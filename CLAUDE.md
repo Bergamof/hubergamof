@@ -61,9 +61,9 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 
 ## Architecture
 - `crates/protocol/` (`bergadeck-protocol`) — messages WebSocket (`ClientMessage`/`ServerMessage`, taggés `type`, camelCase), configuration + `DeviceConfig::validate`, catalogue (`ModuleDescriptor`/`SettingField` → formulaires UI génériques), état en direct (`LiveState`, images en data URL). Source unique du contrat, exporté en TS par `ts-rs` vers `ui/src/lib/generated/` (+ `index.ts` généré par le test `export_bindings_index`).
-- `crates/module-api/` (`bergadeck-module-api`, MPL-2.0) — trait `Module` : touches, pages, molettes, zones de bande tactile. Les modules intégrés l'utilisent comme le feront les externes.
-- `crates/modules/` (`bergadeck-modules`) — modules intégrés : clock, navigation, audio, pomodoro, docker, intellij, claude.
-- `crates/manager/` (`bergadeck` : lib `bergadeck_manager` + binaire) — `device/` (`DeckBackend`, `InputEvent`, `DeviceDiscovery`, `StripLayout`, `virtual_deck`, `hardware/` : un thread par appareil + sondage hotplug 1 s), `render/` (`Renderer` : PNG/JPEG/SVG → RGBA, libellé, zones de bande, data URL, cache LRU ; police Noto Sans OFL dans `assets/fonts/`), `config_store/` (`ConfigStore` : défaut, invalide renommé, révision, écriture atomique, images). À venir (5b) : moteur de pages, serveur axum + UI embarquée, tray.
+- `crates/module-api/` (`bergadeck-module-api`, MPL-2.0) — `ModuleFactory`/`Module` (touche, pages, molette, zone, `update_settings` obligatoire), `Command` (`OpenPage`, `Back`, `GoHome`, `ScrollRows`, `Redraw`), `ModuleContext` (`RedrawHandle`, `TaskSpawner`), catalogue (`ModuleDescriptor`, `SettingField`…) et ids, ré-exportés par `protocol`. **Ne dépend d'aucun crate GPL.**
+- `crates/modules/` (`bergadeck-modules`) — `ModuleRegistry`/`builtin_registry()` ; faits : clock (jiff), navigation ; à venir : audio, pomodoro, docker, intellij, claude (placeholders « X indisponible » en attendant).
+- `crates/manager/` (`bergadeck` : lib `bergadeck_manager` + binaire) — `device/` (`DeckBackend`, `InputEvent`, `DeviceDiscovery`, `StripLayout`, `virtual_deck`, `hardware/` : un thread par appareil + sondage hotplug 1 s), `render/` (`Renderer` : PNG/JPEG/SVG → RGBA, libellé, zones de bande, data URL, cache LRU ; police Noto Sans OFL dans `assets/fonts/`), `config_store/` (`ConfigStore` : défaut, invalide renommé, révision, écriture atomique, images). `engine/` : `Supervisor` → une tâche `DeviceEngine` par appareil (pages, débordement en lignes, pile de navigation, rendu incrémental, `apply_config` qui conserve l'état des instances) ; `EngineHandle` (`press_key`, `rotate_dial`, `press_dial`, `apply_config`, `watch` de config et de `LiveSnapshot` → `to_live_state()` paresseux). À venir (5b-2) : serveur axum + UI embarquée, tray.
 - `ui/` — SvelteKit statique (sortie `ui/build/` : `index.html` prérendu + fallback `200.html` à servir pour toute route inconnue hors assets) ; `pnpm dev`/`preview` proxifient `/ws` et `/api` vers `127.0.0.1:7878`. Client WebSocket : `ui/src/lib/connection/` (`ManagerConnection`, reconnexion avec backoff).
 - `packaging/` — unité systemd utilisateur, règle udev, script d'installation.
 - Flux : appareil → `DeckBackend` → moteur de pages → module → rendu → appareil ; toute modification d'état est diffusée aux clients WebSocket.
@@ -78,7 +78,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 ## Décisions techniques
 - 2026-10-28 — Rust pour le gestionnaire : binaire natif léger ; réticence à JS/TS hors web.
 - 2026-10-28 — Un seul binaire servant UI statique + WebSocket sur `127.0.0.1:7878` : un processus, temps réel simple.
-- 2026-10-28 — Contrôle `Origin`/`Host` + jeton de session : les modules lancent des commandes, un site malveillant ne doit pas pouvoir les piloter.
+- 2026-10-28 — Contrôle strict `Origin`/`Host` (sans jeton de session, validé par Adrien, à confirmer par `cerbere-le-paranoiaque`) : les modules lancent des commandes, un site malveillant ne doit pas pouvoir les piloter (CSRF WebSocket, DNS rebinding) ; le jeton imposerait d'ouvrir l'UI via le tray.
 - 2026-10-28 — Pas d'API REST publique (routes HTTP internes upload/export/import) : règles REST non appliquées.
 - 2026-10-28 — `DeckBackend` virtuel (`--demo`) : tests, dev UI, Playwright et Lighthouse sans matériel.
 - 2026-10-28 — Dockerfile = build reproductible + mode `--demo` (CI/Lighthouse) ; exécution réelle via systemd (USB, D-Bus, audio de session).
@@ -99,11 +99,15 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Requêtes vers des API publiques (crates.io, npm, GitHub) : User-Agent générique, jamais d'information personnelle.
 - Ne pas activer de feature de backend `hidapi` : `elgato-streamdeck` impose `linux-static-hidraw` et deux backends font paniquer le build.
 - Un seul gestionnaire peut tenir l'appareil : StreamController (installé chez Adrien, autostart désactivé) entre en conflit ; son plantage a déjà détaché le pilote HID (débrancher/rebrancher).
+- Les gestionnaires de module sont attendus un par un dans la boucle de l'appareil : toute E/S longue (Docker, IntelliJ, Claude, audio) passe par une tâche de fond (`TaskSpawner`) + `RedrawHandle`.
+- `ts-rs` recopie la rustdoc des types du contrat dans le TS : toute retouche de ces commentaires impose `make gen-types`.
+- Les touches et molettes agissent à l'appui (`KeyDown`/`DialDown`) ; relâchements et taps de bande ignorés.
 - `Renderer` et `ConfigStore` sont synchrones/CPU : les appeler via `spawn_blocking`.
 - Les appareils n'acceptent que JPEG (BMP pour Original v1/Mini) : toute image passe par le pipeline de rendu.
 
 ## État du projet
 - Fait : cadrage, socle, squelette Rust + contrat `protocol`, squelette UI (client WebSocket), outillage (Makefile, CI, Docker, packaging), spikes notifications Claude + KWin (`docs/integrations-desktop.md`).
+- Fait aussi : étape 5b-1 (module-api, moteur de pages, modules clock/navigation).
 - Fait aussi : étape 5a (couche appareils, rendu, config) validée sur le vrai Stream Deck+ (touches, molettes, appuis, tap/appui long/glissement, affichage).
 - Prochaines étapes : cœur du gestionnaire (étape 5), `module-api` + modules simples (6), UI (7), modules Docker/IntelliJ/Claude (8), revue des spécialistes (9).
 - Ouverts : option `--bind` pour le conteneur ? Lighthouse/e2e à basculer sur `bergadeck --demo` à l'étape 5 ; CodeQL/zizmor à arbitrer avec `cerbere-le-paranoiaque` ; couverture de tests en CI.

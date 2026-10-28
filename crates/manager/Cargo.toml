@@ -8,8 +8,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# The device, rendering and configuration layers live in a library so that
-# their public API is documented and tested on its own; the binary wires them.
+# The device, rendering, configuration and engine layers live in a library so
+# that their public API is documented and tested on its own; the binary wires
+# them.
 [lib]
 name = "bergadeck_manager"
 path = "src/lib.rs"
@@ -22,6 +23,8 @@ path = "src/main.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
+bergadeck-module-api.workspace = true
+bergadeck-modules.workspace = true
 bergadeck-protocol.workspace = true
 clap.workspace = true
 # Synchronous API driven from a dedicated thread per device: the crate's
@@ -43,6 +46,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+serde.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

@@ -1,5 +1,5 @@
-//! Core of the `bergadeck` manager: device access, image rendering and
-//! per-device configuration storage.
+//! Core of the `bergadeck` manager: device access, image rendering,
+//! per-device configuration storage and the page engine.
 //!
 //! - [`device`]: the [`device::DeckBackend`] hardware abstraction, the
 //!   [`device::DeviceDiscovery`] registry fed by the real (`hidapi`) or the
@@ -8,7 +8,11 @@
 //!   images, label overlay, data URL export and a bounded cache.
 //! - [`config_store`]: `config/devices/<serial>/` persistence with revision
 //!   checks, atomic writes and content-addressed images.
+//! - [`engine`]: one task per device running its modules, navigation and
+//!   incremental drawing, observable and controllable through
+//!   [`engine::EngineHandle`].
 
 pub mod config_store;
 pub mod device;
+pub mod engine;
 pub mod render;

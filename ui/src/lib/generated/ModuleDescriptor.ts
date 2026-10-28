@@ -8,7 +8,7 @@ import type { SettingField } from "./SettingField";
  */
 export type ModuleDescriptor = { 
 /**
- * Module kind, referenced by [`crate::ModuleInstance::kind`].
+ * Module kind, referenced by the `kind` of a configured module instance.
  */
 kind: ModuleKind, 
 /**

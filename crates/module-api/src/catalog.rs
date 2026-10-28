@@ -1,8 +1,11 @@
 //! Module catalog: what each module kind offers and which settings it takes.
 //!
-//! The UI builds settings forms generically from these descriptors.
+//! The UI builds settings forms generically from these descriptors. These types
+//! are part of the wire contract: `bergadeck-protocol` re-exports them and
+//! exports them to TypeScript, so their JSON format must stay stable.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use ts_rs::TS;
 
 use crate::ModuleKind;
@@ -12,7 +15,7 @@ use crate::ModuleKind;
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ModuleDescriptor {
-    /// Module kind, referenced by [`crate::ModuleInstance::kind`].
+    /// Module kind, referenced by the `kind` of a configured module instance.
     pub kind: ModuleKind,
     /// Human-readable name.
     pub name: String,
@@ -46,7 +49,7 @@ pub struct ModuleCapabilities {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SettingField {
-    /// Key of the setting in [`crate::ModuleInstance::settings`].
+    /// Key of the setting in the `settings` object of a module instance.
     pub key: String,
     /// Form label.
     pub label: String,
@@ -116,4 +119,91 @@ pub struct ChoiceOption {
     pub value: String,
     /// Displayed label.
     pub label: String,
+}
+
+impl ModuleDescriptor {
+    /// Settings object holding the default value of every setting, as stored
+    /// in a new module instance.
+    #[must_use]
+    pub fn default_settings(&self) -> Value {
+        let settings: Map<String, Value> = self
+            .settings
+            .iter()
+            .map(|field| (field.key.clone(), field.kind.default_value()))
+            .collect();
+        Value::Object(settings)
+    }
+}
+
+impl SettingKind {
+    /// Default value of the setting, as JSON.
+    #[must_use]
+    pub fn default_value(&self) -> Value {
+        match self {
+            Self::Boolean { default } => Value::Bool(*default),
+            Self::Integer { default, .. } => Value::from(*default),
+            Self::Text { default } | Self::Path { default, .. } | Self::Choice { default, .. } => {
+                Value::String(default.clone())
+            }
+            Self::PathList { default } => {
+                Value::Array(default.iter().cloned().map(Value::String).collect())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn default_settings_collect_every_field_default() {
+        let field = |key: &str, kind| SettingField {
+            key: key.into(),
+            label: key.into(),
+            help: None,
+            kind,
+        };
+        let descriptor = ModuleDescriptor {
+            kind: "sample".into(),
+            name: "Sample".into(),
+            description: String::new(),
+            capabilities: ModuleCapabilities {
+                key: true,
+                dial: false,
+                touch_zone: false,
+            },
+            settings: vec![
+                field("flag", SettingKind::Boolean { default: true }),
+                field(
+                    "count",
+                    SettingKind::Integer {
+                        default: 25,
+                        min: None,
+                        max: None,
+                        unit: None,
+                    },
+                ),
+                field(
+                    "paths",
+                    SettingKind::PathList {
+                        default: vec!["/a".into()],
+                    },
+                ),
+                field(
+                    "mode",
+                    SettingKind::Choice {
+                        default: "x".into(),
+                        options: Vec::new(),
+                    },
+                ),
+            ],
+        };
+        assert_eq!(
+            descriptor.default_settings(),
+            json!({ "flag": true, "count": 25, "paths": ["/a"], "mode": "x" })
+        );
+    }
 }

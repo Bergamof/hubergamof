@@ -6,7 +6,7 @@ import type { SettingKind } from "./SettingKind";
  */
 export type SettingField = { 
 /**
- * Key of the setting in [`crate::ModuleInstance::settings`].
+ * Key of the setting in the `settings` object of a module instance.
  */
 key: string, 
 /**
