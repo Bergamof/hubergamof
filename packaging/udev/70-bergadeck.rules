@@ -1,0 +1,12 @@
+# Bergadeck — accès sans root aux Stream Deck Elgato (vendor USB 0fd9), toute la gamme.
+#
+# TAG+="uaccess" laisse systemd-logind accorder l'accès (ACL) à l'utilisateur de la
+# session locale active uniquement, contrairement à MODE="0666" qui ouvrirait le
+# périphérique à tous les comptes. Le préfixe 70 place la règle avant
+# 73-seat-late.rules, qui applique ces ACL.
+
+# Périphérique USB (détection, réinitialisation)
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0fd9", TAG+="uaccess"
+
+# Nœud hidraw utilisé par hidapi pour piloter l'appareil
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"

@@ -1,0 +1,29 @@
+# Rust
+/target/
+
+# Node / SvelteKit
+node_modules/
+/ui/.svelte-kit/
+/ui/build/
+/ui/test-results/
+/ui/playwright-report/
+/ui/coverage/
+/ui/vite.config.ts.timestamp-*
+
+# Lighthouse CI
+/.lighthouseci/
+
+# Configuration personnelle des appareils (seul config/example/ est versionné)
+/config/devices/
+
+# Environnement local et secrets
+.env
+.env.*
+!.env.example
+
+# Éditeurs et OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+*.swp

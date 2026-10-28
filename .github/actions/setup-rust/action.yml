@@ -1,0 +1,28 @@
+name: Setup Rust
+description: >-
+  Installe les dépendances système du build (hidapi, udev) et la toolchain
+  épinglée dans rust-toolchain.toml, avec cache des dépendances et de target/.
+inputs:
+  cache-key:
+    description: Clé de cache partagée (une par type de compilation pour éviter les collisions).
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends pkg-config libudev-dev libhidapi-dev
+
+    # rustup lit rust-toolchain.toml (version et composants) : aucune version en dur ici.
+    - name: Install toolchain from rust-toolchain.toml
+      shell: bash
+      run: |
+        rustup toolchain install
+        rustc --version
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        shared-key: ${{ inputs.cache-key }}

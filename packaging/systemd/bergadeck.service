@@ -1,0 +1,17 @@
+# Bergadeck — service systemd utilisateur (gabarit).
+# packaging/install.sh remplace @CONFIG_DIR@ par le chemin absolu, échappé, du
+# dossier de configuration, puis installe l'unité dans ~/.config/systemd/user/.
+
+[Unit]
+Description=Bergadeck Stream Deck manager
+# Le tray (SNI) et les modules de bureau ont besoin de la session graphique.
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/bergadeck --config-dir "@CONFIG_DIR@"
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

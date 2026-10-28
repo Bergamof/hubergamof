@@ -1,0 +1,407 @@
+# CI de vérification des PR (voir le skill regles-projet, references/ci.md).
+# Les jobs appellent les cibles du Makefile : mêmes commandes en local et en CI.
+# Chaque job de vérification expose `outputs.summary` (résumé chiffré) et figure
+# dans les `needs` du job `report`, qui commente la PR.
+#
+# Actions : celles de GitHub (actions/*, docker/*) sont référencées par version
+# majeure ; les actions tierces sont épinglées par SHA de commit (chaîne
+# d'approvisionnement), avec la version en commentaire. Dependabot met les deux à jour.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # pnpm est installé par pnpm/action-setup (version de ui/package.json) : le
+  # Makefile l'utilise directement au lieu de passer par Corepack.
+  PNPM: pnpm
+  CARGO_TERM_COLOR: never
+  FORCE_COLOR: "0"
+  GITLEAKS_VERSION: 8.30.1
+  ACTIONLINT_VERSION: 1.7.12
+
+jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: debug
+      - uses: ./.github/actions/setup-ui
+
+      - name: Rust (rustfmt, clippy)
+        id: rust
+        run: make lint-rust 2>&1 | tee lint-rust.log
+      - name: UI (Prettier, ESLint, svelte-check)
+        id: ui
+        if: ${{ !cancelled() }}
+        run: make lint-ui 2>&1 | tee lint-ui.log
+      - name: Versions (Dockerfile ↔ rust-toolchain.toml, .nvmrc)
+        id: versions
+        if: ${{ !cancelled() }}
+        run: make check-versions
+      - name: Install actionlint
+        if: ${{ !cancelled() }}
+        run: >-
+          .github/scripts/install-release-binary.sh rhysd/actionlint "v$ACTIONLINT_VERSION"
+          "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          "actionlint_${ACTIONLINT_VERSION}_checksums.txt" actionlint
+      # actionlint vérifie aussi les scripts `run:` avec shellcheck (préinstallé sur le runner).
+      - name: Pipeline (actionlint, shellcheck)
+        id: tooling
+        if: ${{ !cancelled() }}
+        run: |
+          actionlint
+          shellcheck --external-sources --source-path=SCRIPTDIR/.. packaging/*.sh .github/scripts/*.sh
+
+      - name: Summary
+        id: summary
+        if: always()
+        env:
+          RUST: ${{ steps.rust.outcome }}
+          UI: ${{ steps.ui.outcome }}
+          VERSIONS: ${{ steps.versions.outcome }}
+          TOOLING: ${{ steps.tooling.outcome }}
+        run: |
+          icon() { [[ "$1" == success ]] && echo "✅" || echo "❌"; }
+          rust_issues=$(grep -cE '^(error|warning)(\[[A-Za-z0-9_:]+\])?: ' lint-rust.log || true)
+          ui_problems=$(sed -nE 's/.*✖ ([0-9]+) problems?.*/\1/p' lint-ui.log 2>/dev/null | tail -1)
+          # svelte-check sans terminal : « COMPLETED n FILES e ERRORS w WARNINGS … ».
+          svelte_check=$(sed -nE 's/.*COMPLETED [0-9]+ FILES ([0-9]+) ERRORS ([0-9]+) WARNINGS.*/\1 erreur(s), \2 avertissement(s)/p' lint-ui.log 2>/dev/null | tail -1)
+          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING")" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: debug
+      - uses: ./.github/actions/setup-ui
+
+      - name: Rust (cargo test)
+        id: rust
+        run: make test-rust 2>&1 | tee test-rust.log
+      - name: UI (Vitest)
+        id: ui
+        if: ${{ !cancelled() }}
+        run: make test-ui 2>&1 | tee test-ui.log
+
+      - name: Summary
+        id: summary
+        if: always()
+        run: |
+          rust=$(awk '/^test result:/ { passed += $4; failed += $6 } END { printf "%d réussi(s), %d échoué(s)", passed, failed }' test-rust.log 2>/dev/null || echo "—")
+          vitest=$(grep -E '^[[:space:]]*Tests[[:space:]]' test-ui.log 2>/dev/null | tail -1 | sed -E 's/^[[:space:]]*Tests[[:space:]]+//' || true)
+          echo "summary=Rust : ${rust} · Vitest : ${vitest:-—}" >> "$GITHUB_OUTPUT"
+
+  contract:
+    name: Contrat TS
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: debug
+      - name: Generated TypeScript types are up to date
+        id: check
+        run: make check-types 2>&1 | tee check-types.log
+      - name: Summary
+        id: summary
+        if: always()
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          files=$(find ui/src/lib/generated -name '*.ts' 2>/dev/null | wc -l)
+          if [[ "$OUTCOME" == success ]]; then
+            echo "summary=${files} fichier(s) généré(s), à jour" >> "$GITHUB_OUTPUT"
+          else
+            diverging=$(grep -cE '^(diff |Only in )' check-types.log || true)
+            echo "summary=${diverging} fichier(s) divergent(s) : lancer make gen-types" >> "$GITHUB_OUTPUT"
+          fi
+
+  e2e:
+    name: Tests e2e (Playwright)
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ui
+      - name: Install Chromium
+        working-directory: ui
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright
+        id: e2e
+        run: make test-e2e 2>&1 | tee e2e.log
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: ui/playwright-report/
+          retention-days: 7
+      - name: Summary
+        id: summary
+        if: always()
+        run: |
+          passed=$(sed -nE 's/^[[:space:]]*([0-9]+) passed.*/\1/p' e2e.log 2>/dev/null | tail -1)
+          failed=$(sed -nE 's/^[[:space:]]*([0-9]+) failed.*/\1/p' e2e.log 2>/dev/null | tail -1)
+          echo "summary=${passed:-0} réussi(s), ${failed:-0} échoué(s)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: release
+      - uses: ./.github/actions/setup-ui
+      # UI d'abord, puis binaire release qui l'embarque.
+      - name: make build
+        id: build
+        run: make build
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: bergadeck-linux-x86_64
+          path: target/release/bergadeck
+          retention-days: 7
+      - name: Summary
+        id: summary
+        if: always()
+        run: |
+          binary=$(du -h target/release/bergadeck 2>/dev/null | cut -f1)
+          ui=$(du -sh ui/build 2>/dev/null | cut -f1)
+          echo "summary=binaire ${binary:-absent}, UI ${ui:-absente}" >> "$GITHUB_OUTPUT"
+
+  docker:
+    name: Image Docker
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    env:
+      IMAGE: bergadeck:ci
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - name: Build (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test (--version)
+        run: docker run --rm "$IMAGE" --version
+      # Les CVE sans correctif publié ne sont pas actionnables : seules les
+      # HIGH/CRITICAL corrigeables font échouer le job.
+      - name: Scan image (Trivy)
+        id: trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: json
+          output: trivy-image.json
+      - name: Trivy findings
+        if: ${{ !cancelled() && hashFiles('trivy-image.json') != '' }}
+        run: jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName) \(.InstalledVersion) → \(.FixedVersion)\t\($t)"' trivy-image.json
+      - name: Summary
+        id: summary
+        if: always()
+        run: |
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}' 2>/dev/null | numfmt --to=iec || true)
+          cves=$(jq -r '[.Results[]?.Vulnerabilities[]?.Severity] | "\(map(select(. == "CRITICAL")) | length) CRITICAL, \(map(select(. == "HIGH")) | length) HIGH"' trivy-image.json 2>/dev/null || true)
+          echo "summary=image ${size:-non construite} · CVE corrigeables : ${cves:-—}" >> "$GITHUB_OUTPUT"
+
+  security:
+    name: Sécurité
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # Historique complet pour le scan de secrets.
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: debug
+      - uses: ./.github/actions/setup-ui
+        with:
+          install: "false"
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-deny@0.20
+
+      - name: Rust dependencies (cargo deny)
+        id: deny
+        run: make deny 2>&1 | tee deny.log
+      - name: UI dependencies (pnpm audit)
+        id: audit
+        if: ${{ !cancelled() }}
+        working-directory: ui
+        run: |
+          pnpm audit --json > ../pnpm-audit.json || true
+          pnpm audit --audit-level high
+      - name: Install gitleaks
+        if: ${{ !cancelled() }}
+        run: >-
+          .github/scripts/install-release-binary.sh gitleaks/gitleaks "v$GITLEAKS_VERSION"
+          "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          "gitleaks_${GITLEAKS_VERSION}_checksums.txt" gitleaks
+      - name: Secrets (gitleaks)
+        id: gitleaks
+        if: ${{ !cancelled() }}
+        run: gitleaks git --redact --no-banner --report-format json --report-path gitleaks.json
+      - name: Lockfiles & IaC (Trivy fs)
+        id: trivy
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          # target/ (cache Rust restauré) n'est pas une source : Cargo.lock est scanné.
+          skip-dirs: target
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Summary
+        id: summary
+        if: always()
+        env:
+          DENY: ${{ steps.deny.outcome }}
+          AUDIT: ${{ steps.audit.outcome }}
+          GITLEAKS: ${{ steps.gitleaks.outcome }}
+          TRIVY: ${{ steps.trivy.outcome }}
+        run: |
+          icon() { [[ "$1" == success ]] && echo "✅" || echo "❌"; }
+          deny_errors=$(grep -cE '^error\[' deny.log 2>/dev/null || true)
+          audit=$(jq -r '.metadata.vulnerabilities // empty | "\(.critical // 0) critique(s), \(.high // 0) haute(s), \(.moderate // 0) moyenne(s)"' pnpm-audit.json 2>/dev/null || true)
+          leaks=$(jq 'length' gitleaks.json 2>/dev/null || true)
+          echo "summary=cargo-deny $(icon "$DENY") ${deny_errors:-0} erreur(s) · pnpm audit $(icon "$AUDIT") ${audit:-—} · gitleaks $(icon "$GITLEAKS") ${leaks:-—} secret(s) · Trivy fs $(icon "$TRIVY")" >> "$GITHUB_OUTPUT"
+
+  lighthouse:
+    name: Lighthouse
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ui
+      # Assertions (Accessibilité et Bonnes pratiques ≥ 0,9) dans lighthouserc.json.
+      - name: Lighthouse CI
+        id: lhci
+        run: make lighthouse
+      - name: Upload reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-reports
+          path: .lighthouseci/
+          include-hidden-files: true
+          retention-days: 7
+      - name: Summary
+        id: summary
+        if: always()
+        run: |
+          # Score le plus bas parmi les pages auditées (run représentatif de chacune).
+          scores=$(jq -r '[.[] | select(.isRepresentativeRun) | .summary] as $runs
+            | def lowest(category): $runs | map(.[category]) | min * 100 | round;
+            "\($runs | length) page(s) · A11y \(lowest("accessibility")) · Bonnes pratiques \(lowest("best-practices")) · Perf \(lowest("performance")) · SEO \(lowest("seo"))"' \
+            .lighthouseci/reports/manifest.json 2>/dev/null || true)
+          echo "summary=${scores:-pas de rapport}" >> "$GITHUB_OUTPUT"
+
+  report:
+    name: Compte rendu
+    needs: [lint, test, contract, e2e, build, docker, security, lighthouse]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v9
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            try {
+              const needs = JSON.parse(process.env.NEEDS);
+              const icons = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
+              const results = Object.values(needs).map(n => n.result);
+              const global = results.every(r => r === 'success') ? '✅'
+                : results.includes('failure') ? '❌' : '⚠️';
+              const rows = Object.entries(needs).map(([job, n]) =>
+                `| ${job} | ${icons[n.result] ?? '❔'} ${n.result} | ${n.outputs?.summary || '—'} |`);
+              const sha = context.payload.pull_request.head.sha.slice(0, 7);
+              const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const body = [
+                `## ${global} Compte rendu CI`,
+                '',
+                `Commit testé : \`${sha}\` — [logs détaillés](${runUrl})`,
+                '',
+                '| Vérification | Résultat | Résumé |',
+                '|---|---|---|',
+                ...rows,
+              ].join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            } catch (error) {
+              // Le compte rendu reflète les résultats sans les juger : il ne fait jamais échouer la CI.
+              core.warning(`Commentaire de compte rendu non publié : ${error.message}`);
+            }

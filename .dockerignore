@@ -1,0 +1,29 @@
+# Seules les sources nécessaires au build entrent dans le contexte Docker.
+.git
+.github
+.claude
+.idea
+.vscode
+.editorconfig
+
+# Artefacts de build et dépendances (reconstruits dans l'image)
+target
+**/node_modules
+ui/build
+ui/.svelte-kit
+ui/test-results
+ui/playwright-report
+ui/coverage
+.lighthouseci
+
+# Configuration personnelle et secrets
+config/devices
+.env
+.env.*
+
+# Outillage hôte
+Makefile
+Dockerfile
+.dockerignore
+packaging
+lighthouserc.json

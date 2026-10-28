@@ -1,0 +1,79 @@
+# Mises à jour hebdomadaires, regroupées pour limiter le nombre de PR.
+# Un délai (cooldown) laisse aux versions fraîchement publiées le temps d'être
+# retirées si elles sont compromises, avant d'être proposées.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Paris
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      rust-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Paris
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    # La version de Node suit .nvmrc / engines (montée manuelle, avec le Dockerfile).
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+    groups:
+      svelte:
+        patterns: ["svelte", "svelte-check", "@sveltejs/*", "prettier-plugin-svelte", "eslint-plugin-svelte"]
+        update-types: [minor, patch]
+      lint-format:
+        patterns: ["eslint", "@eslint/*", "eslint-config-*", "typescript-eslint", "globals", "prettier", "prettier-plugin-*"]
+        update-types: [minor, patch]
+      ui-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Paris
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "chore(docker)"
+    # Les versions de rust et node suivent rust-toolchain.toml et .nvmrc, à monter
+    # à la main dans le même commit : seuls les digests (correctifs de sécurité
+    # de l'image de même version) sont rafraîchis automatiquement.
+    ignore:
+      - dependency-name: rust
+        update-types: [version-update:semver-major, version-update:semver-minor, version-update:semver-patch]
+      - dependency-name: node
+        update-types: [version-update:semver-major, version-update:semver-minor, version-update:semver-patch]
+    groups:
+      base-images:
+        patterns: ["*"]
