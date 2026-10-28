@@ -723,3 +723,28 @@ async fn supervisor_restarts_engines_on_reattach() {
     assert!(deck.screen().keys.iter().all(Option::is_none));
     assert!(engines.handles().is_empty());
 }
+
+#[tokio::test]
+async fn engine_registry_notifies_engine_starts_and_stops() {
+    let dir = tempfile::tempdir().unwrap();
+    let discovery = DeviceDiscovery::new();
+    let supervisor = Supervisor::start(&discovery, services(&dir, &Probe::default()));
+    let devices = VirtualDevices::new(discovery.clone());
+    let engines = supervisor.engines();
+    let mut changes = engines.changes();
+
+    let _deck = devices.attach(virtual_plus_info(DEMO_SERIAL));
+    tokio::time::timeout(WAIT, changes.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(engines.get(DEMO_SERIAL).is_some());
+
+    assert!(devices.detach(DEMO_SERIAL).await);
+    tokio::time::timeout(WAIT, changes.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(engines.get(DEMO_SERIAL).is_none());
+    supervisor.shutdown().await;
+}

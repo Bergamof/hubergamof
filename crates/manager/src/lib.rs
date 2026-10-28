@@ -1,5 +1,6 @@
 //! Core of the `bergadeck` manager: device access, image rendering,
-//! per-device configuration storage and the page engine.
+//! per-device configuration storage, the page engine, the web server and the
+//! tray icon.
 //!
 //! - [`device`]: the [`device::DeckBackend`] hardware abstraction, the
 //!   [`device::DeviceDiscovery`] registry fed by the real (`hidapi`) or the
@@ -11,8 +12,12 @@
 //! - [`engine`]: one task per device running its modules, navigation and
 //!   incremental drawing, observable and controllable through
 //!   [`engine::EngineHandle`].
+//! - [`server`]: the local web server (UI files and `/ws` WebSocket).
+//! - [`tray`]: the system tray icon (`StatusNotifierItem`).
 
 pub mod config_store;
 pub mod device;
 pub mod engine;
 pub mod render;
+pub mod server;
+pub mod tray;

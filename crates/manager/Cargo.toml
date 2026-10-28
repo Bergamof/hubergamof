@@ -22,6 +22,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+# HTTP/1 + WebSocket only: no JSON/form extractors (messages are parsed by hand
+# to answer `invalidMessage` instead of rejecting the request).
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "tracing", "ws"] }
 base64.workspace = true
 bergadeck-module-api.workspace = true
 bergadeck-modules.workspace = true
@@ -30,24 +33,37 @@ clap.workspace = true
 # Synchronous API driven from a dedicated thread per device: the crate's
 # `async` feature relies on `block_in_place` and serialises reads and writes.
 elgato-streamdeck = { version = "0.14.0", default-features = false }
+# `StreamExt` for the D-Bus signal streams of the tray.
+futures-util = { version = "0.3.34", default-features = false }
 # Default backend (`linux-static-hidraw`, bundled C sources + system libudev):
 # elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
 hidapi = "2.6.7"
 image.workspace = true
 lru = "0.19.0"
+mime_guess = "2.0.5"
 # SVG rendering without system fonts nor embedded raster images (untrusted input).
 resvg = { version = "0.49.0", default-features = false, features = ["text"] }
+# `allow_missing`: the UI build (`ui/build/`) may be absent (Rust-only CI jobs).
+rust-embed = "8.13.0"
+serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.1"
 tempfile.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# System tray (StatusNotifierItem + dbusmenu) on the Tokio runtime only, without
+# zbus's own runtime nor the ObjectManager.
+zbus = { version = "6.1.0", default-features = false, features = ["proxy", "service", "tokio"] }
 
 [dev-dependencies]
-serde.workspace = true
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite = "0.30.0"
+# Peer-to-peer connections: the tray objects are exercised without a bus daemon.
+zbus = { version = "6.1.0", default-features = false, features = ["p2p", "proxy", "service", "tokio"] }
+tower = { version = "0.5.3", features = ["util"] }
 
 [lints]
 workspace = true

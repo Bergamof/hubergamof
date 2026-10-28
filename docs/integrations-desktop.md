@@ -24,3 +24,5 @@
 
 ## zbus 6
 - `Value` → `Variant`/`OwnedVariant` ; plus d'API bloquante. Features utilisées : `default-features = false`, `tokio`, `proxy`, `service`. Nouvelles dépendances (`zruntime`, `zcheapstr`, `zbus_utils`) à passer dans `cargo deny`.
+- Blocs `#[interface]` : clippy pedantic signale `unused_self`, `needless_pass_by_value`, `used_underscore_binding` (imposés par zbus) → `#[expect(..., reason = …)]` locaux.
+- Tray (SNI) : `ItemIsMenu=true` fait ouvrir le menu au clic gauche sur Plasma ≥ 6.4 mais appelle `Activate` ailleurs → on garde `false` (clic gauche = UI, clic droit = menu). Libellés dbusmenu : échapper `_`.

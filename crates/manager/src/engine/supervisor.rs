@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
 use super::{DeviceEngine, EngineHandle, EngineServices};
@@ -15,12 +15,30 @@ use crate::device::{DeckBackend, DeviceDiscovery, DiscoveryEvent};
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Engines currently running, by device serial. Cheap to clone.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EngineRegistry {
     engines: Arc<Mutex<BTreeMap<String, EngineHandle>>>,
+    changes: Arc<watch::Sender<()>>,
+}
+
+impl Default for EngineRegistry {
+    fn default() -> Self {
+        Self {
+            engines: Arc::default(),
+            changes: Arc::new(watch::Sender::new(())),
+        }
+    }
 }
 
 impl EngineRegistry {
+    /// Notified whenever an engine starts or stops: a device appears in the
+    /// [`DeviceDiscovery`] before its engine is ready, so a consumer waiting
+    /// for an engine marks the receiver seen, looks it up, then waits here.
+    #[must_use]
+    pub fn changes(&self) -> watch::Receiver<()> {
+        self.changes.subscribe()
+    }
+
     /// Engine of the device with this serial.
     #[must_use]
     pub fn get(&self, serial: &str) -> Option<EngineHandle> {
@@ -35,6 +53,7 @@ impl EngineRegistry {
 
     fn insert(&self, handle: EngineHandle) {
         self.lock().insert(handle.info().serial.clone(), handle);
+        self.changes.send_replace(());
     }
 
     /// Removes the engine `id` of `serial`, unless a newer engine replaced it.
@@ -42,6 +61,8 @@ impl EngineRegistry {
         let mut engines = self.lock();
         if engines.get(serial).is_some_and(|handle| handle.id() == id) {
             engines.remove(serial);
+            drop(engines);
+            self.changes.send_replace(());
         }
     }
 
