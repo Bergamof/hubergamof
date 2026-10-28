@@ -30,3 +30,6 @@ Fichiers modifiés, commandes lancées (lint, tests, build) et leur résultat, p
 - `cargo test --workspace` régénère `ui/src/lib/generated/` (tests ts-rs) ; `index.ts` produit par le test `export_bindings_index` de `crates/protocol/src/bindings.rs`.
 - Tests d'intégration marqués `#![cfg(test)]` pour que `allow-unwrap-in-tests` de clippy s'applique.
 - crates.io : User-Agent générique (jamais l'e-mail ou le nom d'Adrien).
+- Pas d'`ab_glyph`/`ttf-parser` (RUSTSEC-2026-0192) ; texte via `usvg`/`resvg`.
+- Pas de feature de backend `hidapi` (conflit avec `linux-static-hidraw` imposé par `elgato-streamdeck`).
+- Tests manuels du binaire : `--config-dir` dans un dossier temporaire, jamais `config/` du dépôt.

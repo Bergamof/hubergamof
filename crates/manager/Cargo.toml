@@ -8,14 +8,42 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# The device, rendering and configuration layers live in a library so that
+# their public API is documented and tested on its own; the binary wires them.
+[lib]
+name = "bergadeck_manager"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bergadeck"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bergadeck-protocol.workspace = true
 clap.workspace = true
+# Synchronous API driven from a dedicated thread per device: the crate's
+# `async` feature relies on `block_in_place` and serialises reads and writes.
+elgato-streamdeck = { version = "0.14.0", default-features = false }
+# Default backend (`linux-static-hidraw`, bundled C sources + system libudev):
+# elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
+hidapi = "2.6.7"
+image.workspace = true
+lru = "0.19.0"
+# SVG rendering without system fonts nor embedded raster images (untrusted input).
+resvg = { version = "0.49.0", default-features = false, features = ["text"] }
+serde_json.workspace = true
+sha2 = "0.11.1"
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

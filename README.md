@@ -8,7 +8,7 @@ Gestionnaire de Stream Deck pour Linux, à base de modules, avec une interface d
 
 Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme Stream Deck est prise en charge par conception.
 
-> Projet en cours d'initialisation : le gestionnaire ne pilote pas encore les appareils.
+> Projet en cours de développement : le gestionnaire détecte et pilote les appareils, mais les modules et l'interface ne sont pas encore branchés.
 
 ## Prérequis
 
@@ -17,7 +17,7 @@ Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme
 | [rustup](https://rustup.rs/) | installe automatiquement Rust 1.99.1 (épinglé dans `rust-toolchain.toml`) | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` ou paquet `rustup` |
 | [nvm](https://github.com/nvm-sh/nvm) | Node 24 LTS (épinglé dans `.nvmrc`) | voir le lien |
 | Corepack (fourni avec Node 24) | pnpm à la version épinglée dans `ui/package.json` | `corepack enable pnpm` |
-| Bibliothèques système | accès USB/HID | Arch : `sudo pacman -S hidapi systemd-libs pkgconf` ; Ubuntu : `sudo apt install pkg-config libudev-dev libhidapi-dev` |
+| Bibliothèques système | accès USB/HID | Arch : `sudo pacman -S base-devel systemd-libs pkgconf` ; Ubuntu : `sudo apt install build-essential pkg-config libudev-dev` |
 | PipeWire (`pactl`, `wpctl`) | module Audio | présent par défaut sur Arch/KDE et Ubuntu 24.04 |
 | Docker (utilisateur dans le groupe `docker`) | module Docker, `make docker` | [docs.docker.com](https://docs.docker.com/engine/install/) |
 | [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) 0.20 | `make deny` / `make check` | `cargo install --locked cargo-deny` |
@@ -75,3 +75,5 @@ Recommandé : protéger `main` en rendant obligatoires les jobs `lint`, `test`, 
 ## Licence
 
 [GPL-3.0-or-later](LICENSE). La crate `crates/module-api` (contrat des modules) est sous [MPL-2.0](crates/module-api/LICENSE) afin que les auteurs de modules restent libres de leur licence.
+
+Le binaire embarque la police Noto Sans, sous [SIL Open Font License 1.1](crates/manager/assets/fonts/OFL.txt).
