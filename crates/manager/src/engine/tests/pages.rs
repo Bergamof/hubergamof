@@ -21,7 +21,7 @@ async fn default_configuration_shows_placeholders_and_dial_zones() {
         fixture.labels(),
         labels(&[
             Some("audio indisponible"),
-            Some("pomodoro indisponible"),
+            Some("25:00 Travail"),
             Some("docker indisponible"),
             Some("intellij indisponible"),
             Some("claude indisponible"),

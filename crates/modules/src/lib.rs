@@ -2,12 +2,14 @@
 //! from.
 //!
 //! Each module implements [`bergadeck_module_api::Module`] exactly like an
-//! external module would. Available so far: [`clock`] and [`navigation`];
-//! audio, pomodoro, docker, intellij and claude come later (the manager shows
-//! a placeholder key for kinds missing from the registry).
+//! external module would. Available so far: [`clock`], [`navigation`] and
+//! [`pomodoro`]; audio, docker, intellij and claude come later (the manager
+//! shows a placeholder key for kinds missing from the registry).
 
 pub mod clock;
 pub mod navigation;
+pub mod notifications;
+pub mod pomodoro;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -113,6 +115,7 @@ pub fn builtin_registry() -> ModuleRegistry {
     registry.set_default_layout(DefaultLayout::builtin());
     registry.register(Arc::new(clock::ClockFactory::system()));
     registry.register(Arc::new(navigation::NavigationFactory));
+    registry.register(Arc::new(pomodoro::PomodoroFactory::desktop()));
     registry
 }
 
@@ -123,14 +126,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_registry_offers_clock_and_navigation() {
+    fn builtin_registry_offers_the_builtin_modules() {
         let registry = builtin_registry();
         let kinds: Vec<_> = registry
             .descriptors()
             .into_iter()
             .map(|descriptor| descriptor.kind.0)
             .collect();
-        assert_eq!(kinds, [clock::CLOCK_KIND, navigation::NAVIGATION_KIND]);
+        assert_eq!(
+            kinds,
+            [
+                clock::CLOCK_KIND,
+                navigation::NAVIGATION_KIND,
+                pomodoro::POMODORO_KIND
+            ]
+        );
         assert!(registry.get(&"clock".into()).is_some());
         assert!(registry.get(&"audio".into()).is_none());
     }
@@ -162,6 +172,9 @@ mod tests {
         let mut registry = builtin_registry();
         let previous = registry.register(Arc::new(navigation::NavigationFactory));
         assert!(previous.is_some());
-        assert_eq!(registry.descriptors().len(), 2);
+        assert_eq!(
+            registry.descriptors().len(),
+            builtin_registry().descriptors().len()
+        );
     }
 }

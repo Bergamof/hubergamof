@@ -225,7 +225,10 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
+ "tracing",
+ "zbus",
 ]
 
 [[package]]
