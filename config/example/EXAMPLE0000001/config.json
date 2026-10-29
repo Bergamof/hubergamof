@@ -17,7 +17,13 @@
       "kind": "pomodoro",
       "label": "Focus",
       "image": "tomato.png",
-      "settings": { "workMinutes": 25, "breakMinutes": 5 }
+      "settings": {
+        "workMinutes": 25,
+        "shortBreakMinutes": 5,
+        "longBreakMinutes": 15,
+        "longBreakEvery": 4,
+        "autoStart": false
+      }
     },
     {
       "id": "docker",

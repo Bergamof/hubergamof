@@ -56,14 +56,14 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 # System tray (StatusNotifierItem + dbusmenu) on the Tokio runtime only, without
 # zbus's own runtime nor the ObjectManager.
-zbus = { version = "6.1.0", default-features = false, features = ["proxy", "service", "tokio"] }
+zbus = { workspace = true, features = ["proxy", "service"] }
 
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = "0.30.0"
 # Peer-to-peer connections: the tray objects are exercised without a bus daemon.
-zbus = { version = "6.1.0", default-features = false, features = ["p2p", "proxy", "service", "tokio"] }
+zbus = { workspace = true, features = ["p2p", "proxy", "service"] }
 tower = { version = "0.5.3", features = ["util"] }
 
 [lints]
