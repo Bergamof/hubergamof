@@ -1,5 +1,7 @@
 use std::io::Cursor;
 
+use bergadeck_module_api::{GaugeContent, GaugeLevel};
+
 use super::*;
 
 const KEY: ImageSize = ImageSize {
@@ -336,4 +338,105 @@ fn zone_images_fit_the_zone() {
     assert_eq!(rendered.image().dimensions(), (200, 100));
     assert_eq!(*rendered.image().get_pixel(100, 50), RED);
     assert_eq!(*rendered.image().get_pixel(10, 50), DEFAULT_BACKGROUND);
+}
+
+fn gauge(level: f32) -> GaugeContent {
+    GaugeContent::new("Volume", "25 %", GaugeLevel::from_ratio(level))
+}
+
+/// Row crossing the middle of the gauge bar on a [`ZONE`].
+const GAUGE_BAR_ROW: u32 = 84;
+
+/// Columns of [`GAUGE_BAR_ROW`] painted with `color`.
+fn bar_columns(image: &RgbaImage, color: Rgba<u8>) -> usize {
+    (0..image.width())
+        .filter(|x| *image.get_pixel(*x, GAUGE_BAR_ROW) == color)
+        .count()
+}
+
+#[test]
+fn gauge_bars_are_filled_in_proportion_to_the_level() {
+    let renderer = renderer();
+    let quarter = renderer
+        .render_gauge(&gauge(0.25), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let image = quarter.image();
+    assert_eq!(image.dimensions(), (200, 100));
+    let filled = bar_columns(image, GAUGE_FILL_COLOR);
+    let track = bar_columns(image, GAUGE_TRACK_COLOR);
+    // 4 % margins: a 184 px track, a quarter of it filled from the left.
+    assert_eq!((filled, track), (46, 138));
+    assert_eq!(*image.get_pixel(8, GAUGE_BAR_ROW), GAUGE_FILL_COLOR);
+    assert_eq!(*image.get_pixel(7, GAUGE_BAR_ROW), DEFAULT_BACKGROUND);
+
+    let empty = renderer
+        .render_gauge(&gauge(0.0), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert_eq!(bar_columns(empty.image(), GAUGE_FILL_COLOR), 0);
+    let full = renderer
+        .render_gauge(&gauge(1.0), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert_eq!(bar_columns(full.image(), GAUGE_FILL_COLOR), 184);
+}
+
+#[test]
+fn gauge_text_is_drawn_above_the_bar() {
+    let rendered = renderer()
+        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let image = rendered.image();
+    let lit_rows = |rows: std::ops::Range<u32>| {
+        rows.filter(|y| (0..200).any(|x| image.get_pixel(x, *y).0[0] > 200))
+            .count()
+    };
+    // Title in the top quarter, value in the middle, nothing white in the bar.
+    assert!(lit_rows(0..25) > 5);
+    assert!(lit_rows(30..70) > 10);
+    assert_eq!(lit_rows(80..90), 0);
+    assert!(image.pixels().all(|pixel| pixel.0[3] == u8::MAX));
+}
+
+#[test]
+fn dimmed_gauges_are_greyed_out() {
+    let renderer = renderer();
+    let normal = renderer
+        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let dimmed = renderer
+        .render_gauge(&gauge(0.5).with_dimmed(true), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert_eq!(bar_columns(dimmed.image(), GAUGE_FILL_COLOR), 0);
+    assert_eq!(bar_columns(dimmed.image(), GAUGE_DIMMED_FILL_COLOR), 92);
+    let brightest = |image: &RgbaImage| image.pixels().map(|pixel| pixel.0[0]).max().unwrap();
+    assert_eq!(brightest(normal.image()), u8::MAX);
+    assert!(brightest(dimmed.image()) <= DIMMED_TEXT_COLOR.0[0]);
+}
+
+#[test]
+fn identical_gauges_hit_the_cache() {
+    let renderer = renderer();
+    let first = renderer
+        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let again = renderer
+        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+    let other = renderer
+        .render_gauge(&gauge(0.6), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert!(!Arc::ptr_eq(&first, &other));
+    assert_eq!(renderer.cached_len(), 2);
+    assert!(
+        renderer
+            .render_gauge(
+                &gauge(0.5),
+                ImageSize {
+                    width: 0,
+                    height: 100
+                },
+                DEFAULT_BACKGROUND
+            )
+            .is_err()
+    );
 }

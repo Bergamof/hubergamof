@@ -150,8 +150,8 @@ mod module;
 pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingField, SettingKind};
 pub use command::{Command, Feedback};
 pub use content::{
-    ImageData, KeyContent, KeyState, MAX_ZONE_LINES, NavigationView, PageContent, PageItem,
-    ZoneContent,
+    GaugeContent, GaugeLevel, ImageData, KeyContent, KeyState, MAX_ZONE_LINES, NavigationView,
+    PageContent, PageItem, ZoneContent,
 };
 pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
 pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};

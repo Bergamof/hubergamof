@@ -5,7 +5,8 @@
  */
 export type ZoneView = { 
 /**
- * Text lines shown in the zone.
+ * Text shown in the zone: its lines, or the title and value of a gauge;
+ * empty for an image or a blank zone.
  */
 lines: Array<string>, 
 /**

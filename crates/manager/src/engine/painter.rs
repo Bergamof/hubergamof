@@ -153,10 +153,7 @@ impl Painter {
                 module_id: dial.module.clone(),
                 zone: dial.zone.as_ref().map(|zone| LiveZone {
                     feedback: zone.feedback,
-                    lines: match &zone.content {
-                        ZoneContentFace::Lines(lines) => lines.clone(),
-                        ZoneContentFace::Blank | ZoneContentFace::Image(_) => Vec::new(),
-                    },
+                    lines: zone.content.text_lines(),
                     image: self
                         .zones
                         .get(index)
@@ -273,6 +270,7 @@ fn render_zone(
     match &face.content {
         ZoneContentFace::Blank => blank(),
         ZoneContentFace::Lines(lines) => renderer.render_zone(lines, size, DEFAULT_BACKGROUND),
+        ZoneContentFace::Gauge(gauge) => renderer.render_gauge(gauge, size, DEFAULT_BACKGROUND),
         ZoneContentFace::Image(source) => renderer.render_image(size, source).or_else(|error| {
             tracing::warn!(%error, "cannot draw zone image, leaving it blank");
             blank()

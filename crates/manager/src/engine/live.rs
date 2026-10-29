@@ -36,7 +36,8 @@ pub struct LiveKey {
 /// A touch strip zone as drawn.
 #[derive(Debug, Clone)]
 pub struct LiveZone {
-    /// Text lines, empty for an image or a blank zone.
+    /// Text lines (title and value of a gauge), empty for an image or a
+    /// blank zone.
     pub lines: Vec<String>,
     /// Outcome mark drawn over the zone for a moment (part of `image`).
     pub feedback: Option<Feedback>,

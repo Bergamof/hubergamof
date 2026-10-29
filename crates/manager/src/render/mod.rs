@@ -3,8 +3,8 @@
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
 //! ("contain") and centred on a background colour, with the frame of its
-//! [`KeyState`]; it also renders strip zones from text lines or an image, and
-//! the transient [`Feedback`] mark drawn over a surface. Results are cached by
+//! [`KeyState`]; it also renders strip zones from text lines, a gauge or an
+//! image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
 //! content (bounded LRU) and encoded to a PNG data URL only on demand.
 
 mod digest;
@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use bergadeck_module_api::{Feedback, KeyState};
+use bergadeck_module_api::{Feedback, GaugeContent, GaugeLevel, KeyState};
 use bergadeck_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -54,6 +54,18 @@ pub const ATTENTION_BORDER_COLOR: Rgba<u8> = Rgba([0xff, 0x8c, 0x00, u8::MAX]);
 /// and behind a transparent image.
 pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
 
+/// Text of a dimmed gauge (muted, paused).
+pub const DIMMED_TEXT_COLOR: Rgba<u8> = Rgba([0x8a, 0x8a, 0x8a, u8::MAX]);
+
+/// Filled part of a gauge bar.
+pub const GAUGE_FILL_COLOR: Rgba<u8> = ACTIVE_BORDER_COLOR;
+
+/// Filled part of a dimmed gauge bar.
+pub const GAUGE_DIMMED_FILL_COLOR: Rgba<u8> = Rgba([0x5c, 0x5c, 0x5c, u8::MAX]);
+
+/// Empty part of a gauge bar.
+pub const GAUGE_TRACK_COLOR: Rgba<u8> = Rgba([0x2a, 0x2a, 0x2a, u8::MAX]);
+
 /// Opacity of the black veil darkening a surface under a feedback mark.
 pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
 
@@ -87,6 +99,16 @@ const ZONE_TITLE_FONT_RATIO: f32 = 0.30;
 const ZONE_DETAIL_FONT_RATIO: f32 = 0.20;
 /// Horizontal padding of zone lines, relative to the zone width.
 const ZONE_PADDING_RATIO: f32 = 0.04;
+/// Font size of a gauge title, relative to the zone height.
+const GAUGE_TITLE_FONT_RATIO: f32 = 0.20;
+/// Font size of a gauge value, relative to the zone height.
+const GAUGE_VALUE_FONT_RATIO: f32 = 0.34;
+/// Space above the gauge title, relative to the zone height.
+const GAUGE_TOP_MARGIN_RATIO: f32 = 0.05;
+/// Thickness of the gauge bar, relative to the zone height.
+const GAUGE_BAR_HEIGHT_RATIO: f32 = 0.12;
+/// Space below the gauge bar, relative to the zone height.
+const GAUGE_BOTTOM_MARGIN_RATIO: f32 = 0.10;
 
 const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 
@@ -252,6 +274,11 @@ enum CacheKey {
     },
     Zone {
         lines: Vec<String>,
+        size: (u32, u32),
+        background: [u8; 4],
+    },
+    Gauge {
+        gauge: GaugeContent,
         size: (u32, u32),
         background: [u8; 4],
     },
@@ -422,6 +449,33 @@ impl Renderer {
         })
     }
 
+    /// Renders a strip zone gauge: title on top, value in the middle, a bar
+    /// filled to the gauge level at the bottom, all greyed out when the
+    /// gauge is dimmed. CPU-bound: call it from a blocking context.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::InvalidSize`] when the size is empty.
+    pub fn render_gauge(
+        &self,
+        gauge: &GaugeContent,
+        size: ImageSize,
+        background: Rgba<u8>,
+    ) -> Result<Arc<Rendered>, RenderError> {
+        check_size(size)?;
+        let key = CacheKey::Gauge {
+            gauge: gauge.clone(),
+            size: (size.width, size.height),
+            background: background.0,
+        };
+        self.cached(key, || {
+            let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
+            let bar_top = draw_gauge_bar(&mut canvas, gauge.level, gauge.dimmed);
+            self.draw_gauge_text(&mut canvas, gauge, bar_top)?;
+            Ok(keep_opaque(canvas, background))
+        })
+    }
+
     fn cached(
         &self,
         key: CacheKey,
@@ -508,6 +562,47 @@ impl Renderer {
         self.text.draw(canvas, &drawn)
     }
 
+    /// Draws the title at the top of `canvas` and the value centred between
+    /// the title and the bar starting at row `bar_top`.
+    fn draw_gauge_text(
+        &self,
+        canvas: &mut RgbaImage,
+        gauge: &GaugeContent,
+        bar_top: f32,
+    ) -> Result<(), RenderError> {
+        let width = f32_from(canvas.width());
+        let height = f32_from(canvas.height());
+        let max_width = width * (1.0 - 2.0 * ZONE_PADDING_RATIO);
+        let color = if gauge.dimmed {
+            DIMMED_TEXT_COLOR
+        } else {
+            TEXT_COLOR
+        };
+        let title_size = height * GAUGE_TITLE_FONT_RATIO;
+        let value_size = height * GAUGE_VALUE_FONT_RATIO;
+        let title_top = height * GAUGE_TOP_MARGIN_RATIO;
+        let title_bottom = title_top + TextRenderer::line_height(title_size);
+        let value_top =
+            title_bottom + (bar_top - title_bottom - TextRenderer::line_height(value_size)) / 2.0;
+        let lines = [
+            TextLine {
+                text: self.text.fit(&gauge.title, title_size, max_width)?,
+                size: title_size,
+                center_x: width / 2.0,
+                baseline: title_top + TextRenderer::ascent(title_size),
+                color,
+            },
+            TextLine {
+                text: self.text.fit(&gauge.value, value_size, max_width)?,
+                size: value_size,
+                center_x: width / 2.0,
+                baseline: value_top + TextRenderer::ascent(value_size),
+                color,
+            },
+        ];
+        self.text.draw(canvas, &lines)
+    }
+
     fn lock_cache(&self) -> std::sync::MutexGuard<'_, LruCache<CacheKey, Arc<Rendered>>> {
         // Cache entries are immutable: a poisoned lock is still consistent.
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
@@ -562,6 +657,42 @@ fn draw_border(canvas: &mut RgbaImage, color: Rgba<u8>, ratio: f32) {
             *pixel = color;
         }
     }
+}
+
+/// Draws the gauge bar at the bottom of `canvas`, filled to `level` from the
+/// left; returns its top row.
+fn draw_gauge_bar(canvas: &mut RgbaImage, level: GaugeLevel, dimmed: bool) -> f32 {
+    let (width, height) = canvas.dimensions();
+    let margin = scaled_dimension(width, ZONE_PADDING_RATIO, width / 2);
+    let thickness = scaled_dimension(height, GAUGE_BAR_HEIGHT_RATIO, height);
+    let bottom = height.saturating_sub(scaled_dimension(height, GAUGE_BOTTOM_MARGIN_RATIO, height));
+    let top = bottom.saturating_sub(thickness);
+    let track_end = width.saturating_sub(margin).max(margin);
+    let filled_end = margin + bar_fill_width(track_end - margin, level);
+    let fill = if dimmed {
+        GAUGE_DIMMED_FILL_COLOR
+    } else {
+        GAUGE_FILL_COLOR
+    };
+    for y in top..bottom {
+        for x in margin..track_end {
+            let color = if x < filled_end {
+                fill
+            } else {
+                GAUGE_TRACK_COLOR
+            };
+            canvas.put_pixel(x, y, color);
+        }
+    }
+    f32_from(top)
+}
+
+/// Number of filled pixels of a bar `track` pixels long at `level`, rounded.
+fn bar_fill_width(track: u32, level: GaugeLevel) -> u32 {
+    let full = u64::from(GaugeLevel::FULL_PERMILLE);
+    let filled = (u64::from(track) * u64::from(level.permille()) + full / 2) / full;
+    // At most `track` since the level is at most a full bar.
+    u32::try_from(filled).unwrap_or(track)
 }
 
 /// Blends black over `canvas` with opacity `alpha`, in place.

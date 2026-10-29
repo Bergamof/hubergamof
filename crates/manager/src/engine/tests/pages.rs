@@ -1,6 +1,6 @@
 //! Pages, navigation, configuration and drawing.
 
-use bergadeck_module_api::KeyState;
+use bergadeck_module_api::{GaugeContent, GaugeLevel, KeyState};
 use bergadeck_protocol::ErrorCode;
 use image::RgbaImage;
 use serde_json::json;
@@ -269,6 +269,51 @@ async fn only_changed_keys_are_rewritten() {
     redraw.request_redraw();
     fixture.engine.press_key(7).await.unwrap();
     assert_eq!(fixture.deck.writes(), (0, 0));
+}
+
+#[tokio::test]
+async fn only_changed_gauges_are_rewritten() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![list(0), fragile("none")],
+            &["list"],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let redraw = fixture.probe.redraw.lock().unwrap().clone().unwrap();
+    let show = |level: f32| {
+        *fixture.probe.zone_gauge.lock().unwrap() = Some(GaugeContent::new(
+            "Volume",
+            "25 %",
+            GaugeLevel::from_ratio(level),
+        ));
+        redraw.request_redraw();
+    };
+    let mut live = fixture.engine.live();
+    let mut redrawn = async |expected_lines: [&str; 2]| {
+        live.mark_unchanged();
+        tokio::time::timeout(WAIT, live.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fixture.zone_lines(0), expected_lines);
+    };
+    let _ = fixture.deck.writes();
+
+    show(0.25);
+    redrawn(["Volume", "25 %"]).await;
+    assert_eq!(fixture.deck.writes(), (0, 1));
+
+    // The same gauge: nothing written.
+    show(0.25);
+    fixture.engine.press_key(7).await.unwrap();
+    assert_eq!(fixture.deck.writes(), (0, 0));
+
+    // Only the level changed: the zone is rewritten.
+    show(0.5);
+    redrawn(["Volume", "25 %"]).await;
+    assert_eq!(fixture.deck.writes(), (0, 1));
 }
 
 #[tokio::test]

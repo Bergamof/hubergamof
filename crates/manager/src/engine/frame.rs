@@ -2,8 +2,8 @@
 //! to rewrite only what changed.
 
 use bergadeck_module_api::{
-    Feedback, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES, ModuleInstanceId, PageId,
-    ZoneContent,
+    Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
+    ModuleInstanceId, PageId, ZoneContent,
 };
 
 use super::live::PageSummary;
@@ -74,6 +74,7 @@ pub(crate) enum ZoneContentFace {
     #[default]
     Blank,
     Lines(Vec<String>),
+    Gauge(GaugeContent),
     Image(ImageSource),
 }
 
@@ -84,9 +85,20 @@ impl ZoneContentFace {
                 lines.truncate(MAX_ZONE_LINES);
                 Self::Lines(lines)
             }
+            Some(ZoneContent::Gauge(gauge)) => Self::Gauge(gauge),
             Some(ZoneContent::Image(image)) => Self::Image(image_source(image)),
             // No zone, or a content added later that this version cannot draw.
             _ => Self::Blank,
+        }
+    }
+
+    /// Text equivalent of the zone for the web UI: its lines, or the title
+    /// and value of a gauge; empty for an image or a blank zone.
+    pub(crate) fn text_lines(&self) -> Vec<String> {
+        match self {
+            Self::Lines(lines) => lines.clone(),
+            Self::Gauge(gauge) => vec![gauge.title.clone(), gauge.value.clone()],
+            Self::Blank | Self::Image(_) => Vec::new(),
         }
     }
 }
@@ -133,6 +145,8 @@ fn image_source(image: ImageData) -> ImageSource {
 
 #[cfg(test)]
 mod tests {
+    use bergadeck_module_api::GaugeLevel;
+
     use super::*;
 
     #[test]
@@ -144,5 +158,18 @@ mod tests {
             ZoneContentFace::Lines(lines[..MAX_ZONE_LINES].to_vec())
         );
         assert_eq!(ZoneContentFace::from_content(None), ZoneContentFace::Blank);
+    }
+
+    #[test]
+    fn gauges_are_kept_as_is() {
+        let gauge = GaugeContent::new("Volume", "25 %", GaugeLevel::from_ratio(0.25));
+        assert_eq!(
+            ZoneContentFace::from_content(Some(ZoneContent::Gauge(gauge.clone()))),
+            ZoneContentFace::Gauge(gauge.clone())
+        );
+        assert_eq!(
+            ZoneContentFace::Gauge(gauge).text_lines(),
+            ["Volume", "25 %"].map(String::from)
+        );
     }
 }

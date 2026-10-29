@@ -139,11 +139,26 @@ impl TrayIcon {
 
     /// Removes the icon (the watcher drops it when our bus name goes away).
     pub async fn stop(self) {
-        for task in &self.tasks {
-            task.abort();
-        }
+        // Stopped before closing: an update under way would otherwise hit
+        // the closed connection (devices go away during shutdown).
+        stop_tasks(self.tasks).await;
         if let Err(error) = self.connection.close().await {
             tracing::warn!(%error, "cannot close the system tray connection");
+        }
+    }
+}
+
+/// Cancels `tasks` and waits until they are gone: `abort` alone lets a task
+/// being polled on another worker run until its next suspension point.
+async fn stop_tasks(tasks: Vec<JoinHandle<()>>) {
+    for task in &tasks {
+        task.abort();
+    }
+    for task in tasks {
+        if let Err(error) = task.await
+            && error.is_panic()
+        {
+            tracing::warn!(%error, "system tray task panicked");
         }
     }
 }
@@ -233,6 +248,35 @@ mod tests {
             device_labels(&[virtual_plus_info("A1")]),
             [format!("{name} (A1)")]
         );
+    }
+
+    /// Sets its flag when dropped.
+    struct DropFlag(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stopping_waits_for_tasks_busy_on_another_worker() {
+        const BUSY_POLL: Duration = Duration::from_millis(200);
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (running, mut started) = tokio::sync::mpsc::channel(1);
+        let guard = DropFlag(Arc::clone(&stopped));
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            running.send(()).await.unwrap();
+            loop {
+                // A poll that does not yield, like an update under way.
+                std::thread::sleep(BUSY_POLL);
+                tokio::task::yield_now().await;
+            }
+        });
+        started.recv().await.unwrap();
+        stop_tasks(vec![task]).await;
+        assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

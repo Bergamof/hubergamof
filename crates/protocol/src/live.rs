@@ -68,7 +68,8 @@ pub struct DialView {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ZoneView {
-    /// Text lines shown in the zone.
+    /// Text shown in the zone: its lines, or the title and value of a gauge;
+    /// empty for an image or a blank zone.
     pub lines: Vec<String>,
     /// Rendered zone image as a data URL.
     pub image: Option<String>,

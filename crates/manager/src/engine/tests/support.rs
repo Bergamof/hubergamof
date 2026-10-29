@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    ChoiceOption, Command, EventSender, Feedback, ItemId, KeyContent, KeyState, Module,
-    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    NavigationView, PageContent, PageId, PageItem, RedrawHandle, SettingField, SettingKind,
-    ZoneContent, parse_settings,
+    ChoiceOption, Command, EventSender, Feedback, GaugeContent, ItemId, KeyContent, KeyState,
+    Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
+    ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle, SettingField,
+    SettingKind, ZoneContent, parse_settings,
 };
 use bergadeck_modules::{ModuleRegistry, builtin_registry};
 use bergadeck_protocol::{
@@ -49,6 +49,8 @@ pub(super) struct Probe {
     pub(super) events: Arc<Mutex<Option<EventSender>>>,
     /// Overrides the key label of every instance.
     pub(super) key_label: Arc<Mutex<Option<String>>>,
+    /// Replaces the zone of fragile instances.
+    pub(super) zone_gauge: Arc<Mutex<Option<GaugeContent>>>,
     /// Added to the index in the ids of page items.
     pub(super) item_shift: Arc<AtomicUsize>,
     /// Items pressed, in order.
@@ -250,7 +252,7 @@ struct FragileSettings {
 
 /// Module misbehaving as its settings say. Its key shows its tag (default
 /// `fragile`) and opens page `p` (one item `x`); its zone shows the dial
-/// turns; its dial, item and event handlers report success.
+/// turns, or the gauge of the probe; its dial, item and event handlers report success.
 struct Fragile {
     failure: Failure,
     tag: Option<String>,
@@ -317,6 +319,9 @@ impl Module for Fragile {
 
     fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
         assert_ne!(self.failure, Failure::Zone, "fragile zone");
+        if let Some(gauge) = self.probe.zone_gauge.lock().unwrap().clone() {
+            return Some(ZoneContent::Gauge(gauge));
+        }
         Some(ZoneContent::Lines(vec![format!(
             "{FRAGILE_KIND} {}",
             self.turns

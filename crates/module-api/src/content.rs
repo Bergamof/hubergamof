@@ -105,6 +105,102 @@ pub enum ZoneContent {
     Lines(Vec<String>),
     /// An image scaled to fit the zone.
     Image(ImageData),
+    /// A title, a large value and a horizontal level bar (volume, timer
+    /// progress…).
+    Gauge(GaugeContent),
+}
+
+/// Fill level of a [`GaugeContent`], in thousandths of the full bar.
+///
+/// Always within `0..=`[`GaugeLevel::FULL_PERMILLE`]: the constructors clamp
+/// out-of-range values, so modules can pass raw ratios.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GaugeLevel(u16);
+
+impl GaugeLevel {
+    /// Thousandths of a full bar.
+    pub const FULL_PERMILLE: u16 = 1000;
+    /// An empty bar.
+    pub const EMPTY: Self = Self(0);
+    /// A full bar.
+    pub const FULL: Self = Self(Self::FULL_PERMILLE);
+
+    /// The level of `ratio` (0 = empty, 1 = full), clamped to `0..=1`
+    /// and rounded to the nearest thousandth; `NaN` gives an empty bar.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn from_ratio(ratio: f32) -> Self {
+        if ratio.is_nan() {
+            return Self::EMPTY;
+        }
+        let permille = (ratio.clamp(0.0, 1.0) * f32::from(Self::FULL_PERMILLE)).round();
+        // Within 0..=FULL_PERMILLE after the clamp: the cast is exact.
+        Self(permille as u16)
+    }
+
+    /// The level of `permille` thousandths, clamped to a full bar.
+    #[must_use]
+    pub fn from_permille(permille: u16) -> Self {
+        Self(permille.min(Self::FULL_PERMILLE))
+    }
+
+    /// The level of `part` out of `whole` (`whole = 0` gives an empty bar).
+    #[must_use]
+    pub fn from_fraction(part: u64, whole: u64) -> Self {
+        if whole == 0 {
+            return Self::EMPTY;
+        }
+        let permille =
+            u128::from(part.min(whole)) * u128::from(Self::FULL_PERMILLE) / u128::from(whole);
+        Self::from_permille(u16::try_from(permille).unwrap_or(Self::FULL_PERMILLE))
+    }
+
+    /// Thousandths of a full bar, within `0..=`[`Self::FULL_PERMILLE`].
+    #[must_use]
+    pub fn permille(self) -> u16 {
+        self.0
+    }
+
+    /// The level as a ratio within `0..=1`.
+    #[must_use]
+    pub fn ratio(self) -> f32 {
+        f32::from(self.0) / f32::from(Self::FULL_PERMILLE)
+    }
+}
+
+/// A gauge drawn in a touch strip zone: [`Self::title`] on top,
+/// [`Self::value`] in large text, a bar filled to [`Self::level`] at the
+/// bottom.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct GaugeContent {
+    /// Top line (« Volume », « Travail · 2/4 »).
+    pub title: String,
+    /// Large central text (« 25 % », « 18:42 », « Muet »).
+    pub value: String,
+    /// Fill level of the bar.
+    pub level: GaugeLevel,
+    /// Drawn greyed out (muted output, paused timer).
+    pub dimmed: bool,
+}
+
+impl GaugeContent {
+    /// A gauge titled `title` showing `value`, filled to `level`, not dimmed.
+    #[must_use]
+    pub fn new(title: impl Into<String>, value: impl Into<String>, level: GaugeLevel) -> Self {
+        Self {
+            title: title.into(),
+            value: value.into(),
+            level,
+            dimmed: false,
+        }
+    }
+
+    /// The same gauge, greyed out when `dimmed`.
+    #[must_use]
+    pub fn with_dimmed(self, dimmed: bool) -> Self {
+        Self { dimmed, ..self }
+    }
 }
 
 /// Navigation state of the device, given to [`crate::Module::zone`].
@@ -194,6 +290,31 @@ mod tests {
         assert_eq!(page.module, Some("docker".into()));
         assert_eq!(page.page, Some("containers".into()));
         assert_eq!(page.row, 1);
+    }
+
+    #[test]
+    fn gauge_levels_are_clamped_to_the_bar() {
+        assert_eq!(GaugeLevel::from_ratio(0.25).permille(), 250);
+        assert_eq!(GaugeLevel::from_ratio(0.123_4).permille(), 123);
+        assert_eq!(GaugeLevel::from_ratio(-0.5), GaugeLevel::EMPTY);
+        assert_eq!(GaugeLevel::from_ratio(1.5), GaugeLevel::FULL);
+        assert_eq!(GaugeLevel::from_ratio(f32::NAN), GaugeLevel::EMPTY);
+        assert_eq!(GaugeLevel::from_ratio(f32::INFINITY), GaugeLevel::FULL);
+        assert_eq!(GaugeLevel::from_permille(1500), GaugeLevel::FULL);
+        assert_eq!(GaugeLevel::from_fraction(1, 3).permille(), 333);
+        assert_eq!(GaugeLevel::from_fraction(5, 0), GaugeLevel::EMPTY);
+        assert_eq!(GaugeLevel::from_fraction(u64::MAX, 2), GaugeLevel::FULL);
+        assert!((GaugeLevel::from_permille(500).ratio() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn gauges_are_not_dimmed_by_default() {
+        let gauge = GaugeContent::new("Volume", "25 %", GaugeLevel::from_ratio(0.25));
+        assert!(!gauge.dimmed);
+        assert_eq!(gauge.title, "Volume");
+        let muted = gauge.clone().with_dimmed(true);
+        assert!(muted.dimmed);
+        assert_ne!(gauge, muted);
     }
 
     #[test]
