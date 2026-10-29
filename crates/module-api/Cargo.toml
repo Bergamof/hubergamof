@@ -18,7 +18,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 # `rt` for the task scope of module instances (`JoinSet`), nothing else.
 tokio = { workspace = true, features = ["rt"] }
-ts-rs.workspace = true
+# TypeScript bindings of the catalog types, enabled by `bergadeck-protocol`
+# (the wire contract); modules do not need them.
+ts-rs = { workspace = true, optional = true }
+
+[features]
+# Derives `ts_rs::TS` on the types that are part of the wire contract.
+ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }

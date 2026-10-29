@@ -277,13 +277,11 @@ mod tests {
         let redraws = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&redraws);
         let scope = TaskScope::new();
-        let ctx = ModuleContext::new(
-            "clock".into(),
-            RedrawHandle::new(move || {
+        let ctx = ModuleContext::for_tests("clock")
+            .with_redraw(RedrawHandle::new(move || {
                 counter.fetch_add(1, Ordering::SeqCst);
-            }),
-            scope.spawner(),
-        );
+            }))
+            .with_tasks(scope.spawner());
         Fixture {
             clock: factory.create(ctx, settings).unwrap(),
             redraws,
@@ -292,15 +290,7 @@ mod tests {
     }
 
     fn lines(clock: &dyn Module) -> Vec<String> {
-        let nav = NavigationView {
-            page_title: "Accueil".into(),
-            page: None,
-            row: 0,
-            row_count: 1,
-            visible_rows: 2,
-            depth: 0,
-        };
-        match clock.zone(&nav) {
+        match clock.zone(&NavigationView::new("Accueil", 0, 1, 2)) {
             Some(ZoneContent::Lines(lines)) => lines,
             other => panic!("unexpected zone {other:?}"),
         }

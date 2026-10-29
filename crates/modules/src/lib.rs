@@ -13,18 +13,69 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bergadeck_module_api::{ModuleDescriptor, ModuleFactory, ModuleKind};
+use serde_json::{Map, Value};
 
-/// Module factories by kind.
+/// Built-in modules shown on the home page of a new device, in key order.
+/// Kinds not implemented yet show a placeholder key.
+pub const DEFAULT_HOME_MODULES: [&str; 5] = ["audio", "pomodoro", "docker", "intellij", "claude"];
+
+/// Built-in modules assigned to the dials of a new device, from left to
+/// right; a device with fewer dials takes the first ones.
+pub const DEFAULT_DIAL_MODULES: [&str; 4] = ["clock", "audio", "pomodoro", "navigation"];
+
+/// Modules placed on a device seen for the first time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultLayout {
+    /// Kinds shown on the home page, in key order.
+    pub home: Vec<ModuleKind>,
+    /// Kinds assigned to the dials, from left to right.
+    pub dials: Vec<ModuleKind>,
+}
+
+impl DefaultLayout {
+    /// Layout of the built-in modules.
+    #[must_use]
+    pub fn builtin() -> Self {
+        Self {
+            home: DEFAULT_HOME_MODULES.map(ModuleKind::from).to_vec(),
+            dials: DEFAULT_DIAL_MODULES.map(ModuleKind::from).to_vec(),
+        }
+    }
+}
+
+/// Module factories by kind, and the layout of a new device.
 #[derive(Clone, Default)]
 pub struct ModuleRegistry {
     factories: BTreeMap<ModuleKind, Arc<dyn ModuleFactory>>,
+    layout: DefaultLayout,
 }
 
 impl ModuleRegistry {
-    /// Registry without any module.
+    /// Registry without any module, with an empty default layout.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Modules placed on a device seen for the first time.
+    #[must_use]
+    pub fn default_layout(&self) -> &DefaultLayout {
+        &self.layout
+    }
+
+    /// Replaces the default layout.
+    pub fn set_default_layout(&mut self, layout: DefaultLayout) {
+        self.layout = layout;
+    }
+
+    /// Settings of a new instance of `kind`: those of its factory, or an
+    /// empty object for a kind missing from the registry.
+    #[must_use]
+    pub fn default_settings(&self, kind: &ModuleKind) -> Value {
+        self.get(kind).map_or_else(
+            || Value::Object(Map::new()),
+            |factory| factory.default_settings(),
+        )
     }
 
     /// Registers `factory` under the kind of its descriptor, replacing and
@@ -55,10 +106,11 @@ impl std::fmt::Debug for ModuleRegistry {
     }
 }
 
-/// Registry of the built-in modules.
+/// Registry of the built-in modules, with their default layout.
 #[must_use]
 pub fn builtin_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
+    registry.set_default_layout(DefaultLayout::builtin());
     registry.register(Arc::new(clock::ClockFactory::system()));
     registry.register(Arc::new(navigation::NavigationFactory));
     registry
@@ -66,6 +118,8 @@ pub fn builtin_registry() -> ModuleRegistry {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -79,6 +133,28 @@ mod tests {
         assert_eq!(kinds, [clock::CLOCK_KIND, navigation::NAVIGATION_KIND]);
         assert!(registry.get(&"clock".into()).is_some());
         assert!(registry.get(&"audio".into()).is_none());
+    }
+
+    #[test]
+    fn default_settings_come_from_the_factory() {
+        let registry = builtin_registry();
+        assert_eq!(
+            registry.default_settings(&clock::CLOCK_KIND.into()),
+            clock::ClockFactory::system().default_settings()
+        );
+        assert_eq!(registry.default_settings(&"audio".into()), json!({}));
+    }
+
+    #[test]
+    fn builtin_layout_fills_home_and_dials() {
+        let registry = builtin_registry();
+        let layout = registry.default_layout();
+        assert_eq!(layout.home.len(), DEFAULT_HOME_MODULES.len());
+        assert_eq!(layout.dials[0], ModuleKind::from(clock::CLOCK_KIND));
+        assert_eq!(
+            ModuleRegistry::new().default_layout(),
+            &DefaultLayout::default()
+        );
     }
 
     #[test]

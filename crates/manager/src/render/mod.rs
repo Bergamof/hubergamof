@@ -2,13 +2,16 @@
 //!
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
-//! ("contain") and centred on a background colour; it also renders strip
-//! zones from text lines. Results are cached by content (bounded LRU) and
-//! encoded to a PNG data URL only on demand.
+//! ("contain") and centred on a background colour, with the frame of its
+//! [`KeyState`]; it also renders strip zones from text lines or an image, and
+//! the transient [`Feedback`] mark drawn over a surface. Results are cached by
+//! content (bounded LRU) and encoded to a PNG data URL only on demand.
 
+mod digest;
 mod source;
 mod text;
 
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -16,12 +19,12 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use bergadeck_module_api::{Feedback, KeyState};
 use bergadeck_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
 use lru::LruCache;
 use resvg::usvg;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub use source::{
@@ -29,6 +32,7 @@ pub use source::{
 };
 pub use text::{FONT_DATA, FONT_FAMILY, TextLine, TextRenderer};
 
+use digest::{ContentDigest, DigestMemo};
 use source::{Decoded, f32_from};
 
 /// Background used when none is configured.
@@ -40,11 +44,36 @@ pub const TEXT_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
 /// Translucent band behind a key label, keeping it readable on any image.
 pub const LABEL_BAND_COLOR: Rgba<u8> = Rgba([0, 0, 0, 170]);
 
+/// Frame of an [`KeyState::Active`] key.
+pub const ACTIVE_BORDER_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
+
+/// Frame of a [`KeyState::Attention`] key.
+pub const ATTENTION_BORDER_COLOR: Rgba<u8> = Rgba([0xff, 0x8c, 0x00, u8::MAX]);
+
+/// Background of a [`KeyState::Attention`] key (dark orange), visible around
+/// and behind a transparent image.
+pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
+
+/// Opacity of the black veil darkening a surface under a feedback mark.
+pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
+
 /// Number of rendered images kept in the cache.
 pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(512) {
     Some(capacity) => capacity,
     None => NonZeroUsize::MIN,
 };
+
+/// Width of the frame of an active key, relative to the key width.
+const ACTIVE_BORDER_RATIO: f32 = 0.05;
+/// Width of the frame of a key needing attention, relative to the key width.
+const ATTENTION_BORDER_RATIO: f32 = 0.08;
+/// Size of a feedback mark, relative to the smaller side of the surface.
+const FEEDBACK_MARK_RATIO: f32 = 0.7;
+
+/// Green disc with a white check mark ([`Feedback::Ok`]).
+const OK_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="#2e9d4a"/><path d="M27 52 L44 69 L74 34" fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+/// Red warning triangle with a white exclamation mark ([`Feedback::Alert`]).
+const ALERT_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 6 L96 90 H4 Z" fill="#d93025" stroke="#d93025" stroke-width="6" stroke-linejoin="round"/><rect x="44.5" y="32" width="11" height="34" rx="5" fill="#ffffff"/><circle cx="50" cy="77" r="6.5" fill="#ffffff"/></svg>"##;
 
 /// Key label font size, relative to the key height.
 const LABEL_FONT_RATIO: f32 = 0.16;
@@ -52,9 +81,6 @@ const LABEL_FONT_RATIO: f32 = 0.16;
 const LABEL_MAX_LINES: usize = 2;
 /// Horizontal and vertical padding around a label, relative to the key width.
 const LABEL_PADDING_RATIO: f32 = 0.05;
-
-/// Maximum number of text lines in a strip zone.
-pub const ZONE_MAX_LINES: usize = 3;
 /// Font size of the first zone line, relative to the zone height.
 const ZONE_TITLE_FONT_RATIO: f32 = 0.30;
 /// Font size of the other zone lines, relative to the zone height.
@@ -110,12 +136,15 @@ pub struct KeyRequest<'a> {
     pub size: ImageSize,
     /// Label drawn at the bottom, if any.
     pub label: Option<&'a str>,
-    /// Background colour.
+    /// Background colour, used when the state does not impose one.
     pub background: Rgba<u8>,
+    /// Visual state, drawn as a frame (and a background for
+    /// [`KeyState::Attention`]).
+    pub state: KeyState,
 }
 
 impl<'a> KeyRequest<'a> {
-    /// Request with the default background.
+    /// Request in the normal state with the default background.
     #[must_use]
     pub fn new(size: ImageSize, source: Option<&'a ImageSource>, label: Option<&'a str>) -> Self {
         Self {
@@ -123,6 +152,39 @@ impl<'a> KeyRequest<'a> {
             size,
             label,
             background: DEFAULT_BACKGROUND,
+            state: KeyState::Normal,
+        }
+    }
+
+    /// The same request in state `state`.
+    #[must_use]
+    pub fn in_state(self, state: KeyState) -> Self {
+        Self { state, ..self }
+    }
+}
+
+/// How a [`KeyState`] is drawn: background and frame.
+struct StateStyle {
+    background: Option<Rgba<u8>>,
+    border: Option<(Rgba<u8>, f32)>,
+}
+
+impl StateStyle {
+    fn of(state: KeyState) -> Self {
+        match state {
+            KeyState::Active => Self {
+                background: None,
+                border: Some((ACTIVE_BORDER_COLOR, ACTIVE_BORDER_RATIO)),
+            },
+            KeyState::Attention => Self {
+                background: Some(ATTENTION_BACKGROUND),
+                border: Some((ATTENTION_BORDER_COLOR, ATTENTION_BORDER_RATIO)),
+            },
+            // Normal, and states added later that this version cannot draw.
+            _ => Self {
+                background: None,
+                border: None,
+            },
         }
     }
 }
@@ -182,10 +244,11 @@ pub fn to_data_url(image: &RgbaImage) -> Result<String, RenderError> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum CacheKey {
     Key {
-        source: Option<[u8; 32]>,
+        source: Option<ContentDigest>,
         size: (u32, u32),
         label: Option<String>,
         background: [u8; 4],
+        state: KeyState,
     },
     Zone {
         lines: Vec<String>,
@@ -198,6 +261,9 @@ enum CacheKey {
 pub struct Renderer {
     text: TextRenderer,
     cache: Mutex<LruCache<CacheKey, Arc<Rendered>>>,
+    digests: DigestMemo,
+    /// Rasterised feedback marks by outcome and side.
+    marks: Mutex<HashMap<(Feedback, u32), Arc<RgbaImage>>>,
 }
 
 impl Renderer {
@@ -219,6 +285,8 @@ impl Renderer {
         Ok(Self {
             text: TextRenderer::new()?,
             cache: Mutex::new(LruCache::new(capacity)),
+            digests: DigestMemo::new(capacity),
+            marks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -235,24 +303,102 @@ impl Renderer {
     /// Any [`RenderError`] from reading or decoding the source.
     pub fn render_key(&self, request: &KeyRequest<'_>) -> Result<Arc<Rendered>, RenderError> {
         check_size(request.size)?;
-        let bytes = request.source.map(ImageSource::read).transpose()?;
+        let digest = request
+            .source
+            .map(|source| self.digests.digest(source))
+            .transpose()?;
+        let style = StateStyle::of(request.state);
+        let background = style.background.unwrap_or(request.background);
         let key = CacheKey::Key {
-            source: bytes.as_deref().map(content_digest),
+            source: digest.as_ref().map(|digest| digest.digest),
             size: (request.size.width, request.size.height),
             label: request.label.map(str::to_owned),
-            background: request.background.0,
+            background: background.0,
+            state: request.state,
         };
         self.cached(key, || {
-            let mut canvas = self.compose(bytes.as_deref(), request.size, request.background)?;
+            // Read now if the digest was remembered without reading.
+            let bytes = match (request.source, digest.and_then(|digest| digest.bytes)) {
+                (Some(_), Some(bytes)) => Some(bytes),
+                (Some(source), None) => Some(source.read()?),
+                (None, _) => None,
+            };
+            let mut canvas = self.compose(bytes.as_deref(), request.size, background)?;
             if let Some(label) = request.label.filter(|label| !label.trim().is_empty()) {
                 self.draw_label(&mut canvas, label)?;
             }
-            Ok(keep_opaque(canvas, request.background))
+            if let Some((color, ratio)) = style.border {
+                draw_border(&mut canvas, color, ratio);
+            }
+            Ok(keep_opaque(canvas, background))
         })
     }
 
-    /// Renders a strip zone with up to [`ZONE_MAX_LINES`] centred lines, the
-    /// first one larger; extra lines are ignored.
+    /// Renders `source` scaled to fit `size` on the default background (a
+    /// touch strip zone image). CPU-bound: call it from a blocking context.
+    ///
+    /// # Errors
+    ///
+    /// Any [`RenderError`] from reading or decoding the source.
+    pub fn render_image(
+        &self,
+        size: ImageSize,
+        source: &ImageSource,
+    ) -> Result<Arc<Rendered>, RenderError> {
+        self.render_key(&KeyRequest::new(size, Some(source), None))
+    }
+
+    /// `base` with `feedback` drawn over it: darkened, with a green check
+    /// mark ([`Feedback::Ok`]) or a red warning sign ([`Feedback::Alert`])
+    /// in the middle. The result is not cached (marks are transient), the
+    /// rasterised mark is. CPU-bound.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Svg`] or [`RenderError::InvalidSize`] (not expected
+    /// with the built-in marks).
+    pub fn with_feedback(
+        &self,
+        base: &Rendered,
+        feedback: Feedback,
+    ) -> Result<Arc<Rendered>, RenderError> {
+        let mut canvas = base.image().as_ref().clone();
+        let (width, height) = canvas.dimensions();
+        darken(&mut canvas, FEEDBACK_VEIL_ALPHA);
+        let side = scaled_dimension(width.min(height), FEEDBACK_MARK_RATIO, width.min(height));
+        let mark = self.mark(feedback, side)?;
+        imageops::overlay(
+            &mut canvas,
+            mark.as_ref(),
+            i64::from((width - side) / 2),
+            i64::from((height - side) / 2),
+        );
+        Ok(Arc::new(Rendered::new(keep_opaque(
+            canvas,
+            DEFAULT_BACKGROUND,
+        ))))
+    }
+
+    /// The mark of `feedback`, `side` pixels wide.
+    fn mark(&self, feedback: Feedback, side: u32) -> Result<Arc<RgbaImage>, RenderError> {
+        let mut marks = self.marks.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(mark) = marks.get(&(feedback, side)) {
+            return Ok(Arc::clone(mark));
+        }
+        let svg = match feedback {
+            Feedback::Ok => OK_MARK_SVG,
+            // Alert, and outcomes added later: a warning is the safe reading.
+            _ => ALERT_MARK_SVG,
+        };
+        let tree = usvg::Tree::from_str(svg, self.text.svg_options()).map_err(RenderError::Svg)?;
+        let mark = Arc::new(source::rasterize_svg(&tree, side, side)?);
+        marks.insert((feedback, side), Arc::clone(&mark));
+        Ok(mark)
+    }
+
+    /// Renders a strip zone with centred lines, the first one larger. The
+    /// layout is made for at most [`bergadeck_module_api::MAX_ZONE_LINES`] lines (the engine
+    /// truncates longer zones); more would overflow the zone.
     ///
     /// # Errors
     ///
@@ -264,7 +410,6 @@ impl Renderer {
         background: Rgba<u8>,
     ) -> Result<Arc<Rendered>, RenderError> {
         check_size(size)?;
-        let lines = &lines[..lines.len().min(ZONE_MAX_LINES)];
         let key = CacheKey::Zone {
             lines: lines.to_vec(),
             size: (size.width, size.height),
@@ -405,6 +550,32 @@ fn darken_bottom(canvas: &mut RgbaImage, top: f32) {
     imageops::overlay(canvas, &band, 0, i64::from(first_row));
 }
 
+/// Draws a frame of `color` along the edges of `canvas`, `ratio` of its
+/// width thick (at least one pixel).
+fn draw_border(canvas: &mut RgbaImage, color: Rgba<u8>, ratio: f32) {
+    let (width, height) = canvas.dimensions();
+    let thickness = scaled_dimension(width, ratio, (width.min(height) / 2).max(1));
+    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
+        let inside =
+            x >= thickness && y >= thickness && x < width - thickness && y < height - thickness;
+        if !inside {
+            *pixel = color;
+        }
+    }
+}
+
+/// Blends black over `canvas` with opacity `alpha`, in place.
+fn darken(canvas: &mut RgbaImage, alpha: u8) {
+    let keep = u16::from(u8::MAX - alpha);
+    for pixel in canvas.pixels_mut() {
+        for channel in &mut pixel.0[..3] {
+            // At most 255 · 255 / 255: always fits a u8.
+            *channel =
+                u8::try_from(u16::from(*channel) * keep / u16::from(u8::MAX)).unwrap_or(u8::MAX);
+        }
+    }
+}
+
 /// Restores full opacity lost to rounding in alpha blending when the
 /// background is opaque.
 fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
@@ -419,10 +590,6 @@ fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
 /// Small counts (line numbers) as `f32`.
 fn count_f32(value: usize) -> f32 {
     f32_from(u32::try_from(value).unwrap_or(u32::MAX))
-}
-
-fn content_digest(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
 }
 
 fn check_size(size: ImageSize) -> Result<(), RenderError> {

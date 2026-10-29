@@ -2,24 +2,17 @@
 
 use std::sync::Arc;
 
-use crate::{ItemId, PageId};
+use serde::{Deserialize, Serialize};
+
+use crate::{ItemId, ModuleInstanceId, PageId};
 
 /// Maximum number of text lines of a [`ZoneContent::Lines`] zone; extra lines
 /// are not displayed.
 pub const MAX_ZONE_LINES: usize = 3;
 
-/// Encoding of an [`ImageData`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ImageFormat {
-    /// Portable Network Graphics.
-    Png,
-    /// JPEG.
-    Jpeg,
-    /// Scalable Vector Graphics (uncompressed, without external resources).
-    Svg,
-}
-
-/// An encoded image supplied by a module.
+/// An encoded image supplied by a module: PNG, JPEG or SVG (uncompressed,
+/// without external resources). The host recognises the format from the
+/// content.
 ///
 /// The host scales it to fit the target surface. The bytes are shared, so
 /// returning the same `ImageData` on every call costs nothing; the host
@@ -28,19 +21,31 @@ pub enum ImageFormat {
 pub struct ImageData {
     /// Encoded image.
     pub bytes: Arc<[u8]>,
-    /// Encoding of `bytes`.
-    pub format: ImageFormat,
 }
 
 impl ImageData {
     /// Wraps encoded bytes.
     #[must_use]
-    pub fn new(bytes: impl Into<Arc<[u8]>>, format: ImageFormat) -> Self {
+    pub fn new(bytes: impl Into<Arc<[u8]>>) -> Self {
         Self {
             bytes: bytes.into(),
-            format,
         }
     }
+}
+
+/// Visual state of a key, drawn by the host on top of its content.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[non_exhaustive]
+pub enum KeyState {
+    /// Nothing special.
+    #[default]
+    Normal,
+    /// On, running, selected (toggle on, timer running…).
+    Active,
+    /// Needs the user's attention (finished timer, failed container…).
+    Attention,
 }
 
 /// Content of one key.
@@ -50,8 +55,8 @@ pub struct KeyContent {
     pub image: Option<ImageData>,
     /// Text drawn at the bottom of the key.
     pub label: Option<String>,
-    /// Whether the key is in its active state (toggle on, timer running…).
-    pub active: bool,
+    /// Visual state.
+    pub state: KeyState,
 }
 
 impl KeyContent {
@@ -62,6 +67,12 @@ impl KeyContent {
             label: Some(label.into()),
             ..Self::default()
         }
+    }
+
+    /// The same key in state `state`.
+    #[must_use]
+    pub fn in_state(self, state: KeyState) -> Self {
+        Self { state, ..self }
     }
 }
 
@@ -88,6 +99,7 @@ pub struct PageContent {
 
 /// Content of the touch strip zone above a dial.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ZoneContent {
     /// Up to [`MAX_ZONE_LINES`] centred text lines, the first one larger.
     Lines(Vec<String>),
@@ -98,11 +110,16 @@ pub enum ZoneContent {
 /// Navigation state of the device, given to [`crate::Module::zone`].
 ///
 /// Most modules ignore it; it lets a module show where the user is (the
-/// built-in navigation module does exactly that).
+/// built-in navigation module does exactly that). Built by the host with
+/// [`NavigationView::new`] and [`NavigationView::on_page`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NavigationView {
     /// Title of the page shown on the keys.
     pub page_title: String,
+    /// Module instance owning the page shown on the keys, `None` on the home
+    /// page.
+    pub module: Option<ModuleInstanceId>,
     /// Page of the module stack shown on the keys, `None` on the home page.
     pub page: Option<PageId>,
     /// Index of the first visible row, from 0.
@@ -116,6 +133,33 @@ pub struct NavigationView {
 }
 
 impl NavigationView {
+    /// The home page titled `page_title`, scrolled to `row` of `row_count`
+    /// rows, on a device showing `visible_rows` rows.
+    #[must_use]
+    pub fn new(page_title: impl Into<String>, row: u32, row_count: u32, visible_rows: u32) -> Self {
+        Self {
+            page_title: page_title.into(),
+            module: None,
+            page: None,
+            row,
+            row_count,
+            visible_rows,
+            depth: 0,
+        }
+    }
+
+    /// The same view showing page `page` of `module`, `depth` pages above
+    /// the home page.
+    #[must_use]
+    pub fn on_page(self, module: ModuleInstanceId, page: PageId, depth: usize) -> Self {
+        Self {
+            module: Some(module),
+            page: Some(page),
+            depth,
+            ..self
+        }
+    }
+
     /// Whether the home page is displayed.
     #[must_use]
     pub fn is_home(&self) -> bool {
@@ -126,5 +170,42 @@ impl NavigationView {
     #[must_use]
     pub fn is_scrollable(&self) -> bool {
         self.row_count > self.visible_rows
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_views_describe_home_and_module_pages() {
+        let home = NavigationView::new("Accueil", 0, 3, 2);
+        assert!(home.is_home());
+        assert!(home.is_scrollable());
+        assert_eq!((home.module.as_ref(), home.page.as_ref()), (None, None));
+
+        let page = NavigationView::new("Conteneurs", 1, 1, 2).on_page(
+            "docker".into(),
+            "containers".into(),
+            1,
+        );
+        assert!(!page.is_home());
+        assert!(!page.is_scrollable());
+        assert_eq!(page.module, Some("docker".into()));
+        assert_eq!(page.page, Some("containers".into()));
+        assert_eq!(page.row, 1);
+    }
+
+    #[test]
+    fn key_states_use_camel_case_on_the_wire() {
+        assert_eq!(
+            serde_json::to_value(KeyState::Attention).unwrap(),
+            serde_json::json!("attention")
+        );
+        assert_eq!(KeyContent::default().state, KeyState::Normal);
+        assert_eq!(
+            KeyContent::with_label("x").in_state(KeyState::Active).state,
+            KeyState::Active
+        );
     }
 }

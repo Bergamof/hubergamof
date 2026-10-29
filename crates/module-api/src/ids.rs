@@ -3,19 +3,18 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 /// Identifier of a module instance, unique within a device configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ModuleInstanceId(pub String);
 
 /// Kind of module an instance is built from (`"clock"`, `"audio"`, `"docker"`…).
 ///
 /// Kept as an open string rather than an enum so that future external modules
 /// can be configured without changing the contract.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
-#[ts(export)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ModuleKind(pub String);
 
 /// Identifier of a page of a module, chosen by the module.

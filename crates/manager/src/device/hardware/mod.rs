@@ -6,6 +6,7 @@
 //! closed and detached.
 
 mod deck;
+mod encoded;
 pub mod mapping;
 
 use std::collections::{BTreeMap, BTreeSet};

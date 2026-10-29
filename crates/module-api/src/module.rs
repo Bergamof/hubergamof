@@ -1,17 +1,24 @@
 //! The [`Module`] and [`ModuleFactory`] traits.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    Command, ItemId, KeyContent, ModuleContext, ModuleDescriptor, NavigationView, PageContent,
-    PageId, ZoneContent,
+    Command, ItemId, KeyContent, ModuleContext, ModuleDescriptor, ModuleEvent, NavigationView,
+    PageContent, PageId, ZoneContent,
 };
+
+/// Longest time the host lets a handler run (see [`Module`]) before
+/// dropping it and showing an alert.
+pub const HANDLER_BUDGET: Duration = Duration::from_millis(500);
 
 /// Failure of a module operation.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ModuleError {
     /// The settings do not match what the module expects.
     #[error("invalid settings: {0}")]
@@ -44,6 +51,19 @@ pub trait ModuleFactory: Send + Sync {
         self.descriptor().default_settings()
     }
 
+    /// Checks settings before the host saves them, so that an invalid
+    /// configuration is refused instead of being stored and then ignored by
+    /// the instance. Defaults to [`ModuleDescriptor::validate_settings`]
+    /// (types, bounds, choices); override it for checks the descriptor
+    /// cannot express.
+    ///
+    /// # Errors
+    ///
+    /// [`ModuleError::InvalidSettings`] explaining what is wrong.
+    fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
+        self.descriptor().validate_settings(settings)
+    }
+
     /// Creates an instance configured with `settings`.
     ///
     /// Called from within the host Tokio runtime, so background tasks can be
@@ -59,17 +79,43 @@ pub trait ModuleFactory: Send + Sync {
 
 /// A configured module instance driving part of a device.
 ///
+/// This is the in-process module API: built-in modules implement it
+/// directly, and it is also the target of the adapter that will host future
+/// external modules (WASM or sub-process), so that the host only ever drives
+/// this trait.
+///
 /// An instance may appear as a key on the home page, open pages of keys, be
 /// assigned to a dial and draw the touch strip zone above that dial. Every
 /// method has a default doing nothing, except
 /// [`Module::update_settings`]: implement only the surfaces the module uses.
 ///
-/// Getters (`key`, `page`, `zone`) are called on every redraw and must be
-/// cheap: they describe the current state, the host compares the result with
-/// what is displayed and only rewrites what changed. Input handlers are
-/// awaited one at a time by the device task: long work (I/O, processes)
-/// belongs in a background task spawned through [`ModuleContext::tasks`],
-/// which then calls [`crate::RedrawHandle::request_redraw`].
+/// # Getters
+///
+/// `key`, `page` and `zone` are called on every redraw and must be cheap and
+/// side-effect free: they describe the current state, the host compares the
+/// result with what is displayed and only rewrites what changed.
+///
+/// # Handlers
+///
+/// Input handlers and [`Module::on_event`] are awaited one at a time by the
+/// device task, within [`HANDLER_BUDGET`]: past it, the host drops the
+/// future and shows an alert. Handlers must therefore be **cancel-safe**
+/// (leave the instance consistent at every `.await`) and quick.
+///
+/// # Never block
+///
+/// Neither getters nor handlers may block the thread (blocking I/O, sleeps,
+/// waiting on a lock held elsewhere, heavy computation): the budget can only
+/// act at the next `.await`, and a blocked thread freezes the device. Long
+/// work belongs in a background task spawned through
+/// [`ModuleContext::tasks`], which reports back through
+/// [`ModuleContext::events`] (state changes) or
+/// [`crate::RedrawHandle::request_redraw`].
+///
+/// # Failures
+///
+/// An instance that panics, in a getter or a handler, is replaced by a
+/// placeholder until the configuration is applied again.
 #[async_trait]
 pub trait Module: Send {
     /// Key shown on the home page. The device configuration may override its
@@ -91,7 +137,8 @@ pub trait Module: Send {
         None
     }
 
-    /// Handles a press of item `item` of page `page`.
+    /// Handles a press of item `item` of page `page`, as it was displayed
+    /// when the key was pressed.
     async fn on_item_press(&mut self, page: &PageId, item: &ItemId) -> Vec<Command> {
         let _ = (page, item);
         Vec::new()
@@ -109,6 +156,13 @@ pub trait Module: Send {
         Vec::new()
     }
 
+    /// Handles an event sent through [`ModuleContext::events`], usually by a
+    /// background task of the instance; downcast it to the type sent.
+    async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
+        let _ = event;
+        Vec::new()
+    }
+
     /// Content of the touch strip zone above the dial the instance is
     /// assigned to; `None` leaves the zone black.
     fn zone(&self, nav: &NavigationView) -> Option<ZoneContent> {
@@ -119,6 +173,10 @@ pub trait Module: Send {
     /// Applies new settings while keeping the running state (a timer in
     /// progress, a connection…). Required, so that no module silently
     /// ignores a settings change; a module without settings returns `Ok(())`.
+    ///
+    /// Called only when the settings changed, after
+    /// [`ModuleFactory::validate_settings`] accepted them: an error here is
+    /// exceptional.
     ///
     /// # Errors
     ///

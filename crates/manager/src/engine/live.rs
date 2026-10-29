@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use bergadeck_module_api::ModuleInstanceId;
+use bergadeck_module_api::{Feedback, KeyState, ModuleInstanceId};
 use bergadeck_protocol::{DialView, KeyView, LiveState, PageView, ZoneView};
 
 use crate::render::{RenderError, Rendered};
@@ -25,8 +25,10 @@ pub struct PageSummary {
 pub struct LiveKey {
     /// Effective label.
     pub label: Option<String>,
-    /// Active state reported by the module.
-    pub active: bool,
+    /// Visual state reported by the module.
+    pub state: KeyState,
+    /// Outcome mark drawn over the key for a moment (part of `image`).
+    pub feedback: Option<Feedback>,
     /// Drawn image, `None` for a blank key.
     pub image: Option<Arc<Rendered>>,
 }
@@ -36,6 +38,8 @@ pub struct LiveKey {
 pub struct LiveZone {
     /// Text lines, empty for an image or a blank zone.
     pub lines: Vec<String>,
+    /// Outcome mark drawn over the zone for a moment (part of `image`).
+    pub feedback: Option<Feedback>,
     /// Drawn image, `None` for a blank zone.
     pub image: Option<Arc<Rendered>>,
 }
@@ -99,7 +103,7 @@ impl LiveSnapshot {
                     index,
                     label: key.label.clone(),
                     image: data_url(key.image.as_ref())?,
-                    active: key.active,
+                    state: key.state,
                 })
             })
             .collect::<Result<_, RenderError>>()?;

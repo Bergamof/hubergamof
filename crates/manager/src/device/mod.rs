@@ -13,6 +13,9 @@ mod input;
 mod strip;
 pub mod virtual_deck;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use bergadeck_protocol::DeviceInfo;
 use image::RgbaImage;
@@ -31,8 +34,9 @@ pub const INPUT_EVENT_CAPACITY: usize = 256;
 ///
 /// Images are given at the device size (see
 /// [`bergadeck_protocol::DeviceCapabilities`]); conversion to the device wire
-/// format (JPEG/BMP, rotation) is the backend's job. Writes may be buffered
-/// until [`DeckBackend::flush`].
+/// format (JPEG/BMP, rotation) is the backend's job. Images are shared
+/// (`Arc`) because the caller usually keeps them (render cache, live state).
+/// Writes may be buffered until [`DeckBackend::flush`].
 #[async_trait]
 pub trait DeckBackend: Send + Sync {
     /// Description and capabilities of the device.
@@ -46,13 +50,17 @@ pub trait DeckBackend: Send + Sync {
     fn is_connected(&self) -> bool;
 
     /// Shows `image` on key `index` (row-major).
-    async fn set_key_image(&self, index: u8, image: RgbaImage) -> Result<(), DeviceError>;
+    async fn set_key_image(&self, index: u8, image: Arc<RgbaImage>) -> Result<(), DeviceError>;
 
     /// Draws `image` on the touch strip with its left edge at `x`.
-    async fn set_strip_region(&self, x: u32, image: RgbaImage) -> Result<(), DeviceError>;
+    async fn set_strip_region(&self, x: u32, image: Arc<RgbaImage>) -> Result<(), DeviceError>;
 
     /// Draws `image` on touch strip zone `zone` (the zone above dial `zone`).
-    async fn set_touch_zone_image(&self, zone: u8, image: RgbaImage) -> Result<(), DeviceError> {
+    async fn set_touch_zone_image(
+        &self,
+        zone: u8,
+        image: Arc<RgbaImage>,
+    ) -> Result<(), DeviceError> {
         let layout = StripLayout::for_device(self.info()).ok_or(DeviceError::NoTouchStrip)?;
         let x = layout.zone_x(zone)?;
         layout.check_zone_image(&image)?;
@@ -71,4 +79,20 @@ pub trait DeckBackend: Send + Sync {
     /// Stops the device worker. The device emits [`InputEvent::Disconnected`]
     /// and every later call fails with [`DeviceError::Disconnected`].
     async fn close(&self);
+}
+
+/// Blanks every key and the touch strip of `deck`, waiting at most `timeout`;
+/// failures are logged, as there is nothing else to do with them when a
+/// device is being released.
+pub async fn blank(deck: &dyn DeckBackend, timeout: Duration) {
+    let serial = &deck.info().serial;
+    let blank = async {
+        deck.clear_all().await?;
+        deck.flush().await
+    };
+    match tokio::time::timeout(timeout, blank).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%serial, %error, "cannot blank device"),
+        Err(_) => tracing::warn!(%serial, "timed out blanking device"),
+    }
 }

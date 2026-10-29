@@ -54,7 +54,9 @@ install_unit() {
 	mkdir -p "$UNIT_DIR" "$CONFIG_DIR"
 	printf '%s\n' "$unit" >"$INSTALLED_UNIT"
 	systemctl --user daemon-reload
-	systemctl --user enable "$SERVICE_NAME"
+	# reenable : recrée les liens d'après [Install] (retire ceux d'une version
+	# antérieure de l'unité, ex. default.target).
+	systemctl --user reenable "$SERVICE_NAME"
 	# restart plutôt que start : une réinstallation prend en compte le nouveau binaire.
 	systemctl --user restart "$SERVICE_NAME"
 }

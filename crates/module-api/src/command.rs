@@ -1,11 +1,14 @@
-//! Requests a module returns to the host after handling an input.
+//! Requests a module returns to the host after handling an input or an event.
 
 use crate::PageId;
 
-/// What the host should do after a module handled an input.
+/// What the host should do after a module handled an input or an event.
 ///
-/// Commands are applied in order.
+/// Commands are applied in order. Every handler is followed by a redraw of
+/// what changed, so there is no explicit redraw command; changes made outside
+/// a handler use [`crate::RedrawHandle`] or [`crate::EventSender`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Command {
     /// Opens a page of the module that returned the command (see
     /// [`crate::Module::page`]) on top of the navigation stack.
@@ -17,8 +20,19 @@ pub enum Command {
     /// Scrolls the displayed page by this many rows (positive: down); the
     /// host keeps the visible rows within the page.
     ScrollRows(i32),
-    /// Redraws every surface. The host already compares and redraws what
-    /// changed after each input, so this is only an explicit request; changes
-    /// made outside an input handler use [`crate::RedrawHandle`] instead.
-    Redraw,
+    /// Briefly marks the surface that triggered the handler (the pressed
+    /// key, the zone of the turned dial; for [`crate::Module::on_event`], the
+    /// home key of the module when it is displayed) with the outcome of the
+    /// action.
+    Feedback(Feedback),
+}
+
+/// Outcome of an action, shown for a moment over its surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Feedback {
+    /// The action succeeded (green check mark).
+    Ok,
+    /// The action failed (red warning sign).
+    Alert,
 }

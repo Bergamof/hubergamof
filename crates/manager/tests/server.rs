@@ -89,7 +89,7 @@ impl Module for Counter {
 
     async fn on_key_press(&mut self) -> Vec<Command> {
         self.presses += 1;
-        vec![Command::Redraw]
+        Vec::new()
     }
 
     fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {

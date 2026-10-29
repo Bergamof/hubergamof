@@ -12,27 +12,34 @@
 //! # Model
 //!
 //! - A [`ModuleFactory`] describes a module kind ([`ModuleDescriptor`], shown
-//!   in the configuration UI) and creates one [`Module`] per configured
-//!   instance.
+//!   in the configuration UI), validates its settings and creates one
+//!   [`Module`] per configured instance.
 //! - The host owns the instance, calls its input handlers and reads its
 //!   surfaces ([`Module::key`], [`Module::page`], [`Module::zone`]) whenever
-//!   it redraws. Handlers return [`Command`]s to navigate.
-//! - State changing on its own (clock, timer, watcher) is pushed with the
-//!   [`RedrawHandle`] of the [`ModuleContext`], typically from a background
-//!   task spawned through [`ModuleContext::tasks`]; such tasks are aborted
-//!   when the instance is destroyed.
+//!   it redraws. Handlers return [`Command`]s to navigate or show the outcome
+//!   of an action ([`Feedback`]).
+//! - Work that takes time (I/O, processes, timers) runs in background tasks
+//!   spawned through [`ModuleContext::tasks`], aborted when the instance is
+//!   destroyed. They report to the instance with [`ModuleContext::events`]
+//!   ([`Module::on_event`] then runs on the device task and may change the
+//!   state), or only ask for a redraw with [`ModuleContext::redraw`].
+//!
+//! [`Module`] is the in-process API; future external modules (WASM or
+//! sub-process) will be driven through an adapter implementing it.
 //!
 //! # Example
 //!
-//! A counter: its key shows how many times it was pressed, its dial changes
-//! the count and a setting chooses the step.
+//! A counter: its key shows the count, a press or the dial changes it, a
+//! setting chooses the step and a background task resets it every hour.
 //!
 //! ```
+//! use std::time::Duration;
+//!
 //! use async_trait::async_trait;
 //! use bergadeck_module_api::{
-//!     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
-//!     ModuleError, ModuleFactory, RedrawHandle, SettingField, SettingKind, TaskScope,
-//!     parse_settings,
+//!     Command, EventSender, Feedback, KeyContent, Module, ModuleCapabilities, ModuleContext,
+//!     ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, SettingField, SettingKind,
+//!     TaskScope, parse_settings,
 //! };
 //! use serde::Deserialize;
 //! use serde_json::{Value, json};
@@ -41,6 +48,9 @@
 //! struct Settings {
 //!     step: i64,
 //! }
+//!
+//! /// Sent by the background task.
+//! struct Reset;
 //!
 //! struct Counter {
 //!     count: i64,
@@ -55,7 +65,7 @@
 //!
 //!     async fn on_key_press(&mut self) -> Vec<Command> {
 //!         self.count += self.step;
-//!         Vec::new()
+//!         vec![Command::Feedback(Feedback::Ok)]
 //!     }
 //!
 //!     async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
@@ -63,10 +73,26 @@
 //!         Vec::new()
 //!     }
 //!
+//!     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
+//!         if event.is::<Reset>() {
+//!             self.count = 0;
+//!         }
+//!         Vec::new()
+//!     }
+//!
 //!     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
 //!         // The count survives a settings change.
 //!         self.step = parse_settings::<Settings>(settings)?.step;
 //!         Ok(())
+//!     }
+//! }
+//!
+//! async fn reset_hourly(events: EventSender) {
+//!     loop {
+//!         tokio::time::sleep(Duration::from_secs(3600)).await;
+//!         if !events.send(Reset) {
+//!             return;
+//!         }
 //!     }
 //! }
 //!
@@ -88,8 +114,9 @@
 //!         }
 //!     }
 //!
-//!     fn create(&self, _ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
+//!     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
 //!         let Settings { step } = parse_settings(settings)?;
+//!         ctx.tasks().spawn(reset_hourly(ctx.events().clone()));
 //!         Ok(Box::new(Counter { count: 0, step }))
 //!     }
 //! }
@@ -99,13 +126,16 @@
 //! // What the host does with it:
 //! let factory = CounterFactory;
 //! assert_eq!(factory.default_settings(), json!({ "step": 1 }));
+//! assert!(factory.validate_settings(&json!({ "step": 0 })).is_err());
 //! let scope = TaskScope::new();
-//! let ctx = ModuleContext::new("counter".into(), RedrawHandle::noop(), scope.spawner());
+//! let ctx = ModuleContext::for_tests("counter").with_tasks(scope.spawner());
 //! let mut counter = factory.create(ctx, &factory.default_settings())?;
 //! counter.on_key_press().await;
 //! counter.update_settings(&json!({ "step": 10 }))?;
 //! counter.on_dial_rotate(2).await;
 //! assert_eq!(counter.key().label.as_deref(), Some("21"));
+//! counter.on_event(Box::new(Reset)).await;
+//! assert_eq!(counter.key().label.as_deref(), Some("0"));
 //! # Ok(())
 //! # }
 //! ```
@@ -118,11 +148,11 @@ mod ids;
 mod module;
 
 pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingField, SettingKind};
-pub use command::Command;
+pub use command::{Command, Feedback};
 pub use content::{
-    ImageData, ImageFormat, KeyContent, MAX_ZONE_LINES, NavigationView, PageContent, PageItem,
+    ImageData, KeyContent, KeyState, MAX_ZONE_LINES, NavigationView, PageContent, PageItem,
     ZoneContent,
 };
-pub use context::{ModuleContext, RedrawHandle, TaskScope, TaskSpawner};
+pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
 pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};
-pub use module::{Module, ModuleError, ModuleFactory, parse_settings};
+pub use module::{HANDLER_BUDGET, Module, ModuleError, ModuleFactory, parse_settings};

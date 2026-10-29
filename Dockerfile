@@ -7,9 +7,12 @@
 # Versions alignées sur rust-toolchain.toml et .nvmrc (contrôlé par `make check-versions`) ;
 # images épinglées par digest, rafraîchi par Dependabot.
 #
-# Le gestionnaire n'écoute que sur 127.0.0.1 : l'interface n'est joignable depuis
-# l'hôte qu'avec le réseau de l'hôte :
+# Le gestionnaire n'écoute que sur 127.0.0.1 (pas d'option d'écoute externe, par
+# choix : contrôle strict Host/Origin) ; un `-p` ne le rendrait pas joignable.
+# L'image s'utilise donc avec le réseau de l'hôte :
 #   docker run --rm --network host bergadeck:dev
+#   docker run --rm --network host bergadeck:dev --demo --no-tray --port 7979
+# L'interface est alors sur http://127.0.0.1:7878/ (ou le port choisi).
 
 # --------------------------------------------------------------------------- UI
 FROM node:24-trixie-slim@sha256:89c5244bc22a9bc3287d89ebc7e49b9cb5bb84cd40e6175ac3421d5a9f68b95a AS ui
@@ -31,7 +34,7 @@ RUN pnpm run build
 FROM rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS build
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends pkg-config libudev-dev libhidapi-dev \
+    && apt-get install --yes --no-install-recommends pkg-config libudev-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -56,7 +59,7 @@ LABEL org.opencontainers.image.title="bergadeck" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libudev1 libhidapi-hidraw0 \
+    && apt-get install --yes --no-install-recommends libudev1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --home-dir /home/bergadeck --uid 10001 \
        --user-group --shell /usr/sbin/nologin bergadeck
@@ -67,4 +70,5 @@ USER bergadeck
 WORKDIR /home/bergadeck
 
 ENTRYPOINT ["bergadeck"]
-CMD ["--demo"]
+# Pas de session D-Bus dans le conteneur : pas de tray.
+CMD ["--demo", "--no-tray"]

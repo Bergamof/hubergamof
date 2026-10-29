@@ -188,15 +188,15 @@ impl DeckBackend for VirtualDeck {
         self.connected.load(Ordering::Acquire)
     }
 
-    async fn set_key_image(&self, index: u8, image: RgbaImage) -> Result<(), DeviceError> {
+    async fn set_key_image(&self, index: u8, image: Arc<RgbaImage>) -> Result<(), DeviceError> {
         self.ensure_connected()?;
         self.check_key(index)?;
         check_image_size(&image, self.info.capabilities.key_image_size)?;
-        self.lock_screen().keys[usize::from(index)] = Some(Arc::new(image));
+        self.lock_screen().keys[usize::from(index)] = Some(image);
         Ok(())
     }
 
-    async fn set_strip_region(&self, x: u32, image: RgbaImage) -> Result<(), DeviceError> {
+    async fn set_strip_region(&self, x: u32, image: Arc<RgbaImage>) -> Result<(), DeviceError> {
         self.ensure_connected()?;
         let size = self
             .info
@@ -206,7 +206,7 @@ impl DeckBackend for VirtualDeck {
         check_strip_region(size, x, &image)?;
         let mut screen = self.lock_screen();
         if let Some(strip) = screen.strip.as_mut() {
-            imageops::replace(Arc::make_mut(strip), &image, i64::from(x), 0);
+            imageops::replace(Arc::make_mut(strip), image.as_ref(), i64::from(x), 0);
         }
         Ok(())
     }
@@ -325,7 +325,9 @@ mod tests {
     async fn key_images_are_kept_in_memory() {
         let deck = plus();
         let image = RgbaImage::from_pixel(120, 120, Rgba([255, 0, 0, 255]));
-        deck.set_key_image(3, image.clone()).await.unwrap();
+        deck.set_key_image(3, Arc::new(image.clone()))
+            .await
+            .unwrap();
         assert_eq!(*deck.key_image(3).unwrap(), image);
         assert!(deck.key_image(2).is_none());
     }
@@ -334,11 +336,13 @@ mod tests {
     async fn invalid_key_writes_are_rejected() {
         let deck = plus();
         assert!(matches!(
-            deck.set_key_image(8, RgbaImage::new(120, 120)).await,
+            deck.set_key_image(8, Arc::new(RgbaImage::new(120, 120)))
+                .await,
             Err(DeviceError::InvalidKey { index: 8, count: 8 })
         ));
         assert!(matches!(
-            deck.set_key_image(0, RgbaImage::new(100, 100)).await,
+            deck.set_key_image(0, Arc::new(RgbaImage::new(100, 100)))
+                .await,
             Err(DeviceError::ImageSizeMismatch { .. })
         ));
     }
@@ -347,7 +351,7 @@ mod tests {
     async fn touch_zone_images_land_in_their_zone() {
         let deck = plus();
         let red = Rgba([255, 0, 0, 255]);
-        deck.set_touch_zone_image(2, RgbaImage::from_pixel(200, 100, red))
+        deck.set_touch_zone_image(2, Arc::new(RgbaImage::from_pixel(200, 100, red)))
             .await
             .unwrap();
         let strip = deck.screen().strip.unwrap();
@@ -356,7 +360,8 @@ mod tests {
         assert_eq!(*strip.get_pixel(599, 99), red);
         assert_eq!(*strip.get_pixel(600, 0), Rgba([0, 0, 0, 0]));
         assert!(matches!(
-            deck.set_touch_zone_image(4, RgbaImage::new(200, 100)).await,
+            deck.set_touch_zone_image(4, Arc::new(RgbaImage::new(200, 100)))
+                .await,
             Err(DeviceError::InvalidZone { .. })
         ));
     }
@@ -365,9 +370,12 @@ mod tests {
     async fn clear_all_blanks_keys_and_strip_but_keeps_brightness() {
         let deck = plus();
         deck.set_brightness(40).await.unwrap();
-        deck.set_key_image(0, RgbaImage::from_pixel(120, 120, Rgba([1, 2, 3, 255])))
-            .await
-            .unwrap();
+        deck.set_key_image(
+            0,
+            Arc::new(RgbaImage::from_pixel(120, 120, Rgba([1, 2, 3, 255]))),
+        )
+        .await
+        .unwrap();
         deck.clear_all().await.unwrap();
         let screen = deck.screen();
         assert!(screen.keys.iter().all(Option::is_none));

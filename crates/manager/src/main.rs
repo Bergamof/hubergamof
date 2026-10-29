@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use bergadeck_manager::config_store::ConfigStore;
-use bergadeck_manager::device::DeviceDiscovery;
 use bergadeck_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
 use bergadeck_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
+use bergadeck_manager::device::{self, DeviceDiscovery};
 use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
 use bergadeck_manager::server::{DevOrigin, EmbeddedUi, Server, ServerContext};
@@ -206,17 +206,7 @@ async fn start_source(demo: bool, discovery: &DeviceDiscovery) -> Result<DeviceS
 /// then stops the device source.
 async fn shutdown_devices(discovery: &DeviceDiscovery, source: DeviceSource) {
     for deck in discovery.backends() {
-        let blank = async {
-            deck.clear_all().await?;
-            deck.flush().await
-        };
-        match tokio::time::timeout(SHUTDOWN_TIMEOUT, blank).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(serial = %deck.info().serial, %error, "cannot blank device");
-            }
-            Err(_) => tracing::warn!(serial = %deck.info().serial, "timed out blanking device"),
-        }
+        device::blank(deck.as_ref(), SHUTDOWN_TIMEOUT).await;
     }
     match source {
         DeviceSource::Hardware(hotplug) => hotplug.stop().await,

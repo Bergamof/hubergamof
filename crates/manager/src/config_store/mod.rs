@@ -23,15 +23,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bergadeck_protocol::{ConfigError, DeviceConfig, DeviceInfo, ErrorCode};
+use bergadeck_protocol::{ConfigError, DeviceConfig, DeviceInfo, ErrorCode, is_safe_image_name};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-pub use defaults::{
-    DEFAULT_BRIGHTNESS, DEFAULT_DIAL_MODULES, DEFAULT_HOME_MODULES, DefaultSettingsProvider,
-    EmptyDefaultSettings, default_config,
-};
+pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, default_config};
 
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};
 
@@ -46,8 +43,6 @@ pub const INVALID_BACKUP_PREFIX: &str = "config.json.invalid-";
 
 /// Longest accepted serial number.
 const MAX_SERIAL_LENGTH: usize = 64;
-/// Longest accepted image file name.
-const MAX_IMAGE_NAME_LENGTH: usize = 128;
 /// Number of hexadecimal digest characters in a stored image name.
 const IMAGE_DIGEST_LENGTH: usize = 32;
 
@@ -160,14 +155,14 @@ pub struct LoadedConfig {
 #[derive(Clone)]
 pub struct ConfigStore {
     root: PathBuf,
-    defaults: Arc<dyn DefaultSettingsProvider>,
+    defaults: Arc<dyn ConfigDefaults>,
     write_lock: Arc<Mutex<()>>,
 }
 
 impl ConfigStore {
-    /// Store rooted at `root`, using `defaults` for new module instances.
+    /// Store rooted at `root`, using `defaults` for new configurations.
     #[must_use]
-    pub fn new(root: impl Into<PathBuf>, defaults: Arc<dyn DefaultSettingsProvider>) -> Self {
+    pub fn new(root: impl Into<PathBuf>, defaults: Arc<dyn ConfigDefaults>) -> Self {
         Self {
             root: root.into(),
             defaults,
@@ -419,15 +414,6 @@ fn is_safe_serial(serial: &str) -> bool {
         && serial
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-fn is_safe_image_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_IMAGE_NAME_LENGTH
-        && !name.starts_with('.')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 #[cfg(test)]

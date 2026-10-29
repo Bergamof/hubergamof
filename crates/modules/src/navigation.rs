@@ -69,25 +69,21 @@ impl Module for Navigation {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_module_api::{PageId, RedrawHandle, TaskScope};
-
     use super::*;
 
     fn view(title: &str, depth: usize, row: u32, row_count: u32) -> NavigationView {
-        NavigationView {
-            page_title: title.into(),
-            page: (depth > 0).then(|| PageId::from("page")),
-            row,
-            row_count,
-            visible_rows: 2,
-            depth,
+        let view = NavigationView::new(title, row, row_count, 2);
+        if depth == 0 {
+            view
+        } else {
+            view.on_page("docker".into(), "page".into(), depth)
         }
     }
 
     fn create() -> Box<dyn Module> {
-        let scope = TaskScope::new();
-        let ctx = ModuleContext::new("nav".into(), RedrawHandle::noop(), scope.spawner());
-        NavigationFactory.create(ctx, &Value::Null).unwrap()
+        NavigationFactory
+            .create(ModuleContext::for_tests("nav"), &Value::Null)
+            .unwrap()
     }
 
     #[tokio::test]

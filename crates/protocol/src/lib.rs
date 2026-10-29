@@ -16,7 +16,8 @@ mod live;
 mod messages;
 
 pub use config::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, ModuleInstance,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_IMAGE_NAME_LENGTH,
+    ModuleInstance, is_safe_image_name,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{DialView, KeyView, LiveState, PageView, ZoneView};
@@ -25,8 +26,8 @@ pub use messages::{ClientMessage, ErrorCode, ServerMessage};
 // Defined in the MPL-2.0 module API so that modules do not link GPL code;
 // re-exported here because they are part of the wire contract.
 pub use bergadeck_module_api::{
-    ChoiceOption, ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind, SettingField,
-    SettingKind,
+    ChoiceOption, KeyState, ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind,
+    SettingField, SettingKind,
 };
 
 #[cfg(test)]

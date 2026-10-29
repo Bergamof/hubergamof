@@ -1,3 +1,4 @@
+use bergadeck_modules::{DEFAULT_HOME_MODULES, builtin_registry};
 use bergadeck_protocol::{
     DeviceCapabilities, DeviceModel, ImageSize, ModuleInstanceId, ModuleKind,
 };
@@ -10,7 +11,7 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 fn store() -> (TempDir, ConfigStore) {
     let dir = tempfile::tempdir().unwrap();
-    let store = ConfigStore::new(dir.path(), Arc::new(EmptyDefaultSettings));
+    let store = ConfigStore::new(dir.path(), Arc::new(builtin_registry()));
     (dir, store)
 }
 
@@ -98,16 +99,32 @@ fn devices_without_dials_get_no_dial_modules() {
 }
 
 #[test]
-fn default_settings_come_from_the_provider() {
-    struct Provider;
-    impl DefaultSettingsProvider for Provider {
+fn layout_and_settings_come_from_the_defaults() {
+    struct Defaults;
+    impl ConfigDefaults for Defaults {
         fn default_settings(&self, kind: &ModuleKind) -> serde_json::Value {
             serde_json::json!({ "kind": kind.0 })
         }
+
+        fn home_modules(&self) -> Vec<ModuleKind> {
+            vec!["a".into(), "b".into()]
+        }
+
+        fn dial_modules(&self) -> Vec<ModuleKind> {
+            vec!["b".into(), "c".into()]
+        }
     }
-    let config = default_config(&plus(), &Provider);
-    let clock = config.modules.iter().find(|m| m.id.0 == "clock").unwrap();
-    assert_eq!(clock.settings, serde_json::json!({ "kind": "clock" }));
+    let config = default_config(&plus(), &Defaults);
+    assert_eq!(config.home, ids(&["a", "b"]));
+    assert_eq!(
+        config.dials,
+        [Some("b".into()), Some("c".into()), None, None]
+    );
+    let settings: Vec<_> = config.modules.iter().map(|m| m.settings.clone()).collect();
+    assert_eq!(
+        settings,
+        ["a", "b", "c"].map(|kind| serde_json::json!({ "kind": kind }))
+    );
 }
 
 #[test]
@@ -137,7 +154,7 @@ fn corrupt_config_is_renamed_and_replaced() {
 #[test]
 fn config_with_wrong_dial_count_is_set_aside() {
     let (dir, store) = store();
-    let mut config = default_config(&plus(), &EmptyDefaultSettings);
+    let mut config = default_config(&plus(), &builtin_registry());
     config.dials.pop();
     let path = config_file(&dir, DEMO_SERIAL);
     fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -272,20 +272,6 @@ fn zone_lines_are_rendered_centred() {
 }
 
 #[test]
-fn zone_keeps_at_most_three_lines() {
-    let subject = renderer();
-    let three: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
-    let four: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
-    let with_three = subject
-        .render_zone(&three, ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    let with_four = subject
-        .render_zone(&four, ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert!(Arc::ptr_eq(&with_three, &with_four));
-}
-
-#[test]
 fn image_kind_is_sniffed_from_content() {
     let ImageSource::Bytes(png_bytes) = png(1, 1, RED) else {
         unreachable!()
@@ -300,4 +286,54 @@ fn image_kind_is_sniffed_from_content() {
         Some(ImageKind::Svg)
     );
     assert_eq!(ImageKind::sniff(b"hello"), None);
+}
+
+#[test]
+fn active_keys_get_a_frame() {
+    let renderer = renderer();
+    let request = KeyRequest::new(KEY, None, None).in_state(KeyState::Active);
+    let image = renderer.render_key(&request).unwrap();
+    assert_eq!(*image.image().get_pixel(0, 60), ACTIVE_BORDER_COLOR);
+    assert_eq!(*image.image().get_pixel(119, 119), ACTIVE_BORDER_COLOR);
+    assert_eq!(*image.image().get_pixel(60, 60), DEFAULT_BACKGROUND);
+    // The state is part of the cache key.
+    let normal = renderer
+        .render_key(&KeyRequest::new(KEY, None, None))
+        .unwrap();
+    assert_eq!(*normal.image().get_pixel(0, 60), DEFAULT_BACKGROUND);
+}
+
+#[test]
+fn keys_needing_attention_are_framed_on_orange() {
+    let request = KeyRequest::new(KEY, None, Some("Fini")).in_state(KeyState::Attention);
+    let rendered = renderer().render_key(&request).unwrap();
+    let image = rendered.image();
+    assert_eq!(*image.get_pixel(2, 2), ATTENTION_BORDER_COLOR);
+    assert_eq!(*image.get_pixel(60, 30), ATTENTION_BACKGROUND);
+}
+
+#[test]
+fn feedback_marks_are_drawn_over_the_surface() {
+    let renderer = renderer();
+    let base = renderer
+        .render_zone(&["12:00".into()], ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let ok = renderer.with_feedback(&base, Feedback::Ok).unwrap();
+    let centre = ok.image().get_pixel(100, 25).0;
+    assert!(centre[1] > centre[0] && centre[1] > centre[2], "{centre:?}");
+    let alert = renderer.with_feedback(&base, Feedback::Alert).unwrap();
+    let tip = alert.image().get_pixel(82, 71).0;
+    assert!(tip[0] > 150 && tip[1] < 100, "{tip:?}");
+    assert_eq!(alert.image().dimensions(), (200, 100));
+    assert!(alert.image().pixels().all(|pixel| pixel.0[3] == u8::MAX));
+    // The base image is left untouched.
+    assert_ne!(base.image().as_ref(), ok.image().as_ref());
+}
+
+#[test]
+fn zone_images_fit_the_zone() {
+    let rendered = renderer().render_image(ZONE, &png(10, 10, RED)).unwrap();
+    assert_eq!(rendered.image().dimensions(), (200, 100));
+    assert_eq!(*rendered.image().get_pixel(100, 50), RED);
+    assert_eq!(*rendered.image().get_pixel(10, 50), DEFAULT_BACKGROUND);
 }

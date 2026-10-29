@@ -18,6 +18,9 @@ DOCKER ?= docker
 # Version de Lighthouse CI utilisée en local et en CI (`make lighthouse`).
 LHCI_VERSION ?= 0.15.1
 DOCKER_IMAGE ?= bergadeck:dev
+# Origines du serveur de dev Vite (port par défaut 5173), autorisées par le
+# gestionnaire en plus des siennes (contrôle strict Host/Origin).
+VITE_DEV_ORIGINS := http://localhost:5173 http://127.0.0.1:5173
 
 UI_DIR := ui
 GENERATED_DIR := $(UI_DIR)/src/lib/generated
@@ -38,9 +41,11 @@ help: ## Affiche cette aide
 
 ## ---------------------------------------------------------------- Développement
 
+# Sans tray : `make dev` ne doit pas ajouter d'icône à côté d'un gestionnaire installé.
 dev: ui-deps ## Gestionnaire en --demo + serveur de dev UI (Ctrl-C arrête les deux)
 	@trap 'kill "$$manager_pid" "$$ui_pid" 2>/dev/null || true; wait' INT TERM; \
-	$(CARGO) run -p $(MANAGER_PACKAGE) -- --demo & manager_pid=$$!; \
+	$(CARGO) run -p $(MANAGER_PACKAGE) -- --demo --no-tray \
+		$(foreach origin,$(VITE_DEV_ORIGINS),--dev-origin $(origin)) & manager_pid=$$!; \
 	(cd "$(UI_DIR)" && $(PNPM) run dev) & ui_pid=$$!; \
 	wait
 

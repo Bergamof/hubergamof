@@ -12,11 +12,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bergadeck_protocol::{DeviceInfo, MAX_BRIGHTNESS};
-use elgato_streamdeck::images::ImageRect;
+use elgato_streamdeck::images::{ImageRect, convert_image};
 use elgato_streamdeck::{StreamDeck, StreamDeckError};
 use image::{DynamicImage, RgbaImage};
 use tokio::sync::{broadcast, oneshot};
 
+use super::encoded::{ENCODED_CACHE_CAPACITY, EncodedCache};
 use super::mapping::InputTracker;
 use crate::device::strip::{check_image_size, check_strip_region};
 use crate::device::{DeckBackend, DeviceError, INPUT_EVENT_CAPACITY, InputEvent};
@@ -30,12 +31,12 @@ type Reply = oneshot::Sender<Result<(), DeviceError>>;
 enum Command {
     SetKeyImage {
         index: u8,
-        image: RgbaImage,
+        image: Arc<RgbaImage>,
         reply: Reply,
     },
     SetStripRegion {
         x: u16,
-        image: RgbaImage,
+        image: Arc<RgbaImage>,
         reply: Reply,
     },
     SetBrightness {
@@ -78,6 +79,8 @@ impl HardwareDeck {
             commands: receiver,
             events: events.clone(),
             connected: Arc::clone(&connected),
+            encoded_keys: EncodedCache::new(ENCODED_CACHE_CAPACITY),
+            encoded_strips: EncodedCache::new(ENCODED_CACHE_CAPACITY),
         };
         thread::Builder::new()
             .name(format!("deck-{}", info.serial))
@@ -114,7 +117,7 @@ impl DeckBackend for HardwareDeck {
         self.connected.load(Ordering::Acquire)
     }
 
-    async fn set_key_image(&self, index: u8, image: RgbaImage) -> Result<(), DeviceError> {
+    async fn set_key_image(&self, index: u8, image: Arc<RgbaImage>) -> Result<(), DeviceError> {
         let count = self.info.capabilities.key_count();
         if usize::from(index) >= count {
             return Err(DeviceError::InvalidKey { index, count });
@@ -128,7 +131,7 @@ impl DeckBackend for HardwareDeck {
         .await
     }
 
-    async fn set_strip_region(&self, x: u32, image: RgbaImage) -> Result<(), DeviceError> {
+    async fn set_strip_region(&self, x: u32, image: Arc<RgbaImage>) -> Result<(), DeviceError> {
         let size = self
             .info
             .capabilities
@@ -165,6 +168,13 @@ impl DeckBackend for HardwareDeck {
     }
 }
 
+/// A copy of `image` for the encoders of `elgato-streamdeck`, which take
+/// their image by value; made on the device thread, once per distinct image
+/// thanks to the [`EncodedCache`]s.
+fn owned(image: &RgbaImage) -> DynamicImage {
+    DynamicImage::ImageRgba8(image.clone())
+}
+
 struct Worker {
     deck: StreamDeck,
     tracker: InputTracker,
@@ -172,6 +182,10 @@ struct Worker {
     commands: mpsc::Receiver<Command>,
     events: broadcast::Sender<InputEvent>,
     connected: Arc<AtomicBool>,
+    /// Key images in the device format (JPEG or BMP, rotated).
+    encoded_keys: EncodedCache<Vec<u8>>,
+    /// Touch strip regions in the device format.
+    encoded_strips: EncodedCache<ImageRect>,
 }
 
 enum Flow {
@@ -191,7 +205,7 @@ impl Worker {
         tracing::debug!("device worker stopped");
     }
 
-    fn process_commands(&self) -> Flow {
+    fn process_commands(&mut self) -> Flow {
         loop {
             match self.commands.try_recv() {
                 Ok(Command::Close { reply }) => {
@@ -208,18 +222,14 @@ impl Worker {
         }
     }
 
-    fn execute(&self, command: Command) {
+    fn execute(&mut self, command: Command) {
         let (result, reply) = match command {
             Command::SetKeyImage {
                 index,
                 image,
                 reply,
-            } => (
-                self.deck
-                    .set_button_image(index, DynamicImage::ImageRgba8(image)),
-                reply,
-            ),
-            Command::SetStripRegion { x, image, reply } => (self.write_strip(x, image), reply),
+            } => (self.write_key(index, &image), reply),
+            Command::SetStripRegion { x, image, reply } => (self.write_strip(x, &image), reply),
             Command::SetBrightness { percent, reply } => (self.deck.set_brightness(percent), reply),
             Command::ClearAll { reply } => (self.clear_all(), reply),
             Command::Flush { reply } => (self.deck.flush(), reply),
@@ -229,15 +239,25 @@ impl Worker {
         let _ = reply.send(result.map_err(DeviceError::from));
     }
 
-    fn write_strip(&self, x: u16, image: RgbaImage) -> Result<(), StreamDeckError> {
-        let rect = ImageRect::from_image(DynamicImage::ImageRgba8(image))?;
+    fn write_key(&mut self, index: u8, image: &Arc<RgbaImage>) -> Result<(), StreamDeckError> {
+        let kind = self.deck.kind();
+        let encoded = self.encoded_keys.get_or_encode(image, |image| {
+            convert_image(kind, owned(image)).map_err(StreamDeckError::from)
+        })?;
+        self.deck.write_image(index, &encoded)
+    }
+
+    fn write_strip(&mut self, x: u16, image: &Arc<RgbaImage>) -> Result<(), StreamDeckError> {
+        let rect = self
+            .encoded_strips
+            .get_or_encode(image, |image| ImageRect::from_image(owned(image)))?;
         self.deck.write_lcd(x, 0, &rect)
     }
 
-    fn clear_all(&self) -> Result<(), StreamDeckError> {
+    fn clear_all(&mut self) -> Result<(), StreamDeckError> {
         self.deck.clear_all_button_images()?;
         match self.strip_size {
-            Some(size) => self.write_strip(0, RgbaImage::new(size.width, size.height)),
+            Some(size) => self.write_strip(0, &Arc::new(RgbaImage::new(size.width, size.height))),
             None => Ok(()),
         }
     }

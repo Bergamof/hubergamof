@@ -3,17 +3,63 @@
 
 use std::sync::Arc;
 
+use bergadeck_module_api::Feedback;
 use bergadeck_protocol::ImageSize;
 use tokio::task::spawn_blocking;
 
 use super::EngineError;
-use super::frame::{Frame, KeyFace, ZoneFace};
+use super::frame::{Frame, KeyFace, ZoneContentFace, ZoneFace};
 use super::live::{LiveDial, LiveKey, LiveSnapshot, LiveZone};
 use crate::device::{DeckBackend, StripLayout};
 use crate::render::{DEFAULT_BACKGROUND, KeyRequest, RenderError, Rendered, Renderer};
 
+/// What was written to a key or zone: its face, the image without the
+/// feedback mark (`base`) and the image written.
 struct Painted<F> {
     face: F,
+    base: Arc<Rendered>,
+    rendered: Arc<Rendered>,
+}
+
+/// A key or zone face, which may carry a transient feedback mark.
+trait Face: Clone + PartialEq + Send + 'static {
+    fn feedback(&self) -> Option<Feedback>;
+
+    /// Whether both faces look the same once their marks are removed.
+    fn same_base(&self, other: &Self) -> bool;
+}
+
+impl Face for KeyFace {
+    fn feedback(&self) -> Option<Feedback> {
+        self.feedback
+    }
+
+    fn same_base(&self, other: &Self) -> bool {
+        self.image == other.image && self.label == other.label && self.state == other.state
+    }
+}
+
+impl Face for ZoneFace {
+    fn feedback(&self) -> Option<Feedback> {
+        self.feedback
+    }
+
+    fn same_base(&self, other: &Self) -> bool {
+        self.content == other.content
+    }
+}
+
+/// A key or zone to write, with the base image to reuse when only its
+/// feedback mark changed.
+struct Job<F> {
+    index: u8,
+    face: F,
+    base: Option<Arc<Rendered>>,
+}
+
+/// Base and final images of a job.
+struct Images {
+    base: Arc<Rendered>,
     rendered: Arc<Rendered>,
 }
 
@@ -23,12 +69,6 @@ pub(crate) struct Painter {
     zone_size: Option<ImageSize>,
     keys: Vec<Option<Painted<KeyFace>>>,
     zones: Vec<Option<Painted<ZoneFace>>>,
-}
-
-/// Images to write, by key or zone index.
-struct Batch {
-    keys: Vec<(u8, KeyFace)>,
-    zones: Vec<(u8, ZoneFace)>,
 }
 
 impl Painter {
@@ -55,23 +95,35 @@ impl Painter {
         renderer: &Arc<Renderer>,
         frame: &Frame,
     ) -> Result<usize, EngineError> {
-        let batch = self.changes(frame);
-        if batch.keys.is_empty() && batch.zones.is_empty() {
+        let keys = changes(frame.keys.iter().map(|key| &key.face), &self.keys);
+        let zones = changes(
+            frame.dials.iter().filter_map(|dial| dial.zone.as_ref()),
+            &self.zones,
+        );
+        if keys.is_empty() && zones.is_empty() {
             return Ok(0);
         }
-        let images = self.render(renderer, &batch).await?;
-        let mut written = 0;
-        for ((index, face), rendered) in batch.keys.into_iter().zip(images.keys) {
-            deck.set_key_image(index, rendered.image().as_ref().clone())
+        let written = keys.len() + zones.len();
+        let key_size = self.key_size;
+        let keys = render(renderer, keys, move |renderer, face| {
+            render_key(renderer, key_size, face)
+        })
+        .await?;
+        for (job, images) in keys {
+            deck.set_key_image(job.index, Arc::clone(images.rendered.image()))
                 .await?;
-            self.keys[usize::from(index)] = Some(Painted { face, rendered });
-            written += 1;
+            self.keys[usize::from(job.index)] = Some(painted(job.face, images));
         }
-        for ((index, face), rendered) in batch.zones.into_iter().zip(images.zones) {
-            deck.set_touch_zone_image(index, rendered.image().as_ref().clone())
-                .await?;
-            self.zones[usize::from(index)] = Some(Painted { face, rendered });
-            written += 1;
+        if let Some(zone_size) = self.zone_size {
+            let zones = render(renderer, zones, move |renderer, face| {
+                render_zone(renderer, zone_size, face)
+            })
+            .await?;
+            for (job, images) in zones {
+                deck.set_touch_zone_image(job.index, Arc::clone(images.rendered.image()))
+                    .await?;
+                self.zones[usize::from(job.index)] = Some(painted(job.face, images));
+            }
         }
         deck.flush().await?;
         Ok(written)
@@ -83,12 +135,13 @@ impl Painter {
             .keys
             .iter()
             .zip(&self.keys)
-            .map(|(face, painted)| LiveKey {
-                label: face.label.clone(),
-                active: face.active,
+            .map(|(key, painted)| LiveKey {
+                label: key.face.label.clone(),
+                state: key.face.state,
+                feedback: key.face.feedback,
                 image: painted
                     .as_ref()
-                    .filter(|_| !face.is_blank())
+                    .filter(|_| !key.face.is_blank())
                     .map(|painted| Arc::clone(&painted.rendered)),
             })
             .collect();
@@ -99,15 +152,16 @@ impl Painter {
             .map(|(index, dial)| LiveDial {
                 module_id: dial.module.clone(),
                 zone: dial.zone.as_ref().map(|zone| LiveZone {
-                    lines: match zone {
-                        ZoneFace::Lines(lines) => lines.clone(),
-                        ZoneFace::Blank | ZoneFace::Image(_) => Vec::new(),
+                    feedback: zone.feedback,
+                    lines: match &zone.content {
+                        ZoneContentFace::Lines(lines) => lines.clone(),
+                        ZoneContentFace::Blank | ZoneContentFace::Image(_) => Vec::new(),
                     },
                     image: self
                         .zones
                         .get(index)
                         .and_then(Option::as_ref)
-                        .filter(|_| *zone != ZoneFace::Blank)
+                        .filter(|_| !zone.is_blank())
                         .map(|painted| Arc::clone(&painted.rendered)),
                 }),
             })
@@ -119,97 +173,109 @@ impl Painter {
             dials,
         }
     }
+}
 
-    fn changes(&self, frame: &Frame) -> Batch {
-        let keys = frame
-            .keys
-            .iter()
-            .zip(&self.keys)
-            .zip(0_u8..)
-            .filter(|((face, painted), _)| {
-                painted
-                    .as_ref()
-                    .is_none_or(|painted| !painted.face.looks_like(face))
-            })
-            .map(|((face, _), index)| (index, face.clone()))
-            .collect();
-        let zones = frame
-            .dials
-            .iter()
-            .filter_map(|dial| dial.zone.as_ref())
-            .zip(&self.zones)
-            .zip(0_u8..)
-            .filter(|((face, painted), _)| {
-                painted
-                    .as_ref()
-                    .is_none_or(|painted| painted.face != **face)
-            })
-            .map(|((face, _), index)| (index, face.clone()))
-            .collect();
-        Batch { keys, zones }
+fn painted<F>(face: F, images: Images) -> Painted<F> {
+    Painted {
+        face,
+        base: images.base,
+        rendered: images.rendered,
     }
+}
 
-    async fn render(&self, renderer: &Arc<Renderer>, batch: &Batch) -> Result<Images, EngineError> {
-        let renderer = Arc::clone(renderer);
-        let key_size = self.key_size;
-        let zone_size = self.zone_size;
-        let keys: Vec<KeyFace> = batch.keys.iter().map(|(_, face)| face.clone()).collect();
-        let zones: Vec<ZoneFace> = batch.zones.iter().map(|(_, face)| face.clone()).collect();
-        let images = spawn_blocking(move || -> Result<Images, RenderError> {
-            let keys = keys
-                .iter()
-                .map(|face| render_key(&renderer, key_size, face))
-                .collect::<Result<_, _>>()?;
-            let zones = match zone_size {
-                Some(size) => zones
-                    .iter()
-                    .map(|face| render_zone(&renderer, size, face))
-                    .collect::<Result<_, _>>()?,
-                None => Vec::new(),
-            };
-            Ok(Images { keys, zones })
+/// Faces differing from what was painted, with the base image to reuse when
+/// only the mark changed.
+fn changes<'a, F: Face>(
+    faces: impl Iterator<Item = &'a F>,
+    painted: &[Option<Painted<F>>],
+) -> Vec<Job<F>> {
+    faces
+        .zip(painted)
+        .zip(0_u8..)
+        .filter(|((face, painted), _)| {
+            painted
+                .as_ref()
+                .is_none_or(|painted| painted.face != **face)
         })
-        .await??;
-        Ok(images)
+        .map(|((face, painted), index)| Job {
+            index,
+            face: face.clone(),
+            base: painted
+                .as_ref()
+                .filter(|painted| painted.face.same_base(face))
+                .map(|painted| Arc::clone(&painted.base)),
+        })
+        .collect()
+}
+
+/// Renders `jobs` on the blocking pool: the base with `render_base` unless
+/// it is reused, then the feedback mark.
+async fn render<F: Face>(
+    renderer: &Arc<Renderer>,
+    jobs: Vec<Job<F>>,
+    render_base: impl Fn(&Renderer, &F) -> Result<Arc<Rendered>, RenderError> + Send + 'static,
+) -> Result<Vec<(Job<F>, Images)>, EngineError> {
+    if jobs.is_empty() {
+        return Ok(Vec::new());
     }
+    let renderer = Arc::clone(renderer);
+    let images = spawn_blocking(move || {
+        jobs.into_iter()
+            .map(|job| {
+                let base = match &job.base {
+                    Some(base) => Arc::clone(base),
+                    None => render_base(&renderer, &job.face)?,
+                };
+                let marked = match job.face.feedback() {
+                    Some(feedback) => renderer.with_feedback(&base, feedback)?,
+                    None => Arc::clone(&base),
+                };
+                Ok((
+                    job,
+                    Images {
+                        base,
+                        rendered: marked,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, RenderError>>()
+    })
+    .await??;
+    Ok(images)
 }
 
-struct Images {
-    keys: Vec<Arc<Rendered>>,
-    zones: Vec<Arc<Rendered>>,
-}
-
-/// Renders a key; an unreadable image falls back to the label alone.
+/// Renders the base of a key; an unreadable image falls back to the label
+/// alone.
 fn render_key(
     renderer: &Renderer,
     size: ImageSize,
     face: &KeyFace,
 ) -> Result<Arc<Rendered>, RenderError> {
     let label = face.label.as_deref();
-    match renderer.render_key(&KeyRequest::new(size, face.image.as_ref(), label)) {
+    let request = |image| KeyRequest::new(size, image, label).in_state(face.state);
+    match renderer.render_key(&request(face.image.as_ref())) {
         Err(error) if face.image.is_some() => {
             tracing::warn!(%error, "cannot draw key image, showing the label only");
-            renderer.render_key(&KeyRequest::new(size, None, label))
+            renderer.render_key(&request(None))
         }
         result => result,
     }
 }
 
-/// Renders a zone; an unreadable image falls back to a blank zone.
+/// Renders the base of a zone; an unreadable image falls back to a blank
+/// zone.
 fn render_zone(
     renderer: &Renderer,
     size: ImageSize,
     face: &ZoneFace,
 ) -> Result<Arc<Rendered>, RenderError> {
     let blank = || renderer.render_zone(&[], size, DEFAULT_BACKGROUND);
-    match face {
-        ZoneFace::Blank => blank(),
-        ZoneFace::Lines(lines) => renderer.render_zone(lines, size, DEFAULT_BACKGROUND),
-        ZoneFace::Image(source) => renderer
-            .render_key(&KeyRequest::new(size, Some(source), None))
-            .or_else(|error| {
-                tracing::warn!(%error, "cannot draw zone image, leaving it blank");
-                blank()
-            }),
+    match &face.content {
+        ZoneContentFace::Blank => blank(),
+        ZoneContentFace::Lines(lines) => renderer.render_zone(lines, size, DEFAULT_BACKGROUND),
+        ZoneContentFace::Image(source) => renderer.render_image(size, source).or_else(|error| {
+            tracing::warn!(%error, "cannot draw zone image, leaving it blank");
+            blank()
+        }),
     }
 }

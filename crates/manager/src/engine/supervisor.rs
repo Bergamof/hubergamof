@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{oneshot, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 
 use super::{DeviceEngine, EngineHandle, EngineServices};
 use crate::device::{DeckBackend, DeviceDiscovery, DiscoveryEvent};
@@ -138,7 +138,7 @@ async fn supervise(
                 Err(RecvError::Lagged(missed)) => tracing::warn!(missed, "missed device events"),
                 Err(RecvError::Closed) => break,
             },
-            Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
+            Some(result) = tasks.join_next(), if !tasks.is_empty() => report_engine_end(result),
         }
     }
     for handle in engines.handles() {
@@ -175,17 +175,104 @@ fn spawn_engine(
     tasks.spawn(run_engine(deck, services.clone(), engines.clone()));
 }
 
+/// Logs an engine task that panicked; the registration guard of the task
+/// already removed it from the registry.
+fn report_engine_end(result: Result<(), JoinError>) {
+    if let Err(error) = result
+        && error.is_panic()
+    {
+        tracing::error!(%error, "device engine panicked");
+    }
+}
+
+/// Entry of a running engine in the [`EngineRegistry`], removed when dropped:
+/// on return, on panic and on abort alike.
+struct Registration {
+    engines: EngineRegistry,
+    serial: String,
+    id: u64,
+}
+
+impl Registration {
+    fn new(engines: EngineRegistry, handle: EngineHandle) -> Self {
+        let registration = Self {
+            serial: handle.info().serial.clone(),
+            id: handle.id(),
+            engines,
+        };
+        registration.engines.insert(handle);
+        registration
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        self.engines.remove(&self.serial, self.id);
+    }
+}
+
 async fn run_engine(deck: Arc<dyn DeckBackend>, services: EngineServices, engines: EngineRegistry) {
     let serial = deck.info().serial.clone();
     match DeviceEngine::start(deck, services).await {
         Ok((engine, handle)) => {
-            let id = handle.id();
-            engines.insert(handle);
+            let _registration = Registration::new(engines, handle);
             engine.run().await;
-            engines.remove(&serial, id);
         }
         Err(error) => {
             tracing::error!(%serial, error = format!("{error:#}"), "cannot start device engine");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bergadeck_protocol::DeviceConfig;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::config_store::default_config;
+    use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
+    use crate::engine::LiveSnapshot;
+
+    fn handle() -> EngineHandle {
+        let info = virtual_plus_info(DEMO_SERIAL);
+        let config: DeviceConfig = default_config(&info, &bergadeck_modules::builtin_registry());
+        let (requests, _) = mpsc::channel(1);
+        let (_, live) = watch::channel(LiveSnapshot::empty(DEMO_SERIAL));
+        let (_, config) = watch::channel(config);
+        EngineHandle::new(info, requests, live, config)
+    }
+
+    #[test]
+    fn dropping_the_registration_unregisters_the_engine() {
+        let engines = EngineRegistry::default();
+        let first = handle();
+        let first_id = first.id();
+        let registration = Registration::new(engines.clone(), first);
+        assert_eq!(engines.get(DEMO_SERIAL).map(|h| h.id()), Some(first_id));
+        drop(registration);
+        assert!(engines.get(DEMO_SERIAL).is_none());
+
+        // An older registration does not remove a newer engine.
+        let stale = Registration::new(engines.clone(), handle());
+        let current = Registration::new(engines.clone(), handle());
+        drop(stale);
+        assert!(engines.get(DEMO_SERIAL).is_some());
+        drop(current);
+        assert!(engines.handles().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_engine_task_unwinding_unregisters_it() {
+        let engines = EngineRegistry::default();
+        let registration = Registration::new(engines.clone(), handle());
+        let task = tokio::spawn(async move {
+            let _registration = registration;
+            panic!("engine failure");
+        });
+        let result = task.await;
+        assert!(result.as_ref().is_err_and(JoinError::is_panic));
+        report_engine_end(result);
+        assert!(engines.handles().is_empty());
     }
 }

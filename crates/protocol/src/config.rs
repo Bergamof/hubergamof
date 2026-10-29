@@ -14,9 +14,8 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 /// Highest accepted brightness, in percent.
 pub const MAX_BRIGHTNESS: u8 = 100;
 
-/// Path components that must never appear in an image file name, so that an
-/// image reference cannot escape the device `images/` directory.
-const FORBIDDEN_IMAGE_NAME_PATTERNS: [&str; 3] = ["/", "\\", ".."];
+/// Longest accepted image file name.
+pub const MAX_IMAGE_NAME_LENGTH: usize = 128;
 
 /// Full configuration of one device.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -189,9 +188,16 @@ impl DeviceConfig {
     }
 }
 
-fn is_safe_image_name(name: &str) -> bool {
+/// Whether `name` is a plain file name of the device `images/` directory:
+/// ASCII letters, digits, `-`, `_` and `.`, not starting with a dot (no
+/// hidden file, no `..`), at most [`MAX_IMAGE_NAME_LENGTH`] characters. Such
+/// a name cannot designate another directory.
+#[must_use]
+pub fn is_safe_image_name(name: &str) -> bool {
     !name.is_empty()
-        && !FORBIDDEN_IMAGE_NAME_PATTERNS
-            .iter()
-            .any(|pattern| name.contains(pattern))
+        && name.len() <= MAX_IMAGE_NAME_LENGTH
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }

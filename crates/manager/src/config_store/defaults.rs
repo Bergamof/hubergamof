@@ -1,64 +1,68 @@
 //! Configuration generated for a device seen for the first time.
 
+use bergadeck_modules::ModuleRegistry;
 use bergadeck_protocol::{
     CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, ModuleInstance, ModuleInstanceId, ModuleKind,
 };
+use serde_json::Value;
 
 /// Brightness of a new configuration, in percent.
 pub const DEFAULT_BRIGHTNESS: u8 = 70;
 
-/// Built-in modules shown on the home page, in key order.
-pub const DEFAULT_HOME_MODULES: [&str; 5] = ["audio", "pomodoro", "docker", "intellij", "claude"];
-
-/// Modules assigned to the dials, from left to right; a device with fewer
-/// dials takes the first ones.
-pub const DEFAULT_DIAL_MODULES: [&str; 4] = ["clock", "audio", "pomodoro", "navigation"];
-
-/// Supplies the default settings of each module kind (provided by the module
-/// registry; [`EmptyDefaultSettings`] until modules exist).
-pub trait DefaultSettingsProvider: Send + Sync {
+/// Supplies what a new configuration contains: which modules go on the home
+/// page and on the dials, and their settings. Implemented by the
+/// [`ModuleRegistry`], which knows the modules.
+pub trait ConfigDefaults: Send + Sync {
     /// Default settings of a new instance of `kind`.
-    fn default_settings(&self, kind: &ModuleKind) -> serde_json::Value;
+    fn default_settings(&self, kind: &ModuleKind) -> Value;
+
+    /// Kinds shown on the home page, in key order.
+    fn home_modules(&self) -> Vec<ModuleKind>;
+
+    /// Kinds assigned to the dials, from left to right; a device with fewer
+    /// dials takes the first ones.
+    fn dial_modules(&self) -> Vec<ModuleKind>;
 }
 
-/// Gives every module empty settings (`{}`).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct EmptyDefaultSettings;
+impl ConfigDefaults for ModuleRegistry {
+    fn default_settings(&self, kind: &ModuleKind) -> Value {
+        ModuleRegistry::default_settings(self, kind)
+    }
 
-impl DefaultSettingsProvider for EmptyDefaultSettings {
-    fn default_settings(&self, _kind: &ModuleKind) -> serde_json::Value {
-        serde_json::Value::Object(serde_json::Map::new())
+    fn home_modules(&self) -> Vec<ModuleKind> {
+        self.default_layout().home.clone()
+    }
+
+    fn dial_modules(&self) -> Vec<ModuleKind> {
+        self.default_layout().dials.clone()
     }
 }
 
-/// Default configuration of `device`: built-in modules on the home page and
-/// on the dials, each instance id being its module kind.
+/// Default configuration of `device`: the default modules on the home page
+/// and on the dials, one instance per kind whose id is the kind.
 #[must_use]
-pub fn default_config(device: &DeviceInfo, settings: &dyn DefaultSettingsProvider) -> DeviceConfig {
-    let dials: Vec<Option<ModuleInstanceId>> = (0..usize::from(device.capabilities.dial_count))
-        .map(|dial| {
-            DEFAULT_DIAL_MODULES
-                .get(dial)
-                .map(|id| ModuleInstanceId::from(*id))
-        })
-        .collect();
-    let mut kinds: Vec<&str> = DEFAULT_HOME_MODULES.to_vec();
-    for id in dials.iter().flatten() {
-        if !kinds.contains(&id.0.as_str()) {
-            kinds.push(&id.0);
+pub fn default_config(device: &DeviceInfo, defaults: &dyn ConfigDefaults) -> DeviceConfig {
+    let home = defaults.home_modules();
+    let dials: Vec<Option<ModuleKind>> = {
+        let mut kinds = defaults.dial_modules().into_iter();
+        (0..device.capabilities.dial_count)
+            .map(|_| kinds.next())
+            .collect()
+    };
+    let mut kinds: Vec<&ModuleKind> = Vec::new();
+    for kind in home.iter().chain(dials.iter().flatten()) {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
         }
     }
     let modules = kinds
         .into_iter()
-        .map(|kind| {
-            let kind = ModuleKind::from(kind);
-            ModuleInstance {
-                id: ModuleInstanceId(kind.0.clone()),
-                settings: settings.default_settings(&kind),
-                kind,
-                label: None,
-                image: None,
-            }
+        .map(|kind| ModuleInstance {
+            id: instance_id(kind),
+            settings: defaults.default_settings(kind),
+            kind: kind.clone(),
+            label: None,
+            image: None,
         })
         .collect();
     DeviceConfig {
@@ -66,9 +70,16 @@ pub fn default_config(device: &DeviceInfo, settings: &dyn DefaultSettingsProvide
         serial: device.serial.clone(),
         model: device.model,
         brightness: DEFAULT_BRIGHTNESS,
-        home: DEFAULT_HOME_MODULES.map(ModuleInstanceId::from).to_vec(),
+        home: home.iter().map(instance_id).collect(),
         modules,
-        dials,
+        dials: dials
+            .iter()
+            .map(|kind| kind.as_ref().map(instance_id))
+            .collect(),
         revision: 0,
     }
+}
+
+fn instance_id(kind: &ModuleKind) -> ModuleInstanceId {
+    ModuleInstanceId(kind.0.clone())
 }

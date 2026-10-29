@@ -3,14 +3,14 @@
   "serial": "EXAMPLE0000001",
   "model": "plus",
   "brightness": 70,
-  "home": ["clock", "pomodoro", "docker", "intellij", "claude"],
+  "home": ["pomodoro", "docker", "intellij", "claude"],
   "modules": [
     {
       "id": "clock",
       "kind": "clock",
       "label": null,
       "image": null,
-      "settings": { "format": "%H:%M", "showSeconds": false }
+      "settings": { "showSeconds": false, "showDate": true }
     },
     {
       "id": "pomodoro",
@@ -55,6 +55,6 @@
       "settings": { "target": "defaultSource" }
     }
   ],
-  "dials": ["volume", "mic", "pomodoro", null],
+  "dials": ["volume", "mic", "pomodoro", "clock"],
   "revision": 0
 }

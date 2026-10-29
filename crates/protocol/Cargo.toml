@@ -10,7 +10,7 @@ publish.workspace = true
 
 [dependencies]
 # MPL-2.0 module API: owns the catalog types and identifiers shared with modules.
-bergadeck-module-api.workspace = true
+bergadeck-module-api = { workspace = true, features = ["ts"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

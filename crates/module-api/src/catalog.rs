@@ -6,14 +6,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use ts_rs::TS;
 
-use crate::ModuleKind;
+use crate::{ModuleError, ModuleKind};
 
 /// Description of a module kind available to the user.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ModuleDescriptor {
     /// Module kind, referenced by the `kind` of a configured module instance.
     pub kind: ModuleKind,
@@ -28,9 +27,9 @@ pub struct ModuleDescriptor {
 }
 
 /// Device surfaces a module can drive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirrored as-is in the JSON contract"
@@ -45,9 +44,9 @@ pub struct ModuleCapabilities {
 }
 
 /// One setting of a module.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct SettingField {
     /// Key of the setting in the `settings` object of a module instance.
     pub key: String,
@@ -60,13 +59,13 @@ pub struct SettingField {
 }
 
 /// Type of a setting value, with its default and constraints.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-#[ts(export)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum SettingKind {
     /// On/off switch.
     Boolean {
@@ -111,9 +110,9 @@ pub enum SettingKind {
 }
 
 /// An allowed value of a [`SettingKind::Choice`] setting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ChoiceOption {
     /// Stored value.
     pub value: String,
@@ -133,6 +132,40 @@ impl ModuleDescriptor {
             .collect();
         Value::Object(settings)
     }
+
+    /// Checks `settings` against the declared fields: it must be an object
+    /// and every declared key present must hold a value of the declared type
+    /// and constraints. Missing keys are accepted (modules fill them with
+    /// their defaults) and undeclared keys are ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`ModuleError::InvalidSettings`] naming the first offending setting.
+    pub fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
+        let Value::Object(values) = settings else {
+            return Err(ModuleError::InvalidSettings(
+                "settings must be a JSON object".into(),
+            ));
+        };
+        self.settings
+            .iter()
+            .filter_map(|field| values.get(&field.key).map(|value| (field, value)))
+            .try_for_each(|(field, value)| field.validate(value))
+    }
+}
+
+impl SettingField {
+    /// Checks that `value` has the type of the setting and respects its
+    /// constraints (bounds of an integer, options of a choice).
+    ///
+    /// # Errors
+    ///
+    /// [`ModuleError::InvalidSettings`] naming the setting.
+    pub fn validate(&self, value: &Value) -> Result<(), ModuleError> {
+        self.kind
+            .check(value)
+            .map_err(|reason| ModuleError::InvalidSettings(format!("`{}`: {reason}", self.key)))
+    }
 }
 
 impl SettingKind {
@@ -150,6 +183,49 @@ impl SettingKind {
             }
         }
     }
+
+    /// Why `value` does not fit this kind, if it does not.
+    fn check(&self, value: &Value) -> Result<(), String> {
+        match self {
+            Self::Boolean { .. } => expect(value.is_boolean(), "expected a boolean"),
+            Self::Integer { min, max, .. } => {
+                let number = value
+                    .as_i64()
+                    .ok_or_else(|| "expected an integer".to_owned())?;
+                if let Some(min) = min.filter(|min| number < *min) {
+                    return Err(format!("{number} is below the minimum {min}"));
+                }
+                if let Some(max) = max.filter(|max| number > *max) {
+                    return Err(format!("{number} is above the maximum {max}"));
+                }
+                Ok(())
+            }
+            Self::Text { .. } | Self::Path { .. } => expect(value.is_string(), "expected a string"),
+            Self::PathList { .. } => expect(
+                value
+                    .as_array()
+                    .is_some_and(|paths| paths.iter().all(Value::is_string)),
+                "expected a list of strings",
+            ),
+            Self::Choice { options, .. } => {
+                let choice = value
+                    .as_str()
+                    .ok_or_else(|| "expected a string".to_owned())?;
+                expect(
+                    options.iter().any(|option| option.value == choice),
+                    &format!("`{choice}` is not one of the allowed values"),
+                )
+            }
+        }
+    }
+}
+
+fn expect(condition: bool, reason: &str) -> Result<(), String> {
+    if condition {
+        Ok(())
+    } else {
+        Err(reason.to_owned())
+    }
 }
 
 #[cfg(test)]
@@ -158,15 +234,17 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn default_settings_collect_every_field_default() {
-        let field = |key: &str, kind| SettingField {
+    fn field(key: &str, kind: SettingKind) -> SettingField {
+        SettingField {
             key: key.into(),
             label: key.into(),
             help: None,
             kind,
-        };
-        let descriptor = ModuleDescriptor {
+        }
+    }
+
+    fn descriptor(settings: Vec<SettingField>) -> ModuleDescriptor {
+        ModuleDescriptor {
             kind: "sample".into(),
             name: "Sample".into(),
             description: String::new(),
@@ -175,32 +253,144 @@ mod tests {
                 dial: false,
                 touch_zone: false,
             },
-            settings: vec![
-                field("flag", SettingKind::Boolean { default: true }),
-                field(
-                    "count",
-                    SettingKind::Integer {
-                        default: 25,
-                        min: None,
-                        max: None,
-                        unit: None,
-                    },
-                ),
-                field(
-                    "paths",
-                    SettingKind::PathList {
-                        default: vec!["/a".into()],
-                    },
-                ),
-                field(
-                    "mode",
-                    SettingKind::Choice {
-                        default: "x".into(),
-                        options: Vec::new(),
-                    },
-                ),
-            ],
-        };
+            settings,
+        }
+    }
+
+    fn bounded(min: Option<i64>, max: Option<i64>) -> SettingKind {
+        SettingKind::Integer {
+            default: 5,
+            min,
+            max,
+            unit: None,
+        }
+    }
+
+    fn choice() -> SettingKind {
+        SettingKind::Choice {
+            default: "a".into(),
+            options: ["a", "b"]
+                .map(|value| ChoiceOption {
+                    value: value.into(),
+                    label: value.into(),
+                })
+                .to_vec(),
+        }
+    }
+
+    #[test]
+    fn values_of_the_declared_type_and_bounds_are_accepted() {
+        let cases = [
+            (SettingKind::Boolean { default: false }, json!(true)),
+            (bounded(Some(1), Some(10)), json!(10)),
+            (bounded(None, None), json!(-3)),
+            (
+                SettingKind::Text {
+                    default: String::new(),
+                },
+                json!("x"),
+            ),
+            (
+                SettingKind::Path {
+                    default: String::new(),
+                    directory: true,
+                },
+                json!("/tmp"),
+            ),
+            (
+                SettingKind::PathList {
+                    default: Vec::new(),
+                },
+                json!(["/a", "/b"]),
+            ),
+            (choice(), json!("b")),
+        ];
+        for (kind, value) in cases {
+            assert!(
+                field("k", kind).validate(&value).is_ok(),
+                "{value} rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn wrong_types_bounds_and_choices_are_rejected() {
+        let cases = [
+            (SettingKind::Boolean { default: false }, json!("yes")),
+            (bounded(None, None), json!(1.5)),
+            (bounded(Some(1), None), json!(0)),
+            (bounded(None, Some(10)), json!(11)),
+            (
+                SettingKind::Text {
+                    default: String::new(),
+                },
+                json!(3),
+            ),
+            (
+                SettingKind::PathList {
+                    default: Vec::new(),
+                },
+                json!(["/a", 1]),
+            ),
+            (choice(), json!("c")),
+            (choice(), json!(null)),
+        ];
+        for (kind, value) in cases {
+            let error = field("k", kind).validate(&value).unwrap_err();
+            assert!(
+                matches!(&error, ModuleError::InvalidSettings(reason) if reason.starts_with("`k`")),
+                "{value}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_objects_are_checked_field_by_field() {
+        let descriptor = descriptor(vec![
+            field("flag", SettingKind::Boolean { default: true }),
+            field("count", bounded(Some(0), None)),
+        ]);
+        assert!(descriptor.validate_settings(&json!({})).is_ok());
+        assert!(
+            descriptor
+                .validate_settings(&json!({ "flag": false, "extra": 1 }))
+                .is_ok()
+        );
+        assert!(
+            descriptor
+                .validate_settings(&json!({ "count": -1 }))
+                .is_err()
+        );
+        assert!(descriptor.validate_settings(&json!([])).is_err());
+    }
+
+    #[test]
+    fn default_settings_collect_every_field_default() {
+        let descriptor = descriptor(vec![
+            field("flag", SettingKind::Boolean { default: true }),
+            field(
+                "count",
+                SettingKind::Integer {
+                    default: 25,
+                    min: None,
+                    max: None,
+                    unit: None,
+                },
+            ),
+            field(
+                "paths",
+                SettingKind::PathList {
+                    default: vec!["/a".into()],
+                },
+            ),
+            field(
+                "mode",
+                SettingKind::Choice {
+                    default: "x".into(),
+                    options: Vec::new(),
+                },
+            ),
+        ]);
         assert_eq!(
             descriptor.default_settings(),
             json!({ "flag": true, "count": 25, "paths": ["/a"], "mode": "x" })

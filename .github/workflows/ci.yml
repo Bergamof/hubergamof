@@ -233,7 +233,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke test (--version)
-        run: docker run --rm "$IMAGE" --version
+        id: version
+        run: docker run --rm "$IMAGE" --version | tee version.txt
+      # Le serveur n'écoute que sur 127.0.0.1 : conteneur sur le réseau de l'hôte,
+      # requête avec un Host autorisé (contrôle strict Host/Origin).
+      - name: Smoke test (--demo, HTTP)
+        id: http
+        env:
+          PORT: "7878"
+          MAX_ATTEMPTS: "30"
+        run: |
+          docker run --detach --name bergadeck-smoke --network host "$IMAGE" --demo --no-tray --port "$PORT"
+          trap 'docker logs bergadeck-smoke; docker rm --force bergadeck-smoke >/dev/null' EXIT
+          url="http://127.0.0.1:${PORT}/"
+          # Attente bornée du démarrage (1 s entre deux tentatives).
+          status=000
+          for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: 127.0.0.1:${PORT}" "$url" || true)
+            [[ "$status" == 000 ]] || break
+            sleep 1
+          done
+          echo "HTTP ${status} en $((attempt > MAX_ATTEMPTS ? MAX_ATTEMPTS : attempt)) tentative(s)" | tee http.txt
+          [[ "$status" == 200 ]]
       # Les CVE sans correctif publié ne sont pas actionnables : seules les
       # HIGH/CRITICAL corrigeables font échouer le job.
       - name: Scan image (Trivy)
@@ -253,10 +274,15 @@ jobs:
       - name: Summary
         id: summary
         if: always()
+        env:
+          VERSION: ${{ steps.version.outcome }}
+          HTTP: ${{ steps.http.outcome }}
         run: |
+          icon() { [[ "$1" == success ]] && echo "✅" || echo "❌"; }
           size=$(docker image inspect "$IMAGE" --format '{{.Size}}' 2>/dev/null | numfmt --to=iec || true)
+          http=$(cat http.txt 2>/dev/null || true)
           cves=$(jq -r '[.Results[]?.Vulnerabilities[]?.Severity] | "\(map(select(. == "CRITICAL")) | length) CRITICAL, \(map(select(. == "HIGH")) | length) HIGH"' trivy-image.json 2>/dev/null || true)
-          echo "summary=image ${size:-non construite} · CVE corrigeables : ${cves:-—}" >> "$GITHUB_OUTPUT"
+          echo "summary=image ${size:-non construite} · --version $(icon "$VERSION") · --demo $(icon "$HTTP") ${http:-—} · CVE corrigeables : ${cves:-—}" >> "$GITHUB_OUTPUT"
 
   security:
     name: Sécurité
@@ -341,6 +367,9 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-ui
       # Assertions (Accessibilité et Bonnes pratiques ≥ 0,9) dans lighthouserc.json.
+      # Audit du build statique (staticDistDir: ui/build) : l'UI du squelette
+      # s'affiche sans gestionnaire. À basculer sur `bergadeck --demo` (startServerCommand)
+      # quand les pages dépendront de l'état en direct.
       - name: Lighthouse CI
         id: lhci
         run: make lighthouse

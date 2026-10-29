@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ModuleInstanceId;
+use crate::{KeyState, ModuleInstanceId};
 
 /// What a device currently shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -46,8 +46,8 @@ pub struct KeyView {
     pub label: Option<String>,
     /// Rendered key image as a data URL.
     pub image: Option<String>,
-    /// Whether the key is in its active state (toggle on, timer running…).
-    pub active: bool,
+    /// Visual state reported by the module.
+    pub state: KeyState,
 }
 
 /// A dial and its touch strip zone.

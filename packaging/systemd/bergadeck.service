@@ -1,10 +1,16 @@
 # Bergadeck — service systemd utilisateur (gabarit).
 # packaging/install.sh remplace @CONFIG_DIR@ par le chemin absolu, échappé, du
 # dossier de configuration, puis installe l'unité dans ~/.config/systemd/user/.
+#
+# Rattaché à la session graphique (modèle de systemd.special(7)) : le service
+# démarre une fois que l'environnement de bureau a importé WAYLAND_DISPLAY/DISPLAY
+# dans le gestionnaire utilisateur (nécessaires à xdg-open, ouverture de l'UI depuis
+# le tray), et s'arrête avec la session. DBUS_SESSION_BUS_ADDRESS est fourni par
+# systemd --user ; le tray se ré-enregistre si le StatusNotifierWatcher arrive après.
 
 [Unit]
 Description=Bergadeck Stream Deck manager
-# Le tray (SNI) et les modules de bureau ont besoin de la session graphique.
+PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
@@ -14,4 +20,4 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

@@ -33,8 +33,9 @@ clap.workspace = true
 # Synchronous API driven from a dedicated thread per device: the crate's
 # `async` feature relies on `block_in_place` and serialises reads and writes.
 elgato-streamdeck = { version = "0.14.0", default-features = false }
-# `StreamExt` for the D-Bus signal streams of the tray.
-futures-util = { version = "0.3.34", default-features = false }
+# `StreamExt` for the D-Bus signal streams of the tray; `std` for
+# `FutureExt::catch_unwind` around module handlers.
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # Default backend (`linux-static-hidraw`, bundled C sources + system libudev):
 # elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
 hidapi = "2.6.7"
@@ -58,7 +59,7 @@ tracing-subscriber.workspace = true
 zbus = { version = "6.1.0", default-features = false, features = ["proxy", "service", "tokio"] }
 
 [dev-dependencies]
-futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = "0.30.0"
 # Peer-to-peer connections: the tray objects are exercised without a bus daemon.

@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use bergadeck_protocol::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, MAX_BRIGHTNESS, ModuleInstance,
-    ModuleInstanceId,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, MAX_BRIGHTNESS,
+    MAX_IMAGE_NAME_LENGTH, ModuleInstance, ModuleInstanceId, is_safe_image_name,
 };
 use serde_json::json;
 
@@ -109,6 +109,9 @@ fn unsafe_image_names_are_rejected() {
         "sub/icon.png",
         "/etc/passwd",
         "a\\b.png",
+        ".hidden.png",
+        "icône.png",
+        "with space.png",
     ] {
         assert_eq!(
             with_image(image).validate(),
@@ -119,6 +122,16 @@ fn unsafe_image_names_are_rejected() {
             "image name {image:?} should be rejected"
         );
     }
+}
+
+#[test]
+fn plain_image_names_are_accepted() {
+    let longest = format!("{}.png", "a".repeat(MAX_IMAGE_NAME_LENGTH - 4));
+    for image in ["icon.png", "0123abcd-ef_9.jpg", longest.as_str()] {
+        assert!(is_safe_image_name(image), "{image:?} should be accepted");
+        assert_eq!(with_image(image).validate(), Ok(()));
+    }
+    assert!(!is_safe_image_name(&format!("a{longest}")));
 }
 
 #[test]

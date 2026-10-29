@@ -9,6 +9,7 @@ export type * from "./DeviceModel";
 export type * from "./DialView";
 export type * from "./ErrorCode";
 export type * from "./ImageSize";
+export type * from "./KeyState";
 export type * from "./KeyView";
 export type * from "./LiveState";
 export type * from "./ModuleCapabilities";

@@ -4,8 +4,8 @@
 
 use bergadeck_protocol::{
     ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel,
-    DialView, ErrorCode, ImageSize, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor,
-    ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, ZoneView,
+    DialView, ErrorCode, ImageSize, KeyState, KeyView, LiveState, ModuleCapabilities,
+    ModuleDescriptor, ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, ZoneView,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -296,7 +296,7 @@ fn server_live_state() {
                         index: 0,
                         label: Some("12:00".into()),
                         image: Some("data:image/png;base64,AAAA".into()),
-                        active: false,
+                        state: KeyState::Active,
                     }],
                 },
                 dials: vec![DialView {
@@ -322,7 +322,7 @@ fn server_live_state() {
                         "index": 0,
                         "label": "12:00",
                         "image": "data:image/png;base64,AAAA",
-                        "active": false
+                        "state": "active"
                     }]
                 },
                 "dials": [{
