@@ -135,21 +135,42 @@ pub fn builtin_registry() -> ModuleRegistry {
 /// default layout.
 #[must_use]
 pub fn builtin_registry_in(environment: Environment) -> ModuleRegistry {
+    match environment {
+        Environment::System => builtin_registry_with(
+            Arc::new(audio::PactlBackend::new()),
+            Arc::new(notifications::DesktopNotifier::session()),
+        ),
+        Environment::Simulated => builtin_registry_with(
+            Arc::new(audio::SimulatedAudio::demo()),
+            Arc::new(notifications::SimulatedNotifier::default()),
+        ),
+    }
+}
+
+/// Registry of the built-in modules driving the audio server `audio` and
+/// showing desktop notifications through `notifier`, with their default
+/// layout.
+#[must_use]
+pub fn builtin_registry_with(
+    audio: Arc<dyn audio::AudioBackend>,
+    notifier: Arc<dyn notifications::Notifier>,
+) -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
     registry.set_default_layout(DefaultLayout::builtin());
-    registry.register(Arc::new(match environment {
-        Environment::System => audio::AudioFactory::system(),
-        Environment::Simulated => audio::AudioFactory::simulated(),
-    }));
+    registry.register(Arc::new(audio::AudioFactory::with_backend(audio)));
     registry.register(Arc::new(clock::ClockFactory::system()));
     registry.register(Arc::new(navigation::NavigationFactory));
-    registry.register(Arc::new(pomodoro::PomodoroFactory::desktop()));
+    registry.register(Arc::new(pomodoro::PomodoroFactory::with_notifier(notifier)));
     registry
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use bergadeck_module_api::{EventSender, Module, ModuleContext, ModuleEvent, TaskScope};
     use serde_json::json;
+    use tokio::sync::mpsc::{self, UnboundedReceiver};
 
     use super::*;
 
@@ -209,5 +230,63 @@ mod tests {
             registry.descriptors().len(),
             builtin_registry().descriptors().len()
         );
+    }
+
+    /// An instance of `kind` from `registry`, its events and its tasks.
+    fn instance(
+        registry: &ModuleRegistry,
+        kind: &str,
+        settings: &Value,
+    ) -> (Box<dyn Module>, UnboundedReceiver<ModuleEvent>, TaskScope) {
+        let (sender, events) = mpsc::unbounded_channel();
+        let scope = TaskScope::new();
+        let ctx = ModuleContext::for_tests(kind)
+            .with_events(EventSender::new(move |event| sender.send(event).is_ok()))
+            .with_tasks(scope.spawner());
+        let module = registry
+            .get(&kind.into())
+            .unwrap()
+            .create(ctx, settings)
+            .unwrap();
+        (module, events, scope)
+    }
+
+    /// Lets `duration` pass second by second, handing the events to `module`.
+    async fn run_for(
+        module: &mut dyn Module,
+        events: &mut UnboundedReceiver<ModuleEvent>,
+        duration: Duration,
+    ) {
+        let second = Duration::from_secs(1);
+        for _ in 0..duration.as_secs() {
+            tokio::time::sleep(second).await;
+            while let Ok(event) = events.try_recv() {
+                module.on_event(event).await;
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn builtin_modules_act_on_the_services_given() {
+        let server = Arc::new(audio::SimulatedAudio::demo());
+        let notifier = Arc::new(notifications::SimulatedNotifier::default());
+        let registry = builtin_registry_with(Arc::clone(&server) as _, Arc::clone(&notifier) as _);
+        let minute = Duration::from_secs(60);
+
+        let (mut volume, mut volume_events, _volume_tasks) =
+            instance(&registry, audio::AUDIO_KIND, &json!({}));
+        run_for(volume.as_mut(), &mut volume_events, minute).await;
+        volume.on_dial_press().await;
+        run_for(volume.as_mut(), &mut volume_events, minute).await;
+        assert!(server.state().sinks[0].muted);
+
+        let (mut timer, mut timer_events, _timer_tasks) = instance(
+            &registry,
+            pomodoro::POMODORO_KIND,
+            &json!({ "workMinutes": 1 }),
+        );
+        timer.on_key_press().await;
+        run_for(timer.as_mut(), &mut timer_events, minute + minute).await;
+        assert_eq!(notifier.shown().len(), 1);
     }
 }

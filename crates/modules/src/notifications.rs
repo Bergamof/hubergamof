@@ -2,6 +2,7 @@
 //! [`Notifier`] trait so that modules can be tested without a session bus.
 
 use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -139,6 +140,39 @@ impl Notifier for DesktopNotifier {
     }
 }
 
+/// Notifier of the simulated environment (`--demo`, tests): logs and
+/// remembers the notifications instead of showing them on the desktop.
+#[derive(Debug, Default)]
+pub struct SimulatedNotifier {
+    shown: Mutex<Vec<Notification>>,
+}
+
+impl SimulatedNotifier {
+    /// Notifications received so far, in order.
+    #[must_use]
+    pub fn shown(&self) -> Vec<Notification> {
+        self.lock().clone()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Vec<Notification>> {
+        // Only ever pushed to: a poisoned lock is still valid.
+        self.shown.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+#[async_trait]
+impl Notifier for SimulatedNotifier {
+    async fn notify(&self, notification: &Notification) -> Result<(), NotifyError> {
+        tracing::info!(
+            summary = %notification.summary,
+            body = %notification.body,
+            "simulated desktop notification"
+        );
+        self.lock().push(notification.clone());
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::net::UnixStream;
@@ -212,5 +246,17 @@ mod tests {
             ("Pause !", "Pomodoro terminé.")
         );
         assert_eq!(hints[SUPPRESS_SOUND_HINT], OwnedVariant::from(true));
+    }
+
+    #[tokio::test]
+    async fn simulated_notifications_are_only_recorded() {
+        let notifier = SimulatedNotifier::default();
+        let notification = Notification {
+            summary: "Pause !".into(),
+            body: "Pomodoro terminé.".into(),
+        };
+        notifier.notify(&notification).await.unwrap();
+        notifier.notify(&notification).await.unwrap();
+        assert_eq!(notifier.shown(), [notification.clone(), notification]);
     }
 }
