@@ -18,7 +18,7 @@ use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
 use bergadeck_manager::server::{DevOrigin, EmbeddedUi, Server, ServerContext};
 use bergadeck_manager::tray::{TrayIcon, quit_on};
-use bergadeck_modules::builtin_registry;
+use bergadeck_modules::{Environment, builtin_registry_in};
 use clap::Parser;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let (shutdown, stopping) = watch::channel(false);
 
-    let services = services(&cli.config_dir)?;
+    let services = services(&cli.config_dir, environment(cli.demo))?;
     let catalog = services.registry.descriptors().into();
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
@@ -180,8 +180,18 @@ async fn stop_server(server_task: JoinHandle<std::io::Result<()>>) {
     }
 }
 
-fn services(config_dir: &std::path::Path) -> Result<EngineServices> {
-    let registry = Arc::new(builtin_registry());
+/// What the modules act on: the demo is hermetic (simulated audio…), so that
+/// the UI, its tests and Lighthouse never touch the machine.
+fn environment(demo: bool) -> Environment {
+    if demo {
+        Environment::Simulated
+    } else {
+        Environment::System
+    }
+}
+
+fn services(config_dir: &std::path::Path, environment: Environment) -> Result<EngineServices> {
+    let registry = Arc::new(builtin_registry_in(environment));
     Ok(EngineServices {
         store: ConfigStore::new(config_dir, Arc::clone(&registry) as _),
         renderer: Arc::new(Renderer::new().context("cannot initialise the renderer")?),
@@ -227,8 +237,20 @@ fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use bergadeck_manager::device::DeckBackend as _;
+    use bergadeck_manager::engine::LiveSnapshot;
 
     use super::*;
+
+    /// Dial of the audio module in the default layout.
+    const AUDIO_DIAL_INDEX: u8 = 1;
+    const AUDIO_DIAL: usize = AUDIO_DIAL_INDEX as usize;
+    const WAIT: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn only_the_demo_is_simulated() {
+        assert_eq!(environment(true), Environment::Simulated);
+        assert_eq!(environment(false), Environment::System);
+    }
 
     #[test]
     fn cli_definition_is_consistent() {
@@ -284,7 +306,8 @@ mod tests {
     async fn demo_device_shows_the_home_page_until_shutdown() {
         let dir = tempfile::tempdir().unwrap();
         let discovery = DeviceDiscovery::new();
-        let supervisor = Supervisor::start(&discovery, services(dir.path()).unwrap());
+        let supervisor =
+            Supervisor::start(&discovery, services(dir.path(), environment(true)).unwrap());
         let devices = VirtualDevices::new(discovery.clone());
         let deck = devices.attach(virtual_plus_info(DEMO_SERIAL));
         let engine = loop {
@@ -298,6 +321,27 @@ mod tests {
         assert!(screen.keys.iter().all(Option::is_some));
         assert_eq!(screen.brightness, 70);
         assert!(screen.strip.unwrap().pixels().any(|pixel| pixel.0[0] > 128));
+
+        // The audio dial drives the simulated server, never the machine's.
+        let audio_zone = |volume: &str| {
+            let lines = vec!["Haut-parleurs".to_owned(), volume.to_owned()];
+            move |live: &LiveSnapshot| {
+                live.dials[AUDIO_DIAL]
+                    .zone
+                    .as_ref()
+                    .is_some_and(|zone| zone.lines == lines)
+            }
+        };
+        let mut live = engine.live();
+        tokio::time::timeout(WAIT, live.wait_for(audio_zone("40 %")))
+            .await
+            .unwrap()
+            .unwrap();
+        engine.rotate_dial(AUDIO_DIAL_INDEX, 2).await.unwrap();
+        tokio::time::timeout(WAIT, live.wait_for(audio_zone("50 %")))
+            .await
+            .unwrap()
+            .unwrap();
 
         supervisor.shutdown().await;
         assert!(deck.screen().keys.iter().all(Option::is_none));

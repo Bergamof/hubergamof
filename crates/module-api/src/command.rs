@@ -1,6 +1,6 @@
 //! Requests a module returns to the host after handling an input or an event.
 
-use crate::PageId;
+use crate::{ItemId, PageId};
 
 /// What the host should do after a module handled an input or an event.
 ///
@@ -25,6 +25,29 @@ pub enum Command {
     /// home key of the module when it is displayed) with the outcome of the
     /// action.
     Feedback(Feedback),
+    /// Briefly marks a given surface of the module with the outcome of an
+    /// action. Meant for [`crate::Module::on_event`], when a background task
+    /// reports the outcome of an action started by an earlier input (the
+    /// dial zone for a volume change, the pressed item for a selection).
+    /// Surfaces not displayed at that moment show nothing.
+    FeedbackOn(ModuleSurface, Feedback),
+}
+
+/// A surface of the module returning a [`Command::FeedbackOn`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ModuleSurface {
+    /// Its key on the home page.
+    HomeKey,
+    /// The touch strip zones of the dials it is assigned to.
+    Zone,
+    /// The key showing item `item` of its page `page`.
+    Item {
+        /// Page of the item.
+        page: PageId,
+        /// The item.
+        item: ItemId,
+    },
 }
 
 /// Outcome of an action, shown for a moment over its surface.

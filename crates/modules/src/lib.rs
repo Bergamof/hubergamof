@@ -2,10 +2,15 @@
 //! from.
 //!
 //! Each module implements [`bergadeck_module_api::Module`] exactly like an
-//! external module would. Available so far: [`clock`], [`navigation`] and
-//! [`pomodoro`]; audio, docker, intellij and claude come later (the manager
-//! shows a placeholder key for kinds missing from the registry).
+//! external module would. Available so far: [`audio`], [`clock`],
+//! [`navigation`] and [`pomodoro`]; docker, intellij and claude come later
+//! (the manager shows a placeholder key for kinds missing from the registry).
+//!
+//! Modules acting on the desktop (audio server, notifications, later
+//! Docker…) run against the real system or against simulated services, as
+//! chosen by the [`Environment`] given to [`builtin_registry_in`].
 
+pub mod audio;
 pub mod clock;
 pub mod navigation;
 pub mod notifications;
@@ -108,11 +113,34 @@ impl std::fmt::Debug for ModuleRegistry {
     }
 }
 
-/// Registry of the built-in modules, with their default layout.
+/// What the built-in modules act on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Environment {
+    /// The user's session: audio server, Docker…
+    #[default]
+    System,
+    /// In-memory simulations of those services, leaving the machine
+    /// untouched (`--demo`, tests): hermetic and reproducible.
+    Simulated,
+}
+
+/// Registry of the built-in modules acting on the system, with their
+/// default layout.
 #[must_use]
 pub fn builtin_registry() -> ModuleRegistry {
+    builtin_registry_in(Environment::System)
+}
+
+/// Registry of the built-in modules acting on `environment`, with their
+/// default layout.
+#[must_use]
+pub fn builtin_registry_in(environment: Environment) -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
     registry.set_default_layout(DefaultLayout::builtin());
+    registry.register(Arc::new(match environment {
+        Environment::System => audio::AudioFactory::system(),
+        Environment::Simulated => audio::AudioFactory::simulated(),
+    }));
     registry.register(Arc::new(clock::ClockFactory::system()));
     registry.register(Arc::new(navigation::NavigationFactory));
     registry.register(Arc::new(pomodoro::PomodoroFactory::desktop()));
@@ -136,13 +164,18 @@ mod tests {
         assert_eq!(
             kinds,
             [
+                audio::AUDIO_KIND,
                 clock::CLOCK_KIND,
                 navigation::NAVIGATION_KIND,
                 pomodoro::POMODORO_KIND
             ]
         );
         assert!(registry.get(&"clock".into()).is_some());
-        assert!(registry.get(&"audio".into()).is_none());
+        assert!(registry.get(&"docker".into()).is_none());
+        assert_eq!(
+            builtin_registry_in(Environment::Simulated).descriptors(),
+            registry.descriptors()
+        );
     }
 
     #[test]
@@ -152,7 +185,7 @@ mod tests {
             registry.default_settings(&clock::CLOCK_KIND.into()),
             clock::ClockFactory::system().default_settings()
         );
-        assert_eq!(registry.default_settings(&"audio".into()), json!({}));
+        assert_eq!(registry.default_settings(&"docker".into()), json!({}));
     }
 
     #[test]

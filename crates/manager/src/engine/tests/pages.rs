@@ -20,7 +20,7 @@ async fn default_configuration_shows_placeholders_and_dial_zones() {
     assert_eq!(
         fixture.labels(),
         labels(&[
-            Some("audio indisponible"),
+            Some("Audio"),
             Some("25:00 Travail"),
             Some("docker indisponible"),
             Some("intellij indisponible"),
@@ -40,10 +40,14 @@ async fn default_configuration_shows_placeholders_and_dial_zones() {
     let clock = fixture.zone_lines(0);
     assert_eq!(clock.len(), 2);
     assert!(clock[0].contains(':'));
-    // A placeholder has no zone: black, without image.
-    assert_eq!(fixture.zone_lines(1), Vec::<String>::new());
-    assert!(live.dials[1].zone.as_ref().unwrap().image.is_none());
+    // Every default dial module draws its zone.
+    assert_eq!(fixture.zone_lines(2), ["Travail · 1/4", "25:00"]);
+    assert!(live.dials[2].zone.as_ref().unwrap().image.is_some());
     assert_eq!(fixture.zone_lines(3), ["Accueil"]);
+    // The (simulated) audio module shows its gauge once it read the state.
+    fixture
+        .wait_for(|f| f.zone_lines(1) == ["Haut-parleurs", "40 %"])
+        .await;
 }
 
 #[tokio::test]

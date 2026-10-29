@@ -11,7 +11,7 @@ use bergadeck_module_api::{
     ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle, SettingField,
     SettingKind, ZoneContent, parse_settings,
 };
-use bergadeck_modules::{ModuleRegistry, builtin_registry};
+use bergadeck_modules::{Environment, ModuleRegistry, builtin_registry_in};
 use bergadeck_protocol::{
     DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ImageSize, ModuleInstance,
 };
@@ -252,7 +252,8 @@ struct FragileSettings {
 
 /// Module misbehaving as its settings say. Its key shows its tag (default
 /// `fragile`) and opens page `p` (one item `x`); its zone shows the dial
-/// turns, or the gauge of the probe; its dial, item and event handlers report success.
+/// turns, or the gauge of the probe; its dial, item and event handlers report success
+/// (an event carrying a `Vec<Command>` returns those commands instead).
 struct Fragile {
     failure: Failure,
     tag: Option<String>,
@@ -309,12 +310,16 @@ impl Module for Fragile {
         vec![Command::Feedback(Feedback::Ok)]
     }
 
-    async fn on_event(&mut self, _event: ModuleEvent) -> Vec<Command> {
+    async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
         self.misbehave().await;
         self.probe
             .fragile_events_handled
             .fetch_add(1, Ordering::SeqCst);
-        vec![Command::Feedback(Feedback::Ok)]
+        // An event carrying commands asks for exactly those.
+        match event.downcast::<Vec<Command>>() {
+            Ok(commands) => *commands,
+            Err(_) => vec![Command::Feedback(Feedback::Ok)],
+        }
     }
 
     fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
@@ -500,7 +505,7 @@ pub(super) struct Fixture {
 }
 
 pub(super) fn registry(probe: &Probe) -> Arc<ModuleRegistry> {
-    let mut registry = builtin_registry();
+    let mut registry = builtin_registry_in(Environment::Simulated);
     registry.register(Arc::new(ListFactory(probe.clone())));
     registry.register(Arc::new(FragileFactory(probe.clone())));
     Arc::new(registry)

@@ -15,13 +15,15 @@ bergadeck-module-api.workspace = true
 jiff = "0.2.38"
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
 thiserror.workspace = true
+# `process` + `io-util`: the audio module drives `pactl`.
+tokio = { workspace = true, features = ["io-util", "macros", "process", "sync", "time"] }
 tracing.workspace = true
 # Desktop notifications (`org.freedesktop.Notifications`) of the pomodoro.
 zbus = { workspace = true, features = ["proxy"] }
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "test-util"] }
 # Peer-to-peer connections: notifications are checked without a bus daemon.
 zbus = { workspace = true, features = ["p2p", "proxy", "service"] }

@@ -4,7 +4,7 @@
 
 use std::sync::atomic::Ordering;
 
-use bergadeck_module_api::{Feedback, HANDLER_BUDGET, ItemId, KeyState};
+use bergadeck_module_api::{Command, Feedback, HANDLER_BUDGET, ItemId, KeyState, ModuleSurface};
 use bergadeck_protocol::{ErrorCode, ModuleInstance};
 use image::RgbaImage;
 use serde_json::json;
@@ -127,6 +127,50 @@ async fn events_of_a_dial_module_mark_its_zone() {
     fixture.after_change(|| assert!(events.send(()))).await;
     assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
     assert_eq!(fixture.zone_mark(1), None);
+}
+
+#[tokio::test]
+async fn events_can_mark_a_named_surface_of_their_module() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![fragile("none")],
+            &[FRAGILE_KIND],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let events = fixture
+        .probe
+        .fragile_events
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap();
+    let mark = |surface| vec![Command::FeedbackOn(surface, Feedback::Alert)];
+
+    let on_zone = events.clone();
+    fixture
+        .after_change(|| assert!(on_zone.send(mark(ModuleSurface::Zone))))
+        .await;
+    assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert));
+    assert_eq!(fixture.key_mark(0), None);
+
+    let on_home = events.clone();
+    fixture
+        .after_change(|| assert!(on_home.send(mark(ModuleSurface::HomeKey))))
+        .await;
+    assert_eq!(fixture.key_mark(0), Some(Feedback::Alert));
+
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.wait_for(|f| f.page().id != HOME_PAGE_ID).await;
+    let item = ModuleSurface::Item {
+        page: FRAGILE_PAGE.into(),
+        item: "x".into(),
+    };
+    fixture
+        .after_change(|| assert!(events.send(mark(item))))
+        .await;
+    assert_eq!(fixture.key_mark(0), Some(Feedback::Alert));
 }
 
 // ---------------------------------------------------------------- Validation

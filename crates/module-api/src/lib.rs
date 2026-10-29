@@ -148,7 +148,7 @@ mod ids;
 mod module;
 
 pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingField, SettingKind};
-pub use command::{Command, Feedback};
+pub use command::{Command, Feedback, ModuleSurface};
 pub use content::{
     GaugeContent, GaugeLevel, ImageData, KeyContent, KeyState, MAX_ZONE_LINES, NavigationView,
     PageContent, PageItem, ZoneContent,
