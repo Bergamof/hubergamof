@@ -225,7 +225,10 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

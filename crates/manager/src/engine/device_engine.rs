@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bergadeck_module_api::{
-    Command, Feedback, ModuleInstanceId, NavigationView, PageContent, PageId, RedrawHandle,
+    Command, Feedback, ModuleInstanceId, ModuleSurface, NavigationView, PageContent, PageId,
+    RedrawHandle,
 };
 use bergadeck_protocol::{DeviceConfig, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -334,8 +335,22 @@ impl DeviceEngine {
     /// displayed), or else the zones of its dials.
     fn module_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
         if self.config.home.contains(module) {
-            return vec![Surface::Key(KeyTarget::Home(module.clone()))];
+            return self.home_surfaces(module);
         }
+        self.zone_surfaces(module)
+    }
+
+    /// The home key of `module`, if it is on the home page.
+    fn home_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+        if self.config.home.contains(module) {
+            vec![Surface::Key(KeyTarget::Home(module.clone()))]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The zones of the dials `module` is assigned to.
+    fn zone_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
         self.config
             .dials
             .iter()
@@ -345,6 +360,24 @@ impl DeviceEngine {
             })
             .map(|(_, dial)| Surface::Zone(dial))
             .collect()
+    }
+
+    /// Surfaces of `module` named by a [`Command::FeedbackOn`].
+    fn named_surfaces(&self, module: &ModuleInstanceId, surface: ModuleSurface) -> Vec<Surface> {
+        match surface {
+            ModuleSurface::HomeKey => self.home_surfaces(module),
+            ModuleSurface::Zone => self.zone_surfaces(module),
+            ModuleSurface::Item { page, item } => vec![Surface::Key(KeyTarget::Item {
+                module: module.clone(),
+                page,
+                item,
+            })],
+            // Surfaces added to the API after this version of the host.
+            unknown => {
+                tracing::warn!(%module, surface = ?unknown, "unsupported feedback surface");
+                Vec::new()
+            }
+        }
     }
 
     fn show_feedback(&mut self, surfaces: &[Surface], feedback: Feedback) {
@@ -371,6 +404,10 @@ impl DeviceEngine {
                     self.nav.set_row(row);
                 }
                 Command::Feedback(feedback) => self.show_feedback(surfaces, feedback),
+                Command::FeedbackOn(surface, feedback) => {
+                    let named = self.named_surfaces(source, surface);
+                    self.show_feedback(&named, feedback);
+                }
                 // Commands added to the API after this version of the host.
                 unknown => {
                     tracing::warn!(module = %source, command = ?unknown, "unsupported command");
