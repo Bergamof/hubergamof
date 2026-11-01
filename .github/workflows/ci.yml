@@ -56,6 +56,10 @@ jobs:
         id: ui
         if: ${{ !cancelled() }}
         run: make lint-ui 2>&1 | tee lint-ui.log
+      - name: Lancement de shell interdit hors tests
+        id: shell-exec
+        if: ${{ !cancelled() }}
+        run: make lint-shell-exec
       - name: Versions (Dockerfile ↔ rust-toolchain.toml, .nvmrc)
         id: versions
         if: ${{ !cancelled() }}
@@ -80,6 +84,7 @@ jobs:
         env:
           RUST: ${{ steps.rust.outcome }}
           UI: ${{ steps.ui.outcome }}
+          SHELL_EXEC: ${{ steps.shell-exec.outcome }}
           VERSIONS: ${{ steps.versions.outcome }}
           TOOLING: ${{ steps.tooling.outcome }}
         run: |
@@ -88,7 +93,7 @@ jobs:
           ui_problems=$(sed -nE 's/.*✖ ([0-9]+) problems?.*/\1/p' lint-ui.log 2>/dev/null | tail -1)
           # svelte-check sans terminal : « COMPLETED n FILES e ERRORS w WARNINGS … ».
           svelte_check=$(sed -nE 's/.*COMPLETED [0-9]+ FILES ([0-9]+) ERRORS ([0-9]+) WARNINGS.*/\1 erreur(s), \2 avertissement(s)/p' lint-ui.log 2>/dev/null | tail -1)
-          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING")" >> "$GITHUB_OUTPUT"
+          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · shell hors tests $(icon "$SHELL_EXEC") · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING")" >> "$GITHUB_OUTPUT"
 
   test:
     name: Tests

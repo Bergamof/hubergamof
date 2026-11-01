@@ -26,11 +26,12 @@ UI_DIR := ui
 GENERATED_DIR := $(UI_DIR)/src/lib/generated
 MANAGER_PACKAGE := bergadeck
 PROTOCOL_PACKAGE := bergadeck-protocol
+MODULE_API_PACKAGE := bergadeck-module-api
 
 # Pas d'invite interactive de Corepack au premier téléchargement de pnpm.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 
-.PHONY: help dev run lint lint-rust lint-ui fmt test test-rust test-ui test-e2e \
+.PHONY: help dev run lint lint-rust lint-ui lint-shell-exec fmt test test-rust test-ui test-e2e \
 	gen-types check-types check-versions check deny ui-deps ui-build build \
 	lighthouse docker install uninstall clean
 
@@ -54,11 +55,20 @@ run: ## Lance le gestionnaire sur le matériel réel
 
 ## ---------------------------------------------------------------- Qualité
 
-lint: lint-rust lint-ui ## Lint et format en mode vérification (Rust + UI)
+lint: lint-rust lint-ui lint-shell-exec ## Lint et format en mode vérification (Rust + UI)
 
 lint-rust: ## rustfmt --check + clippy (avertissements = erreurs)
 	$(CARGO) fmt --all --check
 	$(CARGO) clippy --workspace --all-targets --all-features --locked -- -D warnings
+	@# L'API des modules seule et sans features : dans le workspace, l'unification
+	@# des features masquerait un usage de `tokio::sync`, réservé à `testing`.
+	$(CARGO) clippy -p $(MODULE_API_PACKAGE) --no-default-features --locked -- -D warnings
+
+# Garde de sécurité : aucun module ne doit lancer `sh -c` (injection depuis la
+# configuration). Chemins analysés surchargeables : `make lint-shell-exec SHELL_EXEC_ROOTS=…`.
+SHELL_EXEC_ROOTS ?= crates
+lint-shell-exec: ## Interdit tout lancement de shell dans le code Rust hors tests
+	"$(CURDIR)/.github/scripts/check-shell-exec.sh" $(SHELL_EXEC_ROOTS)
 
 lint-ui: ui-deps ## Prettier + ESLint + svelte-check
 	cd "$(UI_DIR)" && $(PNPM) run lint
