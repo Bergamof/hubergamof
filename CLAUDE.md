@@ -111,7 +111,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 
 ## État du projet
 - Fait : cadrage, socle, squelette Rust + contrat `protocol`, squelette UI (client WebSocket), outillage (Makefile, CI, Docker, packaging), spikes notifications Claude + KWin (`docs/integrations-desktop.md`).
-- Fait aussi : modules audio et pomodoro + corrections des revues architecture/sécurité/tests/perf (tests hermétiques, 2 `pactl` par cran au lieu de 7, mémoire stable pendant un pomodoro) ; essai sur le vrai Stream Deck+ à faire.
+- Fait aussi : modules audio et pomodoro + corrections des revues architecture/sécurité/tests/perf (tests hermétiques, 2 `pactl` par cran au lieu de 7, mémoire stable pendant un pomodoro), validés sur le vrai Stream Deck+ (l'UI n'affiche pas encore `liveState` : étape 7).
 - Fait aussi : étape 5b-2 (serveur web/WebSocket, UI embarquée, tray zbus 6), validée sur le poste d'Adrien.
 - Fait aussi : étape 5b-1 (module-api, moteur de pages, modules clock/navigation) + corrections de la revue d'architecture (événements, validation, états/retours, isolation, budget) et des revues perf/tests, validées sur le vrai Stream Deck+.
 - Fait aussi : étape 5a (couche appareils, rendu, config) validée sur le vrai Stream Deck+ (touches, molettes, appuis, tap/appui long/glissement, affichage).
