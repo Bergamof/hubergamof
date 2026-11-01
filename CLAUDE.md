@@ -30,30 +30,30 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Toute nouvelle vérification est ajoutée à la CI ET aux `needs` du job `report`.
 - Pas encore de dépôt distant : CI non exécutée (« terminé localement, CI non vérifiée »).
 
-## Équipe d'agents (`.claude/agents/`)
-| Agent | Rôle | Écrit | Périmètre |
-|---|---|---|---|
-| Chef Bouillon (session principale) | plan, briefs, routage, arbitrage | oui | `README.md`, `CHANGELOG.md`, `LICENSE`, `crates/module-api/LICENSE`, `CLAUDE.md`, `.gitignore`, `.editorconfig`, `.claude/**` |
-| `rouille-et-paillettes` | dev Rust | oui | `crates/**` (hors LICENSE), `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml`, `.cargo/config.toml`, `ui/src/lib/generated/**` (généré), `config/example/**` |
-| `svelte-et-sauvage` | dev SvelteKit/TS/Tailwind | oui | `ui/**` (hors `ui/src/lib/generated/**`), `.nvmrc` |
-| `tuyauteur-fou` | CI/CD, packaging | oui | `.github/**`, `Dockerfile`, `.dockerignore`, `Makefile`, `packaging/**`, `lighthouserc.json` |
-| `gardien-du-phare` | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) | non | rapports |
-| `turbo-escargot` | performances | non | rapports |
-| `cerbere-le-paranoiaque` | sécurité & CVE | non | rapports |
-| `maniaque-du-plumeau` | architecture & clean code | non | rapports |
-| `capitaine-assertion` | stratégie de tests | non | rapports |
+## Équipe
+- Session principale (Chef Bouillon) : plan, briefs aux spécialistes, arbitrage et **toute écriture** (code Rust, UI, CI/CD, packaging, docs, `.claude/**`). Pas de sous-agent de développement (décision d'Adrien, 2026-11-01).
+- Conventions et pièges par techno : `.claude/rules/rust.md`, `ui.md`, `ci-packaging.md` (chargés selon les fichiers touchés).
+- Spécialistes en lecture seule (`.claude/agents/`), qui rendent des rapports :
+
+| Agent | Rôle |
+|---|---|
+| `gardien-du-phare` | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) |
+| `turbo-escargot` | performances |
+| `cerbere-le-paranoiaque` | sécurité & CVE |
+| `maniaque-du-plumeau` | architecture & clean code |
+| `capitaine-assertion` | stratégie de tests |
 
 ## Méthode de travail
-- Tâche non triviale : d'abord un plan d'action (choix techniques et fonctionnels justifiés, étapes, livrables, agents mobilisés, risques), puis attendre le « go » d'Adrien avant de coder. Écart significatif en cours de route → resoumettre.
-- Seuls les agents de dev (sur leur techno) et `tuyauteur-fou` (pipeline) écrivent du code ; le chef écrit ce qui n'est à personne. Les spécialistes rendent des rapports (sévérité, localisation, recommandation, agent propriétaire) que les propriétaires doivent suivre.
-- Boucle : dev → rapports des spécialistes concernés → corrections par les propriétaires → nouvelle passe, jusqu'à zéro bloquant/majeur. Désaccord : le chef arbitre ; enjeu significatif → Adrien.
-- Réutiliser les agents existants ; nouvelle techno → nouvel agent de dev (nom rigolo) ; jamais de suppression d'agent sans accord d'Adrien. Piège appris → enrichir la définition de l'agent.
-- Ne solliciter que les spécialistes concernés par la modification.
+- Tâche non triviale : d'abord un plan d'action (choix techniques et fonctionnels justifiés, étapes, livrables, spécialistes mobilisés, risques), puis attendre le « go » d'Adrien avant de coder. Écart significatif en cours de route → resoumettre.
+- Les spécialistes rendent des rapports (sévérité, localisation, recommandation) que la session principale doit suivre.
+- Boucle : dev → rapports des spécialistes concernés → corrections → nouvelle passe, jusqu'à zéro bloquant/majeur. Désaccord avec un spécialiste : enjeu significatif → Adrien.
+- Ne solliciter que les spécialistes concernés par la modification (chaque appel repart de zéro et coûte des tokens). Garder le contexte léger : filtrer les sorties de build/tests (erreurs, résumé) plutôt que les afficher en entier.
+- Réutiliser les spécialistes existants ; jamais de suppression d'agent sans accord d'Adrien. Piège appris → l'ajouter au fichier `.claude/rules/` de la techno (ou à la définition du spécialiste concerné).
 
 ## Définition de « done » (sauf indication contraire d'Adrien)
 - Terminé seulement quand toutes les CI déclenchées par les modifications sont vertes sur le dernier commit poussé. Des tests locaux verts ne suffisent pas.
 - Après chaque push / ouverture de PR : suivre les runs jusqu'à la fin (outils de suivi de la session, ou `gh` / API GitHub sur le SHA poussé).
-- Échec : lire les logs, identifier la cause racine, faire corriger par le propriétaire du fichier (code → agent de la techno ; pipeline → `tuyauteur-fou`), repousser, re-surveiller.
+- Échec : lire les logs, identifier la cause racine, corriger, repousser, re-surveiller.
 - Interdit pour obtenir le vert, sauf accord explicite d'Adrien : skipper/désactiver un test, assouplir le lint, `continue-on-error`, supprimer un job, baisser un seuil (couverture, Lighthouse, sévérité CVE).
 - Échec non lié (flaky, infra, service externe) : relancer une fois, puis signaler avec le diagnostic. Après ~3 échecs sur le même problème : s'arrêter et exposer diagnostic et pistes.
 - CI inaccessible : annoncer « terminé localement, CI non vérifiée », jamais « done ».

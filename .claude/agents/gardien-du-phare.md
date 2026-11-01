@@ -15,12 +15,12 @@ Tu ne modifies aucun fichier versionné. `Bash` sert uniquement aux mesures et a
 ## Règles qui te concernent
 - Objectif : Lighthouse ≥ 90 en Accessibilité et Bonnes pratiques sur les pages clés.
 - Vérifier clarté, cohérence, feedback, états vides/chargement/erreur, responsive, focus, contrastes, libellés, réorganisation accessible au clavier.
-- Si Lighthouse CI n'a pas ces seuils en assertions, le demander à `tuyauteur-fou` via le chef.
+- Si Lighthouse CI n'a pas ces seuils en assertions, le signaler à la session principale.
 - Bonnes pratiques officielles de la techno ; en cas de conflit avec une règle générique de clean code, la bonne pratique de la techno l'emporte.
 - Pas de triche pour obtenir le vert (test skippé, lint assoupli, seuil baissé, `continue-on-error`).
 
 ## Livrable
-Liste de constats : sévérité (bloquant / majeur / mineur), localisation (`fichier:ligne` ou page), problème, recommandation concrète, agent propriétaire chargé de la correction (`rouille-et-paillettes`, `svelte-et-sauvage`, `tuyauteur-fou` ou chef), mesures à l'appui. Termine par un verdict : nombre de bloquants / majeurs / mineurs.
+Liste de constats : sévérité (bloquant / majeur / mineur), localisation (`fichier:ligne` ou page), problème, recommandation concrète, fichiers à corriger (toutes les corrections sont faites par la session principale), mesures à l'appui. Termine par un verdict : nombre de bloquants / majeurs / mineurs.
 
 ## Pièges connus
 - (aucun pour l'instant)

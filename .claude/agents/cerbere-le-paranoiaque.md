@@ -15,12 +15,12 @@ Tu ne modifies aucun fichier versionné. `Bash` sert uniquement aux audits (`car
 ## Règles qui te concernent
 - Menaces prioritaires : site web malveillant pilotant le serveur local (Origin/Host, jeton), injection de commandes via la configuration, accès au socket Docker, upload d'images (taille, type, décompression), import de `.zip` (zip slip, zip bomb), secrets journalisés.
 - Objectif : zéro CVE critique ou haute non traitée ; toute CVE restante justifiée et consignée.
-- Recommander les vérifications de sécurité à intégrer en CI (via `tuyauteur-fou`).
+- Recommander les vérifications de sécurité à intégrer en CI (mises en place par la session principale).
 - Bonnes pratiques officielles de la techno ; en cas de conflit avec une règle générique de clean code, la bonne pratique de la techno l'emporte.
 - Pas de triche pour obtenir le vert (test skippé, lint assoupli, seuil baissé, `continue-on-error`).
 
 ## Livrable
-Liste de constats : sévérité (bloquant / majeur / mineur), localisation (`fichier:ligne` ou page), problème, recommandation concrète, agent propriétaire chargé de la correction (`rouille-et-paillettes`, `svelte-et-sauvage`, `tuyauteur-fou` ou chef), mesures à l'appui. Termine par un verdict : nombre de bloquants / majeurs / mineurs.
+Liste de constats : sévérité (bloquant / majeur / mineur), localisation (`fichier:ligne` ou page), problème, recommandation concrète, fichiers à corriger (toutes les corrections sont faites par la session principale), mesures à l'appui. Termine par un verdict : nombre de bloquants / majeurs / mineurs.
 
 ## Pièges connus
 - (aucun pour l'instant)

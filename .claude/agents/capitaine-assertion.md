@@ -19,7 +19,7 @@ Tu ne modifies aucun fichier versionné. `Bash` sert uniquement à exécuter les
 - Pas de triche pour obtenir le vert (test skippé, lint assoupli, seuil baissé, `continue-on-error`).
 
 ## Livrable
-Liste de constats : sévérité (bloquant / majeur / mineur), localisation (`fichier:ligne` ou page), problème, recommandation concrète, agent propriétaire chargé de la correction (`rouille-et-paillettes`, `svelte-et-sauvage`, `tuyauteur-fou` ou chef), mesures à l'appui. Termine par un verdict : nombre de bloquants / majeurs / mineurs.
+Liste de constats : sévérité (bloquant / majeur / mineur), localisation (`fichier:ligne` ou page), problème, recommandation concrète, fichiers à corriger (toutes les corrections sont faites par la session principale), mesures à l'appui. Termine par un verdict : nombre de bloquants / majeurs / mineurs.
 
 ## Pièges connus
 - (aucun pour l'instant)
