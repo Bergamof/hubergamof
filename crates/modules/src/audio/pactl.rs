@@ -4,7 +4,16 @@
 //! Every call runs `pactl` directly (never through a shell), each argument
 //! passed separately: device names are never interpolated into a command
 //! line. `pactl` stops parsing its options at the sub-command, so a device
-//! name or a negative volume (`-3277`) is never taken for an option.
+//! name is never taken for an option; volumes are absolute (unsigned).
+//!
+//! `pactl` is looked up in the `PATH` of the manager. The manager is a user
+//! service: its `PATH` is the user's own (systemd user manager or session),
+//! which is trusted like any program the user runs; a `PATH` controlled by
+//! someone else would already let them run code as the user.
+//!
+//! What `pactl` prints is bounded ([`MAX_OUTPUT_BYTES`],
+//! [`MAX_ERROR_BYTES`], [`MAX_EVENT_LINE_BYTES`]): a broken or hostile tool
+//! cannot make the manager hold unbounded memory.
 
 use std::ffi::OsString;
 use std::process::Stdio;
@@ -13,20 +22,34 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::{Child, ChildStdout, Command};
 
-use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError};
-use super::state::{AudioDevice, AudioSnapshot, Direction, Volume};
+use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
+use super::state::{AudioDevice, Defaults, Direction, PartialSnapshot, Volume};
 
 /// Program run, looked up in `PATH`.
 const PACTL: &str = "pactl";
 
 /// Longest wait for a `pactl` call (a stuck server must not stall the module).
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Largest standard output of a call: far above the JSON of any real audio
+/// setup (a few kilobytes per device).
+const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+
+/// Part of the error output of a call kept in errors and logs.
+const MAX_ERROR_BYTES: usize = 4 * 1024;
+
+/// Longest line of `pactl subscribe` kept; the end of a longer line is
+/// dropped (relevant lines are about 40 bytes).
+const MAX_EVENT_LINE_BYTES: usize = 256;
+
+/// Appended to a truncated error output.
+const TRUNCATION_MARK: &str = "…";
 
 /// Messages of `pactl subscribe` are translated: force the untranslated
-/// ones, which [`is_relevant_event`] recognises.
+/// ones, which [`event_scope`] recognises.
 const UNTRANSLATED_LOCALE: (&str, &str) = ("LC_ALL", "C");
 
 /// What `pactl` prints for a missing string (it also does so for strings it
@@ -41,11 +64,6 @@ const DEVICE_CLASS_PROPERTY: &str = "device.class";
 const MONITOR_CLASS: &str = "monitor";
 const MONITOR_SUFFIX: &str = ".monitor";
 
-/// Facilities of `pactl subscribe` whose changes alter what the module shows.
-/// Others (clients, streams, modules) are ignored: every `pactl` call of the
-/// module itself creates and removes a client.
-const RELEVANT_FACILITIES: [&str; 4] = ["sink", "source", "server", "card"];
-
 /// Audio server reached through `pactl`.
 #[derive(Debug, Clone)]
 pub struct PactlBackend {
@@ -54,33 +72,22 @@ pub struct PactlBackend {
     leading_args: Vec<OsString>,
 }
 
-impl Default for PactlBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PactlBackend {
     /// Backend running `pactl` from `PATH`.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_program(PACTL)
-    }
-
-    /// Backend running `program` instead of `pactl` (tests).
-    #[must_use]
-    pub fn with_program(program: impl Into<OsString>) -> Self {
         Self {
-            program: program.into(),
+            program: PACTL.into(),
             leading_args: Vec::new(),
         }
     }
 
-    /// Backend running the shell script `script` instead of `pactl`. The
-    /// script is read by `/bin/sh` rather than executed: executing a file
-    /// just written fails (`ETXTBSY`) when another thread forks meanwhile.
+    /// Backend running the shell script `script` instead of `pactl` (tests).
+    /// The script is read by `/bin/sh` rather than executed: executing a
+    /// file just written fails (`ETXTBSY`) when another thread forks
+    /// meanwhile.
     #[cfg(test)]
-    fn shell_script(script: impl Into<OsString>) -> Self {
+    pub(super) fn shell_script(script: impl Into<OsString>) -> Self {
         Self {
             program: "/bin/sh".into(),
             leading_args: vec![script.into()],
@@ -105,23 +112,37 @@ impl PactlBackend {
         }
     }
 
-    /// Runs `pactl args…` and returns what it printed.
+    /// Runs `pactl args…` and returns what it printed; the process is killed
+    /// if it takes longer than [`COMMAND_TIMEOUT`] or prints more than
+    /// [`MAX_OUTPUT_BYTES`].
     async fn run(&self, args: &[String]) -> Result<Vec<u8>, AudioError> {
-        let name = args.join(" ");
-        let mut command = self.command(args);
-        command.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let output = tokio::time::timeout(COMMAND_TIMEOUT, command.output())
-            .await
-            .map_err(|_| AudioError::Timeout {
-                command: name.clone(),
-                timeout: COMMAND_TIMEOUT,
-            })?
+        let mut child = self
+            .command(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|source| self.spawn_error(source))?;
+        let collected = tokio::time::timeout(COMMAND_TIMEOUT, collect(&mut child)).await;
+        let output = match collected {
+            Err(_) => {
+                return Err(AudioError::Timeout {
+                    command: command_line(args),
+                    timeout: COMMAND_TIMEOUT,
+                });
+            }
+            Ok(Err(reason)) => {
+                return Err(AudioError::InvalidOutput {
+                    command: command_line(args),
+                    reason,
+                });
+            }
+            Ok(Ok(output)) => output,
+        };
         if !output.status.success() {
             return Err(AudioError::Failed {
-                command: name,
+                command: command_line(args),
                 status: output.status.to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                stderr: output.stderr,
             });
         }
         Ok(output.stdout)
@@ -130,26 +151,111 @@ impl PactlBackend {
     async fn run_json(&self, args: &[String]) -> Result<Value, AudioError> {
         let output = self.run(args).await?;
         serde_json::from_slice(&output).map_err(|error| AudioError::InvalidOutput {
-            command: args.join(" "),
+            command: command_line(args),
             reason: error.to_string(),
         })
     }
+
+    /// Reads one part of the state, `None` when `wanted` is false.
+    async fn read_part(
+        &self,
+        wanted: bool,
+        args: Vec<String>,
+    ) -> Result<Option<Value>, AudioError> {
+        if wanted {
+            self.run_json(&args).await.map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl Default for PactlBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// What a finished call printed.
+struct Output {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    /// Error output, truncated to [`MAX_ERROR_BYTES`].
+    stderr: String,
+}
+
+/// Waits for `child` while reading its outputs within their bounds; the
+/// error explains why the output is unusable.
+async fn collect(child: &mut Child) -> Result<Output, String> {
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        return Err("outputs not captured".into());
+    };
+    let (stdout, stderr, status) = tokio::try_join!(
+        read_bounded(stdout, MAX_OUTPUT_BYTES),
+        read_truncated(stderr, MAX_ERROR_BYTES),
+        async { child.wait().await.map_err(|error| error.to_string()) },
+    )?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Everything `reader` produces, or an error past `limit` bytes.
+async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut bounded = reader.take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1));
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > limit {
+        return Err(format!("more than {limit} bytes"));
+    }
+    Ok(bytes)
+}
+
+/// The first `limit` bytes of `reader` as text, the rest read and dropped
+/// (so that the process never blocks on a full pipe).
+async fn read_truncated(
+    mut reader: impl AsyncRead + Unpin,
+    limit: usize,
+) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    (&mut reader)
+        .take(u64::try_from(limit).unwrap_or(u64::MAX))
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    let dropped = tokio::io::copy(&mut reader, &mut tokio::io::sink())
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut text = String::from_utf8_lossy(&bytes).trim().to_owned();
+    if dropped > 0 {
+        text.push_str(TRUNCATION_MARK);
+    }
+    Ok(text)
+}
+
+/// The arguments of a call as one line, for errors.
+fn command_line(args: &[String]) -> String {
+    args.join(" ")
 }
 
 #[async_trait]
 impl AudioBackend for PactlBackend {
-    async fn snapshot(&self) -> Result<AudioSnapshot, AudioError> {
-        let (info_args, sinks_args, sources_args) = (
-            info_args(),
-            list_args(Direction::Output),
-            list_args(Direction::Input),
-        );
+    async fn read(&self, scope: ReadScope) -> Result<PartialSnapshot, AudioError> {
         let (info, sinks, sources) = tokio::try_join!(
-            self.run_json(&info_args),
-            self.run_json(&sinks_args),
-            self.run_json(&sources_args),
+            self.read_part(scope.defaults, info_args()),
+            self.read_part(scope.outputs, list_args(Direction::Output)),
+            self.read_part(scope.inputs, list_args(Direction::Input)),
         )?;
-        Ok(parse_snapshot(&info, &sinks, &sources))
+        Ok(PartialSnapshot {
+            sinks: sinks.map(|list| parse_devices(&list, false)),
+            sources: sources.map(|list| parse_devices(&list, true)),
+            defaults: info.map(|info| parse_defaults(&info)),
+        })
     }
 
     async fn apply(&self, change: &AudioChange) -> Result<(), AudioError> {
@@ -167,12 +273,12 @@ impl AudioBackend for PactlBackend {
             .stdout
             .take()
             .ok_or_else(|| AudioError::InvalidOutput {
-                command: subscribe_args().join(" "),
+                command: command_line(&subscribe_args()),
                 reason: "no standard output".into(),
             })?;
         Ok(Box::new(PactlChanges {
             _child: child,
-            lines: BufReader::new(stdout).lines(),
+            lines: BoundedLines::new(BufReader::new(stdout), MAX_EVENT_LINE_BYTES),
         }))
     }
 }
@@ -180,17 +286,58 @@ impl AudioBackend for PactlBackend {
 /// Lines of a running `pactl subscribe`, killed when dropped.
 struct PactlChanges {
     _child: Child,
-    lines: Lines<BufReader<ChildStdout>>,
+    lines: BoundedLines<BufReader<ChildStdout>>,
 }
 
 #[async_trait]
 impl AudioChanges for PactlChanges {
-    async fn changed(&mut self) -> bool {
+    async fn next_change(&mut self) -> Option<ReadScope> {
         loop {
             match self.lines.next_line().await {
-                Ok(Some(line)) if is_relevant_event(&line) => return true,
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => return false,
+                Ok(Some(line)) => {
+                    if let Some(scope) = event_scope(&String::from_utf8_lossy(&line)) {
+                        return Some(scope);
+                    }
+                }
+                Ok(None) | Err(_) => return None,
+            }
+        }
+    }
+}
+
+/// Lines of `reader`, each cut to `limit` bytes. Cancel-safe: the part of a
+/// line read before a cancellation is kept for the next call.
+struct BoundedLines<R> {
+    reader: R,
+    limit: usize,
+    line: Vec<u8>,
+}
+
+impl<R: AsyncBufRead + Unpin> BoundedLines<R> {
+    fn new(reader: R, limit: usize) -> Self {
+        Self {
+            reader,
+            limit,
+            line: Vec::new(),
+        }
+    }
+
+    /// The next line without its end, `None` at the end of the input.
+    async fn next_line(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        loop {
+            let available = self.reader.fill_buf().await?;
+            if available.is_empty() {
+                return Ok((!self.line.is_empty()).then(|| std::mem::take(&mut self.line)));
+            }
+            let end = available.iter().position(|&byte| byte == b'\n');
+            let content = &available[..end.unwrap_or(available.len())];
+            let room = self.limit.saturating_sub(self.line.len());
+            self.line
+                .extend_from_slice(&content[..content.len().min(room)]);
+            let consumed = end.map_or(available.len(), |end| end + 1);
+            self.reader.consume(consumed);
+            if end.is_some() {
+                return Ok(Some(std::mem::take(&mut self.line)));
             }
         }
     }
@@ -222,10 +369,12 @@ fn subscribe_args() -> Vec<String> {
 /// Arguments applying `change`.
 fn change_args(change: &AudioChange) -> Vec<String> {
     match change {
-        // A signed integer is a relative change in PulseAudio units, added
-        // to every channel.
-        AudioChange::SinkVolume { sink, delta } => {
-            vec!["set-sink-volume".into(), sink.clone(), format!("{delta:+}")]
+        // One unsigned integer per channel: absolute volumes in PulseAudio
+        // units, channel by channel.
+        AudioChange::SinkVolume { sink, volume } => {
+            let mut args = vec!["set-sink-volume".to_owned(), sink.clone()];
+            args.extend(volume.channels().iter().map(u32::to_string));
+            args
         }
         AudioChange::Mute {
             direction,
@@ -249,29 +398,33 @@ fn change_args(change: &AudioChange) -> Vec<String> {
     }
 }
 
-/// Whether a line of `pactl subscribe` (untranslated: `Event 'change' on
-/// sink #54`) reports a change of a [`RELEVANT_FACILITIES`].
-fn is_relevant_event(line: &str) -> bool {
-    let Some((_, target)) = line.split_once(" on ") else {
-        return false;
-    };
-    let facility = target.split_whitespace().next().unwrap_or_default();
-    line.starts_with("Event ") && RELEVANT_FACILITIES.contains(&facility)
-}
-
-/// Builds the snapshot from the JSON of `info`, `list sinks` and `list
-/// sources`. Tolerant: entries without a name are skipped, missing fields
-/// take neutral values.
-fn parse_snapshot(info: &Value, sinks: &Value, sources: &Value) -> AudioSnapshot {
-    let info = ServerInfo::deserialize(info).unwrap_or_default();
-    AudioSnapshot {
-        sinks: parse_devices(sinks, false),
-        sources: parse_devices(sources, true),
-        default_sink: info.default_sink_name.filter(|name| is_known(name)),
-        default_source: info.default_source_name.filter(|name| is_known(name)),
+/// What to read again after a line of `pactl subscribe` (untranslated:
+/// `Event 'change' on sink #54`), `None` for events that do not alter what
+/// the module shows: clients, streams and modules (every `pactl` call of the
+/// module itself creates and removes a client).
+fn event_scope(line: &str) -> Option<ReadScope> {
+    let target = line.strip_prefix("Event ")?.split_once(" on ")?.1;
+    match target.split_whitespace().next()? {
+        "sink" => Some(ReadScope::OUTPUTS),
+        "source" => Some(ReadScope::INPUTS),
+        "server" => Some(ReadScope::DEFAULTS),
+        // A card profile change adds and removes devices.
+        "card" => Some(ReadScope::ALL),
+        _ => None,
     }
 }
 
+/// Defaults from the JSON of `info`; tolerant, like [`parse_devices`].
+fn parse_defaults(info: &Value) -> Defaults {
+    let info = ServerInfo::deserialize(info).unwrap_or_default();
+    Defaults {
+        sink: info.default_sink_name.filter(|name| is_known(name)),
+        source: info.default_source_name.filter(|name| is_known(name)),
+    }
+}
+
+/// Devices from the JSON of `list sinks|sources`. Tolerant: entries without
+/// a name are skipped, missing fields take neutral values.
 fn parse_devices(list: &Value, skip_monitors: bool) -> Vec<AudioDevice> {
     list.as_array()
         .into_iter()
@@ -375,6 +528,7 @@ mod tests {
 
     use serde_json::json;
 
+    use super::super::state::AudioSnapshot;
     use super::*;
 
     const INFO: &str = include_str!("fixtures/pipewire-info.json");
@@ -385,6 +539,18 @@ mod tests {
 
     fn json(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
+    }
+
+    /// The snapshot built from the JSON of `info`, `list sinks` and `list
+    /// sources`.
+    fn parse_snapshot(info: &Value, sinks: &Value, sources: &Value) -> AudioSnapshot {
+        let mut snapshot = AudioSnapshot::default();
+        snapshot.update(PartialSnapshot {
+            sinks: Some(parse_devices(sinks, false)),
+            sources: Some(parse_devices(sources, true)),
+            defaults: Some(parse_defaults(info)),
+        });
+        snapshot
     }
 
     #[test]
@@ -466,16 +632,9 @@ mod tests {
             (
                 AudioChange::SinkVolume {
                     sink: name.into(),
-                    delta: -3277,
+                    volume: Volume::new(vec![3277, 65_536]),
                 },
-                vec!["set-sink-volume", name, "-3277"],
-            ),
-            (
-                AudioChange::SinkVolume {
-                    sink: "s".into(),
-                    delta: 3277,
-                },
-                vec!["set-sink-volume", "s", "+3277"],
+                vec!["set-sink-volume", name, "3277", "65536"],
             ),
             (
                 AudioChange::Mute {
@@ -520,16 +679,46 @@ mod tests {
     }
 
     #[test]
-    fn only_device_and_server_events_are_relevant() {
-        assert!(is_relevant_event("Event 'change' on sink #54"));
-        assert!(is_relevant_event("Event 'new' on source #60"));
-        assert!(is_relevant_event("Event 'change' on server #4294967295"));
-        assert!(is_relevant_event("Event 'remove' on card #3"));
-        assert!(!is_relevant_event("Event 'new' on client #201"));
-        assert!(!is_relevant_event("Event 'change' on sink-input #12"));
-        assert!(!is_relevant_event("Event 'change' on source-output #12"));
-        assert!(!is_relevant_event("Got SIGINT, exiting."));
-        assert!(!is_relevant_event(""));
+    fn device_and_server_events_name_what_changed() {
+        assert_eq!(
+            event_scope("Event 'change' on sink #54"),
+            Some(ReadScope::OUTPUTS)
+        );
+        assert_eq!(
+            event_scope("Event 'new' on source #60"),
+            Some(ReadScope::INPUTS)
+        );
+        assert_eq!(
+            event_scope("Event 'change' on server #4294967295"),
+            Some(ReadScope::DEFAULTS)
+        );
+        assert_eq!(
+            event_scope("Event 'remove' on card #3"),
+            Some(ReadScope::ALL)
+        );
+        assert_eq!(event_scope("Event 'new' on client #201"), None);
+        assert_eq!(event_scope("Event 'change' on sink-input #12"), None);
+        assert_eq!(event_scope("Event 'change' on source-output #12"), None);
+        // Only lines starting with `Event `.
+        assert_eq!(event_scope("Got SIGINT, on sink exiting."), None);
+        assert_eq!(event_scope("x Event 'change' on sink #1"), None);
+        assert_eq!(event_scope(""), None);
+    }
+
+    #[tokio::test]
+    async fn event_lines_are_cut_to_their_bound() {
+        let long = "x".repeat(MAX_EVENT_LINE_BYTES * 3);
+        let input = format!("short\n{long}\nEvent 'change' on sink #1\nlast");
+        let mut lines = BoundedLines::new(input.as_bytes(), MAX_EVENT_LINE_BYTES);
+        assert_eq!(lines.next_line().await.unwrap().unwrap(), b"short");
+        let cut = lines.next_line().await.unwrap().unwrap();
+        assert_eq!(cut.len(), MAX_EVENT_LINE_BYTES);
+        assert_eq!(
+            lines.next_line().await.unwrap().unwrap(),
+            b"Event 'change' on sink #1"
+        );
+        assert_eq!(lines.next_line().await.unwrap().unwrap(), b"last");
+        assert_eq!(lines.next_line().await.unwrap(), None);
     }
 
     /// A fake `pactl`: a shell script printing the fixtures and recording
@@ -563,15 +752,104 @@ mod tests {
 esac"#;
 
     #[tokio::test]
-    async fn the_snapshot_comes_from_three_json_calls() {
+    async fn each_part_of_the_state_costs_one_json_call() {
         let dir = tempfile::tempdir().unwrap();
         let backend = PactlBackend::shell_script(fake_pactl(dir.path(), FIXTURE_LISTER));
-        let snapshot = backend.snapshot().await.unwrap();
-        assert_eq!(snapshot.sinks.len(), 1);
-        assert_eq!(snapshot.sources.len(), 1);
+        let full = backend.read(ReadScope::ALL).await.unwrap();
+        assert_eq!(full.sinks.unwrap().len(), 1);
+        assert_eq!(full.sources.unwrap().len(), 1);
+        assert_eq!(
+            full.defaults.unwrap().sink.as_deref(),
+            Some(INTERNAL_OUTPUT)
+        );
         let log = std::fs::read_to_string(dir.path().join("args.log")).unwrap();
         assert!(log.contains("LC_ALL=C"));
         assert_eq!(log.matches("--format=json").count(), 3);
+
+        let outputs = backend.read(ReadScope::OUTPUTS).await.unwrap();
+        assert!(outputs.sinks.is_some());
+        assert_eq!((outputs.sources, outputs.defaults), (None, None));
+        let log = std::fs::read_to_string(dir.path().join("args.log")).unwrap();
+        assert_eq!(log.matches("--format=json").count(), 4);
+        assert_eq!(log.matches("sinks").count(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stuck_pactl_times_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = PactlBackend::shell_script(fake_pactl(dir.path(), "exec sleep 30"));
+        let started = tokio::time::Instant::now();
+        let error = backend.read(ReadScope::DEFAULTS).await.unwrap_err();
+        assert!(
+            matches!(&error, AudioError::Timeout { command, timeout }
+                if command == "--format=json info" && *timeout == COMMAND_TIMEOUT),
+            "{error}"
+        );
+        assert_eq!(started.elapsed(), COMMAND_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn oversized_outputs_are_refused_and_errors_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let flood = format!("head -c {} /dev/zero", MAX_OUTPUT_BYTES + 1);
+        let backend = PactlBackend::shell_script(fake_pactl(dir.path(), &flood));
+        let error = backend.read(ReadScope::OUTPUTS).await.unwrap_err();
+        assert!(
+            matches!(&error, AudioError::InvalidOutput { reason, .. } if reason.starts_with("more than")),
+            "{error}"
+        );
+
+        let other = tempfile::tempdir().unwrap();
+        let noisy = format!(
+            "head -c {} /dev/zero | tr '\\0' e >&2\nexit 1",
+            MAX_ERROR_BYTES * 10
+        );
+        let backend = PactlBackend::shell_script(fake_pactl(other.path(), &noisy));
+        let error = backend.read(ReadScope::OUTPUTS).await.unwrap_err();
+        let AudioError::Failed { stderr, .. } = &error else {
+            panic!("failure expected, got {error}");
+        };
+        assert_eq!(stderr.len(), MAX_ERROR_BYTES + TRUNCATION_MARK.len());
+        assert!(stderr.ends_with(TRUNCATION_MARK));
+    }
+
+    #[tokio::test]
+    async fn dropping_a_subscription_kills_pactl() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let body = format!("echo $$ > '{}'\nexec sleep 30", pid_file.display());
+        let backend = PactlBackend::shell_script(fake_pactl(dir.path(), &body));
+        let changes = backend.subscribe().await.unwrap();
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(pid) = std::fs::read_to_string(&pid_file)
+                    && let Ok(pid) = pid.trim().parse::<u32>()
+                {
+                    return pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(is_running(pid));
+        drop(changes);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while is_running(pid) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("pactl subscribe still running");
+    }
+
+    /// Whether process `pid` exists and is not a zombie (killed, not reaped).
+    fn is_running(pid: u32) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+            // `pid (comm) state …`: the state follows the last parenthesis.
+            stat.rsplit_once(") ")
+                .is_some_and(|(_, rest)| !rest.starts_with('Z'))
+        })
     }
 
     #[tokio::test]
@@ -597,7 +875,7 @@ esac"#;
             dir.path(),
             "echo 'Connection failure' >&2\nexit 1",
         ));
-        let error = failing.snapshot().await.unwrap_err();
+        let error = failing.read(ReadScope::ALL).await.unwrap_err();
         assert!(
             matches!(&error, AudioError::Failed { stderr, .. } if stderr == "Connection failure"),
             "{error}"
@@ -606,13 +884,16 @@ esac"#;
         let other = tempfile::tempdir().unwrap();
         let garbage = PactlBackend::shell_script(fake_pactl(other.path(), "echo 'not json'"));
         assert!(matches!(
-            garbage.snapshot().await,
+            garbage.read(ReadScope::ALL).await,
             Err(AudioError::InvalidOutput { .. })
         ));
 
-        let missing = PactlBackend::with_program("/nonexistent/bergadeck/pactl");
+        let missing = PactlBackend {
+            program: "/nonexistent/bergadeck/pactl".into(),
+            leading_args: Vec::new(),
+        };
         assert!(matches!(
-            missing.snapshot().await,
+            missing.read(ReadScope::ALL).await,
             Err(AudioError::Spawn { .. })
         ));
         assert!(missing.subscribe().await.is_err());
@@ -624,7 +905,7 @@ esac"#;
         let body = "echo \"Event 'new' on client #1\"\necho \"Event 'change' on sink #54\"\necho \"Event 'remove' on client #1\"";
         let backend = PactlBackend::shell_script(fake_pactl(dir.path(), body));
         let mut changes = backend.subscribe().await.unwrap();
-        assert!(changes.changed().await);
-        assert!(!changes.changed().await);
+        assert_eq!(changes.next_change().await, Some(ReadScope::OUTPUTS));
+        assert_eq!(changes.next_change().await, None);
     }
 }

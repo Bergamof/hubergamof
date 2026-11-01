@@ -23,7 +23,7 @@ use bergadeck_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory,
 };
-use bergadeck_modules::builtin_registry;
+use bergadeck_modules::{BuiltinServices, builtin_registry_with};
 use bergadeck_protocol::{
     ClientMessage, DeviceConfig, ErrorCode, LiveState, ModuleInstance, ServerMessage,
 };
@@ -135,7 +135,7 @@ struct Devices {
 impl Devices {
     fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let mut registry = builtin_registry();
+        let mut registry = builtin_registry_with(BuiltinServices::simulated());
         registry.register(Arc::new(CounterFactory));
         let registry = Arc::new(registry);
         let services = EngineServices {

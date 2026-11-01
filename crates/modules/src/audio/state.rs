@@ -52,30 +52,27 @@ impl Volume {
         percent_of(self.average())
     }
 
-    /// Clamps the change `delta` so that the loudest channel stays at or
-    /// below `ceiling` and the quietest at or above 0: the channels move
-    /// together and keep their balance. A volume already above `ceiling`
-    /// (set elsewhere) is never raised, nor lowered by this clamp.
+    /// The volume after a dial change of `delta` (PulseAudio units):
+    ///
+    /// - raising moves every channel by the same amount, keeping their
+    ///   balance, until the loudest one reaches `ceiling`; a volume already
+    ///   above `ceiling` (set elsewhere) is not raised;
+    /// - lowering takes `delta` from every channel, each stopping at 0 on
+    ///   its own, so that the dial always reaches silence.
     #[must_use]
-    pub fn clamp_change(&self, delta: i64, ceiling: u32) -> i64 {
+    pub fn stepped(&self, delta: i64, ceiling: u32) -> Self {
         let loudest = self.channels.iter().copied().max().unwrap_or(0);
-        let quietest = self.channels.iter().copied().min().unwrap_or(0);
-        if delta > 0 {
+        let delta = if delta > 0 {
             delta.min(i64::from(ceiling.saturating_sub(loudest)))
         } else {
-            delta.max(-i64::from(quietest))
-        }
-    }
-
-    /// The volume with `delta` added to every channel, within `0..=u32::MAX`.
-    #[must_use]
-    pub fn shifted(&self, delta: i64) -> Self {
+            delta
+        };
         let channels = self
             .channels
             .iter()
             .map(|&level| {
-                let shifted = (i64::from(level) + delta).clamp(0, i64::from(u32::MAX));
-                u32::try_from(shifted).unwrap_or(u32::MAX)
+                let stepped = (i64::from(level) + delta).clamp(0, i64::from(u32::MAX));
+                u32::try_from(stepped).unwrap_or(u32::MAX)
             })
             .collect();
         Self { channels }
@@ -108,6 +105,27 @@ pub struct AudioDevice {
     pub volume: Volume,
     /// Whether the device is muted.
     pub muted: bool,
+}
+
+/// Default devices, as reported by the server.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Defaults {
+    /// Name of the default output.
+    pub sink: Option<String>,
+    /// Name of the default input.
+    pub source: Option<String>,
+}
+
+/// The parts of the server state read for a [`ReadScope`] (`None`: not
+/// read).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartialSnapshot {
+    /// Outputs, in server order.
+    pub sinks: Option<Vec<AudioDevice>>,
+    /// Inputs, in server order, without the monitors of the outputs.
+    pub sources: Option<Vec<AudioDevice>>,
+    /// Default devices.
+    pub defaults: Option<Defaults>,
 }
 
 /// Outputs, inputs and defaults of the audio server.
@@ -184,6 +202,20 @@ impl AudioSnapshot {
         }
     }
 
+    /// Replaces the parts of the state that `partial` holds.
+    pub fn update(&mut self, partial: PartialSnapshot) {
+        if let Some(sinks) = partial.sinks {
+            self.sinks = sinks;
+        }
+        if let Some(sources) = partial.sources {
+            self.sources = sources;
+        }
+        if let Some(defaults) = partial.defaults {
+            self.default_sink = defaults.sink;
+            self.default_source = defaults.source;
+        }
+    }
+
     fn devices_mut(&mut self, direction: Direction) -> &mut Vec<AudioDevice> {
         match direction {
             Direction::Output => &mut self.sinks,
@@ -218,42 +250,81 @@ mod tests {
     }
 
     #[test]
-    fn changes_stop_at_the_ceiling_and_at_zero() {
+    fn raising_stops_at_the_ceiling_and_lowering_at_zero() {
         let ceiling = VOLUME_NORM;
         let volume = Volume::uniform(level_of_percent(97), 2);
         assert_eq!(
-            volume.clamp_change(FIVE_PERCENT, ceiling),
-            i64::from(ceiling - level_of_percent(97))
+            volume.stepped(FIVE_PERCENT, ceiling).channels(),
+            [ceiling; 2]
         );
-        assert_eq!(volume.clamp_change(-FIVE_PERCENT, ceiling), -FIVE_PERCENT);
-        let quiet = Volume::uniform(1000, 2);
-        assert_eq!(quiet.clamp_change(-FIVE_PERCENT, ceiling), -1000);
         assert_eq!(
-            Volume::default().clamp_change(FIVE_PERCENT, ceiling),
-            FIVE_PERCENT
+            volume.stepped(-FIVE_PERCENT, ceiling).channels(),
+            [level_of_percent(92); 2]
+        );
+        let quiet = Volume::uniform(1000, 2);
+        assert_eq!(quiet.stepped(-FIVE_PERCENT, ceiling).channels(), [0; 2]);
+        assert_eq!(
+            Volume::default().stepped(FIVE_PERCENT, ceiling),
+            Volume::default()
         );
     }
 
     #[test]
-    fn unequal_channels_keep_their_gap_and_the_loudest_caps() {
+    fn raising_keeps_the_balance_and_lowering_reaches_silence() {
         let ceiling = VOLUME_NORM;
         let volume = Volume::new(vec![50_000, 60_000]);
-        let delta = volume.clamp_change(10_000, ceiling);
-        assert_eq!(delta, 5536);
-        let raised = volume.shifted(delta);
-        assert_eq!(raised.channels(), [55_536, VOLUME_NORM]);
-        let lowered = volume.shifted(volume.clamp_change(-55_000, ceiling));
-        assert_eq!(lowered.channels(), [0, 10_000]);
+        // The loudest channel caps the raise, the gap is kept.
+        assert_eq!(
+            volume.stepped(10_000, ceiling).channels(),
+            [55_536, VOLUME_NORM]
+        );
+        // Lowering goes on once the quietest channel is silent.
+        let lowered = volume.stepped(-55_000, ceiling);
+        assert_eq!(lowered.channels(), [0, 5_000]);
+        assert_eq!(lowered.stepped(-10_000, ceiling).channels(), [0, 0]);
     }
 
     #[test]
     fn a_volume_above_the_ceiling_is_not_raised_but_can_be_lowered() {
         let volume = Volume::uniform(level_of_percent(140), 2);
-        assert_eq!(volume.clamp_change(FIVE_PERCENT, VOLUME_NORM), 0);
+        assert_eq!(volume.stepped(FIVE_PERCENT, VOLUME_NORM), volume);
         assert_eq!(
-            volume.clamp_change(-FIVE_PERCENT, VOLUME_NORM),
-            -FIVE_PERCENT
+            volume.stepped(-FIVE_PERCENT, VOLUME_NORM).channels(),
+            [level_of_percent(140) - 3277; 2]
         );
+    }
+
+    #[test]
+    fn partial_reads_replace_only_their_parts() {
+        let device = |name: &str| AudioDevice {
+            name: name.into(),
+            description: name.into(),
+            volume: Volume::default(),
+            muted: false,
+        };
+        let mut snapshot = AudioSnapshot {
+            sinks: vec![device("a")],
+            sources: vec![device("mic")],
+            default_sink: Some("a".into()),
+            default_source: Some("mic".into()),
+        };
+        snapshot.update(PartialSnapshot {
+            sinks: Some(vec![device("b")]),
+            ..PartialSnapshot::default()
+        });
+        assert_eq!(snapshot.sinks, [device("b")]);
+        assert_eq!(snapshot.sources, [device("mic")]);
+        assert_eq!(snapshot.default_sink.as_deref(), Some("a"));
+        snapshot.update(PartialSnapshot {
+            defaults: Some(Defaults {
+                sink: Some("b".into()),
+                source: None,
+            }),
+            ..PartialSnapshot::default()
+        });
+        assert_eq!(snapshot.default_sink.as_deref(), Some("b"));
+        assert_eq!(snapshot.default_source, None);
+        assert_eq!(snapshot.sinks, [device("b")]);
     }
 
     #[test]

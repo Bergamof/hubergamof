@@ -28,7 +28,9 @@ pub enum ModuleError {
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Deserializes a settings object into the typed settings of a module.
+/// Deserializes a settings object into the typed settings of a module,
+/// without checking the bounds declared in its descriptor: modules with
+/// bounded settings use [`ModuleDescriptor::parse_settings`], which does both.
 ///
 /// Missing fields take their `#[serde(default)]` values, so a module stays
 /// usable with settings written by an older version.

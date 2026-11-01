@@ -107,7 +107,7 @@ impl Supervisor {
     }
 
     /// Stops every engine (modules destroyed, screens blanked) and waits for
-    /// them, at most [`SHUTDOWN_TIMEOUT`] per engine.
+    /// them, at most `SHUTDOWN_TIMEOUT` per engine.
     pub async fn shutdown(self) {
         let _ = self.stop.send(());
         if let Err(error) = self.task.await {
@@ -236,7 +236,7 @@ mod tests {
 
     fn handle() -> EngineHandle {
         let info = virtual_plus_info(DEMO_SERIAL);
-        let config: DeviceConfig = default_config(&info, &bergadeck_modules::builtin_registry());
+        let config: DeviceConfig = default_config(&info, &crate::testing::builtin_registry());
         let (requests, _) = mpsc::channel(1);
         let (_, live) = watch::channel(LiveSnapshot::empty(DEMO_SERIAL));
         let (_, config) = watch::channel(config);

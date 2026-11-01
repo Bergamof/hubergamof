@@ -3,18 +3,19 @@
 //! input on its pages.
 //!
 //! The audio server is reached through an [`AudioBackend`]: `pactl` on the
-//! session server ([`AudioFactory::system`]) or an in-memory server
-//! ([`AudioFactory::simulated`], `--demo` and tests). Handlers never wait for
-//! it (see [`worker`]): they update what is shown at once and queue the
-//! change; failures come back as a ⚠ on the surface concerned, and the
-//! state is read again after every change and every external change.
+//! session server ([`PactlBackend`]) or an in-memory server
+//! ([`SimulatedAudio`], `--demo` and tests), shared by every instance
+//! through one hub (module `hub`). Handlers never wait for it: they update
+//! what is shown at once and submit the change; failures come back as a ⚠
+//! on the surface concerned, and what changed is read again after every
+//! change, made here or elsewhere.
 
 mod backend;
+mod hub;
 mod icons;
 mod pactl;
 mod simulated;
 mod state;
-mod worker;
 
 use std::sync::Arc;
 
@@ -23,18 +24,19 @@ use bergadeck_module_api::{
     Command, Feedback, GaugeContent, GaugeLevel, ItemId, KeyContent, KeyState, Module,
     ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
     ModuleSurface, NavigationView, PageContent, PageId, PageItem, SettingField, SettingKind,
-    ZoneContent, parse_settings,
+    ZoneContent,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::mpsc::{self, UnboundedSender};
 
-pub use backend::{AudioBackend, AudioChange, AudioChanges, AudioError};
+pub use backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
+use hub::{AudioEvent, AudioHub, HubState, Sequence, ServerView, Subscription, forward_states};
 pub use pactl::PactlBackend;
 pub use simulated::SimulatedAudio;
-pub use state::{AudioDevice, AudioSnapshot, Direction, VOLUME_NORM, Volume};
+pub use state::{
+    AudioDevice, AudioSnapshot, Defaults, Direction, PartialSnapshot, VOLUME_NORM, Volume,
+};
 use state::{level_of_percent, percent_of};
-use worker::{AudioEvent, Request, Sequence, run_worker, watch_changes};
 
 /// Kind of the audio module.
 pub const AUDIO_KIND: &str = "audio";
@@ -75,87 +77,78 @@ const MUTED_VALUE: &str = "Muet";
 const UNAVAILABLE_TEXT: &str = "Audio indisponible";
 const NO_OUTPUT_TEXT: &str = "Aucune sortie";
 
-/// Creates [`Audio`] instances, all driving the same audio server.
+/// Creates [`Audio`] instances, all driving the same audio server through
+/// one hub.
 #[derive(Clone)]
 pub struct AudioFactory {
-    backend: Arc<dyn AudioBackend>,
+    hub: Arc<AudioHub>,
 }
 
 impl AudioFactory {
-    /// Factory driving the session audio server through `pactl`.
-    #[must_use]
-    pub fn system() -> Self {
-        Self::with_backend(Arc::new(PactlBackend::new()))
-    }
-
-    /// Factory driving a simulated audio server ([`SimulatedAudio::demo`]),
-    /// leaving the audio of the machine untouched.
-    #[must_use]
-    pub fn simulated() -> Self {
-        Self::with_backend(Arc::new(SimulatedAudio::demo()))
-    }
-
     /// Factory driving `backend`.
     #[must_use]
-    pub fn with_backend(backend: Arc<dyn AudioBackend>) -> Self {
-        Self { backend }
+    pub fn new(backend: Arc<dyn AudioBackend>) -> Self {
+        Self {
+            hub: AudioHub::new(backend),
+        }
     }
 }
 
 impl std::fmt::Debug for AudioFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AudioFactory").finish_non_exhaustive()
+        f.debug_struct("AudioFactory")
+            .field("hub", &self.hub)
+            .finish()
+    }
+}
+
+/// Kind, capabilities and settings of the audio module.
+fn descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        kind: AUDIO_KIND.into(),
+        name: "Audio".into(),
+        description: "Molette : volume de la sortie (appui : couper). Touche : micro, choix \
+                      de la sortie et de l'entrée."
+            .into(),
+        capabilities: ModuleCapabilities {
+            key: true,
+            dial: true,
+            touch_zone: true,
+        },
+        settings: vec![
+            percent_setting(
+                VOLUME_STEP_KEY,
+                "Pas de la molette",
+                DEFAULT_VOLUME_STEP,
+                (MIN_VOLUME_STEP, MAX_VOLUME_STEP),
+            ),
+            SettingField {
+                help: Some("La molette ne monte pas le volume au-delà.".into()),
+                ..percent_setting(
+                    MAX_VOLUME_KEY,
+                    "Volume maximal",
+                    DEFAULT_MAX_VOLUME,
+                    (MIN_MAX_VOLUME, MAX_MAX_VOLUME),
+                )
+            },
+        ],
     }
 }
 
 impl ModuleFactory for AudioFactory {
     fn descriptor(&self) -> ModuleDescriptor {
-        ModuleDescriptor {
-            kind: AUDIO_KIND.into(),
-            name: "Audio".into(),
-            description: "Molette : volume de la sortie (appui : couper). Touche : micro, choix \
-                          de la sortie et de l'entrée."
-                .into(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: true,
-                touch_zone: true,
-            },
-            settings: vec![
-                percent_setting(
-                    VOLUME_STEP_KEY,
-                    "Pas de la molette",
-                    DEFAULT_VOLUME_STEP,
-                    (MIN_VOLUME_STEP, MAX_VOLUME_STEP),
-                ),
-                SettingField {
-                    help: Some("La molette ne monte pas le volume au-delà.".into()),
-                    ..percent_setting(
-                        MAX_VOLUME_KEY,
-                        "Volume maximal",
-                        DEFAULT_MAX_VOLUME,
-                        (MIN_MAX_VOLUME, MAX_MAX_VOLUME),
-                    )
-                },
-            ],
-        }
+        descriptor()
     }
 
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
-        let settings = AudioSettings::parse(self, settings)?;
-        let (requests, receiver) = mpsc::unbounded_channel();
-        ctx.tasks().spawn(run_worker(
-            Arc::clone(&self.backend),
-            receiver,
-            ctx.events().clone(),
-        ));
+        let settings = AudioSettings::parse(settings)?;
+        let hub = self.hub.subscribe(ctx.events().clone());
         ctx.tasks()
-            .spawn(watch_changes(Arc::clone(&self.backend), requests.clone()));
+            .spawn(forward_states(hub.states(), ctx.events().clone()));
         Ok(Box::new(Audio {
-            factory: self.clone(),
             settings,
             view: View::Loading,
-            requests,
+            hub,
             last_sent: 0,
         }))
     }
@@ -196,9 +189,8 @@ impl Default for AudioSettings {
 
 impl AudioSettings {
     /// Checks the bounds (also when the host did not), then reads them.
-    fn parse(factory: &AudioFactory, settings: &Value) -> Result<Self, ModuleError> {
-        factory.validate_settings(settings)?;
-        parse_settings(settings)
+    fn parse(settings: &Value) -> Result<Self, ModuleError> {
+        descriptor().parse_settings(settings)
     }
 
     fn step(self) -> i64 {
@@ -221,13 +213,12 @@ enum View {
     Unavailable,
 }
 
-/// One instance: the state shown and the queue of the worker.
+/// One instance: the state shown and its access to the hub.
 pub struct Audio {
-    factory: AudioFactory,
     settings: AudioSettings,
     view: View,
-    requests: UnboundedSender<Request>,
-    /// Sequence number of the last change queued.
+    hub: Subscription,
+    /// Sequence number of the last change submitted.
     last_sent: Sequence,
 }
 
@@ -246,24 +237,23 @@ impl Audio {
         }
     }
 
-    /// Queues `change`; `surface` will show its outcome.
+    /// Submits `change`; `surface` will show its outcome. Should the hub
+    /// refuse it (no Tokio runtime), the change shown at once is not kept:
+    /// the instance shows the server as unavailable until the next state.
     fn request(&mut self, change: AudioChange, surface: ModuleSurface) -> Vec<Command> {
-        self.last_sent += 1;
-        let request = Request::Apply {
-            seq: self.last_sent,
-            change,
-            surface,
-        };
-        if self.requests.send(request).is_err() {
-            return alert();
+        if let Some(seq) = self.hub.submit(change, surface) {
+            self.last_sent = seq;
+            Vec::new()
+        } else {
+            self.view = View::Unavailable;
+            alert()
         }
-        Vec::new()
     }
 
     /// The action needs a state the instance does not have: alert, and read
     /// the state again in case the server came back.
     fn unavailable(&self) -> Vec<Command> {
-        let _ = self.requests.send(Request::Refresh);
+        self.hub.refresh();
         alert()
     }
 
@@ -365,10 +355,14 @@ impl Audio {
 
     fn handle(&mut self, event: AudioEvent) -> Vec<Command> {
         match event {
-            AudioEvent::State { snapshot, applied } => {
+            AudioEvent::State(HubState { server, applied }) => {
                 // An older state would undo the changes still queued.
                 if applied >= self.last_sent {
-                    self.view = snapshot.map_or(View::Unavailable, View::Ready);
+                    self.view = match server {
+                        ServerView::Loading => View::Loading,
+                        ServerView::Ready(snapshot) => View::Ready((*snapshot).clone()),
+                        ServerView::Unavailable => View::Unavailable,
+                    };
                 }
                 Vec::new()
             }
@@ -455,15 +449,21 @@ impl Module for Audio {
         else {
             return self.unavailable();
         };
-        let wanted = i64::from(ticks).saturating_mul(settings.step());
-        let delta = sink.volume.clamp_change(wanted, settings.ceiling());
-        if delta == 0 {
+        if sink.volume.channels().is_empty() {
+            // Nothing known of the channels: no volume to set.
+            return alert();
+        }
+        let delta = i64::from(ticks).saturating_mul(settings.step());
+        let volume = sink.volume.stepped(delta, settings.ceiling());
+        if volume == sink.volume {
             return Vec::new();
         }
-        sink.volume = sink.volume.shifted(delta);
+        // Absolute, from the state shown: never beyond the ceiling, even if
+        // the volume changed elsewhere meanwhile.
+        sink.volume = volume.clone();
         let change = AudioChange::SinkVolume {
             sink: sink.name.clone(),
-            delta,
+            volume,
         };
         self.request(change, ModuleSurface::Zone)
     }
@@ -492,7 +492,7 @@ impl Module for Audio {
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
-        self.settings = AudioSettings::parse(&self.factory, settings)?;
+        self.settings = AudioSettings::parse(settings)?;
         Ok(())
     }
 }

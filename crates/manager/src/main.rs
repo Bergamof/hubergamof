@@ -18,7 +18,7 @@ use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
 use bergadeck_manager::server::{DevOrigin, EmbeddedUi, Server, ServerContext};
 use bergadeck_manager::tray::{TrayIcon, quit_on};
-use bergadeck_modules::{Environment, builtin_registry_in};
+use bergadeck_modules::{BuiltinServices, builtin_registry_with};
 use clap::Parser;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let (shutdown, stopping) = watch::channel(false);
 
-    let services = services(&cli.config_dir, environment(cli.demo))?;
+    let services = services(&cli.config_dir, builtin_services(cli.demo))?;
     let catalog = services.registry.descriptors().into();
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
@@ -182,16 +182,16 @@ async fn stop_server(server_task: JoinHandle<std::io::Result<()>>) {
 
 /// What the modules act on: the demo is hermetic (simulated audio…), so that
 /// the UI, its tests and Lighthouse never touch the machine.
-fn environment(demo: bool) -> Environment {
+fn builtin_services(demo: bool) -> BuiltinServices {
     if demo {
-        Environment::Simulated
+        BuiltinServices::simulated()
     } else {
-        Environment::System
+        BuiltinServices::system()
     }
 }
 
-fn services(config_dir: &std::path::Path, environment: Environment) -> Result<EngineServices> {
-    let registry = Arc::new(builtin_registry_in(environment));
+fn services(config_dir: &std::path::Path, builtins: BuiltinServices) -> Result<EngineServices> {
+    let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
         store: ConfigStore::new(config_dir, Arc::clone(&registry) as _),
         renderer: Arc::new(Renderer::new().context("cannot initialise the renderer")?),
@@ -247,12 +247,6 @@ mod tests {
     const WAIT: Duration = Duration::from_secs(5);
 
     #[test]
-    fn only_the_demo_is_simulated() {
-        assert_eq!(environment(true), Environment::Simulated);
-        assert_eq!(environment(false), Environment::System);
-    }
-
-    #[test]
     fn cli_definition_is_consistent() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
@@ -306,8 +300,10 @@ mod tests {
     async fn demo_device_shows_the_home_page_until_shutdown() {
         let dir = tempfile::tempdir().unwrap();
         let discovery = DeviceDiscovery::new();
-        let supervisor =
-            Supervisor::start(&discovery, services(dir.path(), environment(true)).unwrap());
+        let supervisor = Supervisor::start(
+            &discovery,
+            services(dir.path(), builtin_services(true)).unwrap(),
+        );
         let devices = VirtualDevices::new(discovery.clone());
         let deck = devices.attach(virtual_plus_info(DEMO_SERIAL));
         let engine = loop {

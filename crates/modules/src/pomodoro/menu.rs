@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use tokio::time::Instant;
+use crate::time::ClockInstant as Instant;
 
 /// Time without rotation after which the menu closes by itself.
 pub const MENU_TIMEOUT: Duration = Duration::from_secs(5);
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn rotation_moves_the_selection_within_the_entries() {
-        let now = Instant::now();
+        let now = Instant::from_origin(Duration::ZERO);
         let mut menu = Menu::open(now);
         assert_eq!(menu.selected(), MenuEntry::Skip);
         menu.rotate(1, now);
@@ -86,9 +86,9 @@ mod tests {
 
     #[test]
     fn the_menu_expires_after_the_timeout_without_input() {
-        let opened = Instant::now();
+        let opened = Instant::from_origin(Duration::from_secs(10));
         let mut menu = Menu::open(opened);
-        assert!(!menu.is_expired(opened + MENU_TIMEOUT - Duration::from_millis(1)));
+        assert!(!menu.is_expired(opened + MENU_TIMEOUT.saturating_sub(Duration::from_millis(1))));
         menu.rotate(1, opened + Duration::from_secs(3));
         assert!(!menu.is_expired(opened + MENU_TIMEOUT));
         assert!(menu.is_expired(opened + Duration::from_secs(3) + MENU_TIMEOUT));

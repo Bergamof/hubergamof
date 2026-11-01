@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use bergadeck_module_api::{EventSender, TaskScope};
+use bergadeck_module_api::TaskScope;
+use bergadeck_module_api::testing::TestContext;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -13,6 +14,7 @@ struct Harness {
     module: Box<dyn Module>,
     events: UnboundedReceiver<ModuleEvent>,
     audio: Arc<SimulatedAudio>,
+    factory: AudioFactory,
     _scope: TaskScope,
 }
 
@@ -24,16 +26,13 @@ impl Harness {
 
     async fn on(audio: SimulatedAudio, settings: &Value) -> Self {
         let audio = Arc::new(audio);
-        let factory = AudioFactory::with_backend(Arc::clone(&audio) as _);
-        let (sender, events) = mpsc::unbounded_channel();
-        let scope = TaskScope::new();
-        let ctx = ModuleContext::for_tests(AUDIO_KIND)
-            .with_events(EventSender::new(move |event| sender.send(event).is_ok()))
-            .with_tasks(scope.spawner());
+        let factory = AudioFactory::new(Arc::clone(&audio) as _);
+        let TestContext { ctx, events, scope } = TestContext::new(AUDIO_KIND);
         let mut harness = Self {
             module: factory.create(ctx, settings).unwrap(),
             events,
             audio,
+            factory,
             _scope: scope,
         };
         harness.settle().await;
@@ -85,15 +84,20 @@ impl Harness {
     }
 }
 
-fn volume_changes(audio: &SimulatedAudio) -> Vec<i64> {
+/// Volumes set so far, in percent.
+fn volume_changes(audio: &SimulatedAudio) -> Vec<u32> {
     audio
         .applied()
         .into_iter()
         .filter_map(|change| match change {
-            AudioChange::SinkVolume { delta, .. } => Some(delta),
+            AudioChange::SinkVolume { volume, .. } => Some(volume.percent()),
             _ => None,
         })
         .collect()
+}
+
+fn simulated_factory() -> AudioFactory {
+    AudioFactory::new(Arc::new(SimulatedAudio::demo()))
 }
 
 fn item_surface(page: &str, item: &str) -> ModuleSurface {
@@ -107,7 +111,7 @@ fn item_surface(page: &str, item: &str) -> ModuleSurface {
 
 #[test]
 fn settings_have_bounded_defaults() {
-    let factory = AudioFactory::simulated();
+    let factory = simulated_factory();
     assert_eq!(
         factory.default_settings(),
         json!({ "volumeStep": 5, "maxVolume": 100 })
@@ -142,17 +146,13 @@ async fn settings_changes_keep_the_state_and_refuse_bad_values() {
         Err(ModuleError::InvalidSettings(_))
     ));
     assert!(matches!(
-        AudioFactory::simulated()
-            .create(ModuleContext::for_tests("a"), &json!({ "volumeStep": -1 })),
+        simulated_factory().create(ModuleContext::for_tests("a"), &json!({ "volumeStep": -1 })),
         Err(ModuleError::InvalidSettings(_))
     ));
     harness.module.on_dial_rotate(1).await;
     assert_eq!(harness.gauge().value, "50 %");
     harness.settle().await;
-    assert_eq!(
-        volume_changes(&harness.audio),
-        [i64::from(level_of_percent(10))]
-    );
+    assert_eq!(volume_changes(&harness.audio), [50]);
 }
 
 // ---------------------------------------------------------------- Dial and zone
@@ -216,6 +216,72 @@ async fn unequal_channels_keep_their_balance() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn lowering_unequal_channels_reaches_silence() {
+    let audio = SimulatedAudio::demo();
+    audio.change_externally(|state| {
+        state.sinks[0].volume = Volume::new(vec![level_of_percent(3), level_of_percent(20)]);
+    });
+    let mut harness = Harness::on(audio, &json!({})).await;
+    for _ in 0..5 {
+        harness.module.on_dial_rotate(-1).await;
+        harness.settle().await;
+    }
+    assert_eq!(harness.speakers().volume.channels(), [0, 0]);
+    let changes = harness.audio.applied().len();
+    harness.module.on_dial_rotate(-1).await;
+    harness.settle().await;
+    assert_eq!(
+        harness.audio.applied().len(),
+        changes,
+        "nothing left to lower"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_volume_above_the_ceiling_is_only_lowered() {
+    let audio = SimulatedAudio::demo();
+    audio.change_externally(|state| {
+        state.sinks[0].volume = Volume::uniform(level_of_percent(140), 2);
+    });
+    let mut harness = Harness::on(audio, &json!({})).await;
+    assert_eq!(harness.module.on_dial_rotate(3).await, []);
+    harness.settle().await;
+    assert_eq!(harness.audio.applied(), [], "not raised");
+    assert_eq!(harness.gauge().level, GaugeLevel::FULL);
+    harness.module.on_dial_rotate(-1).await;
+    harness.settle().await;
+    assert_eq!(volume_changes(&harness.audio), [135]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_volume_raised_elsewhere_meanwhile_never_exceeds_the_ceiling() {
+    let mut harness = Harness::start(&json!({})).await;
+    // Raised to 140 % by another program; the instance has not read it yet
+    // when the dial turns.
+    harness.audio.change_externally(|state| {
+        state.sinks[0].volume = Volume::uniform(level_of_percent(140), 2);
+    });
+    harness.module.on_dial_rotate(1).await;
+    harness.settle().await;
+    let volume = harness.speakers().volume;
+    assert!(
+        volume.channels().iter().all(|&level| level <= VOLUME_NORM),
+        "{volume:?}"
+    );
+    assert_eq!(volume.percent(), 45);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_sink_without_channels_cannot_be_turned() {
+    let audio = SimulatedAudio::demo();
+    audio.change_externally(|state| state.sinks[0].volume = Volume::default());
+    let mut harness = Harness::on(audio, &json!({})).await;
+    assert_eq!(harness.module.on_dial_rotate(1).await, alert());
+    harness.settle().await;
+    assert_eq!(harness.audio.applied(), []);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_fast_turn_sends_merged_volume_changes() {
     let mut harness = Harness::start(&json!({})).await;
     for _ in 0..10 {
@@ -224,10 +290,7 @@ async fn a_fast_turn_sends_merged_volume_changes() {
     assert_eq!(harness.gauge().value, "90 %");
     harness.settle().await;
     // The worker found every notch queued: one change for all of them.
-    assert_eq!(
-        volume_changes(&harness.audio),
-        [10 * i64::from(level_of_percent(5))]
-    );
+    assert_eq!(volume_changes(&harness.audio), [90]);
     assert_eq!(harness.gauge().value, "90 %");
 }
 
@@ -236,10 +299,10 @@ async fn states_older_than_the_queued_changes_are_ignored() {
     let mut harness = Harness::start(&json!({})).await;
     harness.module.on_dial_rotate(1).await;
     // A state read before the change was applied.
-    let stale = AudioEvent::State {
-        snapshot: Some(SimulatedAudio::demo().state()),
+    let stale = AudioEvent::State(HubState {
+        server: ServerView::Ready(Arc::new(SimulatedAudio::demo().state())),
         applied: 0,
-    };
+    });
     harness.module.on_event(Box::new(stale)).await;
     assert_eq!(harness.gauge().value, "45 %");
     harness.settle().await;
@@ -463,9 +526,42 @@ async fn an_unreachable_server_is_shown_and_never_crashes() {
     assert_eq!(harness.module.key().label.as_deref(), Some("Audio"));
     harness.audio.set_available(true);
     // The watcher retries and the state comes back by itself.
-    tokio::time::sleep(worker::MAX_BACKOFF).await;
+    tokio::time::sleep(hub::MAX_BACKOFF).await;
     harness.settle().await;
     assert_eq!(harness.gauge().value, "40 %");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_change_made_after_the_worker_stopped_is_applied() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.factory.hub.crash_worker();
+    harness.settle().await;
+    assert_eq!(harness.module.on_dial_rotate(1).await, []);
+    assert_eq!(harness.gauge().value, "45 %");
+    harness.settle().await;
+    assert_eq!(harness.gauge().value, "45 %");
+    assert_eq!(harness.audio.state().sinks[0].volume.percent(), 45);
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_instances_share_the_server() {
+    let mut first = Harness::start(&json!({})).await;
+    let TestContext {
+        ctx,
+        mut events,
+        scope: _scope,
+    } = TestContext::new("second");
+    let mut second = first.factory.create(ctx, &json!({})).unwrap();
+    first.module.on_dial_press().await;
+    first.settle().await;
+    while let Ok(Some(event)) = tokio::time::timeout(IDLE, events.recv()).await {
+        second.on_event(event).await;
+    }
+    let zone = second
+        .zone(&NavigationView::new("Accueil", 0, 1, 2))
+        .unwrap();
+    assert!(matches!(zone, ZoneContent::Gauge(gauge) if gauge.value == "Muet"));
+    assert_eq!(first.audio.subscriptions(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -481,7 +577,7 @@ async fn the_zone_tells_when_there_is_no_output() {
 
 #[test]
 fn the_zone_waits_for_the_first_state() {
-    let module = AudioFactory::simulated()
+    let module = simulated_factory()
         .create(ModuleContext::for_tests(AUDIO_KIND), &json!({}))
         .unwrap();
     let zone = module.zone(&NavigationView::new("Accueil", 0, 1, 2));

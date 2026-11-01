@@ -1,4 +1,4 @@
-use bergadeck_modules::{DEFAULT_HOME_MODULES, builtin_registry};
+use bergadeck_modules::DEFAULT_HOME_MODULES;
 use bergadeck_protocol::{
     DeviceCapabilities, DeviceModel, ImageSize, ModuleInstanceId, ModuleKind,
 };
@@ -6,6 +6,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
+use crate::testing::builtin_registry;
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 

@@ -223,6 +223,7 @@ dependencies = [
  "async-trait",
  "bergadeck-module-api",
  "jiff",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

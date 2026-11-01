@@ -15,6 +15,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Serveur web local (UI embarquée, WebSocket, contrôle `Host`/`Origin`, CSP) et icône de barre système (zbus 6).
 - Jauge sur la bande tactile (`ZoneContent::Gauge`).
 - API des modules : événements des tâches de fond (`EventSender`, `on_event`), validation des réglages avant enregistrement, état visuel des touches (`KeyState`) et retour ✓/⚠ transitoire (`Command::Feedback`).
+- Module Audio (PipeWire/PulseAudio via `pactl`, simulé en `--demo`) : volume, sourdine, sortie et entrée par défaut ; un seul abonnement partagé par tous les appareils.
+- Module Pomodoro avec notifications de bureau ; le minuteur suit le temps réel, mise en veille comprise.
+- API des modules : `ModuleDescriptor::parse_settings` (bornes vérifiées puis désérialisation) et `TestContext` (feature `testing`).
+- Lint : lancement de shell interdit hors tests ; `module-api` vérifié seul, sans features.
 
 ### Modifié
 
@@ -22,4 +26,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Isolation des modules : panique → placeholder et alerte, budget de 500 ms par gestionnaire ; appui résolu sur ce qui est affiché.
 - Icône de barre système : plus d'avertissement `Broken pipe` à l'arrêt.
 - Configuration d'exemple : l'horloge passe de l'accueil à la molette 4.
+- Audio : un cran de molette coûte 2 appels `pactl` au lieu de 7 ; le volume envoyé est la valeur finale (jamais au-delà du plafond) ; la baisse va jusqu'au silence même si la balance est inégale ; une modification faite pendant le redémarrage du worker audio n'est plus perdue.
+- Rendu : les images éphémères (décompte, jauges) ne chassent plus les autres du cache (mémoire stable pendant un pomodoro).
+- Les tests et le mode `--demo` n'utilisent que des services simulés (aucun vrai `pactl` ni D-Bus).
+- Retour ✓/⚠ affiché seulement sur une surface visible.
 - Service systemd lié à `graphical-session.target` ; image Docker sans `libhidapi`, lancée en `--demo --no-tray` (`--network host`).

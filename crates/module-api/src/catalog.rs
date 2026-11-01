@@ -4,10 +4,11 @@
 //! are part of the wire contract: `bergadeck-protocol` re-exports them and
 //! exports them to TypeScript, so their JSON format must stay stable.
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{ModuleError, ModuleKind};
+use crate::{ModuleError, ModuleKind, parse_settings};
 
 /// Description of a module kind available to the user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -151,6 +152,22 @@ impl ModuleDescriptor {
             .iter()
             .filter_map(|field| values.get(&field.key).map(|value| (field, value)))
             .try_for_each(|(field, value)| field.validate(value))
+    }
+
+    /// Checks `settings` against the declared fields
+    /// ([`ModuleDescriptor::validate_settings`]), then deserializes them into
+    /// the typed settings of the module ([`parse_settings`]): the one call a
+    /// module needs in [`crate::ModuleFactory::create`] and
+    /// [`crate::Module::update_settings`], so that bounds are enforced even
+    /// when the host did not validate first.
+    ///
+    /// # Errors
+    ///
+    /// [`ModuleError::InvalidSettings`] naming the first offending setting,
+    /// or explaining why `settings` does not match `T`.
+    pub fn parse_settings<T: DeserializeOwned>(&self, settings: &Value) -> Result<T, ModuleError> {
+        self.validate_settings(settings)?;
+        parse_settings(settings)
     }
 }
 
@@ -362,6 +379,32 @@ mod tests {
                 .is_err()
         );
         assert!(descriptor.validate_settings(&json!([])).is_err());
+    }
+
+    #[test]
+    fn parsing_checks_the_bounds_before_deserializing() {
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct Typed {
+            #[serde(default)]
+            count: i64,
+        }
+        let descriptor = descriptor(vec![field("count", bounded(Some(0), Some(9)))]);
+        assert_eq!(
+            descriptor
+                .parse_settings::<Typed>(&json!({ "count": 3 }))
+                .unwrap(),
+            Typed { count: 3 }
+        );
+        assert_eq!(
+            descriptor.parse_settings::<Typed>(&json!({})).unwrap(),
+            Typed { count: 0 }
+        );
+        // Within the type, outside the declared bounds.
+        assert!(matches!(
+            descriptor.parse_settings::<Typed>(&json!({ "count": 10 })),
+            Err(ModuleError::InvalidSettings(reason)) if reason.starts_with("`count`")
+        ));
+        assert!(descriptor.parse_settings::<Typed>(&json!([])).is_err());
     }
 
     #[test]

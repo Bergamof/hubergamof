@@ -1,10 +1,12 @@
 //! Pure pomodoro state machine: no I/O, no clock of its own. Every operation
-//! receives the current monotonic instant, and the time left is computed from
-//! a deadline rather than by counting ticks.
+//! receives the current instant of a [`crate::time::Clock`] counting
+//! suspends, and the time left is computed from a deadline rather than by
+//! counting ticks: a step whose deadline passed while the machine slept is
+//! over at the first tick after waking up.
 
 use std::time::Duration;
 
-use tokio::time::Instant;
+use crate::time::ClockInstant;
 
 use super::settings::Durations;
 
@@ -29,11 +31,11 @@ impl Phase {
 
 /// Whether the time of the current step runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Clock {
+enum Countdown {
     /// Stopped with `remaining` left.
     Paused { remaining: Duration },
     /// Running until `deadline`.
-    Running { deadline: Instant },
+    Running { deadline: ClockInstant },
 }
 
 /// A step that ended on its own, as reported by [`Timer::tick`].
@@ -60,7 +62,7 @@ pub struct Timer {
     phase: Phase,
     /// Number (from 1) of the current pomodoro, or of the one a break follows.
     pomodoro: u32,
-    clock: Clock,
+    countdown: Countdown,
     /// A step ended and the next one waits for a press.
     awaiting_start: bool,
 }
@@ -74,7 +76,7 @@ impl Timer {
             auto_start,
             phase: Phase::Work,
             pomodoro: 1,
-            clock: Clock::Paused {
+            countdown: Countdown::Paused {
                 remaining: durations.work,
             },
             awaiting_start: false,
@@ -102,7 +104,7 @@ impl Timer {
     /// Whether the time runs.
     #[must_use]
     pub fn is_running(&self) -> bool {
-        matches!(self.clock, Clock::Running { .. })
+        matches!(self.countdown, Countdown::Running { .. })
     }
 
     /// Whether a step ended and the next one waits for a press.
@@ -119,26 +121,35 @@ impl Timer {
 
     /// Time left in the current step at `now`.
     #[must_use]
-    pub fn remaining(&self, now: Instant) -> Duration {
-        match self.clock {
-            Clock::Paused { remaining } => remaining,
-            Clock::Running { deadline } => deadline.saturating_duration_since(now),
+    pub fn remaining(&self, now: ClockInstant) -> Duration {
+        match self.countdown {
+            Countdown::Paused { remaining } => remaining,
+            Countdown::Running { deadline } => deadline.saturating_duration_since(now),
         }
     }
 
     /// Time spent in the current step at `now`.
     #[must_use]
-    pub fn elapsed(&self, now: Instant) -> Duration {
+    pub fn elapsed(&self, now: ClockInstant) -> Duration {
         self.step_duration().saturating_sub(self.remaining(now))
     }
 
+    /// Deadline of the current step while the time runs.
+    #[must_use]
+    pub fn deadline(&self) -> Option<ClockInstant> {
+        match self.countdown {
+            Countdown::Running { deadline } => Some(deadline),
+            Countdown::Paused { .. } => None,
+        }
+    }
+
     /// Starts or pauses the time; starting also acknowledges a finished step.
-    pub fn toggle(&mut self, now: Instant) {
+    pub fn toggle(&mut self, now: ClockInstant) {
         let remaining = self.remaining(now);
-        self.clock = if self.is_running() {
-            Clock::Paused { remaining }
+        self.countdown = if self.is_running() {
+            Countdown::Paused { remaining }
         } else {
-            Clock::Running {
+            Countdown::Running {
                 deadline: now + remaining,
             }
         };
@@ -147,7 +158,7 @@ impl Timer {
 
     /// Ends the current step early and prepares the next one, running if
     /// the current one was. Skipping a work session counts it as done.
-    pub fn skip(&mut self, now: Instant) {
+    pub fn skip(&mut self, now: ClockInstant) {
         let running = self.is_running();
         self.advance(now, running);
         self.awaiting_start = false;
@@ -161,8 +172,8 @@ impl Timer {
     /// Ends the current step if its time is up at `now`: the next step is
     /// prepared stopped and awaits a press, or starts at once with
     /// `autoStart`.
-    pub fn tick(&mut self, now: Instant) -> Option<StepEnd> {
-        let Clock::Running { deadline } = self.clock else {
+    pub fn tick(&mut self, now: ClockInstant) -> Option<StepEnd> {
+        let Countdown::Running { deadline } = self.countdown else {
             return None;
         };
         if now < deadline {
@@ -185,22 +196,22 @@ impl Timer {
     /// new length minus that time (possibly zero: the step then ends at the
     /// next tick once running). The pomodoro number is capped to the new
     /// cycle length.
-    pub fn update(&mut self, durations: Durations, auto_start: bool, now: Instant) {
+    pub fn update(&mut self, durations: Durations, auto_start: bool, now: ClockInstant) {
         let elapsed = self.elapsed(now);
         self.durations = durations;
         self.auto_start = auto_start;
         self.pomodoro = self.pomodoro.min(durations.long_break_every);
         let remaining = self.step_duration().saturating_sub(elapsed);
-        self.clock = match self.clock {
-            Clock::Paused { .. } => Clock::Paused { remaining },
-            Clock::Running { .. } => Clock::Running {
+        self.countdown = match self.countdown {
+            Countdown::Paused { .. } => Countdown::Paused { remaining },
+            Countdown::Running { .. } => Countdown::Running {
                 deadline: now + remaining,
             },
         };
     }
 
     /// Moves to the step after the current one, at its full length.
-    fn advance(&mut self, now: Instant, running: bool) {
+    fn advance(&mut self, now: ClockInstant, running: bool) {
         let every = self.durations.long_break_every;
         (self.phase, self.pomodoro) = match self.phase {
             Phase::Work if self.pomodoro >= every => (Phase::LongBreak, self.pomodoro),
@@ -209,12 +220,12 @@ impl Timer {
             Phase::LongBreak => (Phase::Work, 1),
         };
         let remaining = self.step_duration();
-        self.clock = if running {
-            Clock::Running {
+        self.countdown = if running {
+            Countdown::Running {
                 deadline: now + remaining,
             }
         } else {
-            Clock::Paused { remaining }
+            Countdown::Paused { remaining }
         };
     }
 
@@ -243,7 +254,7 @@ mod tests {
     }
 
     /// Runs the current step to its end and returns what `tick` reported.
-    fn finish_step(timer: &mut Timer, now: &mut Instant) -> StepEnd {
+    fn finish_step(timer: &mut Timer, now: &mut ClockInstant) -> StepEnd {
         if !timer.is_running() {
             timer.toggle(*now);
         }
@@ -253,7 +264,7 @@ mod tests {
 
     #[test]
     fn a_new_timer_is_the_first_pomodoro_stopped() {
-        let now = Instant::now();
+        let now = ClockInstant::from_origin(Duration::from_secs(1000));
         let timer = Timer::new(durations(4), false);
         assert_eq!((timer.phase(), timer.pomodoro()), (Phase::Work, 1));
         assert!(!timer.is_running() && !timer.is_awaiting_start());
@@ -263,7 +274,7 @@ mod tests {
 
     #[test]
     fn time_left_follows_the_deadline_and_pauses() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         timer.toggle(now);
         assert!(timer.is_running());
@@ -288,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_finished_step_prepares_the_next_one_stopped() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         let end = finish_step(&mut timer, &mut now);
         assert_eq!(
@@ -312,7 +323,7 @@ mod tests {
 
     #[test]
     fn a_late_tick_still_ends_the_step_once() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         timer.toggle(now);
         now += 3 * 60 * MINUTE;
@@ -322,7 +333,7 @@ mod tests {
 
     #[test]
     fn the_nth_pomodoro_is_followed_by_a_long_break() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(3), false);
         let phases: Vec<_> = (0..8)
             .map(|_| {
@@ -347,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_cycle_of_one_has_only_long_breaks() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(1), false);
         assert_eq!(finish_step(&mut timer, &mut now).next, Phase::LongBreak);
         assert_eq!(finish_step(&mut timer, &mut now).pomodoro, 1);
@@ -356,7 +367,7 @@ mod tests {
 
     #[test]
     fn auto_start_runs_the_next_step_at_once() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), true);
         let end = finish_step(&mut timer, &mut now);
         assert!(end.started);
@@ -369,7 +380,7 @@ mod tests {
 
     #[test]
     fn skipping_keeps_the_running_state() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         timer.skip(now);
         assert_eq!(timer.phase(), Phase::ShortBreak);
@@ -386,7 +397,7 @@ mod tests {
 
     #[test]
     fn skipping_acknowledges_a_finished_step() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         finish_step(&mut timer, &mut now);
         timer.skip(now);
@@ -396,7 +407,7 @@ mod tests {
 
     #[test]
     fn reset_goes_back_to_the_first_pomodoro_stopped() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), true);
         for _ in 0..3 {
             finish_step(&mut timer, &mut now);
@@ -408,7 +419,7 @@ mod tests {
 
     #[test]
     fn new_lengths_keep_the_time_spent_in_the_step() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         timer.toggle(now);
         now += 10 * MINUTE;
@@ -432,7 +443,7 @@ mod tests {
 
     #[test]
     fn new_lengths_apply_to_a_paused_step() {
-        let now = Instant::now();
+        let now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         timer.update(
             Durations {
@@ -448,7 +459,7 @@ mod tests {
 
     #[test]
     fn a_shorter_cycle_caps_the_pomodoro_number() {
-        let mut now = Instant::now();
+        let mut now = ClockInstant::from_origin(Duration::from_secs(1000));
         let mut timer = Timer::new(durations(4), false);
         for _ in 0..4 {
             finish_step(&mut timer, &mut now);

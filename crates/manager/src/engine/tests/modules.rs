@@ -173,6 +173,95 @@ async fn events_can_mark_a_named_surface_of_their_module() {
     assert_eq!(fixture.key_mark(0), Some(Feedback::Alert));
 }
 
+#[tokio::test]
+async fn surfaces_not_displayed_get_no_mark() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    // On a dial only: no home key to mark.
+    fixture
+        .configure(
+            vec![fragile("none")],
+            &[],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let events = fixture
+        .probe
+        .fragile_events
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap();
+    // The zone mark tells when the event was handled.
+    let marks = vec![
+        Command::FeedbackOn(ModuleSurface::HomeKey, Feedback::Alert),
+        Command::FeedbackOn(ModuleSurface::Zone, Feedback::Ok),
+    ];
+    fixture.after_change(|| assert!(events.send(marks))).await;
+    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
+    assert!(fixture.live().keys.iter().all(|key| key.feedback.is_none()));
+}
+
+#[tokio::test]
+async fn an_item_mark_does_not_wait_for_its_page() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![fragile("none")],
+            &[FRAGILE_KIND],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let events = fixture
+        .probe
+        .fragile_events
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap();
+    let item = ModuleSurface::Item {
+        page: FRAGILE_PAGE.into(),
+        item: "x".into(),
+    };
+    let marks = vec![
+        Command::FeedbackOn(item, Feedback::Alert),
+        Command::FeedbackOn(ModuleSurface::Zone, Feedback::Ok),
+    ];
+    fixture.after_change(|| assert!(events.send(marks))).await;
+    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
+    assert_eq!(fixture.key_mark(0), None);
+
+    // The page opens within the mark duration: its item carries no mark.
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.wait_for(|f| f.page().id != HOME_PAGE_ID).await;
+    assert_eq!(fixture.labels()[0].as_deref(), Some("x"));
+    assert_eq!(fixture.key_mark(0), None);
+}
+
+#[tokio::test]
+async fn event_outcomes_go_to_the_zone_while_the_home_key_is_hidden() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![fragile("none")],
+            &[FRAGILE_KIND],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let events = fixture
+        .probe
+        .fragile_events
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap();
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.wait_for(|f| f.page().id != HOME_PAGE_ID).await;
+    let alert = vec![Command::Feedback(Feedback::Alert)];
+    fixture.after_change(|| assert!(events.send(alert))).await;
+    assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert));
+    assert_eq!(fixture.key_mark(0), None);
+}
+
 // ---------------------------------------------------------------- Validation
 
 #[tokio::test]

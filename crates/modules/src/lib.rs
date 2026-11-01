@@ -7,14 +7,17 @@
 //! (the manager shows a placeholder key for kinds missing from the registry).
 //!
 //! Modules acting on the desktop (audio server, notifications, later
-//! Docker…) run against the real system or against simulated services, as
-//! chosen by the [`Environment`] given to [`builtin_registry_in`].
+//! Docker…) run against the [`BuiltinServices`] given to
+//! [`builtin_registry_with`]: those of the system, or simulated ones. There
+//! is no default: the caller always chooses (the manager from `--demo`,
+//! tests the simulated services).
 
 pub mod audio;
 pub mod clock;
 pub mod navigation;
 pub mod notifications;
 pub mod pomodoro;
+pub mod time;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -113,54 +116,56 @@ impl std::fmt::Debug for ModuleRegistry {
     }
 }
 
-/// What the built-in modules act on.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum Environment {
-    /// The user's session: audio server, Docker…
-    #[default]
-    System,
-    /// In-memory simulations of those services, leaving the machine
-    /// untouched (`--demo`, tests): hermetic and reproducible.
-    Simulated,
+/// The services the built-in modules act on.
+#[derive(Debug, Clone)]
+pub struct BuiltinServices {
+    /// Audio server of the audio module.
+    pub audio: Arc<dyn audio::AudioBackend>,
+    /// Desktop notifications of the pomodoro.
+    pub notifier: Arc<dyn notifications::Notifier>,
+    /// Time of the pomodoro, counting suspends.
+    pub clock: Arc<dyn time::Clock>,
 }
 
-/// Registry of the built-in modules acting on the system, with their
-/// default layout.
-#[must_use]
-pub fn builtin_registry() -> ModuleRegistry {
-    builtin_registry_in(Environment::System)
-}
+impl BuiltinServices {
+    /// The user's session: `pactl`, and the session bus, connected on first
+    /// use and shared by the modules that need it.
+    #[must_use]
+    pub fn system() -> Self {
+        let session_bus = notifications::SessionBus::new();
+        Self {
+            audio: Arc::new(audio::PactlBackend::new()),
+            notifier: Arc::new(notifications::DesktopNotifier::new(session_bus)),
+            clock: Arc::new(time::BootClock),
+        }
+    }
 
-/// Registry of the built-in modules acting on `environment`, with their
-/// default layout.
-#[must_use]
-pub fn builtin_registry_in(environment: Environment) -> ModuleRegistry {
-    match environment {
-        Environment::System => builtin_registry_with(
-            Arc::new(audio::PactlBackend::new()),
-            Arc::new(notifications::DesktopNotifier::session()),
-        ),
-        Environment::Simulated => builtin_registry_with(
-            Arc::new(audio::SimulatedAudio::demo()),
-            Arc::new(notifications::SimulatedNotifier::default()),
-        ),
+    /// Simulations leaving the machine untouched (`--demo`, tests), hermetic
+    /// and reproducible: the demo audio server and notifications that are
+    /// only logged. Time is real.
+    #[must_use]
+    pub fn simulated() -> Self {
+        Self {
+            audio: Arc::new(audio::SimulatedAudio::demo()),
+            notifier: Arc::new(notifications::SimulatedNotifier::default()),
+            clock: Arc::new(time::BootClock),
+        }
     }
 }
 
-/// Registry of the built-in modules driving the audio server `audio` and
-/// showing desktop notifications through `notifier`, with their default
-/// layout.
+/// Registry of the built-in modules acting on `services`, with their
+/// default layout.
 #[must_use]
-pub fn builtin_registry_with(
-    audio: Arc<dyn audio::AudioBackend>,
-    notifier: Arc<dyn notifications::Notifier>,
-) -> ModuleRegistry {
+pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
     registry.set_default_layout(DefaultLayout::builtin());
-    registry.register(Arc::new(audio::AudioFactory::with_backend(audio)));
+    registry.register(Arc::new(audio::AudioFactory::new(services.audio)));
     registry.register(Arc::new(clock::ClockFactory::system()));
     registry.register(Arc::new(navigation::NavigationFactory));
-    registry.register(Arc::new(pomodoro::PomodoroFactory::with_notifier(notifier)));
+    registry.register(Arc::new(pomodoro::PomodoroFactory::new(
+        services.notifier,
+        services.clock,
+    )));
     registry
 }
 
@@ -168,15 +173,21 @@ pub fn builtin_registry_with(
 mod tests {
     use std::time::Duration;
 
-    use bergadeck_module_api::{EventSender, Module, ModuleContext, ModuleEvent, TaskScope};
+    use bergadeck_module_api::testing::TestContext;
+    use bergadeck_module_api::{Module, ModuleEvent, NavigationView, TaskScope, ZoneContent};
     use serde_json::json;
-    use tokio::sync::mpsc::{self, UnboundedReceiver};
+    use tokio::sync::mpsc::UnboundedReceiver;
 
     use super::*;
+    use crate::time::testing::SimulatedClock;
+
+    fn simulated_registry() -> ModuleRegistry {
+        builtin_registry_with(BuiltinServices::simulated())
+    }
 
     #[test]
     fn builtin_registry_offers_the_builtin_modules() {
-        let registry = builtin_registry();
+        let registry = simulated_registry();
         let kinds: Vec<_> = registry
             .descriptors()
             .into_iter()
@@ -194,14 +205,41 @@ mod tests {
         assert!(registry.get(&"clock".into()).is_some());
         assert!(registry.get(&"docker".into()).is_none());
         assert_eq!(
-            builtin_registry_in(Environment::Simulated).descriptors(),
+            builtin_registry_with(BuiltinServices::system()).descriptors(),
             registry.descriptors()
         );
     }
 
     #[test]
+    fn each_environment_has_its_own_services() {
+        // Building the system services touches nothing: the bus connects on
+        // first use and `pactl` runs when an instance needs it.
+        let names = |services: BuiltinServices| {
+            [
+                format!("{:?}", services.audio),
+                format!("{:?}", services.notifier),
+                format!("{:?}", services.clock),
+            ]
+        };
+        let simulated = names(BuiltinServices::simulated());
+        assert!(simulated[0].starts_with("SimulatedAudio "), "{simulated:?}");
+        assert!(
+            simulated[1].starts_with("SimulatedNotifier "),
+            "{simulated:?}"
+        );
+        let system = names(BuiltinServices::system());
+        assert!(system[0].starts_with("PactlBackend "), "{system:?}");
+        assert!(
+            system[1].starts_with("DesktopNotifier { bus: SessionBus { connected: false } }"),
+            "{system:?}"
+        );
+        assert_eq!(simulated[2], "BootClock");
+        assert_eq!(system[2], "BootClock");
+    }
+
+    #[test]
     fn default_settings_come_from_the_factory() {
-        let registry = builtin_registry();
+        let registry = simulated_registry();
         assert_eq!(
             registry.default_settings(&clock::CLOCK_KIND.into()),
             clock::ClockFactory::system().default_settings()
@@ -211,7 +249,7 @@ mod tests {
 
     #[test]
     fn builtin_layout_fills_home_and_dials() {
-        let registry = builtin_registry();
+        let registry = simulated_registry();
         let layout = registry.default_layout();
         assert_eq!(layout.home.len(), DEFAULT_HOME_MODULES.len());
         assert_eq!(layout.dials[0], ModuleKind::from(clock::CLOCK_KIND));
@@ -223,12 +261,12 @@ mod tests {
 
     #[test]
     fn registering_a_kind_twice_replaces_the_factory() {
-        let mut registry = builtin_registry();
+        let mut registry = simulated_registry();
         let previous = registry.register(Arc::new(navigation::NavigationFactory));
         assert!(previous.is_some());
         assert_eq!(
             registry.descriptors().len(),
-            builtin_registry().descriptors().len()
+            simulated_registry().descriptors().len()
         );
     }
 
@@ -238,11 +276,7 @@ mod tests {
         kind: &str,
         settings: &Value,
     ) -> (Box<dyn Module>, UnboundedReceiver<ModuleEvent>, TaskScope) {
-        let (sender, events) = mpsc::unbounded_channel();
-        let scope = TaskScope::new();
-        let ctx = ModuleContext::for_tests(kind)
-            .with_events(EventSender::new(move |event| sender.send(event).is_ok()))
-            .with_tasks(scope.spawner());
+        let TestContext { ctx, events, scope } = TestContext::new(kind);
         let module = registry
             .get(&kind.into())
             .unwrap()
@@ -267,10 +301,26 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn the_simulated_audio_is_the_demo_server() {
+        let registry = builtin_registry_with(BuiltinServices::simulated());
+        let (mut volume, mut events, _tasks) = instance(&registry, audio::AUDIO_KIND, &json!({}));
+        run_for(volume.as_mut(), &mut events, Duration::from_secs(2)).await;
+        let zone = volume.zone(&NavigationView::new("Accueil", 0, 1, 2));
+        assert!(
+            matches!(&zone, Some(ZoneContent::Gauge(gauge)) if gauge.title == "Haut-parleurs"),
+            "{zone:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn builtin_modules_act_on_the_services_given() {
         let server = Arc::new(audio::SimulatedAudio::demo());
         let notifier = Arc::new(notifications::SimulatedNotifier::default());
-        let registry = builtin_registry_with(Arc::clone(&server) as _, Arc::clone(&notifier) as _);
+        let registry = builtin_registry_with(BuiltinServices {
+            audio: Arc::clone(&server) as _,
+            notifier: Arc::clone(&notifier) as _,
+            clock: Arc::new(SimulatedClock::new()),
+        });
         let minute = Duration::from_secs(60);
 
         let (mut volume, mut volume_events, _volume_tasks) =

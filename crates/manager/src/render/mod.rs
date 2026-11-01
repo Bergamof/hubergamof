@@ -5,7 +5,9 @@
 //! ("contain") and centred on a background colour, with the frame of its
 //! [`KeyState`]; it also renders strip zones from text lines, a gauge or an
 //! image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
-//! content (bounded LRU) and encoded to a PNG data URL only on demand.
+//! content (bounded segmented LRU, module `cache`: images used once,
+//! like those of a countdown, do not push out those that come back) and
+//! encoded to a PNG data URL only on demand.
 
 mod digest;
 mod source;
@@ -23,7 +25,6 @@ use bergadeck_module_api::{Feedback, GaugeContent, GaugeLevel, KeyState};
 use bergadeck_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
-use lru::LruCache;
 use resvg::usvg;
 use thiserror::Error;
 
@@ -32,6 +33,7 @@ pub use source::{
 };
 pub use text::{FONT_DATA, FONT_FAMILY, TextLine, TextRenderer};
 
+use crate::cache::SegmentedLru;
 use digest::{ContentDigest, DigestMemo};
 use source::{Decoded, f32_from};
 
@@ -69,8 +71,16 @@ pub const GAUGE_TRACK_COLOR: Rgba<u8> = Rgba([0x2a, 0x2a, 0x2a, u8::MAX]);
 /// Opacity of the black veil darkening a surface under a feedback mark.
 pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
 
-/// Number of rendered images kept in the cache.
-pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(512) {
+/// Number of reused rendered images kept in the cache (see
+/// module `cache`).
+pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(480) {
+    Some(capacity) => capacity,
+    None => NonZeroUsize::MIN,
+};
+
+/// Number of new rendered images kept in the cache until they are used
+/// again: what images used once (a countdown) can occupy.
+pub const RENDER_PROBATION_CAPACITY: NonZeroUsize = match NonZeroUsize::new(32) {
     Some(capacity) => capacity,
     None => NonZeroUsize::MIN,
 };
@@ -287,32 +297,37 @@ enum CacheKey {
 /// Renders key and strip zone images; shareable between threads.
 pub struct Renderer {
     text: TextRenderer,
-    cache: Mutex<LruCache<CacheKey, Arc<Rendered>>>,
+    cache: Mutex<SegmentedLru<CacheKey, Arc<Rendered>>>,
     digests: DigestMemo,
     /// Rasterised feedback marks by outcome and side.
     marks: Mutex<HashMap<(Feedback, u32), Arc<RgbaImage>>>,
 }
 
 impl Renderer {
-    /// Creates a renderer with an empty cache of [`RENDER_CACHE_CAPACITY`].
+    /// Creates a renderer with an empty cache of [`RENDER_CACHE_CAPACITY`]
+    /// reused and [`RENDER_PROBATION_CAPACITY`] new images.
     ///
     /// # Errors
     ///
     /// [`RenderError::Font`] if the embedded font is corrupt.
     pub fn new() -> Result<Self, RenderError> {
-        Self::with_cache_capacity(RENDER_CACHE_CAPACITY)
+        Self::with_cache_capacity(RENDER_CACHE_CAPACITY, RENDER_PROBATION_CAPACITY)
     }
 
-    /// Creates a renderer keeping at most `capacity` images.
+    /// Creates a renderer keeping at most `reused` images used more than
+    /// once and `probation` new ones.
     ///
     /// # Errors
     ///
     /// [`RenderError::Font`] if the embedded font is corrupt.
-    pub fn with_cache_capacity(capacity: NonZeroUsize) -> Result<Self, RenderError> {
+    pub fn with_cache_capacity(
+        reused: NonZeroUsize,
+        probation: NonZeroUsize,
+    ) -> Result<Self, RenderError> {
         Ok(Self {
             text: TextRenderer::new()?,
-            cache: Mutex::new(LruCache::new(capacity)),
-            digests: DigestMemo::new(capacity),
+            cache: Mutex::new(SegmentedLru::new(reused, probation)),
+            digests: DigestMemo::new(reused.saturating_add(probation.get())),
             marks: Mutex::new(HashMap::new()),
         })
     }
@@ -485,7 +500,7 @@ impl Renderer {
             return Ok(Arc::clone(hit));
         }
         let rendered = Arc::new(Rendered::new(render()?));
-        self.lock_cache().put(key, Arc::clone(&rendered));
+        self.lock_cache().insert(key, Arc::clone(&rendered));
         Ok(rendered)
     }
 
@@ -603,7 +618,7 @@ impl Renderer {
         self.text.draw(canvas, &lines)
     }
 
-    fn lock_cache(&self) -> std::sync::MutexGuard<'_, LruCache<CacheKey, Arc<Rendered>>> {
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, SegmentedLru<CacheKey, Arc<Rendered>>> {
         // Cache entries are immutable: a poisoned lock is still consistent.
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
     }

@@ -1,22 +1,26 @@
 //! Access to the audio server, behind a trait so that the module runs on the
 //! real server (`pactl`) or on a simulated one (`--demo`, tests).
 
+use std::fmt;
+use std::ops::BitOr;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use thiserror::Error;
 
-use super::state::{AudioSnapshot, Direction};
+use super::state::{Direction, PartialSnapshot, Volume};
 
 /// A change requested from the audio server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioChange {
-    /// Adds `delta` (PulseAudio units) to every channel of output `sink`.
+    /// Sets the volume of every channel of output `sink`. Absolute rather
+    /// than relative: a relative change applied to a volume changed
+    /// elsewhere meanwhile could go beyond the ceiling of the dial.
     SinkVolume {
         /// Output name.
         sink: String,
-        /// Change of every channel.
-        delta: i64,
+        /// New volume of each channel.
+        volume: Volume,
     },
     /// Mutes or unmutes a device.
     Mute {
@@ -37,22 +41,17 @@ pub enum AudioChange {
 }
 
 impl AudioChange {
-    /// `self` followed by `next` as a single change, when they combine:
-    /// volume changes of the same output add up, a later mute or default
-    /// selection of the same kind replaces an earlier one.
-    #[must_use]
-    pub fn merged_with(&self, next: &Self) -> Option<Self> {
-        match (self, next) {
+    /// `self` followed by `next` as a single change, when the later one
+    /// makes the earlier one pointless: a volume of the same output, a mute
+    /// of the same device, a default of the same direction.
+    pub(super) fn merged_with(&self, next: &Self) -> Option<Self> {
+        let replaces = match (self, next) {
             (
-                Self::SinkVolume { sink, delta },
+                Self::SinkVolume { sink, .. },
                 Self::SinkVolume {
-                    sink: next_sink,
-                    delta: next_delta,
+                    sink: next_sink, ..
                 },
-            ) if sink == next_sink => Some(Self::SinkVolume {
-                sink: sink.clone(),
-                delta: delta.saturating_add(*next_delta),
-            }),
+            ) => sink == next_sink,
             (
                 Self::Mute {
                     direction, device, ..
@@ -62,22 +61,97 @@ impl AudioChange {
                     device: next_device,
                     ..
                 },
-            ) if direction == next_direction && device == next_device => Some(next.clone()),
+            ) => direction == next_direction && device == next_device,
             (
                 Self::Default { direction, .. },
                 Self::Default {
                     direction: next_direction,
                     ..
                 },
-            ) if direction == next_direction => Some(next.clone()),
-            _ => None,
-        }
+            ) => direction == next_direction,
+            _ => false,
+        };
+        replaces.then(|| next.clone())
     }
 
-    /// Whether the change does nothing (a volume change of 0).
+    /// What the change alters, to read again once it is applied.
+    pub(super) fn scope(&self) -> ReadScope {
+        match self {
+            Self::SinkVolume { .. }
+            | Self::Mute {
+                direction: Direction::Output,
+                ..
+            } => ReadScope::OUTPUTS,
+            Self::Mute {
+                direction: Direction::Input,
+                ..
+            } => ReadScope::INPUTS,
+            Self::Default { .. } => ReadScope::DEFAULTS,
+        }
+    }
+}
+
+/// Parts of the server state to read: each costs a call to the server
+/// (a `pactl` process), so only those that changed are read again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent parts, combined with `|`"
+)]
+pub struct ReadScope {
+    /// The outputs (sinks) and their volumes.
+    pub outputs: bool,
+    /// The inputs (sources) and their volumes.
+    pub inputs: bool,
+    /// The default output and input.
+    pub defaults: bool,
+}
+
+impl ReadScope {
+    /// Nothing to read.
+    pub const NONE: Self = Self {
+        outputs: false,
+        inputs: false,
+        defaults: false,
+    };
+    /// The outputs only.
+    pub const OUTPUTS: Self = Self {
+        outputs: true,
+        ..Self::NONE
+    };
+    /// The inputs only.
+    pub const INPUTS: Self = Self {
+        inputs: true,
+        ..Self::NONE
+    };
+    /// The defaults only.
+    pub const DEFAULTS: Self = Self {
+        defaults: true,
+        ..Self::NONE
+    };
+    /// Everything.
+    pub const ALL: Self = Self {
+        outputs: true,
+        inputs: true,
+        defaults: true,
+    };
+
+    /// Whether there is nothing to read.
     #[must_use]
-    pub fn is_noop(&self) -> bool {
-        matches!(self, Self::SinkVolume { delta: 0, .. })
+    pub fn is_empty(self) -> bool {
+        self == Self::NONE
+    }
+}
+
+impl BitOr for ReadScope {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self {
+            outputs: self.outputs || other.outputs,
+            inputs: self.inputs || other.inputs,
+            defaults: self.defaults || other.defaults,
+        }
     }
 }
 
@@ -100,7 +174,7 @@ pub enum AudioError {
         command: String,
         /// Exit status.
         status: String,
-        /// What it reported.
+        /// What it reported (truncated).
         stderr: String,
     },
     /// The audio tool did not answer in time.
@@ -119,6 +193,9 @@ pub enum AudioError {
         /// What is wrong.
         reason: String,
     },
+    /// The backend panicked (a bug): the call is treated as failed.
+    #[error("the audio backend panicked")]
+    Panicked,
     /// The (simulated) audio server is unavailable.
     #[error("audio server unavailable")]
     Unavailable,
@@ -127,9 +204,11 @@ pub enum AudioError {
 /// Notifications of changes made on the audio server, by anyone.
 #[async_trait]
 pub trait AudioChanges: Send {
-    /// Waits for the next change of devices, volumes or defaults; `false`
-    /// when the notifications ended (the server or the tool stopped).
-    async fn changed(&mut self) -> bool;
+    /// Waits for the next change of devices, volumes or defaults and tells
+    /// what to read again; `None` when the notifications ended (the server
+    /// or the tool stopped). Cancel-safe: no notification is lost when the
+    /// future is dropped before completing.
+    async fn next_change(&mut self) -> Option<ReadScope>;
 }
 
 /// The audio server.
@@ -137,9 +216,9 @@ pub trait AudioChanges: Send {
 /// Calls may take a while (a process per call): the module only makes them
 /// from its background tasks.
 #[async_trait]
-pub trait AudioBackend: Send + Sync {
-    /// Reads the devices and the defaults.
-    async fn snapshot(&self) -> Result<AudioSnapshot, AudioError>;
+pub trait AudioBackend: Send + Sync + fmt::Debug {
+    /// Reads the parts of the state in `scope`.
+    async fn read(&self, scope: ReadScope) -> Result<PartialSnapshot, AudioError>;
 
     /// Applies `change`.
     async fn apply(&self, change: &AudioChange) -> Result<(), AudioError>;
@@ -152,17 +231,17 @@ pub trait AudioBackend: Send + Sync {
 mod tests {
     use super::*;
 
-    fn volume(sink: &str, delta: i64) -> AudioChange {
+    fn volume(sink: &str, level: u32) -> AudioChange {
         AudioChange::SinkVolume {
             sink: sink.into(),
-            delta,
+            volume: Volume::uniform(level, 2),
         }
     }
 
-    fn mute(direction: Direction, muted: bool) -> AudioChange {
+    fn mute(direction: Direction, device: &str, muted: bool) -> AudioChange {
         AudioChange::Mute {
             direction,
-            device: "d".into(),
+            device: device.into(),
             muted,
         }
     }
@@ -175,29 +254,57 @@ mod tests {
     }
 
     #[test]
-    fn volume_changes_of_one_output_add_up() {
+    fn a_later_volume_of_the_same_output_replaces_the_earlier_one() {
         assert_eq!(
-            volume("a", 3).merged_with(&volume("a", -5)),
-            Some(volume("a", -2))
+            volume("a", 3).merged_with(&volume("a", 5)),
+            Some(volume("a", 5))
         );
         assert_eq!(volume("a", 3).merged_with(&volume("b", 1)), None);
-        assert!(volume("a", 0).is_noop());
-        assert!(!volume("a", 1).is_noop());
     }
 
     #[test]
     fn later_mutes_and_defaults_replace_earlier_ones() {
         let (output, input) = (Direction::Output, Direction::Input);
         assert_eq!(
-            mute(output, true).merged_with(&mute(output, false)),
-            Some(mute(output, false))
+            mute(output, "d", true).merged_with(&mute(output, "d", false)),
+            Some(mute(output, "d", false))
         );
-        assert_eq!(mute(output, true).merged_with(&mute(input, false)), None);
+        assert_eq!(
+            mute(output, "d", true).merged_with(&mute(input, "d", false)),
+            None
+        );
+        // Two devices of the same direction are muted separately.
+        assert_eq!(
+            mute(input, "a", true).merged_with(&mute(input, "b", true)),
+            None
+        );
         assert_eq!(
             default(output, "a").merged_with(&default(output, "b")),
             Some(default(output, "b"))
         );
         assert_eq!(default(output, "a").merged_with(&default(input, "b")), None);
-        assert_eq!(volume("d", 1).merged_with(&mute(output, true)), None);
+        assert_eq!(volume("d", 1).merged_with(&mute(output, "d", true)), None);
+    }
+
+    #[test]
+    fn changes_name_what_to_read_again() {
+        assert_eq!(volume("a", 1).scope(), ReadScope::OUTPUTS);
+        assert_eq!(
+            mute(Direction::Output, "a", true).scope(),
+            ReadScope::OUTPUTS
+        );
+        assert_eq!(mute(Direction::Input, "a", true).scope(), ReadScope::INPUTS);
+        assert_eq!(default(Direction::Input, "a").scope(), ReadScope::DEFAULTS);
+    }
+
+    #[test]
+    fn scopes_combine() {
+        assert!(ReadScope::NONE.is_empty());
+        assert!(!ReadScope::INPUTS.is_empty());
+        assert_eq!(
+            ReadScope::OUTPUTS | ReadScope::INPUTS | ReadScope::DEFAULTS,
+            ReadScope::ALL
+        );
+        assert_eq!(ReadScope::NONE | ReadScope::INPUTS, ReadScope::INPUTS);
     }
 }

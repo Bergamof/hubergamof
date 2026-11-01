@@ -9,7 +9,9 @@
 //! - When a step ends, the next one is prepared stopped (unless `autoStart`)
 //!   and the key asks for attention; a silent desktop notification says so.
 //!
-//! The state lives in memory only: a restart begins a new cycle.
+//! The time follows real time, suspends included (see [`crate::time`]): a
+//! step whose end passed while the machine slept is over on waking up. The
+//! state lives in memory only: a restart begins a new cycle.
 
 mod menu;
 mod settings;
@@ -26,12 +28,12 @@ use bergadeck_module_api::{
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
-use tokio::time::{Instant, MissedTickBehavior};
 
 pub use menu::MENU_TIMEOUT;
 pub use settings::PomodoroSettings;
 
-use crate::notifications::{DesktopNotifier, Notification, Notifier};
+use crate::notifications::{Notification, Notifier};
+use crate::time::{Clock, ClockInstant};
 use menu::{MENU_ENTRIES, Menu, MenuEntry};
 use timer::{Phase, StepEnd, Timer};
 
@@ -50,48 +52,61 @@ const SECONDS_PER_MINUTE: u64 = 60;
 #[derive(Clone)]
 pub struct PomodoroFactory {
     notifier: Arc<dyn Notifier>,
+    clock: Arc<dyn Clock>,
 }
 
 impl PomodoroFactory {
-    /// Factory of pomodoros notifying the desktop session.
+    /// Factory of pomodoros notifying through `notifier` and following
+    /// `clock` (which must count the time the machine sleeps, see
+    /// [`crate::time`]).
     #[must_use]
-    pub fn desktop() -> Self {
-        Self::with_notifier(Arc::new(DesktopNotifier::session()))
-    }
-
-    /// Factory of pomodoros notifying through `notifier`.
-    #[must_use]
-    pub fn with_notifier(notifier: Arc<dyn Notifier>) -> Self {
-        Self { notifier }
+    pub fn new(notifier: Arc<dyn Notifier>, clock: Arc<dyn Clock>) -> Self {
+        Self { notifier, clock }
     }
 }
 
 impl std::fmt::Debug for PomodoroFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PomodoroFactory").finish_non_exhaustive()
+        f.debug_struct("PomodoroFactory")
+            .field("notifier", &self.notifier)
+            .field("clock", &self.clock)
+            .finish()
+    }
+}
+
+/// Kind, capabilities and settings of the pomodoro.
+fn descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        kind: POMODORO_KIND.into(),
+        name: "Pomodoro".into(),
+        description: "Sessions de travail et pauses : appuyer lance ou met en pause, \
+                      tourner la molette ouvre le menu."
+            .into(),
+        capabilities: ModuleCapabilities {
+            key: true,
+            dial: true,
+            touch_zone: true,
+        },
+        settings: settings::fields(),
+    }
+}
+
+impl PomodoroSettings {
+    /// Checks settings against the catalog fields and parses them (missing keys
+    /// take their defaults).
+    ///
+    /// # Errors
+    ///
+    /// [`ModuleError::InvalidSettings`] when they do not parse or are out of
+    /// bounds.
+    pub fn parse(settings: &Value) -> Result<Self, ModuleError> {
+        descriptor().parse_settings(settings)
     }
 }
 
 impl ModuleFactory for PomodoroFactory {
     fn descriptor(&self) -> ModuleDescriptor {
-        ModuleDescriptor {
-            kind: POMODORO_KIND.into(),
-            name: "Pomodoro".into(),
-            description: "Sessions de travail et pauses : appuyer lance ou met en pause, \
-                          tourner la molette ouvre le menu."
-                .into(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: true,
-                touch_zone: true,
-            },
-            settings: settings::fields(),
-        }
-    }
-
-    fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
-        self.descriptor().validate_settings(settings)?;
-        PomodoroSettings::parse(settings).map(|_| ())
+        descriptor()
     }
 
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
@@ -101,18 +116,21 @@ impl ModuleFactory for PomodoroFactory {
             menu: None,
             ticker: None,
             notifier: Arc::clone(&self.notifier),
+            clock: Arc::clone(&self.clock),
             ctx,
         }))
     }
 }
 
-/// Sent by the ticker task every [`TICK_PERIOD`].
+/// Sent by the ticker task.
 #[derive(Debug, Clone, Copy)]
 struct Tick;
 
-/// Stops the ticker task when dropped.
+/// The running ticker task, stopped when dropped.
 #[derive(Debug)]
-struct TickerGuard {
+struct Ticker {
+    /// Deadline the ticks are aligned on (`None`: every [`TICK_PERIOD`]).
+    deadline: Option<ClockInstant>,
     _stop: oneshot::Sender<()>,
 }
 
@@ -120,62 +138,69 @@ struct TickerGuard {
 pub struct Pomodoro {
     timer: Timer,
     menu: Option<Menu>,
-    ticker: Option<TickerGuard>,
+    ticker: Option<Ticker>,
     notifier: Arc<dyn Notifier>,
+    clock: Arc<dyn Clock>,
     ctx: ModuleContext,
 }
 
 impl Pomodoro {
-    fn toggle(&mut self, now: Instant) {
-        self.timer.toggle(now);
-        self.sync_ticker(now, true);
+    fn now(&self) -> ClockInstant {
+        self.clock.now()
     }
 
-    fn run_menu_entry(&mut self, entry: MenuEntry, now: Instant) {
+    fn toggle(&mut self) {
+        self.timer.toggle(self.now());
+        self.sync_ticker();
+    }
+
+    fn run_menu_entry(&mut self, entry: MenuEntry) {
         match entry {
-            MenuEntry::Skip => self.timer.skip(now),
+            MenuEntry::Skip => self.timer.skip(self.now()),
             MenuEntry::Reset => self.timer.reset(),
         }
         self.menu = None;
-        self.sync_ticker(now, true);
+        self.sync_ticker();
     }
 
-    fn on_tick(&mut self, now: Instant) {
+    fn on_tick(&mut self) {
+        let now = self.now();
         if self.menu.is_some_and(|menu| menu.is_expired(now)) {
             self.menu = None;
         }
-        let ended = self.timer.tick(now);
-        if let Some(end) = ended {
+        if let Some(end) = self.timer.tick(now) {
             self.notify(notification_for(&end, self.timer.cycle_length()));
         }
-        self.sync_ticker(now, ended.is_some());
+        self.sync_ticker();
     }
 
-    /// Runs the ticker only while the time runs or the menu is open. With
-    /// `realign` (the deadline moved), a running timer gets a new ticker
-    /// whose ticks fall on whole seconds of the time left, so that the
-    /// display changes on time and the last tick hits the deadline.
-    fn sync_ticker(&mut self, now: Instant, realign: bool) {
-        let running = self.timer.is_running();
-        if !running && self.menu.is_none() {
+    /// Runs the ticker only while the time runs or the menu is open, aligned
+    /// on the current deadline: a new deadline (start, skip, new lengths…)
+    /// replaces the ticker.
+    fn sync_ticker(&mut self) {
+        let deadline = self.timer.deadline();
+        if deadline.is_none() && self.menu.is_none() {
             self.ticker = None;
             return;
         }
-        if self.ticker.is_some() && !(realign && running) {
+        if self
+            .ticker
+            .as_ref()
+            .is_some_and(|ticker| ticker.deadline == deadline)
+        {
             return;
         }
-        let first_tick = if running {
-            delay_to_whole_second(self.timer.remaining(now))
-        } else {
-            TICK_PERIOD
-        };
         let (stop, stopped) = oneshot::channel();
-        let ticker = tick_until_stopped(self.ctx.events().clone(), now + first_tick, stopped);
-        self.ticker = self
-            .ctx
-            .tasks()
-            .spawn(ticker)
-            .then_some(TickerGuard { _stop: stop });
+        let ticks = tick_until_stopped(
+            self.ctx.events().clone(),
+            Arc::clone(&self.clock),
+            deadline,
+            stopped,
+        );
+        self.ticker = self.ctx.tasks().spawn(ticks).then_some(Ticker {
+            deadline,
+            _stop: stop,
+        });
     }
 
     /// Shows `notification` from a background task; a failure is logged.
@@ -209,10 +234,9 @@ impl Pomodoro {
 #[async_trait]
 impl Module for Pomodoro {
     fn key(&self) -> KeyContent {
-        let now = Instant::now();
         let label = format!(
             "{} {}",
-            format_remaining(self.timer.remaining(now)),
+            format_remaining(self.timer.remaining(self.now())),
             phase_name(self.timer.phase())
         );
         let state = if self.timer.is_awaiting_start() {
@@ -226,34 +250,33 @@ impl Module for Pomodoro {
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
-        self.toggle(Instant::now());
+        self.toggle();
         Vec::new()
     }
 
     async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
-        let now = Instant::now();
+        let now = self.now();
         match &mut self.menu {
             Some(menu) => menu.rotate(ticks, now),
             None => self.menu = Some(Menu::open(now)),
         }
-        self.sync_ticker(now, false);
+        self.sync_ticker();
         Vec::new()
     }
 
     async fn on_dial_press(&mut self) -> Vec<Command> {
-        let now = Instant::now();
         if let Some(menu) = self.menu {
-            self.run_menu_entry(menu.selected(), now);
+            self.run_menu_entry(menu.selected());
             vec![Command::Feedback(Feedback::Ok)]
         } else {
-            self.toggle(now);
+            self.toggle();
             Vec::new()
         }
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
         if event.is::<Tick>() {
-            self.on_tick(Instant::now());
+            self.on_tick();
         }
         Vec::new()
     }
@@ -262,15 +285,11 @@ impl Module for Pomodoro {
         if let Some(menu) = self.menu {
             return Some(self.menu_zone(menu));
         }
-        let now = Instant::now();
-        let level = GaugeLevel::from_fraction(
-            millis(self.timer.elapsed(now)),
-            millis(self.timer.step_duration()),
-        );
+        let remaining = self.timer.remaining(self.now());
         let gauge = GaugeContent::new(
             step_title(&self.timer),
-            format_remaining(self.timer.remaining(now)),
-            level,
+            format_remaining(remaining),
+            displayed_level(self.timer.step_duration(), remaining),
         )
         .with_dimmed(!self.timer.is_running());
         Some(ZoneContent::Gauge(gauge))
@@ -278,30 +297,49 @@ impl Module for Pomodoro {
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
         let settings = PomodoroSettings::parse(settings)?;
-        let now = Instant::now();
         self.timer
-            .update(settings.durations(), settings.auto_start, now);
-        self.sync_ticker(now, true);
+            .update(settings.durations(), settings.auto_start, self.now());
+        self.sync_ticker();
         Ok(())
     }
 }
 
-/// Sends a [`Tick`] at `first` then every [`TICK_PERIOD`], until `stop`
-/// fires or is dropped, or the instance is gone.
-async fn tick_until_stopped(events: EventSender, first: Instant, mut stop: oneshot::Receiver<()>) {
-    let mut ticks = tokio::time::interval_at(first, TICK_PERIOD);
-    // After a suspend, one tick is enough (the state comes from the clock),
-    // and the next ones stay on whole seconds of the time left.
-    ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
+/// Sends a [`Tick`] whenever the time left reaches a whole second (the
+/// display changes) and at `deadline`, or every [`TICK_PERIOD`] without a
+/// deadline, until `stop` fires or is dropped, or the instance is gone.
+///
+/// Every delay is computed from `clock` again: after a suspend, the first
+/// tick comes at most a second after waking up (Tokio's timers do not count
+/// the time asleep), finds the step over if its deadline passed, and the
+/// next ticks fall on whole seconds again. Missed ticks are not replayed.
+async fn tick_until_stopped(
+    events: EventSender,
+    clock: Arc<dyn Clock>,
+    deadline: Option<ClockInstant>,
+    mut stop: oneshot::Receiver<()>,
+) {
+    // Whether the last tick was sent with the deadline passed: that tick
+    // ends the step and replaces this ticker; until it is handled, do not
+    // spin.
+    let mut ticked_at_deadline = false;
     loop {
+        let delay = match deadline {
+            Some(_) if ticked_at_deadline => TICK_PERIOD,
+            Some(deadline) => {
+                delay_to_whole_second(deadline.saturating_duration_since(clock.now()))
+            }
+            None => TICK_PERIOD,
+        };
         tokio::select! {
             _ = &mut stop => return,
-            _ = ticks.tick() => {
+            () = tokio::time::sleep(delay) => {
                 if !events.send(Tick) {
                     return;
                 }
             }
         }
+        ticked_at_deadline = deadline
+            .is_some_and(|deadline| deadline.saturating_duration_since(clock.now()).is_zero());
     }
 }
 
@@ -319,12 +357,25 @@ fn delay_to_whole_second(remaining: Duration) -> Duration {
 /// `mm:ss`, rounded up to the second so that a step shows its full length
 /// when it starts and `00:00` only when it is over.
 fn format_remaining(remaining: Duration) -> String {
-    let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
+    let seconds = displayed_seconds(remaining);
     format!(
         "{:02}:{:02}",
         seconds / SECONDS_PER_MINUTE,
         seconds % SECONDS_PER_MINUTE
     )
+}
+
+/// Seconds shown for `remaining`: rounded up (see [`format_remaining`]).
+fn displayed_seconds(remaining: Duration) -> u64 {
+    remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+}
+
+/// Gauge level matching the time shown: the bar moves when the displayed
+/// second changes and is identical in between, so that the zone image is
+/// rendered once per second.
+fn displayed_level(step: Duration, remaining: Duration) -> GaugeLevel {
+    let shown_remaining = Duration::from_secs(displayed_seconds(remaining));
+    GaugeLevel::from_fraction(millis(step.saturating_sub(shown_remaining)), millis(step))
 }
 
 fn millis(duration: Duration) -> u64 {

@@ -80,9 +80,8 @@ fn invalid(module: &ModuleInstanceId, reason: String) -> EngineError {
 mod tests {
     use std::path::Path;
 
-    use bergadeck_modules::builtin_registry;
-
     use super::*;
+    use crate::testing::builtin_registry;
 
     #[test]
     fn example_configurations_pass_the_builtin_modules() {

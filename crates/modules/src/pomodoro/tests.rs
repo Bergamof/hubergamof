@@ -1,16 +1,18 @@
 use std::sync::Mutex;
 
-use bergadeck_module_api::{EventSender, TaskScope};
+use bergadeck_module_api::TaskScope;
+use bergadeck_module_api::testing::TestContext;
 use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::*;
 use crate::notifications::NotifyError;
+use crate::time::testing::SimulatedClock;
 
 const MINUTE: Duration = Duration::from_secs(60);
 
 /// Records notifications, or fails every one of them.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct FakeNotifier {
     sent: Mutex<Vec<Notification>>,
     failing: bool,
@@ -40,7 +42,16 @@ struct Harness {
     module: Box<dyn Module>,
     events: mpsc::UnboundedReceiver<ModuleEvent>,
     notifier: Arc<FakeNotifier>,
+    clock: Arc<SimulatedClock>,
     scope: TaskScope,
+}
+
+fn factory(notifier: Arc<FakeNotifier>, clock: Arc<SimulatedClock>) -> PomodoroFactory {
+    PomodoroFactory::new(notifier, clock)
+}
+
+fn simple_factory() -> PomodoroFactory {
+    factory(Arc::default(), Arc::new(SimulatedClock::new()))
 }
 
 impl Harness {
@@ -50,16 +61,14 @@ impl Harness {
 
     fn with_notifier(settings: &Value, notifier: FakeNotifier) -> Self {
         let notifier = Arc::new(notifier);
-        let (sender, events) = mpsc::unbounded_channel();
-        let scope = TaskScope::new();
-        let ctx = ModuleContext::for_tests(POMODORO_KIND)
-            .with_events(EventSender::new(move |event| sender.send(event).is_ok()))
-            .with_tasks(scope.spawner());
-        let factory = PomodoroFactory::with_notifier(Arc::clone(&notifier) as Arc<dyn Notifier>);
+        let clock = Arc::new(SimulatedClock::new());
+        let TestContext { ctx, events, scope } = TestContext::new(POMODORO_KIND);
+        let factory = factory(Arc::clone(&notifier), Arc::clone(&clock));
         Self {
             module: factory.create(ctx, settings).unwrap(),
             events,
             notifier,
+            clock,
             scope,
         }
     }
@@ -126,7 +135,7 @@ fn label(key: &KeyContent) -> &str {
 
 #[test]
 fn default_settings_are_the_classic_cycle() {
-    let factory = PomodoroFactory::with_notifier(Arc::new(FakeNotifier::default()));
+    let factory = simple_factory();
     assert_eq!(
         factory.default_settings(),
         json!({
@@ -143,7 +152,7 @@ fn default_settings_are_the_classic_cycle() {
 
 #[test]
 fn settings_are_validated_against_their_bounds() {
-    let factory = PomodoroFactory::with_notifier(Arc::new(FakeNotifier::default()));
+    let factory = simple_factory();
     assert!(factory.validate_settings(&json!({})).is_ok());
     assert!(
         factory
@@ -186,7 +195,8 @@ async fn pressing_the_key_starts_and_pauses_the_time() {
     let gauge = pomodoro.gauge();
     assert_eq!(gauge.value, "24:00");
     assert!(!gauge.dimmed);
-    assert_eq!(gauge.level, GaugeLevel::from_fraction(60_500, 25 * 60_000));
+    // The bar matches the time shown (one minute spent), not the 60.5 s.
+    assert_eq!(gauge.level, GaugeLevel::from_fraction(60_000, 25 * 60_000));
 
     assert_eq!(pomodoro.module.on_key_press().await, []);
     assert_eq!(pomodoro.key().state, KeyState::Normal);
@@ -402,6 +412,84 @@ async fn ticks_stop_with_the_instance() {
     drop(scope);
     tokio::time::sleep(MINUTE).await;
     assert!(events.try_recv().is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_gauge_changes_with_the_displayed_second_only() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(Duration::from_millis(1_100)).await;
+    let first = pomodoro.gauge();
+    pomodoro.run_for(Duration::from_millis(800)).await;
+    assert_eq!(pomodoro.gauge(), first, "same second shown, same image");
+    pomodoro.run_for(Duration::from_millis(200)).await;
+    assert_ne!(pomodoro.gauge().level, first.level);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_step_whose_deadline_passed_asleep_ends_on_waking_up() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 25 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(10 * MINUTE).await;
+    // An hour asleep: Tokio's timers did not see it pass.
+    pomodoro.clock.sleep_machine(60 * MINUTE);
+    assert_eq!(pomodoro.run_for(TICK_PERIOD).await, 1, "a single tick");
+    let key = pomodoro.key();
+    assert_eq!(label(&key), "05:00 Pause");
+    assert_eq!(key.state, KeyState::Attention);
+    assert_eq!(pomodoro.notifier.sent().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn time_asleep_counts_within_a_step() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.clock.sleep_machine(10 * MINUTE);
+    pomodoro.run_for(TICK_PERIOD).await;
+    assert_eq!(label(&pomodoro.key()), "14:59 Travail");
+}
+
+#[tokio::test(start_paused = true)]
+async fn missed_ticks_are_not_replayed() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    assert_eq!(pomodoro.handle_events().await, 0, "ticker started");
+    // The runtime stalls for ten seconds (busy machine): one tick only.
+    tokio::time::advance(10 * TICK_PERIOD).await;
+    assert_eq!(pomodoro.handle_events().await, 1);
+    assert_eq!(label(&pomodoro.key()), "24:50 Travail");
+}
+
+#[tokio::test(start_paused = true)]
+async fn ticks_realign_after_a_jump_within_a_second() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(Duration::from_secs(2)).await;
+    // 0.3 s asleep: 24:57.7 left. The tick already due at 3 s still comes
+    // (24:56.7 left), then the next ones fall on whole seconds again.
+    pomodoro.clock.sleep_machine(Duration::from_millis(300));
+    assert_eq!(pomodoro.run_for(Duration::from_millis(600)).await, 0);
+    assert_eq!(pomodoro.run_for(Duration::from_millis(100)).await, 0);
+    assert_eq!(pomodoro.run_for(Duration::from_millis(300)).await, 1);
+    assert_eq!(label(&pomodoro.key()), "24:57 Travail");
+    assert_eq!(pomodoro.run_for(Duration::from_millis(600)).await, 0);
+    assert_eq!(pomodoro.run_for(Duration::from_millis(100)).await, 1);
+    assert_eq!(label(&pomodoro.key()), "24:56 Travail");
+}
+
+#[tokio::test(start_paused = true)]
+async fn shorter_lengths_below_the_time_spent_end_the_step_at_once() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 10 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(5 * MINUTE).await;
+    pomodoro
+        .module
+        .update_settings(&json!({ "workMinutes": 2 }))
+        .unwrap();
+    assert_eq!(pomodoro.handle_events().await, 1, "immediate tick");
+    assert_eq!(label(&pomodoro.key()), "05:00 Pause");
+    assert_eq!(pomodoro.notifier.sent().len(), 1);
+    assert_eq!(pomodoro.run_for(MINUTE).await, 0, "no spinning ticker");
 }
 
 #[test]

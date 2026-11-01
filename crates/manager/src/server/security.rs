@@ -26,7 +26,7 @@ use super::{AppState, WS_PATH};
 
 /// Content Security Policy of every response; HTML pages extend
 /// `script-src` with the hashes of their inline scripts (see
-/// [`super::assets`]).
+/// module `assets`).
 ///
 /// `style-src 'unsafe-inline'`: Svelte writes `style` attributes in the
 /// prerendered pages (`<div style="display: contents">`).

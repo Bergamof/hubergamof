@@ -146,6 +146,8 @@ mod content;
 mod context;
 mod ids;
 mod module;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingField, SettingKind};
 pub use command::{Command, Feedback, ModuleSurface};

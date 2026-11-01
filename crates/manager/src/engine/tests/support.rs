@@ -11,7 +11,7 @@ use bergadeck_module_api::{
     ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle, SettingField,
     SettingKind, ZoneContent, parse_settings,
 };
-use bergadeck_modules::{Environment, ModuleRegistry, builtin_registry_in};
+use bergadeck_modules::ModuleRegistry;
 use bergadeck_protocol::{
     DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ImageSize, ModuleInstance,
 };
@@ -26,6 +26,7 @@ use crate::config_store::ConfigStore;
 use crate::device::virtual_deck::VirtualDeck;
 use crate::device::{DeckBackend, DeviceError, InputEvent};
 use crate::engine::*;
+use crate::testing::builtin_registry;
 
 pub(super) const LIST_KIND: &str = "list";
 pub(super) const LIST_PAGE: &str = "list";
@@ -505,7 +506,7 @@ pub(super) struct Fixture {
 }
 
 pub(super) fn registry(probe: &Probe) -> Arc<ModuleRegistry> {
-    let mut registry = builtin_registry_in(Environment::Simulated);
+    let mut registry = builtin_registry();
     registry.register(Arc::new(ListFactory(probe.clone())));
     registry.register(Arc::new(FragileFactory(probe.clone())));
     Arc::new(registry)

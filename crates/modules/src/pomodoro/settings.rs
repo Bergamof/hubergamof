@@ -3,9 +3,8 @@
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
-use bergadeck_module_api::{ModuleError, SettingField, SettingKind, parse_settings};
+use bergadeck_module_api::{SettingField, SettingKind};
 use serde::Deserialize;
-use serde_json::Value;
 
 const WORK_MINUTES_KEY: &str = "workMinutes";
 const SHORT_BREAK_MINUTES_KEY: &str = "shortBreakMinutes";
@@ -54,51 +53,6 @@ impl Default for PomodoroSettings {
 }
 
 impl PomodoroSettings {
-    /// Parses settings already checked against [`fields`] (missing keys take
-    /// their defaults).
-    ///
-    /// # Errors
-    ///
-    /// [`ModuleError::InvalidSettings`] when they do not parse or are out of
-    /// bounds.
-    pub fn parse(settings: &Value) -> Result<Self, ModuleError> {
-        let parsed: Self = parse_settings(settings)?;
-        parsed.check_bounds()?;
-        Ok(parsed)
-    }
-
-    fn check_bounds(&self) -> Result<(), ModuleError> {
-        let checks = [
-            (WORK_MINUTES_KEY, self.work_minutes, WORK_MINUTES),
-            (
-                SHORT_BREAK_MINUTES_KEY,
-                self.short_break_minutes,
-                SHORT_BREAK_MINUTES,
-            ),
-            (
-                LONG_BREAK_MINUTES_KEY,
-                self.long_break_minutes,
-                LONG_BREAK_MINUTES,
-            ),
-            (
-                LONG_BREAK_EVERY_KEY,
-                self.long_break_every,
-                LONG_BREAK_EVERY,
-            ),
-        ];
-        match checks
-            .into_iter()
-            .find(|(_, value, range)| !range.contains(value))
-        {
-            Some((key, value, range)) => Err(ModuleError::InvalidSettings(format!(
-                "`{key}`: {value} is not within {}..={}",
-                range.start(),
-                range.end()
-            ))),
-            None => Ok(()),
-        }
-    }
-
     /// Lengths of the steps.
     #[must_use]
     pub fn durations(&self) -> Durations {
@@ -196,6 +150,7 @@ fn integer(default: u32, range: &RangeInclusive<u32>, unit: Option<&str>) -> Set
 
 #[cfg(test)]
 mod tests {
+    use bergadeck_module_api::ModuleError;
     use serde_json::json;
 
     use super::*;

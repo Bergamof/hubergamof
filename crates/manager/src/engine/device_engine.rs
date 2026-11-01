@@ -311,7 +311,7 @@ impl DeviceEngine {
 
     async fn handle_event(&mut self, routed: RoutedEvent) {
         let module = routed.module.clone();
-        let surfaces = self.module_surfaces(&module);
+        let surfaces = self.event_surfaces(&module);
         if let Some(outcome) = self.instances.dispatch(routed).await {
             self.conclude(&module, &surfaces, outcome);
         }
@@ -331,26 +331,35 @@ impl DeviceEngine {
         }
     }
 
-    /// Surfaces showing `module` outside of a pressed key: its home key (when
-    /// displayed), or else the zones of its dials.
-    fn module_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
-        if self.config.home.contains(module) {
-            return self.home_surfaces(module);
+    /// Surfaces showing the outcome of an event of `module`: its home key
+    /// when displayed, or else the zones of its dials.
+    fn event_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+        let home = self.displayed(vec![Self::home_surface(module)]);
+        if home.is_empty() {
+            self.zone_surfaces(module)
+        } else {
+            home
         }
-        self.zone_surfaces(module)
     }
 
-    /// The home key of `module`, if it is on the home page.
-    fn home_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+    /// Surfaces alerting that `module` was replaced by a placeholder: its
+    /// home key if it is on the home page, or else the zones of its dials.
+    /// Not limited to the last frame: the replacement happens while the next
+    /// one is composed.
+    fn failure_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
         if self.config.home.contains(module) {
-            vec![Surface::Key(KeyTarget::Home(module.clone()))]
+            vec![Self::home_surface(module)]
         } else {
-            Vec::new()
+            self.dial_zones(module)
         }
+    }
+
+    fn home_surface(module: &ModuleInstanceId) -> Surface {
+        Surface::Key(KeyTarget::Home(module.clone()))
     }
 
     /// The zones of the dials `module` is assigned to.
-    fn zone_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+    fn dial_zones(&self, module: &ModuleInstanceId) -> Vec<Surface> {
         self.config
             .dials
             .iter()
@@ -362,22 +371,50 @@ impl DeviceEngine {
             .collect()
     }
 
-    /// Surfaces of `module` named by a [`Command::FeedbackOn`].
+    /// The displayed zones of the dials `module` is assigned to.
+    fn zone_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+        self.displayed(self.dial_zones(module))
+    }
+
+    /// Surfaces of `module` named by a [`Command::FeedbackOn`], among those
+    /// displayed.
     fn named_surfaces(&self, module: &ModuleInstanceId, surface: ModuleSurface) -> Vec<Surface> {
         match surface {
-            ModuleSurface::HomeKey => self.home_surfaces(module),
+            ModuleSurface::HomeKey => self.displayed(vec![Self::home_surface(module)]),
             ModuleSurface::Zone => self.zone_surfaces(module),
-            ModuleSurface::Item { page, item } => vec![Surface::Key(KeyTarget::Item {
-                module: module.clone(),
-                page,
-                item,
-            })],
+            ModuleSurface::Item { page, item } => {
+                self.displayed(vec![Surface::Key(KeyTarget::Item {
+                    module: module.clone(),
+                    page,
+                    item,
+                })])
+            }
             // Surfaces added to the API after this version of the host.
             unknown => {
                 tracing::warn!(%module, surface = ?unknown, "unsupported feedback surface");
                 Vec::new()
             }
         }
+    }
+
+    /// The `surfaces` shown on the last drawn frame: a mark is only ever
+    /// drawn over what the user sees when the outcome comes, never later
+    /// over a surface shown afterwards.
+    fn displayed(&self, mut surfaces: Vec<Surface>) -> Vec<Surface> {
+        let Some(frame) = &self.last_frame else {
+            return Vec::new();
+        };
+        surfaces.retain(|surface| match surface {
+            Surface::Key(target) => frame
+                .keys
+                .iter()
+                .any(|key| key.target.as_ref() == Some(target)),
+            Surface::Zone(dial) => frame
+                .dials
+                .get(usize::from(*dial))
+                .is_some_and(|dial| dial.zone.is_some()),
+        });
+        surfaces
     }
 
     fn show_feedback(&mut self, surfaces: &[Surface], feedback: Feedback) {
@@ -502,7 +539,7 @@ impl DeviceEngine {
     /// ends because placeholders never panic.
     fn next_frame(&mut self) -> Frame {
         for module in self.instances.take_task_panics() {
-            let surfaces = self.module_surfaces(&module);
+            let surfaces = self.failure_surfaces(&module);
             self.show_feedback(&surfaces, Feedback::Alert);
         }
         loop {
@@ -514,7 +551,7 @@ impl DeviceEngine {
                 return frame;
             }
             for module in &failed {
-                let surfaces = self.module_surfaces(module);
+                let surfaces = self.failure_surfaces(module);
                 self.show_feedback(&surfaces, Feedback::Alert);
             }
         }

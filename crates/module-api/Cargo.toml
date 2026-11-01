@@ -25,6 +25,8 @@ ts-rs = { workspace = true, optional = true }
 [features]
 # Derives `ts_rs::TS` on the types that are part of the wire contract.
 ts = ["dep:ts-rs"]
+# `testing::TestContext`, for the tests of modules (channels need `sync`).
+testing = ["tokio/sync"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }

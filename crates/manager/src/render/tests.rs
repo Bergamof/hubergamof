@@ -229,7 +229,8 @@ fn identical_requests_hit_the_cache() {
 
 #[test]
 fn cache_is_bounded() {
-    let subject = Renderer::with_cache_capacity(NonZeroUsize::new(2).unwrap()).unwrap();
+    let two = NonZeroUsize::new(2).unwrap();
+    let subject = Renderer::with_cache_capacity(two, two).unwrap();
     let first = subject
         .render_key(&KeyRequest::new(KEY, None, Some("1")))
         .unwrap();
@@ -243,6 +244,38 @@ fn cache_is_bounded() {
         .render_key(&KeyRequest::new(KEY, None, Some("1")))
         .unwrap();
     assert!(!Arc::ptr_eq(&first, &again));
+}
+
+#[test]
+fn a_countdown_does_not_push_icons_out_of_the_cache() {
+    let subject = renderer();
+    let icon = png(16, 16, RED);
+    let render_icon = || {
+        subject
+            .render_key(&KeyRequest::new(KEY, Some(&icon), Some("Audio")))
+            .unwrap()
+    };
+    // Shown, then shown again after a page visit.
+    let first = render_icon();
+    assert!(Arc::ptr_eq(&first, &render_icon()));
+    // 300 seconds of a pomodoro: a new key and a new gauge every second.
+    for second in 0..300_u32 {
+        let label = format!("{:02}:{:02} Travail", second / 60, second % 60);
+        subject
+            .render_key(&KeyRequest::new(KEY, None, Some(&label)))
+            .unwrap();
+        let level = GaugeLevel::from_fraction(u64::from(second), 1500);
+        subject
+            .render_gauge(
+                &GaugeContent::new("Travail · 1/4", label, level),
+                ZONE,
+                DEFAULT_BACKGROUND,
+            )
+            .unwrap();
+    }
+    assert!(Arc::ptr_eq(&first, &render_icon()), "the icon was evicted");
+    // The countdown only ever occupies the probation segment.
+    assert_eq!(subject.cached_len(), 1 + RENDER_PROBATION_CAPACITY.get());
 }
 
 #[test]

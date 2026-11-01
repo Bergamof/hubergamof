@@ -22,14 +22,16 @@ pub enum Command {
     ScrollRows(i32),
     /// Briefly marks the surface that triggered the handler (the pressed
     /// key, the zone of the turned dial; for [`crate::Module::on_event`], the
-    /// home key of the module when it is displayed) with the outcome of the
-    /// action.
+    /// home key of the module when it is displayed, or else the zones of its
+    /// dials) with the outcome of the action.
     Feedback(Feedback),
     /// Briefly marks a given surface of the module with the outcome of an
     /// action. Meant for [`crate::Module::on_event`], when a background task
     /// reports the outcome of an action started by an earlier input (the
     /// dial zone for a volume change, the pressed item for a selection).
-    /// Surfaces not displayed at that moment show nothing.
+    /// Only surfaces displayed when the command is applied are marked: a
+    /// surface shown afterwards (its page opened within the mark duration)
+    /// carries no mark.
     FeedbackOn(ModuleSurface, Feedback),
 }
 

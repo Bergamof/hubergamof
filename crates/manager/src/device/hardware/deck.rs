@@ -17,7 +17,7 @@ use elgato_streamdeck::{StreamDeck, StreamDeckError};
 use image::{DynamicImage, RgbaImage};
 use tokio::sync::{broadcast, oneshot};
 
-use super::encoded::{ENCODED_CACHE_CAPACITY, EncodedCache};
+use super::encoded::{ENCODED_CACHE_CAPACITY, ENCODED_PROBATION_CAPACITY, EncodedCache};
 use super::mapping::InputTracker;
 use crate::device::strip::{check_image_size, check_strip_region};
 use crate::device::{DeckBackend, DeviceError, INPUT_EVENT_CAPACITY, InputEvent};
@@ -79,8 +79,8 @@ impl HardwareDeck {
             commands: receiver,
             events: events.clone(),
             connected: Arc::clone(&connected),
-            encoded_keys: EncodedCache::new(ENCODED_CACHE_CAPACITY),
-            encoded_strips: EncodedCache::new(ENCODED_CACHE_CAPACITY),
+            encoded_keys: EncodedCache::new(ENCODED_CACHE_CAPACITY, ENCODED_PROBATION_CAPACITY),
+            encoded_strips: EncodedCache::new(ENCODED_CACHE_CAPACITY, ENCODED_PROBATION_CAPACITY),
         };
         thread::Builder::new()
             .name(format!("deck-{}", info.serial))

@@ -15,9 +15,12 @@
 //! - [`server`]: the local web server (UI files and `/ws` WebSocket).
 //! - [`tray`]: the system tray icon (`StatusNotifierItem`).
 
+mod cache;
 pub mod config_store;
 pub mod device;
 pub mod engine;
 pub mod render;
 pub mod server;
+#[cfg(test)]
+mod testing;
 pub mod tray;
