@@ -46,6 +46,15 @@ pub const WS_PATH: &str = "/ws";
 /// configuration is a few kilobytes; images do not travel over `/ws`.
 pub const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024;
 
+/// Whether clients may simulate presses and rotations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulatedInput {
+    /// Accepted (`--demo`, virtual devices only).
+    Accepted,
+    /// Refused: on real devices, input comes from the device only.
+    Refused,
+}
+
 /// What the server exposes.
 #[derive(Clone)]
 pub struct ServerContext {
@@ -55,6 +64,8 @@ pub struct ServerContext {
     pub engines: EngineRegistry,
     /// Module kinds offered to the UI.
     pub catalog: Arc<[ModuleDescriptor]>,
+    /// Whether clients may press keys and turn dials.
+    pub simulated_input: SimulatedInput,
 }
 
 /// Shared by every request handler.

@@ -16,7 +16,7 @@ use bergadeck_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtu
 use bergadeck_manager::device::{self, DeviceDiscovery};
 use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
-use bergadeck_manager::server::{DevOrigin, EmbeddedUi, Server, ServerContext};
+use bergadeck_manager::server::{DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput};
 use bergadeck_manager::tray::{TrayIcon, quit_on};
 use bergadeck_modules::{BuiltinServices, builtin_registry_with};
 use clap::Parser;
@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
         discovery: discovery.clone(),
         engines: supervisor.engines(),
         catalog,
+        simulated_input: simulated_input(cli.demo),
     };
     let server = match Server::bind(
         cli.port,
@@ -182,6 +183,16 @@ async fn stop_server(server_task: JoinHandle<std::io::Result<()>>) {
 
 /// What the modules act on: the demo is hermetic (simulated audio…), so that
 /// the UI, its tests and Lighthouse never touch the machine.
+/// Only the demo, on virtual devices, accepts presses from the web
+/// interface: on real devices, input comes from the device only.
+fn simulated_input(demo: bool) -> SimulatedInput {
+    if demo {
+        SimulatedInput::Accepted
+    } else {
+        SimulatedInput::Refused
+    }
+}
+
 fn builtin_services(demo: bool) -> BuiltinServices {
     if demo {
         BuiltinServices::simulated()
@@ -245,6 +256,12 @@ mod tests {
     const AUDIO_DIAL_INDEX: u8 = 1;
     const AUDIO_DIAL: usize = AUDIO_DIAL_INDEX as usize;
     const WAIT: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn only_the_demo_accepts_simulated_input() {
+        assert_eq!(simulated_input(true), SimulatedInput::Accepted);
+        assert_eq!(simulated_input(false), SimulatedInput::Refused);
+    }
 
     #[test]
     fn cli_definition_is_consistent() {

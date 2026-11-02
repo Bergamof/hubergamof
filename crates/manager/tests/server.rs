@@ -17,7 +17,7 @@ use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
 use bergadeck_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
-    MISSING_UI_MESSAGE, Server, ServerContext, WS_PATH, router,
+    MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH, router,
 };
 use bergadeck_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
@@ -151,6 +151,7 @@ impl Devices {
             discovery: discovery.clone(),
             engines: supervisor.engines(),
             catalog: registry.descriptors().into(),
+            simulated_input: SimulatedInput::Accepted,
         };
         Self {
             _dir: dir,
@@ -171,8 +172,14 @@ struct Running {
 }
 
 impl Running {
+    /// A demo server: simulated input accepted.
     async fn start() -> Self {
-        let devices = Devices::start();
+        Self::accepting(SimulatedInput::Accepted).await
+    }
+
+    async fn accepting(simulated_input: SimulatedInput) -> Self {
+        let mut devices = Devices::start();
+        devices.context.simulated_input = simulated_input;
         let (shutdown, stopping) = watch::channel(false);
         let dev_origins = [DEV_ORIGIN.parse::<DevOrigin>().unwrap()];
         let server = Server::bind(
@@ -272,11 +279,15 @@ impl Client {
         .await
     }
 
+    /// The next error, skipping the live states published meanwhile (the
+    /// modules update their keys in the background).
     async fn error(&mut self) -> ErrorCode {
-        match self.receive().await {
-            ServerMessage::Error { code, .. } => code,
+        self.receive_until(|message| match message {
+            ServerMessage::Error { code, .. } => Some(code),
+            ServerMessage::LiveState { .. } => None,
             other => panic!("expected an error, got {other:?}"),
-        }
+        })
+        .await
     }
 
     /// Selects `serial` and returns the `config` then `liveState` that follow.
@@ -628,6 +639,35 @@ async fn selected_device_streams_config_and_live_state() {
             .await,
         ErrorCode::StaleRevision
     );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn real_devices_refuse_simulated_input_but_not_configuration() {
+    let server = Running::accepting(SimulatedInput::Refused).await;
+    // Allowed Host and Origin: still refused, input comes from the device.
+    let mut client = server.connect().await;
+    let (_, _) = client.select(DEMO_SERIAL).await;
+    let inputs = [
+        ClientMessage::PressKey {
+            serial: DEMO_SERIAL.into(),
+            index: 0,
+        },
+        ClientMessage::RotateDial {
+            serial: DEMO_SERIAL.into(),
+            index: 0,
+            ticks: 1,
+        },
+        ClientMessage::PressDial {
+            serial: DEMO_SERIAL.into(),
+            index: 0,
+        },
+    ];
+    for input in inputs {
+        client.send(&input).await;
+        assert_eq!(client.error().await, ErrorCode::InputRefused, "{input:?}");
+    }
+    client.ping().await;
     server.stop().await;
 }
 

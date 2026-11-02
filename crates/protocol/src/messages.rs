@@ -29,14 +29,15 @@ pub enum ClientMessage {
         /// New configuration.
         config: DeviceConfig,
     },
-    /// Simulate a key press.
+    /// Simulate a key press: `--demo` only, refused with
+    /// [`ErrorCode::InputRefused`] on real devices.
     PressKey {
         /// Device serial.
         serial: String,
         /// Key index.
         index: u32,
     },
-    /// Simulate a dial rotation.
+    /// Simulate a dial rotation: `--demo` only, see [`ClientMessage::PressKey`].
     RotateDial {
         /// Device serial.
         serial: String,
@@ -45,7 +46,7 @@ pub enum ClientMessage {
         /// Rotation steps, positive clockwise.
         ticks: i32,
     },
-    /// Simulate a dial press.
+    /// Simulate a dial press: `--demo` only, see [`ClientMessage::PressKey`].
     PressDial {
         /// Device serial.
         serial: String,
@@ -118,6 +119,10 @@ pub enum ErrorCode {
     StaleRevision,
     /// The requested key or dial does not exist on the device.
     InvalidInput,
+    /// Simulated input outside `--demo`: on real devices, presses and
+    /// rotations come from the device only, so that no local program can
+    /// act through the manager (start containers…).
+    InputRefused,
     /// Unexpected failure inside the manager.
     Internal,
 }

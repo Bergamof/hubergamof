@@ -16,7 +16,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::AppState;
+use super::{AppState, SimulatedInput};
 use crate::device::DiscoveryEvent;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry, LiveSnapshot};
 
@@ -182,6 +182,13 @@ impl Session {
                     Ok(())
                 })
                 .await
+            }
+            ClientMessage::PressKey { .. }
+            | ClientMessage::RotateDial { .. }
+            | ClientMessage::PressDial { .. }
+                if self.state.context.simulated_input == SimulatedInput::Refused =>
+            {
+                Err(RequestFailure::input_refused())
             }
             ClientMessage::PressKey { serial, index } => {
                 with_engine(engines, &serial, async |engine| {
@@ -366,6 +373,13 @@ struct RequestFailure {
 }
 
 impl RequestFailure {
+    fn input_refused() -> Self {
+        Self {
+            code: ErrorCode::InputRefused,
+            message: "presses come from the device only (simulated input needs --demo)".into(),
+        }
+    }
+
     fn unknown_device(serial: &str) -> Self {
         Self {
             code: ErrorCode::UnknownDevice,
