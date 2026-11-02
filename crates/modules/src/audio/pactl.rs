@@ -22,11 +22,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStdout, Command};
 
 use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
 use super::state::{AudioDevice, Defaults, Direction, PartialSnapshot, Volume};
+use crate::process::{self, OutputLimits, RunError};
 
 /// Program run, looked up in `PATH`.
 const PACTL: &str = "pactl";
@@ -44,9 +45,6 @@ const MAX_ERROR_BYTES: usize = 4 * 1024;
 /// Longest line of `pactl subscribe` kept; the end of a longer line is
 /// dropped (relevant lines are about 40 bytes).
 const MAX_EVENT_LINE_BYTES: usize = 256;
-
-/// Appended to a truncated error output.
-const TRUNCATION_MARK: &str = "…";
 
 /// Messages of `pactl subscribe` are translated: force the untranslated
 /// ones, which [`event_scope`] recognises.
@@ -116,28 +114,23 @@ impl PactlBackend {
     /// if it takes longer than [`COMMAND_TIMEOUT`] or prints more than
     /// [`MAX_OUTPUT_BYTES`].
     async fn run(&self, args: &[String]) -> Result<Vec<u8>, AudioError> {
-        let mut child = self
-            .command(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| self.spawn_error(source))?;
-        let collected = tokio::time::timeout(COMMAND_TIMEOUT, collect(&mut child)).await;
-        let output = match collected {
-            Err(_) => {
-                return Err(AudioError::Timeout {
+        let limits = OutputLimits {
+            stdout: Some(MAX_OUTPUT_BYTES),
+            stderr: MAX_ERROR_BYTES,
+        };
+        let output = process::run(self.command(args), COMMAND_TIMEOUT, limits)
+            .await
+            .map_err(|error| match error {
+                RunError::Spawn(source) => self.spawn_error(source),
+                RunError::Timeout => AudioError::Timeout {
                     command: command_line(args),
                     timeout: COMMAND_TIMEOUT,
-                });
-            }
-            Ok(Err(reason)) => {
-                return Err(AudioError::InvalidOutput {
+                },
+                RunError::Output(reason) => AudioError::InvalidOutput {
                     command: command_line(args),
                     reason,
-                });
-            }
-            Ok(Ok(output)) => output,
-        };
+                },
+            })?;
         if !output.status.success() {
             return Err(AudioError::Failed {
                 command: command_line(args),
@@ -174,68 +167,6 @@ impl Default for PactlBackend {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// What a finished call printed.
-struct Output {
-    status: std::process::ExitStatus,
-    stdout: Vec<u8>,
-    /// Error output, truncated to [`MAX_ERROR_BYTES`].
-    stderr: String,
-}
-
-/// Waits for `child` while reading its outputs within their bounds; the
-/// error explains why the output is unusable.
-async fn collect(child: &mut Child) -> Result<Output, String> {
-    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        return Err("outputs not captured".into());
-    };
-    let (stdout, stderr, status) = tokio::try_join!(
-        read_bounded(stdout, MAX_OUTPUT_BYTES),
-        read_truncated(stderr, MAX_ERROR_BYTES),
-        async { child.wait().await.map_err(|error| error.to_string()) },
-    )?;
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-/// Everything `reader` produces, or an error past `limit` bytes.
-async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    let mut bounded = reader.take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1));
-    bounded
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(|error| error.to_string())?;
-    if bytes.len() > limit {
-        return Err(format!("more than {limit} bytes"));
-    }
-    Ok(bytes)
-}
-
-/// The first `limit` bytes of `reader` as text, the rest read and dropped
-/// (so that the process never blocks on a full pipe).
-async fn read_truncated(
-    mut reader: impl AsyncRead + Unpin,
-    limit: usize,
-) -> Result<String, String> {
-    let mut bytes = Vec::new();
-    (&mut reader)
-        .take(u64::try_from(limit).unwrap_or(u64::MAX))
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(|error| error.to_string())?;
-    let dropped = tokio::io::copy(&mut reader, &mut tokio::io::sink())
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut text = String::from_utf8_lossy(&bytes).trim().to_owned();
-    if dropped > 0 {
-        text.push_str(TRUNCATION_MARK);
-    }
-    Ok(text)
 }
 
 /// The arguments of a call as one line, for errors.
@@ -530,6 +461,7 @@ mod tests {
 
     use super::super::state::AudioSnapshot;
     use super::*;
+    use crate::process::TRUNCATION_MARK;
 
     const INFO: &str = include_str!("fixtures/pipewire-info.json");
     const SINKS: &str = include_str!("fixtures/pipewire-sinks.json");
@@ -810,7 +742,7 @@ esac"#;
             panic!("failure expected, got {error}");
         };
         assert_eq!(stderr.len(), MAX_ERROR_BYTES + TRUNCATION_MARK.len());
-        assert!(stderr.ends_with(TRUNCATION_MARK));
+        assert!(stderr.starts_with(TRUNCATION_MARK));
     }
 
     #[tokio::test]

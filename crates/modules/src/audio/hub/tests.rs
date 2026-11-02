@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use bergadeck_module_api::ModuleEvent;
 use bergadeck_module_api::testing::TestContext;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::time::Instant;
 
 use super::super::pactl::PactlBackend;
 use super::super::simulated::SimulatedAudio;
@@ -128,17 +129,6 @@ fn consecutive_changes_of_one_instance_become_one() {
     assert!(merge(vec![Request::Refresh]).jobs.is_empty());
     assert!(merge(vec![job(1, 7, volume(10)), Request::Stop]).stop);
 }
-
-#[test]
-fn backoff_doubles_up_to_its_bound_and_resets() {
-    let mut backoff = Backoff::default();
-    let delays: Vec<_> = (0..7).map(|_| backoff.next_delay().as_secs()).collect();
-    assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30]);
-    backoff.reset();
-    assert_eq!(backoff.next_delay(), INITIAL_BACKOFF);
-}
-
-// ---------------------------------------------------------------- Sharing
 
 #[tokio::test(start_paused = true)]
 async fn instances_share_one_subscription_and_one_read_per_change() {

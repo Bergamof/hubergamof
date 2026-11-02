@@ -35,7 +35,7 @@ clap.workspace = true
 elgato-streamdeck = { version = "0.14.0", default-features = false }
 # `StreamExt` for the D-Bus signal streams of the tray; `std` for
 # `FutureExt::catch_unwind` around module handlers.
-futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+futures-util.workspace = true
 # Default backend (`linux-static-hidraw`, bundled C sources + system libudev):
 # elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
 hidapi = "2.6.7"
@@ -59,7 +59,7 @@ tracing-subscriber.workspace = true
 zbus = { workspace = true, features = ["proxy", "service"] }
 
 [dev-dependencies]
-futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+futures-util = { workspace = true, features = ["sink"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = "0.30.0"
 # Peer-to-peer connections: the tray objects are exercised without a bus daemon.

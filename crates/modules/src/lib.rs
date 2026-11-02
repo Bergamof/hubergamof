@@ -3,20 +3,25 @@
 //!
 //! Each module implements [`bergadeck_module_api::Module`] exactly like an
 //! external module would. Available so far: [`audio`], [`clock`],
-//! [`navigation`] and [`pomodoro`]; docker, intellij and claude come later
-//! (the manager shows a placeholder key for kinds missing from the registry).
+//! [`docker`], [`navigation`] and [`pomodoro`]; intellij and claude come
+//! later (the manager shows a placeholder key for kinds missing from the
+//! registry).
 //!
-//! Modules acting on the desktop (audio server, notifications, later
-//! Docker…) run against the [`BuiltinServices`] given to
+//! Modules acting on the desktop (audio server, notifications, Docker…)
+//! run against the [`BuiltinServices`] given to
 //! [`builtin_registry_with`]: those of the system, or simulated ones. There
 //! is no default: the caller always chooses (the manager from `--demo`,
 //! tests the simulated services).
 
 pub mod audio;
+mod background;
 pub mod clock;
+pub mod docker;
 pub mod navigation;
 pub mod notifications;
+mod paths;
 pub mod pomodoro;
+mod process;
 pub mod time;
 
 use std::collections::BTreeMap;
@@ -121,6 +126,8 @@ impl std::fmt::Debug for ModuleRegistry {
 pub struct BuiltinServices {
     /// Audio server of the audio module.
     pub audio: Arc<dyn audio::AudioBackend>,
+    /// Docker host of the Docker module.
+    pub docker: Arc<dyn docker::DockerBackend>,
     /// Desktop notifications of the pomodoro.
     pub notifier: Arc<dyn notifications::Notifier>,
     /// Time of the pomodoro, counting suspends.
@@ -128,25 +135,28 @@ pub struct BuiltinServices {
 }
 
 impl BuiltinServices {
-    /// The user's session: `pactl`, and the session bus, connected on first
-    /// use and shared by the modules that need it.
+    /// The user's session: `pactl`, the Docker Engine, and the session bus;
+    /// Docker and the bus are connected on first use, the bus shared by the
+    /// modules that need it.
     #[must_use]
     pub fn system() -> Self {
         let session_bus = notifications::SessionBus::new();
         Self {
             audio: Arc::new(audio::PactlBackend::new()),
+            docker: Arc::new(docker::DockerEngine::new()),
             notifier: Arc::new(notifications::DesktopNotifier::new(session_bus)),
             clock: Arc::new(time::BootClock),
         }
     }
 
     /// Simulations leaving the machine untouched (`--demo`, tests), hermetic
-    /// and reproducible: the demo audio server and notifications that are
-    /// only logged. Time is real.
+    /// and reproducible: the demo audio server and Docker host, and
+    /// notifications that are only logged. Time is real.
     #[must_use]
     pub fn simulated() -> Self {
         Self {
             audio: Arc::new(audio::SimulatedAudio::demo()),
+            docker: Arc::new(docker::SimulatedDocker::demo()),
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
             clock: Arc::new(time::BootClock),
         }
@@ -161,6 +171,7 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     registry.set_default_layout(DefaultLayout::builtin());
     registry.register(Arc::new(audio::AudioFactory::new(services.audio)));
     registry.register(Arc::new(clock::ClockFactory::system()));
+    registry.register(Arc::new(docker::DockerFactory::new(services.docker)));
     registry.register(Arc::new(navigation::NavigationFactory));
     registry.register(Arc::new(pomodoro::PomodoroFactory::new(
         services.notifier,
@@ -198,12 +209,13 @@ mod tests {
             [
                 audio::AUDIO_KIND,
                 clock::CLOCK_KIND,
+                docker::DOCKER_KIND,
                 navigation::NAVIGATION_KIND,
                 pomodoro::POMODORO_KIND
             ]
         );
         assert!(registry.get(&"clock".into()).is_some());
-        assert!(registry.get(&"docker".into()).is_none());
+        assert!(registry.get(&"intellij".into()).is_none());
         assert_eq!(
             builtin_registry_with(BuiltinServices::system()).descriptors(),
             registry.descriptors()
@@ -212,13 +224,14 @@ mod tests {
 
     #[test]
     fn each_environment_has_its_own_services() {
-        // Building the system services touches nothing: the bus connects on
-        // first use and `pactl` runs when an instance needs it.
+        // Building the system services touches nothing: the bus and Docker
+        // connect on first use and `pactl` runs when an instance needs it.
         let names = |services: BuiltinServices| {
             [
                 format!("{:?}", services.audio),
                 format!("{:?}", services.notifier),
                 format!("{:?}", services.clock),
+                format!("{:?}", services.docker),
             ]
         };
         let simulated = names(BuiltinServices::simulated());
@@ -235,6 +248,11 @@ mod tests {
         );
         assert_eq!(simulated[2], "BootClock");
         assert_eq!(system[2], "BootClock");
+        assert!(
+            simulated[3].starts_with("SimulatedDocker "),
+            "{simulated:?}"
+        );
+        assert!(system[3].starts_with("DockerEngine "), "{system:?}");
     }
 
     #[test]
@@ -244,7 +262,11 @@ mod tests {
             registry.default_settings(&clock::CLOCK_KIND.into()),
             clock::ClockFactory::system().default_settings()
         );
-        assert_eq!(registry.default_settings(&"docker".into()), json!({}));
+        assert_eq!(registry.default_settings(&"intellij".into()), json!({}));
+        assert_eq!(
+            registry.default_settings(&docker::DOCKER_KIND.into()),
+            json!({ "composeFiles": [] })
+        );
     }
 
     #[test]
@@ -318,6 +340,7 @@ mod tests {
         let notifier = Arc::new(notifications::SimulatedNotifier::default());
         let registry = builtin_registry_with(BuiltinServices {
             audio: Arc::clone(&server) as _,
+            docker: Arc::new(docker::SimulatedDocker::empty()),
             notifier: Arc::clone(&notifier) as _,
             clock: Arc::new(SimulatedClock::new()),
         });

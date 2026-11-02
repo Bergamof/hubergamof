@@ -30,13 +30,15 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub use backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
-use hub::{AudioEvent, AudioHub, HubState, Sequence, ServerView, Subscription, forward_states};
+use hub::{AudioEvent, AudioHub, HubState, Sequence, ServerView, Subscription};
 pub use pactl::PactlBackend;
 pub use simulated::SimulatedAudio;
 pub use state::{
     AudioDevice, AudioSnapshot, Defaults, Direction, PartialSnapshot, VOLUME_NORM, Volume,
 };
 use state::{level_of_percent, percent_of};
+
+use crate::background::forward_states;
 
 /// Kind of the audio module.
 pub const AUDIO_KIND: &str = "audio";
@@ -143,8 +145,11 @@ impl ModuleFactory for AudioFactory {
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
         let settings = AudioSettings::parse(settings)?;
         let hub = self.hub.subscribe(ctx.events().clone());
-        ctx.tasks()
-            .spawn(forward_states(hub.states(), ctx.events().clone()));
+        ctx.tasks().spawn(forward_states(
+            hub.states(),
+            ctx.events().clone(),
+            AudioEvent::State,
+        ));
         Ok(Box::new(Audio {
             settings,
             view: View::Loading,

@@ -21,19 +21,17 @@
 //!   own changes.
 
 use std::future::Future;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::task::Poll;
 use std::time::Duration;
 
 use bergadeck_module_api::{EventSender, Feedback, ModuleSurface};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
-use tokio::time::Instant;
 
 use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
 use super::state::AudioSnapshot;
+use crate::background::{Backoff, Listener, ReadPacer, catch_panic, sleep_until};
 
 /// Time from the first change of a burst (one change produces several
 /// notifications, and the server echoes the changes of the worker) to the
@@ -47,14 +45,14 @@ pub(super) const READ_COALESCE_DELAY: Duration = Duration::from_millis(50);
 pub(super) const MIN_READ_INTERVAL: Duration = Duration::from_millis(150);
 
 /// First wait before listening to changes again after it stopped.
-pub(super) const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Longest wait between two attempts to listen to changes.
 pub(super) const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 /// A subscription that lived this long was healthy: the next wait starts
 /// over.
-pub(super) const STABLE_SUBSCRIPTION: Duration = Duration::from_secs(10);
+const STABLE_SUBSCRIPTION: Duration = Duration::from_secs(10);
 
 /// Sequence number of the changes submitted to a hub, from 1, in the order
 /// the worker applies them.
@@ -333,17 +331,6 @@ impl Drop for Subscription {
     }
 }
 
-/// Hands every state published by the hub to an instance, until the
-/// instance is gone (its event sender refuses events).
-pub(super) async fn forward_states(mut states: watch::Receiver<HubState>, events: EventSender) {
-    loop {
-        let state = states.borrow_and_update().clone();
-        if !events.send(AudioEvent::State(state)) || states.changed().await.is_err() {
-            return;
-        }
-    }
-}
-
 struct Worker {
     hub: Arc<AudioHub>,
     generation: u64,
@@ -352,19 +339,14 @@ struct Worker {
     snapshot: Option<Arc<AudioSnapshot>>,
     /// Whether the last read succeeded, to log only transitions.
     reachable: bool,
-    /// Parts to read at `read_due`.
+    /// Parts to read when `pacer` says so.
     pending: ReadScope,
-    read_due: Option<Instant>,
-    last_read: Option<Instant>,
-    changes: Option<Box<dyn AudioChanges>>,
-    subscribed_at: Instant,
-    resubscribe_at: Option<Instant>,
-    backoff: Backoff,
+    pacer: ReadPacer,
+    listener: Listener<Box<dyn AudioChanges>>,
 }
 
 impl Worker {
     fn new(hub: Arc<AudioHub>, generation: u64, applied: Sequence) -> Self {
-        let now = Instant::now();
         Self {
             hub,
             generation,
@@ -372,12 +354,11 @@ impl Worker {
             snapshot: None,
             reachable: true,
             pending: ReadScope::ALL,
-            read_due: Some(now),
-            last_read: None,
-            changes: None,
-            subscribed_at: now,
-            resubscribe_at: Some(now),
-            backoff: Backoff::default(),
+            pacer: ReadPacer::new(READ_COALESCE_DELAY, MIN_READ_INTERVAL),
+            listener: Listener::new(
+                Backoff::new(INITIAL_BACKOFF, MAX_BACKOFF),
+                STABLE_SUBSCRIPTION,
+            ),
         }
     }
 
@@ -385,7 +366,7 @@ impl Worker {
     /// until replaced.
     async fn run(mut self, mut requests: UnboundedReceiver<Request>) {
         loop {
-            let (read_due, resubscribe_at) = (self.read_due, self.resubscribe_at);
+            let (read_due, listen_due) = (self.pacer.due(), self.listener.due());
             // Requests first: a change is applied before a read that would
             // show the state without it. Listening comes before reading so
             // that no change is missed between the two.
@@ -404,11 +385,16 @@ impl Worker {
                         return;
                     }
                 }
-                () = sleep_until(resubscribe_at) => self.subscribe().await,
-                change = next_change(self.changes.as_mut()) => match change {
-                    Some(scope) => self.mark_dirty(scope),
-                    None => self.subscription_ended(),
-                },
+                () = sleep_until(listen_due) => self.subscribe().await,
+                change = next_change(self.listener.changes()) => {
+                    if let Some(scope) = change {
+                        self.mark_dirty(scope);
+                    } else {
+                        self.listener.ended();
+                        // The server may have restarted or gone.
+                        self.mark_dirty(ReadScope::ALL);
+                    }
+                }
                 () = sleep_until(read_due) => self.read().await,
             }
         }
@@ -453,16 +439,11 @@ impl Worker {
     /// still shown.
     fn mark_dirty(&mut self, scope: ReadScope) {
         self.pending = self.pending | scope;
-        if self.read_due.is_none() {
-            let coalesced = Instant::now() + READ_COALESCE_DELAY;
-            let paced = self.last_read.map(|last| last + MIN_READ_INTERVAL);
-            self.read_due = Some(paced.map_or(coalesced, |paced| paced.max(coalesced)));
-        }
+        self.pacer.request();
     }
 
     async fn read(&mut self) {
-        self.read_due = None;
-        self.last_read = Some(Instant::now());
+        self.pacer.start();
         let pending = std::mem::take(&mut self.pending);
         // Without a state to update, read everything.
         let scope = if self.snapshot.is_some() {
@@ -498,34 +479,14 @@ impl Worker {
         );
     }
 
+    /// Listens to the changes; reads everything either way: changes made
+    /// while not listening were missed, or the server may have gone.
     async fn subscribe(&mut self) {
-        self.resubscribe_at = None;
-        match guarded(self.hub.backend.subscribe()).await {
-            Ok(changes) => {
-                self.changes = Some(changes);
-                self.subscribed_at = Instant::now();
-                // Changes made while not listening were missed.
-                self.mark_dirty(ReadScope::ALL);
-            }
-            Err(error) => {
-                tracing::debug!(%error, "cannot listen to audio changes");
-                self.listen_later();
-            }
-        }
-    }
-
-    fn subscription_ended(&mut self) {
-        self.changes = None;
-        if self.subscribed_at.elapsed() >= STABLE_SUBSCRIPTION {
-            self.backoff.reset();
-        }
-        self.listen_later();
-    }
-
-    /// Listens again after the backoff and reads everything meanwhile: the
-    /// server may have restarted or gone.
-    fn listen_later(&mut self) {
-        self.resubscribe_at = Some(Instant::now() + self.backoff.next_delay());
+        let changes = guarded(self.hub.backend.subscribe())
+            .await
+            .inspect_err(|error| tracing::debug!(%error, "cannot listen to audio changes"))
+            .ok();
+        self.listener.listened(changes);
         self.mark_dirty(ReadScope::ALL);
     }
 }
@@ -571,17 +532,12 @@ fn merge(batch: Vec<Request>) -> Merged {
     merged
 }
 
-/// Runs a backend call, turning a panic into [`AudioError::Panicked`] so
-/// that a bug in a backend does not stop the audio of every device.
+/// Runs a backend call, a panic counting as a failure
+/// ([`AudioError::Panicked`]).
 async fn guarded<T>(
-    mut call: impl Future<Output = Result<T, AudioError>> + Unpin,
+    call: impl Future<Output = Result<T, AudioError>> + Unpin,
 ) -> Result<T, AudioError> {
-    std::future::poll_fn(move |cx| {
-        // A panicking call is never polled again: it is complete.
-        catch_unwind(AssertUnwindSafe(|| std::pin::Pin::new(&mut call).poll(cx)))
-            .unwrap_or(Poll::Ready(Err(AudioError::Panicked)))
-    })
-    .await
+    catch_panic(call).await.unwrap_or(Err(AudioError::Panicked))
 }
 
 /// The next change notified, or pending forever while not listening.
@@ -589,41 +545,6 @@ async fn next_change(changes: Option<&mut Box<dyn AudioChanges>>) -> Option<Read
     match changes {
         Some(changes) => changes.next_change().await,
         None => std::future::pending().await,
-    }
-}
-
-/// Sleeps until `deadline`, forever without one.
-async fn sleep_until(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending().await,
-    }
-}
-
-/// Waits between two attempts to listen to changes, doubling up to
-/// [`MAX_BACKOFF`].
-#[derive(Debug)]
-struct Backoff {
-    next: Duration,
-}
-
-impl Default for Backoff {
-    fn default() -> Self {
-        Self {
-            next: INITIAL_BACKOFF,
-        }
-    }
-}
-
-impl Backoff {
-    fn next_delay(&mut self) -> Duration {
-        let delay = self.next;
-        self.next = (self.next * 2).min(MAX_BACKOFF);
-        delay
-    }
-
-    fn reset(&mut self) {
-        *self = Self::default();
     }
 }
 

@@ -19,6 +19,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Module Pomodoro avec notifications de bureau ; le minuteur suit le temps réel, mise en veille comprise.
 - API des modules : `ModuleDescriptor::parse_settings` (bornes vérifiées puis désérialisation) et `TestContext` (feature `testing`).
 - Lint : lancement de shell interdit hors tests ; `module-api` vérifié seul, sans features.
+- Module Docker : projets compose et conteneurs (démarrer, arrêter, redémarrer, supprimer arrêté, Up / Up + build / Up + pull, Down / Down + volumes avec double appui), état en direct, fichiers compose déclarés (`composeFiles`) proposés même après un down ; simulé en `--demo`.
 
 ### Modifié
 
@@ -30,4 +31,5 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Rendu : les images éphémères (décompte, jauges) ne chassent plus les autres du cache (mémoire stable pendant un pomodoro).
 - Les tests et le mode `--demo` n'utilisent que des services simulés (aucun vrai `pactl` ni D-Bus).
 - Retour ✓/⚠ affiché seulement sur une surface visible.
+- Sécurité : hors `--demo`, le serveur refuse les appuis simulés (`InputRefused`) ; les actions ne viennent que de l'appareil.
 - Service systemd lié à `graphical-session.target` ; image Docker sans `libhidapi`, lancée en `--demo --no-tray` (`--network host`).

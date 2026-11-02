@@ -52,6 +52,8 @@ pub(super) struct Probe {
     pub(super) key_label: Arc<Mutex<Option<String>>>,
     /// Replaces the zone of fragile instances.
     pub(super) zone_gauge: Arc<Mutex<Option<GaugeContent>>>,
+    /// Page the list instances no longer have (removed by an event).
+    pub(super) gone_page: Arc<Mutex<Option<String>>>,
     /// Added to the index in the ids of page items.
     pub(super) item_shift: Arc<AtomicUsize>,
     /// Items pressed, in order.
@@ -118,7 +120,9 @@ impl Module for List {
 
     fn page(&self, page: &PageId) -> Option<PageContent> {
         let shift = self.probe.item_shift.load(Ordering::SeqCst);
-        (page.0 == LIST_PAGE || page.0 == "nested").then(|| PageContent {
+        let gone = self.probe.gone_page.lock().unwrap().as_deref() == Some(page.0.as_str());
+        let exists = (page.0 == LIST_PAGE || page.0 == "nested") && !gone;
+        exists.then(|| PageContent {
             title: format!("{} ({page})", self.settings.label),
             items: (0..self.settings.items)
                 .map(|index| PageItem {

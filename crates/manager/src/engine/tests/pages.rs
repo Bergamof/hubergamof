@@ -17,12 +17,16 @@ async fn default_configuration_shows_placeholders_and_dial_zones() {
     let live = fixture.live();
     assert_eq!(live.page.id, HOME_PAGE_ID);
     assert_eq!(live.page.title, HOME_PAGE_TITLE);
+    // The Docker key counts the containers once the simulated host answers.
+    fixture
+        .wait_for(|fixture| fixture.labels()[2].as_deref() == Some("Docker 4/7"))
+        .await;
     assert_eq!(
         fixture.labels(),
         labels(&[
             Some("Audio"),
             Some("25:00 Travail"),
-            Some("docker indisponible"),
+            Some("Docker 4/7"),
             Some("intellij indisponible"),
             Some("claude indisponible"),
             None,
@@ -163,6 +167,28 @@ async fn back_and_home_unwind_the_navigation_stack() {
     fixture.engine.press_dial(3).await.unwrap();
     assert_eq!(fixture.page().id, HOME_PAGE_ID);
     assert_eq!(fixture.zone_lines(3), ["Accueil"]);
+}
+
+#[tokio::test]
+async fn pages_gone_after_an_event_unwind_to_the_closest_one_left() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(vec![list(4)], &["list"], &[None; 4])
+        .await;
+    fixture.engine.press_key(0).await.unwrap();
+    // Item i3 opens a nested page, twice: list → nested → nested.
+    fixture.engine.press_key(3).await.unwrap();
+    fixture.engine.press_key(3).await.unwrap();
+    assert_eq!(fixture.page().id, "list/nested");
+
+    *fixture.probe.gone_page.lock().unwrap() = Some("nested".into());
+    let events = fixture.probe.events.lock().unwrap().clone().unwrap();
+    assert!(events.send(Bump));
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+    // Not home: the list page is still there.
+    assert_eq!(fixture.page().title, "list (list)");
 }
 
 #[tokio::test]

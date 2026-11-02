@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use crate::time::ClockInstant as Instant;
+use crate::time::ClockInstant;
 
 /// Time without rotation after which the menu closes by itself.
 pub const MENU_TIMEOUT: Duration = Duration::from_secs(5);
@@ -24,13 +24,13 @@ pub const MENU_ENTRIES: [MenuEntry; 2] = [MenuEntry::Skip, MenuEntry::Reset];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Menu {
     selected: usize,
-    last_input: Instant,
+    last_input: ClockInstant,
 }
 
 impl Menu {
     /// Menu opened at `now` on its first entry.
     #[must_use]
-    pub fn open(now: Instant) -> Self {
+    pub fn open(now: ClockInstant) -> Self {
         Self {
             selected: 0,
             last_input: now,
@@ -45,7 +45,7 @@ impl Menu {
 
     /// Moves the selection by `ticks` entries (positive: down), stopping at
     /// the first and last ones.
-    pub fn rotate(&mut self, ticks: i32, now: Instant) {
+    pub fn rotate(&mut self, ticks: i32, now: ClockInstant) {
         let last = MENU_ENTRIES.len() - 1;
         let steps = usize::try_from(ticks.unsigned_abs()).unwrap_or(usize::MAX);
         self.selected = if ticks >= 0 {
@@ -58,7 +58,7 @@ impl Menu {
 
     /// Whether the menu went [`MENU_TIMEOUT`] without input at `now`.
     #[must_use]
-    pub fn is_expired(&self, now: Instant) -> bool {
+    pub fn is_expired(&self, now: ClockInstant) -> bool {
         now.saturating_duration_since(self.last_input) >= MENU_TIMEOUT
     }
 }
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn rotation_moves_the_selection_within_the_entries() {
-        let now = Instant::from_origin(Duration::ZERO);
+        let now = ClockInstant::from_origin(Duration::ZERO);
         let mut menu = Menu::open(now);
         assert_eq!(menu.selected(), MenuEntry::Skip);
         menu.rotate(1, now);
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn the_menu_expires_after_the_timeout_without_input() {
-        let opened = Instant::from_origin(Duration::from_secs(10));
+        let opened = ClockInstant::from_origin(Duration::from_secs(10));
         let mut menu = Menu::open(opened);
         assert!(!menu.is_expired(opened + MENU_TIMEOUT.saturating_sub(Duration::from_millis(1))));
         menu.rotate(1, opened + Duration::from_secs(3));
