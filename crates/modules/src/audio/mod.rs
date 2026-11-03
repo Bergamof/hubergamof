@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    Command, Feedback, GaugeContent, GaugeLevel, ItemId, KeyContent, KeyState, Module,
+    Command, Feedback, GaugeContent, GaugeLevel, ImageData, ItemId, KeyContent, KeyState, Module,
     ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
     ModuleSurface, NavigationView, PageContent, PageId, PageItem, SettingField, SettingKind,
     ZoneContent,
@@ -140,6 +140,10 @@ fn descriptor() -> ModuleDescriptor {
 impl ModuleFactory for AudioFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn icon(&self) -> Option<ImageData> {
+        Some(icons::SPEAKER.clone())
     }
 
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {

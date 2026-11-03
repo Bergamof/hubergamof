@@ -22,9 +22,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    Command, EventSender, Feedback, GaugeContent, GaugeLevel, KeyContent, KeyState, Module,
-    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    NavigationView, ZoneContent,
+    Command, EventSender, Feedback, GaugeContent, GaugeLevel, ImageData, KeyContent, KeyState,
+    Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
+    ModuleFactory, NavigationView, ZoneContent,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -32,6 +32,7 @@ use tokio::sync::oneshot;
 pub use menu::MENU_TIMEOUT;
 pub use settings::PomodoroSettings;
 
+use crate::icons::svg;
 use crate::notifications::{Notification, Notifier};
 use crate::time::{Clock, ClockInstant};
 use menu::{MENU_ENTRIES, Menu, MenuEntry};
@@ -39,6 +40,9 @@ use timer::{Phase, StepEnd, Timer};
 
 /// Kind of the pomodoro module.
 pub const POMODORO_KIND: &str = "pomodoro";
+
+/// Icon of the module: a timer.
+const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 2M9.5 2.5h5M12 2.5V6"/></svg>"##;
 
 /// Period of the refresh ticks, while the time runs or the menu is open.
 pub const TICK_PERIOD: Duration = Duration::from_secs(1);
@@ -107,6 +111,10 @@ impl PomodoroSettings {
 impl ModuleFactory for PomodoroFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn icon(&self) -> Option<ImageData> {
+        Some(svg(ICON_SVG))
     }
 
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {

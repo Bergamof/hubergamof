@@ -17,6 +17,7 @@ pub mod audio;
 mod background;
 pub mod clock;
 pub mod docker;
+mod icons;
 pub mod navigation;
 pub mod notifications;
 mod paths;
@@ -27,7 +28,7 @@ pub mod time;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bergadeck_module_api::{ModuleDescriptor, ModuleFactory, ModuleKind};
+use bergadeck_module_api::{ModuleFactory, ModuleKind};
 use serde_json::{Map, Value};
 
 /// Built-in modules shown on the home page of a new device, in key order.
@@ -105,13 +106,9 @@ impl ModuleRegistry {
         self.factories.get(kind)
     }
 
-    /// Descriptors of every registered module, ordered by kind.
-    #[must_use]
-    pub fn descriptors(&self) -> Vec<ModuleDescriptor> {
-        self.factories
-            .values()
-            .map(|factory| factory.descriptor())
-            .collect()
+    /// Every registered factory, ordered by kind.
+    pub fn factories(&self) -> impl Iterator<Item = &Arc<dyn ModuleFactory>> {
+        self.factories.values()
     }
 }
 
@@ -189,6 +186,8 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc::UnboundedReceiver;
 
+    use bergadeck_module_api::ModuleDescriptor;
+
     use super::*;
     use crate::time::testing::SimulatedClock;
 
@@ -196,11 +195,17 @@ mod tests {
         builtin_registry_with(BuiltinServices::simulated())
     }
 
+    fn descriptors(registry: &ModuleRegistry) -> Vec<ModuleDescriptor> {
+        registry
+            .factories()
+            .map(|factory| factory.descriptor())
+            .collect()
+    }
+
     #[test]
     fn builtin_registry_offers_the_builtin_modules() {
         let registry = simulated_registry();
-        let kinds: Vec<_> = registry
-            .descriptors()
+        let kinds: Vec<_> = descriptors(&registry)
             .into_iter()
             .map(|descriptor| descriptor.kind.0)
             .collect();
@@ -217,9 +222,22 @@ mod tests {
         assert!(registry.get(&"clock".into()).is_some());
         assert!(registry.get(&"intellij".into()).is_none());
         assert_eq!(
-            builtin_registry_with(BuiltinServices::system()).descriptors(),
-            registry.descriptors()
+            descriptors(&builtin_registry_with(BuiltinServices::system())),
+            descriptors(&registry)
         );
+    }
+
+    #[test]
+    fn every_builtin_module_has_an_svg_icon() {
+        for factory in simulated_registry().factories() {
+            let icon = factory.icon().expect("built-in modules have an icon");
+            let source = std::str::from_utf8(&icon.bytes).unwrap();
+            assert!(
+                icons::is_complete_svg(source),
+                "{}: {source}",
+                factory.descriptor().kind.0
+            );
+        }
     }
 
     #[test]
@@ -287,8 +305,8 @@ mod tests {
         let previous = registry.register(Arc::new(navigation::NavigationFactory));
         assert!(previous.is_some());
         assert_eq!(
-            registry.descriptors().len(),
-            simulated_registry().descriptors().len()
+            registry.factories().count(),
+            simulated_registry().factories().count()
         );
     }
 

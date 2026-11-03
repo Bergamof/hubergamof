@@ -3,13 +3,18 @@
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    Command, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    Command, ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory, NavigationView, ZoneContent,
 };
 use serde_json::Value;
 
+use crate::icons::svg;
+
 /// Kind of the navigation module.
 pub const NAVIGATION_KIND: &str = "navigation";
+
+/// Icon of the module: scrolling arrows.
+const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>"##;
 
 /// Creates [`Navigation`] instances.
 #[derive(Debug, Clone, Copy, Default)]
@@ -29,6 +34,10 @@ impl ModuleFactory for NavigationFactory {
             },
             settings: Vec::new(),
         }
+    }
+
+    fn icon(&self) -> Option<ImageData> {
+        Some(svg(ICON_SVG))
     }
 
     fn create(

@@ -8,8 +8,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    Command, ItemId, KeyContent, ModuleContext, ModuleDescriptor, ModuleEvent, NavigationView,
-    PageContent, PageId, ZoneContent,
+    Command, ImageData, ItemId, KeyContent, ModuleContext, ModuleDescriptor, ModuleEvent,
+    NavigationView, PageContent, PageId, ZoneContent,
 };
 
 /// Longest time the host lets a handler run (see [`Module`]) before
@@ -46,6 +46,15 @@ pub fn parse_settings<T: DeserializeOwned>(settings: &Value) -> Result<T, Module
 pub trait ModuleFactory: Send + Sync {
     /// Kind, name, capabilities and settings of the module.
     fn descriptor(&self) -> ModuleDescriptor;
+
+    /// Image standing for the module in the configuration interface, on the
+    /// keys and dials it is placed on: PNG, JPEG or SVG (see [`ImageData`]),
+    /// drawn by the host like a key (square, on a dark background, about
+    /// 144 px). `None` (the default), or an image the host cannot read
+    /// (logged as a warning): the interface shows the module name instead.
+    fn icon(&self) -> Option<ImageData> {
+        None
+    }
 
     /// Settings of a new instance. Defaults to the default value of every
     /// setting of [`ModuleFactory::descriptor`].

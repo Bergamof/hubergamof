@@ -17,7 +17,8 @@ use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
 use bergadeck_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
-    MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH, router,
+    MIN_LIVE_STATE_INTERVAL, MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH,
+    module_catalog, router,
 };
 use bergadeck_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
@@ -143,6 +144,7 @@ impl Devices {
             renderer: Arc::new(Renderer::new().unwrap()),
             registry: Arc::clone(&registry),
         };
+        let catalog = module_catalog(&registry, &services.renderer);
         let discovery = DeviceDiscovery::new();
         let supervisor = Supervisor::start(&discovery, services);
         let decks = VirtualDevices::new(discovery.clone());
@@ -150,7 +152,7 @@ impl Devices {
         let context = ServerContext {
             discovery: discovery.clone(),
             engines: supervisor.engines(),
-            catalog: registry.descriptors().into(),
+            catalog,
             simulated_input: SimulatedInput::Accepted,
         };
         Self {
@@ -294,6 +296,7 @@ impl Client {
     async fn select(&mut self, serial: &str) -> (DeviceConfig, LiveState) {
         self.send(&ClientMessage::SelectDevice {
             serial: serial.into(),
+            live_state: true,
         })
         .await;
         let config = match self.receive().await {
@@ -565,10 +568,21 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         ServerMessage::ModuleCatalog { modules } => {
             let kinds: Vec<_> = modules
                 .iter()
-                .map(|module| module.kind.0.as_str())
+                .map(|module| module.descriptor.kind.0.as_str())
                 .collect();
             assert!(kinds.contains(&"clock"), "{kinds:?}");
             assert!(kinds.contains(&COUNTER_KIND), "{kinds:?}");
+            let clock = modules
+                .iter()
+                .find(|module| module.descriptor.kind.0 == "clock")
+                .unwrap();
+            assert!(
+                clock
+                    .icon
+                    .as_deref()
+                    .is_some_and(|icon| icon.starts_with("data:image/png;base64,")),
+                "{clock:?}"
+            );
         }
         other => panic!("expected the catalog, got {other:?}"),
     }
@@ -607,9 +621,15 @@ async fn selected_device_streams_config_and_live_state() {
                 other => panic!("unexpected {other:?}"),
             }
         }
-        let saved = saved.unwrap();
-        assert_eq!(saved.revision, config.revision + 1);
-        assert_eq!(saved.home[0], "counter-1".into());
+        // Saved as sent, revision aside: the UI recognises its update by it.
+        let sent = counter_on_first_key(config.clone());
+        assert_eq!(
+            saved.unwrap(),
+            DeviceConfig {
+                revision: sent.revision + 1,
+                ..sent
+            }
+        );
     }
 
     // Simulated press, handled like a hardware one.
@@ -639,6 +659,43 @@ async fn selected_device_streams_config_and_live_state() {
             .await,
         ErrorCode::StaleRevision
     );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn live_states_are_only_sent_to_clients_asking_for_them() {
+    let server = Running::start().await;
+    let mut client = server.connect().await;
+    client
+        .send(&ClientMessage::SelectDevice {
+            serial: DEMO_SERIAL.into(),
+            live_state: false,
+        })
+        .await;
+    let config = match client.receive().await {
+        ServerMessage::Config { config, .. } => config,
+        other => panic!("expected the configuration, got {other:?}"),
+    };
+
+    client
+        .send(&ClientMessage::UpdateConfig {
+            serial: DEMO_SERIAL.into(),
+            config: counter_on_first_key(config),
+        })
+        .await;
+    assert!(matches!(
+        client.receive().await,
+        ServerMessage::Config { .. }
+    ));
+    client
+        .send(&ClientMessage::PressKey {
+            serial: DEMO_SERIAL.into(),
+            index: 0,
+        })
+        .await;
+    // Long enough for a live state of the new look to be due.
+    tokio::time::sleep(MIN_LIVE_STATE_INTERVAL * 3).await;
+    client.ping().await;
     server.stop().await;
 }
 
@@ -711,6 +768,7 @@ async fn invalid_requests_get_errors_without_closing() {
     client
         .send(&ClientMessage::SelectDevice {
             serial: "NOPE".into(),
+            live_state: false,
         })
         .await;
     assert_eq!(client.error().await, ErrorCode::UnknownDevice);

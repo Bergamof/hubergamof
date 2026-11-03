@@ -191,9 +191,15 @@ fn save_increments_the_revision() {
     let (dir, store) = store();
     let mut config = store.load(&plus()).unwrap().config;
     config.brightness = 30;
-    let saved = store.save(&plus(), config).unwrap();
-    assert_eq!(saved.revision, 1);
-    assert_eq!(saved.brightness, 30);
+    let saved = store.save(&plus(), config.clone()).unwrap();
+    // Stored as given, revision aside: clients recognise their update by it.
+    assert_eq!(
+        saved,
+        DeviceConfig {
+            revision: 1,
+            ..config
+        }
+    );
     let text = fs::read_to_string(config_file(&dir, DEMO_SERIAL)).unwrap();
     assert!(
         text.contains("\n  \"brightness\": 30,"),

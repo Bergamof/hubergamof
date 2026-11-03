@@ -8,7 +8,11 @@ export type ClientMessage = { "type": "selectDevice",
 /**
  * Device serial.
  */
-serial: string, } | { "type": "updateConfig", 
+serial: string, 
+/**
+ * Also stream what the device displays (`liveState` messages).
+ */
+liveState: boolean, } | { "type": "updateConfig", 
 /**
  * Device serial.
  */

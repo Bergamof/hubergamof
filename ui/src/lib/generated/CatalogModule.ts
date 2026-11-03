@@ -2,11 +2,22 @@
 import type { ModuleCapabilities } from "./ModuleCapabilities";
 import type { ModuleKind } from "./ModuleKind";
 import type { SettingField } from "./SettingField";
+import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * Description of a module kind available to the user.
+ * A module kind the user can configure, with the image standing for it.
  */
-export type ModuleDescriptor = { 
+export type CatalogModule = { 
+/**
+ * Icon of the module, rendered like a key, as a PNG data URL; `null`
+ * when the module has none.
+ */
+icon: string | null, 
+/**
+ * Settings of a new instance, as the module chooses them (usually the
+ * default of every field, but a module may compute its own).
+ */
+defaultSettings: JsonValue, 
 /**
  * Module kind, referenced by the `kind` of a configured module instance.
  */

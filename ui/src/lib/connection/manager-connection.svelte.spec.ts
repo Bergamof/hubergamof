@@ -119,10 +119,14 @@ describe('ManagerConnection', () => {
 		it('serialises client messages as JSON when open', () => {
 			const { connection, lastSocket } = openConnection();
 
-			const sent = connection.send({ type: 'selectDevice', serial: 'ABC123' });
+			const sent = connection.send({ type: 'selectDevice', serial: 'ABC123', liveState: false });
 
 			expect(sent).toBe(true);
-			expect(JSON.parse(lastSocket().sent[0])).toEqual({ type: 'selectDevice', serial: 'ABC123' });
+			expect(JSON.parse(lastSocket().sent[0])).toEqual({
+				type: 'selectDevice',
+				serial: 'ABC123',
+				liveState: false
+			});
 		});
 
 		it('refuses to send while not open', () => {

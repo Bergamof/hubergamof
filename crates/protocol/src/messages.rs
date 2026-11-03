@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{DeviceConfig, DeviceInfo, LiveState, ModuleDescriptor};
+use crate::{CatalogModule, DeviceConfig, DeviceInfo, LiveState};
 
 /// Message sent by the UI to the manager.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -18,8 +18,13 @@ pub enum ClientMessage {
     SelectDevice {
         /// Device serial.
         serial: String,
+        /// Also stream what the device displays (`liveState` messages).
+        live_state: bool,
     },
-    /// Replace the whole configuration of a device.
+    /// Replace the whole configuration of a device. Once accepted, the
+    /// author gets a `config` with the configuration sent, unchanged except
+    /// for its revision, incremented: clients recognise their own update by
+    /// it. Other subscribers get it too, unless a later update overtakes it.
     ///
     /// Rejected with [`ErrorCode::StaleRevision`] when `config.revision` is not
     /// the current one.
@@ -79,7 +84,7 @@ pub enum ServerMessage {
     /// Module kinds available for configuration.
     ModuleCatalog {
         /// Available modules.
-        modules: Vec<ModuleDescriptor>,
+        modules: Vec<CatalogModule>,
     },
     /// Current configuration of a device.
     Config {

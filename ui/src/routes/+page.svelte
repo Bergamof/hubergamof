@@ -1,22 +1,28 @@
 <script lang="ts">
 	import { ManagerConnection, managerSocketUrl } from '#lib/connection/index.js';
-	import type { DeviceInfo } from '#lib/generated/index.js';
+	import { DeckState } from '#lib/deck/deck-state.svelte.js';
+	import DeckEditor from '#lib/components/DeckEditor.svelte';
+	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
+	import Notices from '#lib/components/Notices.svelte';
+
+	/** Focus target once the last notice is dismissed. */
+	const MAIN_ID = 'main-content';
 
 	let connection = $state<ManagerConnection>();
-	let devices = $state<DeviceInfo[]>([]);
+	let deck = $state<DeckState>();
 
 	const isOnline = $derived(connection?.status === 'open');
 
 	$effect(() => {
 		const managerConnection = new ManagerConnection({ url: managerSocketUrl(location) });
-		const unsubscribe = managerConnection.onMessage((message) => {
-			if (message.type === 'devices') devices = message.devices;
-		});
+		const deckState = new DeckState(managerConnection);
+		const stopListening = deckState.listen();
 		managerConnection.connect();
 		connection = managerConnection;
+		deck = deckState;
 
 		return () => {
-			unsubscribe();
+			stopListening();
 			managerConnection.disconnect();
 		};
 	});
@@ -26,7 +32,7 @@
 	<title>Bergadeck</title>
 </svelte:head>
 
-<div class="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 p-6">
+<div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-6">
 	<header class="flex flex-wrap items-center justify-between gap-4">
 		<h1 class="text-2xl font-bold tracking-tight">Bergadeck</h1>
 		<p role="status" aria-live="polite" class="flex items-center gap-2 text-sm">
@@ -41,18 +47,46 @@
 		</p>
 	</header>
 
-	<main class="flex flex-1 flex-col">
-		<h2 class="sr-only">Appareils</h2>
-		{#if !isOnline}
-			<p class="m-auto text-zinc-600 dark:text-zinc-400">Connexion au gestionnaire…</p>
-		{:else if devices.length === 0}
+	<main id={MAIN_ID} tabindex="-1" class="flex flex-1 flex-col gap-6 outline-none">
+		{#if deck?.device && deck.config}
+			{#if !isOnline}
+				<p
+					role="alert"
+					class="rounded-lg border border-amber-600 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-400 dark:bg-amber-950 dark:text-amber-100"
+				>
+					Connexion au gestionnaire perdue, reconnexion en cours… La configuration reste affichée
+					mais ne peut pas être modifiée.
+				</p>
+			{/if}
+			<div class="flex flex-col gap-6" inert={!isOnline}>
+				<DeviceSelector
+					devices={deck.devices}
+					selected={deck.selectedSerial}
+					onselect={(serial) => deck?.select(serial)}
+				/>
+				<Notices
+					notices={deck.notices}
+					fallbackFocusId={MAIN_ID}
+					ondismiss={(id) => deck?.dismiss(id)}
+				/>
+				<DeckEditor {deck} device={deck.device} config={deck.config} />
+			</div>
+		{:else if !isOnline || !deck}
+			<div class="m-auto flex flex-col items-center gap-2 text-center">
+				<p class="text-zinc-600 dark:text-zinc-400">Connexion au gestionnaire…</p>
+				<p class="text-sm text-zinc-600 dark:text-zinc-400">
+					Si rien ne se passe, vérifiez que le service bergadeck est lancé.
+				</p>
+			</div>
+		{:else if deck.devices.length === 0}
 			<p class="m-auto text-zinc-600 dark:text-zinc-400">Aucun appareil connecté</p>
 		{:else}
-			<ul class="flex flex-col gap-2">
-				{#each devices as device (device.serial)}
-					<li>{device.displayName}</li>
-				{/each}
-			</ul>
+			<Notices
+				notices={deck.notices}
+				fallbackFocusId={MAIN_ID}
+				ondismiss={(id) => deck?.dismiss(id)}
+			/>
+			<p class="m-auto text-zinc-600 dark:text-zinc-400">Chargement de la configuration…</p>
 		{/if}
 	</main>
 </div>

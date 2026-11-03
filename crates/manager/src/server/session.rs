@@ -2,8 +2,8 @@
 //!
 //! On connection the client receives `hello`, `devices` and `moduleCatalog`,
 //! then `devices` after every attach or detach. `selectDevice` subscribes it
-//! to one device (the previous one is dropped): `config` and `liveState`
-//! right away, then on every change, live states being sent at most every
+//! to one device (the previous one is dropped): `config` right away, then on
+//! every change; with `liveState: true`, `liveState` too, sent at most every
 //! [`MIN_LIVE_STATE_INTERVAL`]. The subscription ends with the engine
 //! (device detached); the UI selects again from the new `devices` list.
 
@@ -33,6 +33,7 @@ enum Selection {
     /// The device is attached but its engine is still starting.
     Starting {
         serial: String,
+        live_state: bool,
         deadline: Instant,
     },
     Active(Subscription),
@@ -41,10 +42,16 @@ enum Selection {
 struct Subscription {
     serial: String,
     config: watch::Receiver<DeviceConfig>,
-    live: watch::Receiver<LiveSnapshot>,
-    /// A live state newer than the last one sent is waiting for `next_live`.
-    live_pending: bool,
-    next_live: Instant,
+    /// `None` when the client did not ask for live states.
+    live: Option<LiveFeed>,
+}
+
+/// Live states streamed to a client that asked for them.
+struct LiveFeed {
+    receiver: watch::Receiver<LiveSnapshot>,
+    /// A live state newer than the last one sent is waiting for `next`.
+    pending: bool,
+    next: Instant,
 }
 
 /// What woke the session up.
@@ -125,8 +132,13 @@ impl Session {
             Selection::None => (None, None, None, None),
             Selection::Starting { deadline, .. } => (Some(*deadline), None, None, None),
             Selection::Active(subscription) => {
-                let live_due = subscription.live_pending.then_some(subscription.next_live);
-                let live = (!subscription.live_pending).then_some(&mut subscription.live);
+                let (live, live_due) = match &mut subscription.live {
+                    Some(feed) => {
+                        let due = feed.pending.then_some(feed.next);
+                        ((!feed.pending).then_some(&mut feed.receiver), due)
+                    }
+                    None => (None, None),
+                };
                 (None, Some(&mut subscription.config), live, live_due)
             }
         };
@@ -172,16 +184,36 @@ impl Session {
     async fn on_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
         let engines = &self.state.context.engines;
         let outcome = match request {
-            ClientMessage::SelectDevice { serial } => return self.select(serial).await,
+            ClientMessage::SelectDevice { serial, live_state } => {
+                return self.select(serial, live_state).await;
+            }
             ClientMessage::Ping => return self.send(&ServerMessage::Pong).await,
             ClientMessage::UpdateConfig { serial, config } => {
-                // Subscribers (this client included) get the saved
-                // configuration through the engine's `config` channel.
-                with_engine(engines, &serial, async |engine| {
-                    engine.apply_config(config).await?;
-                    Ok(())
+                // Sent back to the author even if a later update overtakes it
+                // in the engine's `config` channel (which keeps the latest
+                // only): the UI recognises its own update by it. Other
+                // subscribers get it through the channel.
+                let saved = with_engine(engines, &serial, async |engine| {
+                    Ok(engine.apply_config(config).await?)
                 })
-                .await
+                .await;
+                return match saved {
+                    Ok(config) => {
+                        let newer = self.take_newer_config(&serial, &config);
+                        self.send(&ServerMessage::Config {
+                            serial: serial.clone(),
+                            config,
+                        })
+                        .await?;
+                        match newer {
+                            Some(config) => {
+                                self.send(&ServerMessage::Config { serial, config }).await
+                            }
+                            None => Ok(()),
+                        }
+                    }
+                    Err(failure) => self.send_error(failure.code, &failure.message).await,
+                };
             }
             ClientMessage::PressKey { .. }
             | ClientMessage::RotateDial { .. }
@@ -219,17 +251,18 @@ impl Session {
         }
     }
 
-    async fn select(&mut self, serial: String) -> Result<(), Closed> {
+    async fn select(&mut self, serial: String, live_state: bool) -> Result<(), Closed> {
         self.selection = Selection::None;
         // Seen before the lookup: an engine registered in between still
         // wakes `next_event` up.
         self.engine_changes.borrow_and_update();
         if let Some(engine) = self.state.context.engines.get(&serial) {
-            return self.subscribe(&engine).await;
+            return self.subscribe(&engine, live_state).await;
         }
         if self.state.context.discovery.backend(&serial).is_some() {
             self.selection = Selection::Starting {
                 serial,
+                live_state,
                 deadline: Instant::now() + ENGINE_START_TIMEOUT,
             };
             return Ok(());
@@ -241,24 +274,30 @@ impl Session {
         .await
     }
 
-    async fn subscribe(&mut self, engine: &EngineHandle) -> Result<(), Closed> {
+    async fn subscribe(&mut self, engine: &EngineHandle, live_state: bool) -> Result<(), Closed> {
         self.selection = Selection::Active(Subscription {
             serial: engine.info().serial.clone(),
             config: engine.config(),
-            live: engine.live(),
-            live_pending: false,
-            next_live: Instant::now(),
+            live: live_state.then(|| LiveFeed {
+                receiver: engine.live(),
+                pending: false,
+                next: Instant::now(),
+            }),
         });
         self.send_config().await?;
         self.send_live_state().await
     }
 
     async fn resolve_starting_engine(&mut self) -> Result<(), Closed> {
-        let Selection::Starting { serial, .. } = &self.selection else {
+        let Selection::Starting {
+            serial, live_state, ..
+        } = &self.selection
+        else {
             return Ok(());
         };
+        let live_state = *live_state;
         match self.state.context.engines.get(serial) {
-            Some(engine) => self.subscribe(&engine).await,
+            Some(engine) => self.subscribe(&engine, live_state).await,
             None => Ok(()),
         }
     }
@@ -296,9 +335,26 @@ impl Session {
     }
 
     fn mark_live_pending(&mut self) {
-        if let Selection::Active(subscription) = &mut self.selection {
-            subscription.live_pending = true;
+        if let Selection::Active(Subscription {
+            live: Some(feed), ..
+        }) = &mut self.selection
+        {
+            feed.pending = true;
         }
+    }
+
+    /// Consumes the channel's latest configuration of `serial`, so that the
+    /// client does not get `saved` twice; returns it when a later update
+    /// already overtook `saved`, to be sent after it.
+    fn take_newer_config(&mut self, serial: &str, saved: &DeviceConfig) -> Option<DeviceConfig> {
+        let Selection::Active(subscription) = &mut self.selection else {
+            return None;
+        };
+        if subscription.serial != serial {
+            return None;
+        }
+        let latest = subscription.config.borrow_and_update();
+        (*latest != *saved).then(|| latest.clone())
     }
 
     async fn send_config(&mut self) -> Result<(), Closed> {
@@ -313,12 +369,15 @@ impl Session {
     }
 
     async fn send_live_state(&mut self) -> Result<(), Closed> {
-        let Selection::Active(subscription) = &mut self.selection else {
+        let Selection::Active(Subscription {
+            live: Some(feed), ..
+        }) = &mut self.selection
+        else {
             return Ok(());
         };
-        let snapshot = subscription.live.borrow_and_update().clone();
-        subscription.live_pending = false;
-        subscription.next_live = Instant::now() + MIN_LIVE_STATE_INTERVAL;
+        let snapshot = feed.receiver.borrow_and_update().clone();
+        feed.pending = false;
+        feed.next = Instant::now() + MIN_LIVE_STATE_INTERVAL;
         // Encoding new images as PNG data URLs is CPU-bound.
         match tokio::task::spawn_blocking(move || snapshot.to_live_state()).await {
             Ok(Ok(state)) => self.send(&ServerMessage::LiveState { state }).await,
@@ -417,11 +476,11 @@ impl From<RequestError> for RequestFailure {
 }
 
 /// Runs `action` on the engine of `serial`.
-async fn with_engine(
+async fn with_engine<T>(
     engines: &EngineRegistry,
     serial: &str,
-    action: impl AsyncFnOnce(EngineHandle) -> Result<(), RequestError>,
-) -> Result<(), RequestFailure> {
+    action: impl AsyncFnOnce(EngineHandle) -> Result<T, RequestError>,
+) -> Result<T, RequestFailure> {
     let engine = engines
         .get(serial)
         .ok_or_else(|| RequestFailure::unknown_device(serial))?;

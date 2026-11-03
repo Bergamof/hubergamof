@@ -20,9 +20,14 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - API des modules : `ModuleDescriptor::parse_settings` (bornes vérifiées puis désérialisation) et `TestContext` (feature `testing`).
 - Lint : lancement de shell interdit hors tests ; `module-api` vérifié seul, sans features.
 - Module Docker : projets compose et conteneurs (démarrer, arrêter, redémarrer, supprimer arrêté, Up / Up + build / Up + pull, Down / Down + volumes avec double appui), état en direct, fichiers compose déclarés (`composeFiles`) proposés même après un down ; simulé en `--demo`.
+- Interface de configuration : choix de l'appareil, luminosité, touches de l'accueil (ajout depuis le catalogue, réorganisation au clavier et à la souris, suppression), affectation des molettes, réglages de chaque module ; synchronisée entre onglets, erreurs du gestionnaire affichées.
+- API des modules : `ModuleFactory::icon`, l'icône affichée par l'interface ; le catalogue (`CatalogModule`) la fournit rendue en PNG.
 
 ### Modifié
 
+- Contrat : `moduleCatalog` envoie des `CatalogModule` (descripteur, icône, réglages par défaut choisis par le module) ; `selectDevice` porte `liveState` : l'état en direct n'est plus envoyé qu'aux clients qui le demandent.
+- API des modules : un réglage chemin (`path`, `pathList`) doit être absolu ou commencer par `~/`.
+- Tests e2e et Lighthouse lancés contre `bergadeck --demo`.
 - Contrat : `KeyView.active` remplacé par `state` (`normal`/`active`/`attention`) ; `Command::Redraw` et `ImageFormat` supprimés.
 - Isolation des modules : panique → placeholder et alerte, budget de 500 ms par gestionnaire ; appui résolu sur ce qui est affiché.
 - Icône de barre système : plus d'avertissement `Broken pipe` à l'arrêt.

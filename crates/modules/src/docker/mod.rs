@@ -134,6 +134,10 @@ impl ModuleFactory for DockerFactory {
         descriptor()
     }
 
+    fn icon(&self) -> Option<ImageData> {
+        Some(icons::MODULE.clone())
+    }
+
     fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
         DockerSettings::parse(settings).map(drop)
     }

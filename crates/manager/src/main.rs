@@ -16,9 +16,12 @@ use bergadeck_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtu
 use bergadeck_manager::device::{self, DeviceDiscovery};
 use bergadeck_manager::engine::{EngineServices, Supervisor};
 use bergadeck_manager::render::Renderer;
-use bergadeck_manager::server::{DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput};
+use bergadeck_manager::server::{
+    DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, module_catalog,
+};
 use bergadeck_manager::tray::{TrayIcon, quit_on};
 use bergadeck_modules::{BuiltinServices, builtin_registry_with};
+use bergadeck_protocol::CatalogModule;
 use clap::Parser;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -84,7 +87,7 @@ async fn main() -> Result<()> {
     let (shutdown, stopping) = watch::channel(false);
 
     let services = services(&cli.config_dir, builtin_services(cli.demo))?;
-    let catalog = services.registry.descriptors().into();
+    let catalog = catalog_of(&services).await?;
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
     let context = ServerContext {
@@ -199,6 +202,15 @@ fn builtin_services(demo: bool) -> BuiltinServices {
     } else {
         BuiltinServices::system()
     }
+}
+
+/// Module catalog of the UI, its icons rendered off the async runtime.
+async fn catalog_of(services: &EngineServices) -> Result<Arc<[CatalogModule]>> {
+    let registry = Arc::clone(&services.registry);
+    let renderer = Arc::clone(&services.renderer);
+    tokio::task::spawn_blocking(move || module_catalog(&registry, &renderer))
+        .await
+        .context("cannot build the module catalog")
 }
 
 fn services(config_dir: &std::path::Path, builtins: BuiltinServices) -> Result<EngineServices> {

@@ -46,11 +46,11 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 | `make run` | gestionnaire sur le matériel réel |
 | `make check` | toutes les vérifications locales (lint, tests, contrat TS, versions, cargo-deny) |
 | `make lint` / `make fmt` | lint en vérification / formatage |
-| `make test` / `make test-e2e` | tests Rust + Vitest / tests Playwright (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
+| `make test` / `make test-e2e` | tests Rust + Vitest / tests Playwright : chaque test lance son propre `bergadeck --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
 | `make gen-types` | régénère les types TypeScript du contrat (`ui/src/lib/generated/`) |
 | `make build` | UI puis binaire release `target/release/bergadeck` qui l'embarque |
 | `make docker` | image de build reproductible (mode `--demo`, pas l'usage normal) |
-| `make lighthouse` | audit Lighthouse (Accessibilité et Bonnes pratiques ≥ 90) |
+| `make lighthouse` | audit Lighthouse de l'UI servie par `bergadeck --demo` (port 7881) : Accessibilité et Bonnes pratiques ≥ 90 |
 | `make install` / `make uninstall` | installe/retire le binaire (`~/.local/bin`), le service systemd utilisateur et la règle udev |
 
 ## Installation sur le poste

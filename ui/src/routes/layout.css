@@ -9,3 +9,23 @@
 		@apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
 	}
 }
+
+/* Visible keyboard focus, shared by every control. */
+@utility focus-ring {
+	@apply focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-sky-600;
+}
+
+/* Text input, select and textarea. */
+@utility field {
+	@apply w-full rounded-lg border border-zinc-400 bg-white px-3 py-2 text-zinc-900 focus-ring aria-invalid:border-red-700 dark:border-zinc-500 dark:bg-zinc-900 dark:text-zinc-100 dark:aria-invalid:border-red-400;
+}
+
+/* Secondary action button. */
+@utility secondary-button {
+	@apply min-h-6 rounded-lg border border-zinc-400 px-3 py-1.5 text-sm font-medium focus-ring hover:bg-zinc-100 aria-disabled:opacity-50 aria-disabled:hover:bg-transparent dark:border-zinc-500 dark:hover:bg-zinc-800;
+}
+
+/* A key or dial of the device, selectable to configure it. */
+@utility surface-button {
+	@apply flex w-full flex-col items-center gap-1 rounded-xl p-1 text-sm focus-ring hover:bg-zinc-100 aria-current:bg-sky-100 aria-current:ring-2 aria-current:ring-sky-600 dark:hover:bg-zinc-800 dark:aria-current:bg-sky-950 dark:aria-current:ring-sky-400;
+}

@@ -5,6 +5,8 @@ use std::sync::LazyLock;
 
 use bergadeck_module_api::ImageData;
 
+use crate::icons::svg;
+
 /// Stroke shared by the icons.
 macro_rules! icon {
     ($body:expr) => {
@@ -67,10 +69,6 @@ pub(super) static UP: LazyLock<ImageData> = LazyLock::new(|| svg(UP_SVG));
 /// `compose down`.
 pub(super) static DOWN: LazyLock<ImageData> = LazyLock::new(|| svg(DOWN_SVG));
 
-fn svg(source: &str) -> ImageData {
-    ImageData::new(source.as_bytes())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,11 +88,7 @@ mod tests {
             UP_SVG,
             DOWN_SVG,
         ] {
-            assert!(
-                icon.starts_with("<svg ") && icon.ends_with("</svg>"),
-                "{icon}"
-            );
-            assert!(!icon.contains('$'), "{icon}");
+            assert!(crate::icons::is_complete_svg(icon), "{icon}");
         }
         assert!(RUNNING_SVG.contains("fill=\"#3fbf6a\""));
     }

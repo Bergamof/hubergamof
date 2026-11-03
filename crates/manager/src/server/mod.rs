@@ -10,6 +10,7 @@
 //!   frame, then in-flight requests complete.
 
 mod assets;
+mod catalog;
 mod security;
 mod session;
 
@@ -22,7 +23,7 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::middleware;
 use axum::response::Response;
 use axum::routing::get;
-use bergadeck_protocol::ModuleDescriptor;
+use bergadeck_protocol::CatalogModule;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -31,6 +32,7 @@ pub use assets::{
     AssetSource, EmbeddedUi, FALLBACK_FILE, INDEX_FILE, MISSING_UI_MESSAGE,
     html_content_security_policy,
 };
+pub use catalog::module_catalog;
 pub use security::{
     AccessDenied, AccessPolicy, CONTENT_SECURITY_POLICY_BASE, DevOrigin, InvalidDevOrigin,
 };
@@ -63,7 +65,7 @@ pub struct ServerContext {
     /// Running device engines.
     pub engines: EngineRegistry,
     /// Module kinds offered to the UI.
-    pub catalog: Arc<[ModuleDescriptor]>,
+    pub catalog: Arc<[CatalogModule]>,
     /// Whether clients may press keys and turn dials.
     pub simulated_input: SimulatedInput,
 }

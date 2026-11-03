@@ -3,8 +3,8 @@
 #![cfg(test)]
 
 use bergadeck_protocol::{
-    ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel,
-    DialView, ErrorCode, ImageSize, KeyState, KeyView, LiveState, ModuleCapabilities,
+    CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
+    DeviceModel, DialView, ErrorCode, ImageSize, KeyState, KeyView, LiveState, ModuleCapabilities,
     ModuleDescriptor, ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, ZoneView,
 };
 use serde::Serialize;
@@ -60,12 +60,43 @@ fn sample_config_json() -> Value {
 }
 
 #[test]
+fn catalog_module_without_icon() {
+    assert_wire_format(
+        &CatalogModule {
+            descriptor: ModuleDescriptor {
+                kind: "navigation".into(),
+                name: "Navigation".into(),
+                description: "Scroll".into(),
+                capabilities: ModuleCapabilities {
+                    key: false,
+                    dial: true,
+                    touch_zone: true,
+                },
+                settings: Vec::new(),
+            },
+            icon: None,
+            default_settings: json!({}),
+        },
+        &json!({
+            "kind": "navigation",
+            "name": "Navigation",
+            "description": "Scroll",
+            "capabilities": { "key": false, "dial": true, "touchZone": true },
+            "settings": [],
+            "icon": null,
+            "defaultSettings": {}
+        }),
+    );
+}
+
+#[test]
 fn client_select_device() {
     assert_wire_format(
         &ClientMessage::SelectDevice {
             serial: "ABC123".into(),
+            live_state: true,
         },
-        &json!({ "type": "selectDevice", "serial": "ABC123" }),
+        &json!({ "type": "selectDevice", "serial": "ABC123", "liveState": true }),
     );
 }
 
@@ -196,16 +227,20 @@ fn server_module_catalog() {
     };
     assert_wire_format(
         &ServerMessage::ModuleCatalog {
-            modules: vec![ModuleDescriptor {
-                kind: "pomodoro".into(),
-                name: "Pomodoro".into(),
-                description: "Focus timer".into(),
-                capabilities: ModuleCapabilities {
-                    key: true,
-                    dial: true,
-                    touch_zone: true,
+            modules: vec![CatalogModule {
+                descriptor: ModuleDescriptor {
+                    kind: "pomodoro".into(),
+                    name: "Pomodoro".into(),
+                    description: "Focus timer".into(),
+                    capabilities: ModuleCapabilities {
+                        key: true,
+                        dial: true,
+                        touch_zone: true,
+                    },
+                    settings: vec![integer, choice],
                 },
-                settings: vec![integer, choice],
+                icon: Some("data:image/png;base64,AA==".into()),
+                default_settings: json!({ "workMinutes": 25, "target": "sink" }),
             }],
         },
         &json!({
@@ -232,7 +267,9 @@ fn server_module_catalog() {
                             "options": [{ "value": "sink", "label": "Output" }]
                         }
                     }
-                ]
+                ],
+                "icon": "data:image/png;base64,AA==",
+                "defaultSettings": { "workMinutes": 25, "target": "sink" }
             }]
         }),
     );

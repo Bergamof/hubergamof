@@ -1,18 +1,32 @@
 import { defineConfig, devices } from '@playwright/test';
 
-/** Port of `vite preview` (its default), serving the production build. */
+/** Port of `vite preview` (its default), serving the production build with no manager behind. */
 const PREVIEW_PORT = 4173;
 const isCi = Boolean(process.env.CI);
 
 export default defineConfig({
-	testMatch: '**/*.e2e.{ts,js}',
+	testDir: 'e2e',
+	testMatch: '**/*.e2e.ts',
+	// Builds the UI and the manager; each demo test then starts its own (`e2e/demo-manager.ts`).
+	globalSetup: './e2e/global-setup.ts',
 	forbidOnly: isCi,
 	retries: isCi ? 1 : 0,
 	reporter: isCi ? [['list'], ['html', { open: 'never' }]] : 'list',
-	use: { baseURL: `http://127.0.0.1:${PREVIEW_PORT}` },
-	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+	projects: [
+		{
+			name: 'sans-gestionnaire',
+			testMatch: '**/offline.e2e.ts',
+			use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${PREVIEW_PORT}` }
+		},
+		{
+			name: 'demo',
+			testMatch: '**/demo.e2e.ts',
+			use: { ...devices['Desktop Chrome'] }
+		}
+	],
+	// Serves the build made by the global setup.
 	webServer: {
-		command: `pnpm build && pnpm preview --host 127.0.0.1 --port ${PREVIEW_PORT} --strictPort`,
+		command: `pnpm preview --host 127.0.0.1 --port ${PREVIEW_PORT} --strictPort`,
 		url: `http://127.0.0.1:${PREVIEW_PORT}`,
 		reuseExistingServer: !isCi
 	}

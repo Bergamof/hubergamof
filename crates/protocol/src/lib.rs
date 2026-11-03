@@ -10,11 +10,13 @@
 //! JSON conventions: fields are `camelCase`, enums carrying data are
 //! internally tagged with a `type` field, optional values are `null`.
 
+mod catalog;
 mod config;
 mod device;
 mod live;
 mod messages;
 
+pub use catalog::CatalogModule;
 pub use config::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_IMAGE_NAME_LENGTH,
     ModuleInstance, is_safe_image_name,

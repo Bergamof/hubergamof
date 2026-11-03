@@ -164,6 +164,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-ui
+      # Les tests « demo » tournent contre `bergadeck --demo` (cargo run, binaire debug).
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: debug
       - name: Install Chromium
         working-directory: ui
         run: pnpm exec playwright install --with-deps chromium
@@ -371,10 +375,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-ui
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: debug
       # Assertions (Accessibilité et Bonnes pratiques ≥ 0,9) dans lighthouserc.json.
-      # Audit du build statique (staticDistDir: ui/build) : l'UI du squelette
-      # s'affiche sans gestionnaire. À basculer sur `bergadeck --demo` (startServerCommand)
-      # quand les pages dépendront de l'état en direct.
+      # Audit de l'UI servie par `bergadeck --demo` (startServerCommand), éditeur affiché.
       - name: Lighthouse CI
         id: lhci
         run: make lighthouse

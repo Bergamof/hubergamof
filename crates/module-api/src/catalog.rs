@@ -8,12 +8,14 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{ModuleError, ModuleKind, parse_settings};
+use crate::{ModuleError, ModuleKind, is_setting_path, parse_settings};
 
 /// Description of a module kind available to the user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+// Not exported on its own: the contract sends it flattened into
+// `bergadeck_protocol::CatalogModule`.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ModuleDescriptor {
     /// Module kind, referenced by the `kind` of a configured module instance.
     pub kind: ModuleKind,
@@ -89,14 +91,16 @@ pub enum SettingKind {
         /// Default value.
         default: String,
     },
-    /// Filesystem path.
+    /// Filesystem path: absolute, or starting with `~/` for the home
+    /// directory (see [`crate::expand_home`]); empty when not set.
     Path {
         /// Default value.
         default: String,
         /// Whether the path must be a directory rather than a file.
         directory: bool,
     },
-    /// Ordered list of filesystem paths.
+    /// Ordered list of filesystem paths, each absolute or starting with
+    /// `~/` (see [`SettingKind::Path`]).
     PathList {
         /// Default value.
         default: Vec<String>,
@@ -217,13 +221,27 @@ impl SettingKind {
                 }
                 Ok(())
             }
-            Self::Text { .. } | Self::Path { .. } => expect(value.is_string(), "expected a string"),
-            Self::PathList { .. } => expect(
-                value
-                    .as_array()
-                    .is_some_and(|paths| paths.iter().all(Value::is_string)),
-                "expected a list of strings",
-            ),
+            Self::Text { .. } => expect(value.is_string(), "expected a string"),
+            Self::Path { .. } => {
+                let path = value
+                    .as_str()
+                    .ok_or_else(|| "expected a string".to_owned())?;
+                if path.is_empty() {
+                    Ok(())
+                } else {
+                    check_path(path)
+                }
+            }
+            Self::PathList { .. } => value
+                .as_array()
+                .ok_or_else(|| "expected a list of strings".to_owned())?
+                .iter()
+                .try_for_each(|path| {
+                    check_path(
+                        path.as_str()
+                            .ok_or_else(|| "expected a list of strings".to_owned())?,
+                    )
+                }),
             Self::Choice { options, .. } => {
                 let choice = value
                     .as_str()
@@ -234,6 +252,17 @@ impl SettingKind {
                 )
             }
         }
+    }
+}
+
+/// A path the host can resolve without a working directory.
+fn check_path(path: &str) -> Result<(), String> {
+    if is_setting_path(path) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{path}` is neither absolute nor in the home directory (`~/…`)"
+        ))
     }
 }
 
@@ -315,10 +344,17 @@ mod tests {
                 json!("/tmp"),
             ),
             (
+                SettingKind::Path {
+                    default: String::new(),
+                    directory: false,
+                },
+                json!(""),
+            ),
+            (
                 SettingKind::PathList {
                     default: Vec::new(),
                 },
-                json!(["/a", "/b"]),
+                json!(["/a", "~/b"]),
             ),
             (choice(), json!("b")),
         ];
@@ -348,6 +384,31 @@ mod tests {
                     default: Vec::new(),
                 },
                 json!(["/a", 1]),
+            ),
+            (
+                SettingKind::PathList {
+                    default: Vec::new(),
+                },
+                json!(["relative/compose.yaml"]),
+            ),
+            (
+                SettingKind::PathList {
+                    default: Vec::new(),
+                },
+                json!(["~user/file"]),
+            ),
+            (
+                SettingKind::PathList {
+                    default: Vec::new(),
+                },
+                json!(["~"]),
+            ),
+            (
+                SettingKind::Path {
+                    default: String::new(),
+                    directory: true,
+                },
+                json!("projects"),
             ),
             (choice(), json!("c")),
             (choice(), json!(null)),
