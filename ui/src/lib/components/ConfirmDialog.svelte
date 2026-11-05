@@ -19,7 +19,7 @@ cancels and focus returns to the opener). « Annuler », first, has the initial 
 
 	const uid = $props.id();
 	let dialog: HTMLDialogElement | undefined = $state();
-	/** Set by « Remplacer »: the `close` event that follows is not a cancellation. */
+	/** Set by the confirm button: the `close` event that follows is not a cancellation. */
 	let confirmed = false;
 
 	function confirm() {

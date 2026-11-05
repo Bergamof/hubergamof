@@ -56,7 +56,7 @@ selected key or dial.
 	let pickerOpen = $state(false);
 	let announcement = $state('');
 	/** A removal waiting for confirmation: its instance and settings would be lost. */
-	let pendingRemoval: { position: number; name: string } | undefined = $state();
+	let pendingRemoval: { position: number; id: string; name: string } | undefined = $state();
 
 	const moduleOf = (kind: string) => deck.moduleOf(kind);
 	const instancesById = $derived(new Map(config.modules.map((module) => [module.id, module])));
@@ -150,14 +150,17 @@ selected key or dial.
 	function requestRemove(position: number) {
 		const lost = removedInstance(config, removeKey(position));
 		if (lost) {
-			pendingRemoval = { position, name: instanceName(lost, moduleOf(lost.kind)) };
+			pendingRemoval = { position, id: lost.id, name: instanceName(lost, moduleOf(lost.kind)) };
 		} else {
 			void remove(position);
 		}
 	}
 
 	function confirmRemoval() {
-		if (pendingRemoval) void remove(pendingRemoval.position);
+		// Another tab may have moved the keys meanwhile: only the key asked for is removed.
+		if (pendingRemoval && config.home[pendingRemoval.position] === pendingRemoval.id) {
+			void remove(pendingRemoval.position);
+		}
 		pendingRemoval = undefined;
 	}
 
