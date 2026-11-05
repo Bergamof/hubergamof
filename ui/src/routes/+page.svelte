@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { ManagerApi } from '#lib/api/manager-api.js';
 	import { ManagerConnection, managerSocketUrl } from '#lib/connection/index.js';
 	import { DeckState } from '#lib/deck/deck-state.svelte.js';
@@ -15,6 +16,27 @@
 	let deck = $state<DeckState>();
 
 	const isOnline = $derived(connection?.status === 'open');
+
+	let editor: HTMLDivElement | undefined = $state();
+	/** Focused control of the editor when the connection was lost, focused again once back. */
+	let focusBeforeOffline: HTMLElement | undefined;
+
+	// Before the DOM update: the editor turns inert, which drops the focus.
+	$effect.pre(() => {
+		if (isOnline || !editor) return;
+		const focused = document.activeElement;
+		if (focused instanceof HTMLElement && editor.contains(focused)) focusBeforeOffline = focused;
+	});
+
+	$effect(() => {
+		if (!isOnline || !focusBeforeOffline) return;
+		const target = focusBeforeOffline;
+		focusBeforeOffline = undefined;
+		void tick().then(() => {
+			const fallback = document.getElementById(MAIN_ID);
+			(target.isConnected ? target : fallback)?.focus();
+		});
+	});
 
 	$effect(() => {
 		const managerConnection = new ManagerConnection({ url: managerSocketUrl(location) });
@@ -61,7 +83,7 @@
 					mais ne peut pas être modifiée.
 				</p>
 			{/if}
-			<div class="flex flex-col gap-6" inert={!isOnline}>
+			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline}>
 				<DeviceSelector
 					devices={deck.devices}
 					selected={deck.selectedSerial}

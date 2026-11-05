@@ -1,18 +1,9 @@
 import type { CatalogModule, ModuleInstance } from '#lib/generated/index.js';
 import { keyImageUrl } from '#lib/api/manager-api.js';
 
-/** Names of the modules announced but not provided yet, shown instead of their kind. */
-const UPCOMING_MODULE_NAMES: Readonly<Record<string, string>> = {
-	intellij: 'IntelliJ',
-	claude: 'Claude'
-};
-
-/** Name of a module kind: from the catalog, else a known upcoming name, else the kind. */
+/** Name of a module kind: from the catalog, else the kind (module missing from this version). */
 export function moduleName(kind: string, module: CatalogModule | undefined): string {
-	return (
-		module?.name ??
-		(Object.hasOwn(UPCOMING_MODULE_NAMES, kind) ? UPCOMING_MODULE_NAMES[kind] : kind)
-	);
+	return module?.name ?? kind;
 }
 
 /** Name shown for an instance: its label, else the name of its module. */

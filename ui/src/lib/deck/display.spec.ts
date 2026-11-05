@@ -20,13 +20,12 @@ describe('instanceName', () => {
 	it('prefers the label, then the module name', () => {
 		expect(instanceName(instance('Micro'), audio)).toBe('Micro');
 		expect(instanceName(instance(null), audio)).toBe('Audio');
-		expect(instanceName(instance(null, 'intellij'), undefined)).toBe('IntelliJ');
+		expect(instanceName(instance(null, 'teleporter'), undefined)).toBe('teleporter');
 	});
 });
 
 describe('moduleName', () => {
-	it('names upcoming modules, and falls back to the kind', () => {
-		expect(moduleName('claude', undefined)).toBe('Claude');
+	it('falls back to the kind of a module missing from the catalog', () => {
 		expect(moduleName('mystery', undefined)).toBe('mystery');
 		expect(moduleName('constructor', undefined)).toBe('constructor');
 		expect(moduleName('audio', audio)).toBe('Audio');

@@ -19,6 +19,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Module Pomodoro avec notifications de bureau ; le minuteur suit le temps réel, mise en veille comprise.
 - API des modules : `ModuleDescriptor::parse_settings` (bornes vérifiées puis désérialisation) et `TestContext` (feature `testing`).
 - Lint : lancement de shell interdit hors tests ; `module-api` vérifié seul, sans features.
+- Tests e2e : contrôle d'accessibilité axe (WCAG 2.2 A/AA) des états riches de l'interface, en thème clair et sombre.
 - Module Docker : projets compose et conteneurs (démarrer, arrêter, redémarrer, supprimer arrêté, Up / Up + build / Up + pull, Down / Down + volumes avec double appui), état en direct, fichiers compose déclarés (`composeFiles`) proposés même après un down ; simulé en `--demo`.
 - Interface de configuration : choix de l'appareil, luminosité, touches de l'accueil (ajout depuis le catalogue, réorganisation au clavier et à la souris, suppression), affectation des molettes, réglages de chaque module ; synchronisée entre onglets, erreurs du gestionnaire affichées.
 - API des modules : `ModuleFactory::icon`, l'icône affichée par l'interface ; le catalogue (`CatalogModule`) la fournit rendue en PNG.
@@ -31,6 +32,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Interface : supprimer une touche dont le module n'est placé nulle part ailleurs demande confirmation (ses réglages seraient perdus) ; le focus va sur la touche ajoutée, et revient sur le contrôle d'origine après une reconnexion au gestionnaire.
 - Contrat : `moduleCatalog` envoie des `CatalogModule` (descripteur, icône, réglages par défaut choisis par le module) ; `selectDevice` porte `liveState` : l'état en direct n'est plus envoyé qu'aux clients qui le demandent.
 - API des modules : un réglage chemin (`path`, `pathList`) doit être absolu ou commencer par `~/`.
 - Tests e2e et Lighthouse lancés contre `bergadeck --demo`.

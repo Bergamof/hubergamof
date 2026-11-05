@@ -16,6 +16,7 @@ selected key or dial.
 		assignDial,
 		moveKey,
 		removeKey,
+		removedInstance,
 		setBrightness,
 		setKeyImage,
 		updateInstance,
@@ -23,9 +24,10 @@ selected key or dial.
 		type InstanceChanges
 	} from '#lib/deck/config-edits.js';
 	import type { ManagerApi } from '#lib/api/manager-api.js';
-	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
-	import { keyImage } from '#lib/deck/display.js';
+	import type { DeckState, EditOutcome } from '#lib/deck/deck-state.svelte.js';
+	import { instanceName, keyImage } from '#lib/deck/display.js';
 	import BrightnessControl from './BrightnessControl.svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DialDetails from './DialDetails.svelte';
 	import DialRow from './DialRow.svelte';
 	import ExportImport from './ExportImport.svelte';
@@ -53,6 +55,8 @@ selected key or dial.
 	let selection: Selection | undefined = $state();
 	let pickerOpen = $state(false);
 	let announcement = $state('');
+	/** A removal waiting for confirmation: its instance and settings would be lost. */
+	let pendingRemoval: { position: number; name: string } | undefined = $state();
 
 	const moduleOf = (kind: string) => deck.moduleOf(kind);
 	const instancesById = $derived(new Map(config.modules.map((module) => [module.id, module])));
@@ -110,26 +114,51 @@ selected key or dial.
 		void revealDetails();
 	}
 
-	function apply(instance: ModuleInstance, changes: InstanceChanges) {
-		return deck.edit(updateInstance(instance.id, changes), { notify: false });
+	/** Nothing to save for a key whose instance is missing. */
+	const NOTHING_TO_SAVE: Promise<EditOutcome> = Promise.resolve({ saved: true });
+
+	function apply(instance: ModuleInstance | null | undefined, changes: InstanceChanges) {
+		return instance
+			? deck.edit(updateInstance(instance.id, changes), { notify: false })
+			: NOTHING_TO_SAVE;
 	}
 
-	function setImage(instance: ModuleInstance, image: string | null) {
-		return deck.edit(setKeyImage(instance.id, image), { notify: false });
+	function setImage(instance: ModuleInstance | undefined, image: string | null) {
+		return instance
+			? deck.edit(setKeyImage(instance.id, image), { notify: false })
+			: NOTHING_TO_SAVE;
 	}
 
-	function add(module: CatalogModule) {
+	async function add(module: CatalogModule) {
 		const position = config.home.length;
 		void deck.edit(addKey(module));
 		pickerOpen = false;
 		selectKey(position);
 		announcement = `Touche ${module.name} ajoutée en position ${position + 1}.`;
+		// The picker gives the focus back to « Ajouter une touche »: the new key is the next step.
+		await tick();
+		document.getElementById(keyButtonId(position))?.focus();
 	}
 
 	function move(from: number, to: number) {
 		void deck.edit(moveKey(from, to));
 		selection = { surface: 'key', position: to, id: config.home[to] };
 		announcement = `Touche déplacée en position ${to + 1} sur ${config.home.length}.`;
+	}
+
+	/** Removes the key at `position`, once confirmed if its settings would be lost. */
+	function requestRemove(position: number) {
+		const lost = removedInstance(config, removeKey(position));
+		if (lost) {
+			pendingRemoval = { position, name: instanceName(lost, moduleOf(lost.kind)) };
+		} else {
+			void remove(position);
+		}
+	}
+
+	function confirmRemoval() {
+		if (pendingRemoval) void remove(pendingRemoval.position);
+		pendingRemoval = undefined;
 	}
 
 	async function remove(position: number) {
@@ -202,11 +231,9 @@ selected key or dial.
 					{api}
 					headingId={detailsHeadingId}
 					onmove={(to) => move(position, to)}
-					onremove={() => remove(position)}
-					onapply={(changes) =>
-						instance ? apply(instance, changes) : Promise.resolve({ saved: true })}
-					onimage={(image) =>
-						instance ? setImage(instance, image) : Promise.resolve({ saved: true })}
+					onremove={() => requestRemove(position)}
+					onapply={(changes) => apply(instance, changes)}
+					onimage={(image) => setImage(instance, image)}
 				/>
 			{:else if selected?.surface === 'dial'}
 				{@const instance = dials[selected.index]}
@@ -221,8 +248,7 @@ selected key or dial.
 						{moduleOf}
 						headingId={detailsHeadingId}
 						onassign={(choice) => assign(index, choice)}
-						onapply={(changes) =>
-							instance ? apply(instance, changes) : Promise.resolve({ saved: true })}
+						onapply={(changes) => apply(instance, changes)}
 					/>
 				{/key}
 			{:else}
@@ -233,6 +259,18 @@ selected key or dial.
 		</div>
 	</div>
 </div>
+
+<ConfirmDialog
+	open={pendingRemoval !== undefined}
+	title="Supprimer la touche ?"
+	confirmLabel="Supprimer"
+	onconfirm={confirmRemoval}
+	oncancel={() => (pendingRemoval = undefined)}
+>
+	<p>
+		« {pendingRemoval?.name} » n’est placé nulle part ailleurs : ses réglages seront perdus.
+	</p>
+</ConfirmDialog>
 
 <ModulePicker
 	open={pickerOpen}

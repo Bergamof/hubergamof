@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { expect, test } from './demo-manager.js';
 
@@ -58,6 +59,8 @@ test('ajoute une touche depuis le catalogue', async ({ page }) => {
 	await expect(page.getByRole('status').filter({ hasText: 'ajoutée' })).toHaveText(
 		'Touche Pomodoro ajoutée en position 6.'
 	);
+	// Next step: configuring it.
+	await expect(key(page, '6 : Pomodoro')).toBeFocused();
 });
 
 test('déplace une touche au clavier sans perdre le focus', async ({ page }) => {
@@ -146,10 +149,29 @@ test('garde la saisie quand le gestionnaire refuse la modification', async ({ pa
 	await expect(key(page, '2 : Pomodoro')).toBeVisible();
 });
 
-test('supprime une touche et place le focus sur sa voisine', async ({ page }) => {
+/** Removes the selected key, confirming the loss of its settings. */
+async function removeSelectedKey(page: Page) {
+	await page.getByRole('button', { name: 'Supprimer la touche' }).click();
+	await page
+		.getByRole('dialog', { name: 'Supprimer la touche ?' })
+		.getByRole('button', { name: 'Supprimer' })
+		.click();
+}
+
+test('supprime une touche après confirmation et place le focus sur sa voisine', async ({
+	page
+}) => {
 	await open(page);
 	await key(page, /^Touche 5 : Claude/).click();
 	await page.getByRole('button', { name: 'Supprimer la touche' }).click();
+	const confirm = page.getByRole('dialog', { name: 'Supprimer la touche ?' });
+	await expect(confirm).toContainText('« Claude » n’est placé nulle part ailleurs');
+	await expect(confirm.getByRole('button', { name: 'Annuler' })).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(confirm).toBeHidden();
+	await expect(key(page, /^Touche 5 : Claude/)).toBeVisible();
+
+	await removeSelectedKey(page);
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 	await expect(key(page, /^Touche 4 : IntelliJ/)).toBeFocused();
 	await expect(page.getByText('Touche supprimée.')).toBeAttached();
@@ -205,12 +227,14 @@ test('se reconnecte au gestionnaire en gardant l’éditeur affiché', async ({ 
 		socket.connectToServer();
 	});
 	await open(page);
+	await key(page, '2 : Pomodoro').focus();
 
 	await sockets[0].close();
 	await expect(page.getByRole('alert')).toContainText('Connexion au gestionnaire perdue');
 	await expect(key(page, '1 : Audio')).toBeVisible();
 
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
+	await expect(key(page, '2 : Pomodoro'), 'focus given back').toBeFocused();
 	await expect(page.getByRole('alert').filter({ hasText: 'perdue' })).toHaveCount(0);
 	// Selected again on the new connection: an edit is saved on the current revision.
 	await key(page, '1 : Audio').click();
@@ -279,7 +303,7 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	expect((await download).suggestedFilename()).toMatch(/^bergadeck-.+-\d{4}-\d{2}-\d{2}\.zip$/);
 
 	await key(page, /^Touche 5 : Claude/).click();
-	await page.getByRole('button', { name: 'Supprimer la touche' }).click();
+	await removeSelectedKey(page);
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 
 	const importInput = page.locator('input[type="file"][accept*=".zip"]');
@@ -311,3 +335,38 @@ test('refuse un fichier qui n’est pas un export', async ({ page }) => {
 	await expect(page.getByRole('alert')).toContainText('export Bergadeck');
 	await expect(key(page, '1 : Audio')).toBeVisible();
 });
+
+/** Fails on any WCAG 2.2 A/AA violation of the page as it is now. */
+async function expectAccessible(page: Page, state: string) {
+	const results = await new AxeBuilder({ page })
+		.withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+		.analyze();
+	expect(results.violations, state).toEqual([]);
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+	test(`reste accessible dans ses états riches (thème ${colorScheme})`, async ({ page }) => {
+		await page.emulateMedia({ colorScheme });
+		await open(page);
+		await expectAccessible(page, 'page initiale');
+
+		await key(page, '2 : Pomodoro').click();
+		await expectAccessible(page, 'touche sélectionnée');
+
+		const work = page.getByLabel('Durée du travail');
+		await work.fill('0');
+		await page.getByRole('button', { name: 'Appliquer' }).click();
+		await expect(work).toHaveAttribute('aria-invalid', 'true');
+		await expectAccessible(page, 'réglages en erreur');
+
+		await page.getByRole('button', { name: 'Ajouter une touche' }).click();
+		await expect(page.getByRole('dialog', { name: 'Ajouter une touche' })).toBeVisible();
+		await expectAccessible(page, 'sélecteur de modules');
+		await page.keyboard.press('Escape');
+
+		await key(page, /^Touche 5 : Claude/).click();
+		await page.getByRole('button', { name: 'Supprimer la touche' }).click();
+		await expect(page.getByRole('dialog', { name: 'Supprimer la touche ?' })).toBeVisible();
+		await expectAccessible(page, 'confirmation de suppression');
+	});
+}

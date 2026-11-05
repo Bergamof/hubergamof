@@ -21,3 +21,4 @@ paths:
 - Bouton qui devient inactif sous le focus (déplacer en bout de liste) : `aria-disabled` + action ignorée, pas `disabled` (le focus tomberait sur `body`).
 - Fixture Playwright : le premier paramètre doit être déstructuré ; `({}, use)` est refusé par ESLint (`no-empty-pattern`) → dépendre d'une fixture utilisée (`browserName`…).
 - Erreurs du gestionnaire : texte français + détail anglais dans `<span lang="en">` (`Problem`).
+- Bouton dont le texte visible inclut une description (sélecteur de modules) : ne pas restreindre son nom accessible au seul titre (`aria-labelledby`) — WCAG 2.5.3 « Label in Name », signalé par axe.
