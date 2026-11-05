@@ -9,6 +9,7 @@ import {
 	removeKey,
 	removedInstance,
 	setBrightness,
+	setKeyImage,
 	updateInstance
 } from './config-edits.js';
 
@@ -148,5 +149,14 @@ describe('removedInstance', () => {
 		expect(removedInstance(config(), assignDial(1, { type: 'none' }))).toBeUndefined();
 		expect(removedInstance(config(), removeKey(0))?.id).toBe('audio');
 		expect(removedInstance(config(), setBrightness(10))).toBeUndefined();
+	});
+});
+
+describe('setKeyImage', () => {
+	it('sets or clears the image of one instance', () => {
+		const withImage = setKeyImage('audio', 'abc.png')(config());
+		expect(withImage.modules[0].image).toBe('abc.png');
+		expect(withImage.modules[1].image).toBeNull();
+		expect(setKeyImage('audio', null)(withImage).modules[0].image).toBeNull();
 	});
 });

@@ -3,4 +3,4 @@
 /**
  * Machine-readable error categories.
  */
-export type ErrorCode = "invalidMessage" | "unknownDevice" | "invalidConfig" | "staleRevision" | "invalidInput" | "inputRefused" | "internal";
+export type ErrorCode = "invalidMessage" | "unknownDevice" | "invalidConfig" | "staleRevision" | "invalidInput" | "inputRefused" | "invalidImage" | "invalidArchive" | "internal";

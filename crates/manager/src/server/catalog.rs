@@ -4,16 +4,10 @@
 use std::sync::Arc;
 
 use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::{CatalogModule, ImageSize, ModuleKind};
+use bergadeck_protocol::{CatalogModule, ModuleKind};
 
+use super::UI_IMAGE_SIZE;
 use crate::render::{ImageSource, RenderError, Renderer};
-
-/// Size of the rendered icons: large enough for the biggest keys on a
-/// high-density screen.
-const CATALOG_ICON_SIZE: ImageSize = ImageSize {
-    width: 144,
-    height: 144,
-};
 
 /// Catalog of every module of `registry`. A module whose icon cannot be
 /// rendered is listed without one. CPU-bound: call it from a blocking
@@ -38,7 +32,7 @@ pub fn module_catalog(registry: &ModuleRegistry, renderer: &Renderer) -> Arc<[Ca
 
 fn icon_data_url(renderer: &Renderer, kind: &ModuleKind, bytes: Arc<[u8]>) -> Option<String> {
     let to_data_url = || -> Result<String, RenderError> {
-        let icon = renderer.render_image(CATALOG_ICON_SIZE, &ImageSource::Bytes(bytes))?;
+        let icon = renderer.render_image(UI_IMAGE_SIZE, &ImageSource::Bytes(bytes))?;
         icon.data_url().map(str::to_owned)
     };
     to_data_url()
@@ -120,7 +114,7 @@ mod tests {
             let decoded = image::load_from_memory(&png).unwrap();
             assert_eq!(
                 (decoded.width(), decoded.height()),
-                (CATALOG_ICON_SIZE.width, CATALOG_ICON_SIZE.height),
+                (UI_IMAGE_SIZE.width, UI_IMAGE_SIZE.height),
                 "{}",
                 module.descriptor.kind.0
             );

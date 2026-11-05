@@ -39,6 +39,12 @@ pub const CONTENT_SECURITY_POLICY_BASE: &str = "default-src 'self'; \
      form-action 'self'; \
      frame-ancestors 'none'";
 
+/// Prefix of the internal HTTP routes.
+const API_PREFIX: &str = "/api/";
+
+/// Set by browsers on every request: who made it, relative to its target.
+const SEC_FETCH_SITE: HeaderName = HeaderName::from_static("sec-fetch-site");
+
 const CROSS_ORIGIN_OPENER_POLICY: HeaderName =
     HeaderName::from_static("cross-origin-opener-policy");
 const CROSS_ORIGIN_RESOURCE_POLICY: HeaderName =
@@ -105,13 +111,16 @@ pub enum AccessDenied {
     /// `Origin` missing or foreign where it is required.
     #[error("unexpected or missing Origin header")]
     Origin,
+    /// An `/api` request made from another site (`Sec-Fetch-Site`).
+    #[error("cross-site request to the API")]
+    CrossSite,
 }
 
 impl AccessDenied {
     fn status(self) -> StatusCode {
         match self {
             Self::Host => StatusCode::MISDIRECTED_REQUEST,
-            Self::Origin => StatusCode::FORBIDDEN,
+            Self::Origin | Self::CrossSite => StatusCode::FORBIDDEN,
         }
     }
 }
@@ -147,7 +156,7 @@ impl AccessPolicy {
     }
 
     /// Checks a request; `Origin` is required on [`WS_PATH`] and on requests
-    /// that may change state.
+    /// that may change state, and `/api` refuses requests from other sites.
     ///
     /// # Errors
     ///
@@ -164,6 +173,12 @@ impl AccessPolicy {
         let read_only = *method == Method::GET || *method == Method::HEAD;
         if (path == WS_PATH || !read_only) && !self.allows_origin(headers.get(ORIGIN)) {
             return Err(AccessDenied::Origin);
+        }
+        // Reads need no `Origin`, but a page of another site must not even
+        // trigger them (exports, image renderings): browsers say who asks.
+        // Without the header (curl, old browsers), the checks above suffice.
+        if path.starts_with(API_PREFIX) && is_cross_site(headers.get(SEC_FETCH_SITE)) {
+            return Err(AccessDenied::CrossSite);
         }
         Ok(())
     }
@@ -185,6 +200,13 @@ impl AccessPolicy {
 }
 
 /// Middleware refusing requests that fail the [`AccessPolicy`].
+/// Whether `Sec-Fetch-Site` says another site made the request (`none`:
+/// typed or bookmarked by the user; `same-origin`: the UI itself).
+fn is_cross_site(site: Option<&HeaderValue>) -> bool {
+    site.and_then(|value| value.to_str().ok())
+        .is_some_and(|site| matches!(site, "cross-site" | "same-site"))
+}
+
 pub(super) async fn enforce_access_policy(
     State(state): State<AppState>,
     request: Request,
@@ -298,6 +320,29 @@ mod tests {
         assert_eq!(
             check(Some("https://127.0.0.1:7878")),
             Err(AccessDenied::Origin)
+        );
+    }
+
+    #[test]
+    fn api_requests_from_other_sites_are_refused() {
+        let check = |site: Option<&str>| {
+            let mut headers = headers(Some("127.0.0.1:7878"), None);
+            if let Some(site) = site {
+                headers.insert(SEC_FETCH_SITE, HeaderValue::from_str(site).unwrap());
+            }
+            policy().check(&Method::GET, "/api/devices/A/export", &headers)
+        };
+        assert_eq!(check(None), Ok(()));
+        assert_eq!(check(Some("same-origin")), Ok(()));
+        assert_eq!(check(Some("none")), Ok(()));
+        assert_eq!(check(Some("cross-site")), Err(AccessDenied::CrossSite));
+        assert_eq!(check(Some("same-site")), Err(AccessDenied::CrossSite));
+        let mut ui = headers(Some("127.0.0.1:7878"), None);
+        ui.insert(SEC_FETCH_SITE, HeaderValue::from_static("cross-site"));
+        assert_eq!(
+            policy().check(&Method::GET, "/index.html", &ui),
+            Ok(()),
+            "UI pages may be linked"
         );
     }
 

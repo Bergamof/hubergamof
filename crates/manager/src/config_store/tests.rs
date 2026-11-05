@@ -331,3 +331,183 @@ fn image_path_traversal_is_rejected() {
     }
     assert!(store.image_path(DEMO_SERIAL, "logo-1.svg").is_ok());
 }
+
+fn png_image() -> Vec<u8> {
+    let mut png = PNG_SIGNATURE.to_vec();
+    png.extend_from_slice(b"rest");
+    png
+}
+
+/// The default configuration of the Stream Deck+ with `image` on its first key.
+fn with_first_key_image(store: &ConfigStore, image: &str) -> DeviceConfig {
+    let mut config = store.load(&plus()).unwrap().config;
+    let first = config.home[0].clone();
+    let module = config.modules.iter_mut().find(|m| m.id == first).unwrap();
+    module.image = Some(image.to_owned());
+    config
+}
+
+#[test]
+fn an_export_holds_the_images_in_use_and_drops_missing_ones() {
+    let (_dir, store) = store();
+    let name = store
+        .store_image(DEMO_SERIAL, &png_image(), ImageKind::Png)
+        .unwrap();
+    let config = with_first_key_image(&store, &name);
+    let archive = read_archive(&store.export(DEMO_SERIAL, &config).unwrap()).unwrap();
+    assert_eq!(archive.config, config);
+    assert_eq!(archive.images, ArchiveImages::from([(name, png_image())]));
+
+    let dangling = with_first_key_image(&store, "gone.png");
+    let archive = read_archive(&store.export(DEMO_SERIAL, &dangling).unwrap()).unwrap();
+    assert!(archive.images.is_empty());
+    assert!(
+        archive
+            .config
+            .modules
+            .iter()
+            .all(|module| module.image.is_none())
+    );
+}
+
+/// Accepts anything sniffed as an image (the renderer check is tested apart).
+fn sniffed(bytes: &[u8]) -> Result<ImageKind, String> {
+    ImageKind::sniff(bytes).ok_or_else(|| "not an image".to_owned())
+}
+
+fn archive_of(config: &DeviceConfig, images: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let images = images
+        .iter()
+        .map(|(name, bytes)| ((*name).to_owned(), bytes.clone()))
+        .collect();
+    write_archive(config, &images).unwrap()
+}
+
+#[test]
+fn imported_images_are_named_by_content_whatever_their_archived_name() {
+    let (_dir, store) = store();
+    let config = with_first_key_image(&store, "renamed-by-hand.png");
+    let archive = archive_of(&config, &[("renamed-by-hand.png", png_image())]);
+    let prepared = prepare_import(&archive, &plus(), config.revision, sniffed).unwrap();
+    let name = image_name(&png_image(), ImageKind::Png);
+    assert_eq!(prepared.images, vec![(name.clone(), png_image())]);
+    assert!(
+        prepared
+            .config
+            .modules
+            .iter()
+            .any(|m| m.image.as_deref() == Some(name.as_str()))
+    );
+    assert!(
+        !store.image_path(DEMO_SERIAL, &name).unwrap().exists(),
+        "nothing written yet"
+    );
+
+    assert_eq!(
+        store.write_import_images(DEMO_SERIAL, &prepared).unwrap(),
+        std::slice::from_ref(&name)
+    );
+    assert!(store.image_path(DEMO_SERIAL, &name).unwrap().is_file());
+    assert_eq!(
+        store.write_import_images(DEMO_SERIAL, &prepared).unwrap(),
+        Vec::<String>::new(),
+        "already there: not created again"
+    );
+    store.remove_images(DEMO_SERIAL, std::slice::from_ref(&name));
+    assert!(!store.image_path(DEMO_SERIAL, &name).unwrap().exists());
+}
+
+#[test]
+fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
+    let (_dir, store) = store();
+    let missing = with_first_key_image(&store, "absent.png");
+    assert!(matches!(
+        prepare_import(&archive_of(&missing, &[]), &plus(), 0, sniffed),
+        Err(ConfigStoreError::MissingImage(name)) if name == "absent.png"
+    ));
+    let not_an_image = with_first_key_image(&store, "a.png");
+    assert!(matches!(
+        prepare_import(
+            &archive_of(&not_an_image, &[("a.png", b"text".to_vec())]),
+            &plus(),
+            0,
+            sniffed
+        ),
+        Err(ConfigStoreError::UnreadableImage { .. })
+    ));
+    let mut invalid = with_first_key_image(&store, "a.png");
+    invalid.brightness = 250;
+    assert!(matches!(
+        prepare_import(
+            &archive_of(&invalid, &[("a.png", png_image())]),
+            &plus(),
+            0,
+            sniffed
+        ),
+        Err(ConfigStoreError::Invalid(_))
+    ));
+}
+
+#[test]
+fn images_of_instances_dropped_by_the_fit_are_left_out() {
+    let (_dir, store) = store();
+    let mut config = store.load(&plus()).unwrap().config;
+    let dial_only = config.dials[0].clone().unwrap();
+    assert!(!config.home.contains(&dial_only));
+    let module = config
+        .modules
+        .iter_mut()
+        .find(|m| m.id == dial_only)
+        .unwrap();
+    module.image = Some("a.png".into());
+    let prepared = prepare_import(
+        &archive_of(&config, &[("a.png", png_image())]),
+        &mk2(),
+        0,
+        sniffed,
+    )
+    .unwrap();
+    assert_eq!(prepared.images, Vec::new());
+}
+
+#[test]
+fn unused_images_are_removed_when_the_config_is_loaded() {
+    let (_dir, store) = store();
+    let used = store
+        .store_image(DEMO_SERIAL, &png_image(), ImageKind::Png)
+        .unwrap();
+    let mut other = png_image();
+    other.push(0);
+    let unused = store
+        .store_image(DEMO_SERIAL, &other, ImageKind::Png)
+        .unwrap();
+    let config = with_first_key_image(&store, &used);
+    store.save(&plus(), config).unwrap();
+
+    store.load(&plus()).unwrap();
+    assert!(store.image_path(DEMO_SERIAL, &used).unwrap().is_file());
+    assert!(!store.image_path(DEMO_SERIAL, &unused).unwrap().exists());
+}
+
+#[test]
+fn imported_configs_are_fitted_to_the_target_device() {
+    let (_dir, store) = store();
+    let plus_config = store.load(&plus()).unwrap().config;
+    let on_mk2 = fit_to_device(plus_config.clone(), &mk2(), 7);
+    assert_eq!(on_mk2.serial, "MK2SERIAL");
+    assert_eq!(on_mk2.model, DeviceModel::Mk2);
+    assert_eq!(on_mk2.revision, 7);
+    assert_eq!(on_mk2.dials, Vec::new());
+    assert_eq!(on_mk2.home, plus_config.home);
+    let kept: Vec<_> = on_mk2.modules.iter().map(|m| m.id.clone()).collect();
+    assert!(
+        kept.iter().all(|id| on_mk2.home.contains(id)),
+        "dial-only instances dropped: {kept:?}"
+    );
+    check_config(&on_mk2, &mk2()).unwrap();
+
+    let mk2_config = store.load(&mk2()).unwrap().config;
+    let on_plus = fit_to_device(mk2_config, &plus(), 0);
+    assert_eq!(on_plus.dials, vec![None; 4]);
+    check_config(&on_plus, &plus()).unwrap();
+}

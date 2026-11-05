@@ -17,14 +17,18 @@ selected key or dial.
 		moveKey,
 		removeKey,
 		setBrightness,
+		setKeyImage,
 		updateInstance,
 		type DialChoice,
 		type InstanceChanges
 	} from '#lib/deck/config-edits.js';
+	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
+	import { keyImage } from '#lib/deck/display.js';
 	import BrightnessControl from './BrightnessControl.svelte';
 	import DialDetails from './DialDetails.svelte';
 	import DialRow from './DialRow.svelte';
+	import ExportImport from './ExportImport.svelte';
 	import KeyDetails from './KeyDetails.svelte';
 	import KeyGrid from './KeyGrid.svelte';
 	import ModulePicker from './ModulePicker.svelte';
@@ -34,9 +38,10 @@ selected key or dial.
 		// `deck.device` and `deck.config`, passed apart once known to be defined.
 		device: DeviceInfo;
 		config: DeviceConfig;
+		api: ManagerApi;
 	}
 
-	let { deck, device, config }: Props = $props();
+	let { deck, device, config, api }: Props = $props();
 
 	/** A key is identified by its position and instance: a change elsewhere drops the selection. */
 	type Selection =
@@ -81,6 +86,10 @@ selected key or dial.
 		return position < 0 ? `${uid}-add` : `${uid}-key-${position}`;
 	}
 
+	function imageOf(instance: ModuleInstance, module: CatalogModule | undefined): string | null {
+		return keyImage(device.serial, instance, module);
+	}
+
 	function moduleFor(instance: ModuleInstance | null | undefined): CatalogModule | undefined {
 		return instance ? moduleOf(instance.kind) : undefined;
 	}
@@ -103,6 +112,10 @@ selected key or dial.
 
 	function apply(instance: ModuleInstance, changes: InstanceChanges) {
 		return deck.edit(updateInstance(instance.id, changes), { notify: false });
+	}
+
+	function setImage(instance: ModuleInstance, image: string | null) {
+		return deck.edit(setKeyImage(instance.id, image), { notify: false });
 	}
 
 	function add(module: CatalogModule) {
@@ -134,10 +147,13 @@ selected key or dial.
 </script>
 
 <div class="flex flex-col gap-8">
-	<BrightnessControl
-		brightness={config.brightness}
-		onchange={(brightness) => deck.edit(setBrightness(brightness))}
-	/>
+	<div class="flex flex-wrap items-start justify-between gap-4">
+		<BrightnessControl
+			brightness={config.brightness}
+			onchange={(brightness) => deck.edit(setBrightness(brightness))}
+		/>
+		<ExportImport {device} {api} />
+	</div>
 	<p role="status" class="sr-only">{announcement}</p>
 
 	<div class="flex flex-col gap-8 lg:flex-row lg:items-start">
@@ -147,6 +163,7 @@ selected key or dial.
 				<KeyGrid
 					{keys}
 					{moduleOf}
+					{imageOf}
 					columns={device.capabilities.keyColumns}
 					visibleRows={device.capabilities.keyRows}
 					selected={selected?.surface === 'key' ? selected.position : undefined}
@@ -181,11 +198,15 @@ selected key or dial.
 					count={keys.length}
 					{instance}
 					module={moduleFor(instance)}
+					serial={device.serial}
+					{api}
 					headingId={detailsHeadingId}
 					onmove={(to) => move(position, to)}
 					onremove={() => remove(position)}
 					onapply={(changes) =>
 						instance ? apply(instance, changes) : Promise.resolve({ saved: true })}
+					onimage={(image) =>
+						instance ? setImage(instance, image) : Promise.resolve({ saved: true })}
 				/>
 			{:else if selected?.surface === 'dial'}
 				{@const instance = dials[selected.index]}

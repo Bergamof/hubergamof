@@ -12,6 +12,8 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		/** Instance of each key, in order (`undefined`: dangling reference). */
 		keys: readonly (ModuleInstance | undefined)[];
 		moduleOf: (kind: string) => CatalogModule | undefined;
+		/** Image shown on the key of `instance`: its own, else the module icon. */
+		imageOf: (instance: ModuleInstance, module: CatalogModule | undefined) => string | null;
 		columns: number;
 		/** Rows shown at once by the device: further rows are reached by scrolling. */
 		visibleRows: number;
@@ -23,8 +25,18 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		onadd: () => void;
 	}
 
-	let { keys, moduleOf, columns, visibleRows, selected, buttonId, onselect, onmove, onadd }: Props =
-		$props();
+	let {
+		keys,
+		moduleOf,
+		imageOf,
+		columns,
+		visibleRows,
+		selected,
+		buttonId,
+		onselect,
+		onmove,
+		onadd
+	}: Props = $props();
 
 	const DRAG_TYPE = 'application/x-bergadeck-key';
 	const overflows = $derived(keys.length >= columns * visibleRows);
@@ -74,7 +86,11 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 				class="surface-button"
 				onclick={() => onselect(position)}
 			>
-				<ModuleTile icon={module?.icon} {name} unavailable={!module} />
+				<ModuleTile
+					icon={instance ? imageOf(instance, module) : null}
+					{name}
+					unavailable={!module}
+				/>
 				<span class="w-full truncate">
 					<span class="sr-only">Touche {position + 1} :</span>
 					{name}

@@ -88,6 +88,8 @@ async fn main() -> Result<()> {
 
     let services = services(&cli.config_dir, builtin_services(cli.demo))?;
     let catalog = catalog_of(&services).await?;
+    let store = services.store.clone();
+    let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
     let context = ServerContext {
@@ -95,6 +97,8 @@ async fn main() -> Result<()> {
         engines: supervisor.engines(),
         catalog,
         simulated_input: simulated_input(cli.demo),
+        store,
+        renderer,
     };
     let server = match Server::bind(
         cli.port,

@@ -225,6 +225,7 @@ impl StateStyle {
 #[derive(Debug)]
 pub struct Rendered {
     image: Arc<RgbaImage>,
+    png: OnceLock<Arc<[u8]>>,
     data_url: OnceLock<String>,
 }
 
@@ -232,6 +233,7 @@ impl Rendered {
     fn new(image: RgbaImage) -> Self {
         Self {
             image: Arc::new(image),
+            png: OnceLock::new(),
             data_url: OnceLock::new(),
         }
     }
@@ -251,9 +253,22 @@ impl Rendered {
         if let Some(url) = self.data_url.get() {
             return Ok(url);
         }
-        let url = to_data_url(&self.image)?;
+        let url = format!("{PNG_DATA_URL_PREFIX}{}", BASE64.encode(self.png()?));
         // A concurrent caller may have won the race; both values are equal.
         Ok(self.data_url.get_or_init(|| url))
+    }
+
+    /// The image encoded as PNG, on first call.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Encode`].
+    pub fn png(&self) -> Result<Arc<[u8]>, RenderError> {
+        if let Some(png) = self.png.get() {
+            return Ok(Arc::clone(png));
+        }
+        let png: Arc<[u8]> = to_png(&self.image)?.into();
+        Ok(Arc::clone(self.png.get_or_init(|| png)))
     }
 }
 
@@ -263,14 +278,23 @@ impl Rendered {
 ///
 /// [`RenderError::Encode`].
 pub fn to_data_url(image: &RgbaImage) -> Result<String, RenderError> {
+    Ok(format!(
+        "{PNG_DATA_URL_PREFIX}{}",
+        BASE64.encode(to_png(image)?)
+    ))
+}
+
+/// Encodes `image` as PNG.
+///
+/// # Errors
+///
+/// [`RenderError::Encode`].
+pub fn to_png(image: &RgbaImage) -> Result<Vec<u8>, RenderError> {
     let mut png = Cursor::new(Vec::new());
     image
         .write_to(&mut png, ImageFormat::Png)
         .map_err(RenderError::Encode)?;
-    Ok(format!(
-        "{PNG_DATA_URL_PREFIX}{}",
-        BASE64.encode(png.into_inner())
-    ))
+    Ok(png.into_inner())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -388,6 +412,23 @@ impl Renderer {
         source: &ImageSource,
     ) -> Result<Arc<Rendered>, RenderError> {
         self.render_key(&KeyRequest::new(size, Some(source), None))
+    }
+
+    /// Checks that `bytes` are an image the renderer can draw at `size`
+    /// (format, dimensions, SVG content) and returns its format. Nothing is
+    /// cached nor remembered: meant for untrusted, one-off content (uploads,
+    /// imports). CPU-bound.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::SourceTooLarge`], [`RenderError::UnsupportedFormat`],
+    /// [`RenderError::Decode`] or [`RenderError::Svg`].
+    pub fn check_image(&self, bytes: &[u8], size: ImageSize) -> Result<ImageKind, RenderError> {
+        check_size(size)?;
+        check_source_length(bytes.len())?;
+        let kind = ImageKind::sniff(bytes).ok_or(RenderError::UnsupportedFormat)?;
+        self.compose(Some(bytes), size, DEFAULT_BACKGROUND)?;
+        Ok(kind)
     }
 
     /// `base` with `feedback` drawn over it: darkened, with a green check

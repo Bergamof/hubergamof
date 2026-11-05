@@ -145,6 +145,8 @@ impl Devices {
             registry: Arc::clone(&registry),
         };
         let catalog = module_catalog(&registry, &services.renderer);
+        let store = services.store.clone();
+        let renderer = Arc::clone(&services.renderer);
         let discovery = DeviceDiscovery::new();
         let supervisor = Supervisor::start(&discovery, services);
         let decks = VirtualDevices::new(discovery.clone());
@@ -154,6 +156,8 @@ impl Devices {
             engines: supervisor.engines(),
             catalog,
             simulated_input: SimulatedInput::Accepted,
+            store,
+            renderer,
         };
         Self {
             _dir: dir,

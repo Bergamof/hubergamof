@@ -22,6 +22,9 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Module Docker : projets compose et conteneurs (démarrer, arrêter, redémarrer, supprimer arrêté, Up / Up + build / Up + pull, Down / Down + volumes avec double appui), état en direct, fichiers compose déclarés (`composeFiles`) proposés même après un down ; simulé en `--demo`.
 - Interface de configuration : choix de l'appareil, luminosité, touches de l'accueil (ajout depuis le catalogue, réorganisation au clavier et à la souris, suppression), affectation des molettes, réglages de chaque module ; synchronisée entre onglets, erreurs du gestionnaire affichées.
 - API des modules : `ModuleFactory::icon`, l'icône affichée par l'interface ; le catalogue (`CatalogModule`) la fournit rendue en PNG.
+- Image personnalisée des touches (PNG, JPEG ou SVG), envoyée depuis l'interface et affichée rendue par le gestionnaire.
+- Export de la configuration d'un appareil en zip (`config.json` lisible + `images/`) et import, y compris vers un autre modèle (molettes adaptées), après confirmation.
+- Sécurité : routes `/api` refusées quand un autre site les déclenche (`Sec-Fetch-Site`) ; détection SVG stricte ; images inutilisées supprimées au chargement de la configuration.
 
 ### Modifié
 

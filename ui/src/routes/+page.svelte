@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ManagerApi } from '#lib/api/manager-api.js';
 	import { ManagerConnection, managerSocketUrl } from '#lib/connection/index.js';
 	import { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
@@ -7,6 +8,8 @@
 
 	/** Focus target once the last notice is dismissed. */
 	const MAIN_ID = 'main-content';
+
+	const api = new ManagerApi();
 
 	let connection = $state<ManagerConnection>();
 	let deck = $state<DeckState>();
@@ -69,7 +72,7 @@
 					fallbackFocusId={MAIN_ID}
 					ondismiss={(id) => deck?.dismiss(id)}
 				/>
-				<DeckEditor {deck} device={deck.device} config={deck.config} />
+				<DeckEditor {deck} device={deck.device} config={deck.config} {api} />
 			</div>
 		{:else if !isOnline || !deck}
 			<div class="m-auto flex flex-col items-center gap-2 text-center">

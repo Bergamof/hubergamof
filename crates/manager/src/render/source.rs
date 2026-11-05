@@ -57,9 +57,23 @@ impl ImageKind {
     }
 }
 
+/// Whether `bytes` start like an SVG document: its root `<svg` element,
+/// after an optional byte order mark, XML declaration, comments and doctype
+/// only. A text merely mentioning `<svg` (a YAML or shell file…) is not one.
 fn looks_like_svg(bytes: &[u8]) -> bool {
+    const PROLOG: [(&str, &str); 3] = [("<?xml", "?>"), ("<!--", "-->"), ("<!DOCTYPE", ">")];
     let head = &bytes[..bytes.len().min(SVG_SNIFF_LENGTH)];
-    String::from_utf8_lossy(head).contains("<svg")
+    let text = String::from_utf8_lossy(head);
+    let mut rest = text.trim_start_matches('\u{feff}').trim_start();
+    loop {
+        let Some((_, end)) = PROLOG.iter().find(|(start, _)| rest.starts_with(start)) else {
+            return rest.starts_with("<svg");
+        };
+        let Some(close) = rest.find(end) else {
+            return false;
+        };
+        rest = rest[close + end.len()..].trim_start();
+    }
 }
 
 /// Where an image comes from.

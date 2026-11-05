@@ -473,3 +473,46 @@ fn identical_gauges_hit_the_cache() {
             .is_err()
     );
 }
+
+#[test]
+fn only_documents_rooted_in_svg_are_sniffed_as_svg() {
+    for svg in [
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+        "\u{feff}  <?xml version=\"1.0\"?>\n<!-- logo -->\n<!DOCTYPE svg>\n<svg/>",
+    ] {
+        assert_eq!(
+            ImageKind::sniff(svg.as_bytes()),
+            Some(ImageKind::Svg),
+            "{svg}"
+        );
+    }
+    for text in [
+        "# <svg>\nservices:\n  x:\n    image: alpine",
+        "<html><svg/></html>",
+        "<!-- <svg> never closed",
+        "text <svg/>",
+    ] {
+        assert_eq!(ImageKind::sniff(text.as_bytes()), None, "{text}");
+    }
+}
+
+#[test]
+fn checked_images_are_drawn_but_not_remembered() {
+    let renderer = renderer();
+    let ImageSource::Bytes(bytes) = png(30, 10, Rgba([1, 2, 3, 255])) else {
+        unreachable!("an in-memory source")
+    };
+    let size = ImageSize {
+        width: 144,
+        height: 144,
+    };
+    assert_eq!(renderer.check_image(&bytes, size).unwrap(), ImageKind::Png);
+    assert_eq!(renderer.cached_len(), 0);
+    let mut truncated = bytes.to_vec();
+    truncated.truncate(truncated.len() / 2);
+    assert!(renderer.check_image(&truncated, size).is_err());
+    assert!(matches!(
+        renderer.check_image(b"plain text", size),
+        Err(RenderError::UnsupportedFormat)
+    ));
+}

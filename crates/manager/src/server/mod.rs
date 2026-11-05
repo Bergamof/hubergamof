@@ -9,6 +9,7 @@
 //! - [`Server::run`] stops gracefully: WebSocket clients are sent a close
 //!   frame, then in-flight requests complete.
 
+mod api;
 mod assets;
 mod catalog;
 mod security;
@@ -23,10 +24,10 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::middleware;
 use axum::response::Response;
 use axum::routing::get;
-use bergadeck_protocol::CatalogModule;
+use bergadeck_protocol::{CatalogModule, ImageSize};
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 
 pub use assets::{
     AssetSource, EmbeddedUi, FALLBACK_FILE, INDEX_FILE, MISSING_UI_MESSAGE,
@@ -38,8 +39,17 @@ pub use security::{
 };
 pub use session::{ENGINE_START_TIMEOUT, MIN_LIVE_STATE_INTERVAL};
 
+use crate::config_store::ConfigStore;
 use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
+use crate::render::Renderer;
+
+/// Size of the images drawn for the UI (module icons, key images): large
+/// enough for the biggest keys on a high-density screen.
+pub const UI_IMAGE_SIZE: ImageSize = ImageSize {
+    width: 144,
+    height: 144,
+};
 
 /// Path of the WebSocket endpoint.
 pub const WS_PATH: &str = "/ws";
@@ -68,6 +78,10 @@ pub struct ServerContext {
     pub catalog: Arc<[CatalogModule]>,
     /// Whether clients may press keys and turn dials.
     pub simulated_input: SimulatedInput,
+    /// Configuration storage (key images, archives).
+    pub store: ConfigStore,
+    /// Renderer of the images served to the UI.
+    pub renderer: Arc<Renderer>,
 }
 
 /// Shared by every request handler.
@@ -78,6 +92,9 @@ struct AppState {
     policy: Arc<AccessPolicy>,
     /// Becomes `true` when the server shuts down.
     shutdown: watch::Receiver<bool>,
+    /// Admits one image or archive transfer at a time: each may hold tens
+    /// of megabytes while decoding or zipping.
+    transfers: Arc<Semaphore>,
 }
 
 /// Failure to start the server.
@@ -108,9 +125,11 @@ pub fn router(
         assets,
         policy: Arc::new(policy),
         shutdown,
+        transfers: Arc::new(Semaphore::new(1)),
     };
     Router::new()
         .route(WS_PATH, get(upgrade_websocket))
+        .merge(api::routes())
         .fallback_service(get(assets::serve_ui).with_state(state.clone()))
         .layer(middleware::from_fn_with_state(
             state.clone(),

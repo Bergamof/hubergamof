@@ -57,6 +57,7 @@ tracing-subscriber.workspace = true
 # System tray (StatusNotifierItem + dbusmenu) on the Tokio runtime only, without
 # zbus's own runtime nor the ObjectManager.
 zbus = { workspace = true, features = ["proxy", "service"] }
+zip.workspace = true
 
 [dev-dependencies]
 futures-util = { workspace = true, features = ["sink"] }

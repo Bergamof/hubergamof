@@ -3,23 +3,17 @@ import type {
 	ClientMessage,
 	DeviceConfig,
 	DeviceInfo,
-	ErrorCode,
 	ServerMessage
 } from '#lib/generated/index.js';
 import type { ConfigEdit } from './config-edits.js';
 import { browserDevicePreference, type DevicePreference } from './device-preference.js';
 import { sameJson } from './json.js';
+import { problemOf, type Problem } from './problems.js';
 
 /** The part of `ManagerConnection` the deck state relies on (eases test doubles). */
 export interface DeckConnection {
 	send(message: ClientMessage): boolean;
 	onMessage(listener: (message: ServerMessage) => void): () => void;
-}
-
-/** A message for the user: French text, and the manager's own details (in English), if any. */
-export interface Problem {
-	text: string;
-	detail: string | null;
 }
 
 /** An error shown to the user until dismissed. */
@@ -57,26 +51,6 @@ const DEVICE_GONE: Problem = {
 	text: 'Modification non enregistrée : l’appareil n’est plus connecté.',
 	detail: null
 };
-
-/** French explanation of a manager error, its English message as details. */
-export function problemOf(code: ErrorCode, message: string): Problem {
-	switch (code) {
-		case 'staleRevision':
-			return {
-				text: 'La configuration a été modifiée ailleurs entre-temps : la version à jour est affichée, refaites la modification.',
-				detail: null
-			};
-		case 'invalidConfig':
-			return {
-				text: 'Le gestionnaire a refusé la modification : vérifiez les réglages.',
-				detail: message
-			};
-		case 'unknownDevice':
-			return { text: 'Cet appareil n’est plus connecté.', detail: null };
-		default:
-			return { text: 'Le gestionnaire a signalé une erreur.', detail: message };
-	}
-}
 
 interface Waiter {
 	settle: (outcome: EditOutcome) => void;

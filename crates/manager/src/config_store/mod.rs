@@ -14,8 +14,10 @@
 //! The API is synchronous (small files); async callers run it with
 //! `tokio::task::spawn_blocking`.
 
+mod archive;
 mod defaults;
 
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write as _};
@@ -28,6 +30,11 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
+pub use archive::{
+    ARCHIVE_CONFIG_ENTRY, ARCHIVE_IMAGES_PREFIX, Archive, ArchiveError, ArchiveImages,
+    MAX_ARCHIVE_BYTES, MAX_ARCHIVE_CONFIG_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ARCHIVE_EXPANDED_BYTES,
+    read_archive, write_archive,
+};
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, default_config};
 
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};
@@ -107,6 +114,20 @@ pub enum ConfigStoreError {
     /// The image is larger than [`MAX_SOURCE_BYTES`].
     #[error("image is larger than {MAX_SOURCE_BYTES} bytes")]
     ImageTooLarge,
+    /// An image of an archive cannot be drawn.
+    #[error("image `{name}` cannot be drawn: {reason}")]
+    UnreadableImage {
+        /// Name in the archive.
+        name: String,
+        /// Why.
+        reason: String,
+    },
+    /// The archive cannot be read.
+    #[error(transparent)]
+    Archive(#[from] ArchiveError),
+    /// The archived configuration uses an image the archive does not hold.
+    #[error("the archive has no image `{0}`")]
+    MissingImage(String),
 }
 
 impl ConfigStoreError {
@@ -119,9 +140,11 @@ impl ConfigStoreError {
             Self::Invalid(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
-            | Self::InvalidImageName(_)
-            | Self::ImageKindMismatch { .. }
-            | Self::ImageTooLarge => ErrorCode::InvalidConfig,
+            | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,
+            Self::ImageKindMismatch { .. } | Self::ImageTooLarge | Self::UnreadableImage { .. } => {
+                ErrorCode::InvalidImage
+            }
+            Self::Archive(_) | Self::MissingImage(_) => ErrorCode::InvalidArchive,
             Self::Io { .. } | Self::Json { .. } => ErrorCode::Internal,
         }
     }
@@ -202,6 +225,7 @@ impl ConfigStore {
         let outcome = match read_config(&path) {
             Ok(Some(config)) => match check_config(&config, device) {
                 Ok(()) => {
+                    self.prune_images(&device.serial, &config);
                     return Ok(LoadedConfig {
                         config,
                         outcome: LoadOutcome::Loaded,
@@ -265,14 +289,109 @@ impl ConfigStore {
         if ImageKind::sniff(bytes) != Some(kind) {
             return Err(ConfigStoreError::ImageKindMismatch { declared: kind });
         }
-        let digest = Sha256::digest(bytes);
-        let hex = hex_digest(&digest);
-        let name = format!("{}.{}", &hex[..IMAGE_DIGEST_LENGTH], kind.extension());
+        let name = image_name(bytes, kind);
         let path = self.image_path(serial, &name)?;
         if !path.exists() {
             write_bytes_atomically(&path, bytes)?;
         }
         Ok(name)
+    }
+
+    /// Archive of `config` (the current configuration of device `serial`)
+    /// with the images it uses. An image missing from the disk is left out,
+    /// and so is its reference: the archive stays importable.
+    ///
+    /// # Errors
+    ///
+    /// An I/O error on an image, or [`ConfigStoreError::Archive`].
+    pub fn export(&self, serial: &str, config: &DeviceConfig) -> Result<Vec<u8>, ConfigStoreError> {
+        let mut exported = config.clone();
+        let mut images = ArchiveImages::new();
+        for module in &mut exported.modules {
+            let Some(name) = module.image.clone() else {
+                continue;
+            };
+            let path = self.image_path(serial, &name)?;
+            match fs::read(&path) {
+                Ok(bytes) => {
+                    images.insert(name, bytes);
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    tracing::warn!(%serial, image = %name, "exported without its missing image");
+                    module.image = None;
+                }
+                Err(error) => return Err(io_error(&path, error)),
+            }
+        }
+        Ok(write_archive(&exported, &images)?)
+    }
+
+    /// Writes the images of `import` that device `serial` does not have yet;
+    /// returns their names, for [`ConfigStore::remove_images`] should the
+    /// configuration be refused.
+    ///
+    /// # Errors
+    ///
+    /// An I/O error (the images written so far are removed).
+    pub fn write_import_images(
+        &self,
+        serial: &str,
+        import: &PreparedImport,
+    ) -> Result<Vec<String>, ConfigStoreError> {
+        let mut created = Vec::new();
+        for (name, bytes) in &import.images {
+            let path = self.image_path(serial, name)?;
+            if path.exists() {
+                continue;
+            }
+            if let Err(error) = write_bytes_atomically(&path, bytes) {
+                self.remove_images(serial, &created);
+                return Err(error);
+            }
+            created.push(name.clone());
+        }
+        Ok(created)
+    }
+
+    /// Removes images `names` of device `serial`, best effort (logged).
+    pub fn remove_images(&self, serial: &str, names: &[String]) {
+        for name in names {
+            let removed = self
+                .image_path(serial, name)
+                .map_err(|error| error.to_string())
+                .and_then(|path| fs::remove_file(path).map_err(|error| error.to_string()));
+            if let Err(error) = removed {
+                tracing::warn!(%serial, image = %name, %error, "cannot remove image");
+            }
+        }
+    }
+
+    /// Removes the images of device `serial` that `config` does not use
+    /// (left by replaced images, abandoned uploads…), best effort (logged).
+    /// Run when the configuration is loaded, before any upload can be under
+    /// way.
+    fn prune_images(&self, serial: &str, config: &DeviceConfig) {
+        let used: HashSet<&str> = config
+            .modules
+            .iter()
+            .filter_map(|module| module.image.as_deref())
+            .collect();
+        let Ok(dir) = self.device_dir(serial).map(|dir| dir.join(IMAGES_DIR)) else {
+            return;
+        };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return;
+        };
+        let unused: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| is_safe_image_name(name) && !used.contains(name.as_str()))
+            .collect();
+        if !unused.is_empty() {
+            tracing::info!(%serial, count = unused.len(), "removing unused images");
+            self.remove_images(serial, &unused);
+        }
     }
 
     /// Path of image `name` of a device; the name must be a plain file name.
@@ -321,6 +440,96 @@ pub fn check_config(config: &DeviceConfig, device: &DeviceInfo) -> Result<(), Co
         });
     }
     Ok(())
+}
+
+/// `config` (imported, possibly from another device or model) made for
+/// `device` at its current `revision`: serial and model of the device, one
+/// dial entry per dial (extra ones dropped, missing ones empty), and no
+/// instance left without a key or a dial.
+#[must_use]
+pub fn fit_to_device(mut config: DeviceConfig, device: &DeviceInfo, revision: u64) -> DeviceConfig {
+    config.serial.clone_from(&device.serial);
+    config.model = device.model;
+    config.revision = revision;
+    config
+        .dials
+        .resize(usize::from(device.capabilities.dial_count), None);
+    let used: HashSet<_> = config
+        .home
+        .iter()
+        .chain(config.dials.iter().flatten())
+        .cloned()
+        .collect();
+    config.modules.retain(|module| used.contains(&module.id));
+    config
+}
+
+/// Name of an image in the `images/` directory: from its content, so that
+/// the same image is stored once and a name never changes content.
+#[must_use]
+pub fn image_name(bytes: &[u8], kind: ImageKind) -> String {
+    let hex = hex_digest(&Sha256::digest(bytes));
+    format!("{}.{}", &hex[..IMAGE_DIGEST_LENGTH], kind.extension())
+}
+
+/// An archive ready to be applied: its configuration fitted to the device,
+/// naming its images as they will be stored, and those images, all checked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedImport {
+    /// Configuration to apply.
+    pub config: DeviceConfig,
+    /// Images used by `config`, by stored name.
+    pub images: Vec<(String, Vec<u8>)>,
+}
+
+/// Reads archive `bytes` and prepares it for `device` at its current
+/// `revision`, writing nothing: the configuration is fitted
+/// ([`fit_to_device`]) and validated, and every image it uses must pass
+/// `check` (the same check as uploads). Archived image names are only
+/// labels: images are named by content.
+///
+/// # Errors
+///
+/// [`ConfigStoreError::Archive`], [`ConfigStoreError::MissingImage`],
+/// [`ConfigStoreError::UnreadableImage`] or a validation error.
+pub fn prepare_import(
+    bytes: &[u8],
+    device: &DeviceInfo,
+    revision: u64,
+    check: impl Fn(&[u8]) -> Result<ImageKind, String>,
+) -> Result<PreparedImport, ConfigStoreError> {
+    let Archive { config, images } = read_archive(bytes)?;
+    let mut config = fit_to_device(config, device, revision);
+    let mut stored: BTreeMap<String, String> = BTreeMap::new();
+    let mut prepared = Vec::new();
+    for module in &mut config.modules {
+        let Some(name) = module.image.take() else {
+            continue;
+        };
+        if !stored.contains_key(&name) {
+            let content = images
+                .get(&name)
+                .ok_or_else(|| ConfigStoreError::MissingImage(name.clone()))?;
+            let kind = check(content).map_err(|reason| ConfigStoreError::UnreadableImage {
+                name: name.clone(),
+                reason,
+            })?;
+            let stored_name = image_name(content, kind);
+            if !prepared
+                .iter()
+                .any(|(existing, _)| *existing == stored_name)
+            {
+                prepared.push((stored_name.clone(), content.clone()));
+            }
+            stored.insert(name.clone(), stored_name);
+        }
+        module.image = stored.get(&name).cloned();
+    }
+    check_config(&config, device)?;
+    Ok(PreparedImport {
+        config,
+        images: prepared,
+    })
 }
 
 fn set_invalid_aside(

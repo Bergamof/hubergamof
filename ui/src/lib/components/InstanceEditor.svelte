@@ -9,7 +9,8 @@ and lets the user reload it.
 	import { tick } from 'svelte';
 	import type { CatalogModule, ModuleInstance } from '#lib/generated/index.js';
 	import type { InstanceChanges } from '#lib/deck/config-edits.js';
-	import type { EditOutcome, Problem } from '#lib/deck/deck-state.svelte.js';
+	import type { EditOutcome } from '#lib/deck/deck-state.svelte.js';
+	import type { Problem } from '#lib/deck/problems.js';
 	import { moduleName } from '#lib/deck/display.js';
 	import { cloneJson, sameJson } from '#lib/deck/json.js';
 	import {
@@ -19,6 +20,7 @@ and lets the user reload it.
 		type SettingsDraft,
 		type SettingsErrors
 	} from '#lib/deck/settings-form.js';
+	import ProblemAlert from './ProblemAlert.svelte';
 	import SettingInput from './SettingInput.svelte';
 
 	interface Props {
@@ -123,7 +125,15 @@ and lets the user reload it.
 	}
 </script>
 
-<form bind:this={form} class="flex flex-col gap-4" onsubmit={apply} oninput={edited} novalidate>
+<form
+	bind:this={form}
+	class="flex flex-col gap-4"
+	aria-labelledby="{uid}-title"
+	onsubmit={apply}
+	oninput={edited}
+	novalidate
+>
+	<h3 id="{uid}-title" class="font-semibold">Réglages</h3>
 	{#if changedElsewhere && dirty}
 		<div
 			role="alert"
@@ -163,15 +173,7 @@ and lets the user reload it.
 	{/each}
 
 	{#if refusal}
-		<div
-			role="alert"
-			class="rounded-lg border border-red-700 bg-red-50 p-3 text-sm text-red-950 dark:border-red-400 dark:bg-red-950 dark:text-red-100"
-		>
-			<p>Réglages non enregistrés. {refusal.text}</p>
-			{#if refusal.detail}
-				<p class="mt-1">Détail : <span lang="en">{refusal.detail}</span></p>
-			{/if}
-		</div>
+		<ProblemAlert problem={refusal} lead="Réglages non enregistrés." />
 	{/if}
 
 	<div class="flex flex-wrap items-center gap-3">

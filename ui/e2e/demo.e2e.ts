@@ -220,3 +220,95 @@ test('se reconnecte au gestionnaire en gardant l’éditeur affiché', async ({ 
 	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
 	await expect(key(page, '1 : Volume')).toBeVisible();
 });
+
+/** A 2×2 red PNG. */
+const RED_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+function keyImageInput(page: Page): Locator {
+	return page.locator('input[type="file"][accept*="image/png"]');
+}
+
+test('remplace l’image d’une touche, puis rétablit l’icône du module', async ({ page }) => {
+	await open(page);
+	await key(page, '1 : Audio').click();
+	await keyImageInput(page).setInputFiles({
+		name: 'logo.png',
+		mimeType: 'image/png',
+		buffer: RED_PNG
+	});
+	await expect(page.getByText('Image enregistrée.')).toBeVisible();
+	const tile = key(page, '1 : Audio').locator('img');
+	await expect(tile).toHaveAttribute('src', /^\/api\/devices\/.+\/images\/[0-9a-f]+\.png$/);
+	await expect.poll(() => tile.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(144);
+
+	await page.getByRole('button', { name: 'Rétablir l’icône du module' }).focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByText('Icône du module rétablie.')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Choisir une image…' })).toBeFocused();
+	await expect(tile).toHaveAttribute('src', /^data:image\/png/);
+});
+
+test('refuse un fichier qui n’est pas une image lisible', async ({ page }) => {
+	await open(page);
+	await key(page, '1 : Audio').click();
+	await keyImageInput(page).setInputFiles({
+		name: 'faux.png',
+		mimeType: 'image/png',
+		buffer: Buffer.from('pas une image')
+	});
+	await expect(page.getByRole('alert')).toContainText('Image refusée');
+	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
+});
+
+test('exporte la configuration puis la réimporte après confirmation', async ({ page }) => {
+	await open(page);
+	await key(page, '1 : Audio').click();
+	await keyImageInput(page).setInputFiles({
+		name: 'logo.png',
+		mimeType: 'image/png',
+		buffer: RED_PNG
+	});
+	await expect(page.getByText('Image enregistrée.')).toBeVisible();
+	const customImage = await key(page, '1 : Audio').locator('img').getAttribute('src');
+
+	const download = page.waitForEvent('download');
+	await page.getByRole('link', { name: 'Exporter la configuration' }).click();
+	const archive = await (await download).path();
+	expect((await download).suggestedFilename()).toMatch(/^bergadeck-.+-\d{4}-\d{2}-\d{2}\.zip$/);
+
+	await key(page, /^Touche 5 : Claude/).click();
+	await page.getByRole('button', { name: 'Supprimer la touche' }).click();
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+
+	const importInput = page.locator('input[type="file"][accept*=".zip"]');
+	await importInput.setInputFiles(archive);
+	const confirm = page.getByRole('dialog', { name: /^Remplacer la configuration\s\?$/ });
+	await expect(confirm.getByRole('button', { name: 'Annuler' })).toBeFocused();
+	await expect(confirm).toContainText('fichiers de confiance');
+	await page.keyboard.press('Escape');
+	await expect(confirm).toBeHidden();
+	await expect(page.getByRole('button', { name: 'Importer une configuration…' })).toBeFocused();
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+
+	await importInput.setInputFiles(archive);
+	await confirm.getByRole('button', { name: 'Remplacer' }).click();
+	await expect(page.getByText(/Configuration importée depuis/)).toBeVisible();
+	await expect(key(page, /^Touche 5 : Claude/)).toBeVisible();
+	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', customImage ?? '');
+});
+
+test('refuse un fichier qui n’est pas un export', async ({ page }) => {
+	await open(page);
+	await page.locator('input[type="file"][accept*=".zip"]').setInputFiles({
+		name: 'notes.zip',
+		mimeType: 'application/zip',
+		buffer: Buffer.from('pas une archive')
+	});
+	await page.getByRole('button', { name: 'Remplacer' }).click();
+	await expect(page.getByRole('alert')).toContainText('Configuration non importée');
+	await expect(page.getByRole('alert')).toContainText('export Bergadeck');
+	await expect(key(page, '1 : Audio')).toBeVisible();
+});

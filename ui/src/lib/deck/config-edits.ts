@@ -138,3 +138,13 @@ export function updateInstance(id: ModuleInstanceId, changes: InstanceChanges): 
 		)
 	});
 }
+
+/** Shows image `name` (stored by the manager) on the key of instance `id`, or its module icon (`null`). */
+export function setKeyImage(id: ModuleInstanceId, name: string | null): ConfigEdit {
+	return (config) => ({
+		...config,
+		modules: config.modules.map((module) =>
+			module.id === id ? { ...module, image: name } : module
+		)
+	});
+}

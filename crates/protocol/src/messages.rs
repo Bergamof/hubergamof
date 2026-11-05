@@ -128,6 +128,12 @@ pub enum ErrorCode {
     /// rotations come from the device only, so that no local program can
     /// act through the manager (start containers…).
     InputRefused,
+    /// The image was refused: unsupported or undecodable format, content not
+    /// matching the declared type, or too large.
+    InvalidImage,
+    /// The configuration archive was refused: not a Bergadeck export,
+    /// unexpected entries, missing image, or too large.
+    InvalidArchive,
     /// Unexpected failure inside the manager.
     Internal,
 }
