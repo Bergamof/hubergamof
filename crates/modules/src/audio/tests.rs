@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use bergadeck_module_api::TaskScope;
 use bergadeck_module_api::testing::TestContext;
+use bergadeck_module_api::{Feedback, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -276,7 +276,7 @@ async fn a_sink_without_channels_cannot_be_turned() {
     let audio = SimulatedAudio::demo();
     audio.change_externally(|state| state.sinks[0].volume = Volume::default());
     let mut harness = Harness::on(audio, &json!({})).await;
-    assert_eq!(harness.module.on_dial_rotate(1).await, alert());
+    assert_eq!(harness.module.on_dial_rotate(1).await, Command::alert());
     harness.settle().await;
     assert_eq!(harness.audio.applied(), []);
 }
@@ -441,7 +441,7 @@ async fn device_pages_list_devices_and_select_the_default() {
         harness.audio.state().default_source.as_deref(),
         Some("demo.usb-mic")
     );
-    assert_eq!(harness.press(INPUTS_PAGE, "gone").await, alert());
+    assert_eq!(harness.press(INPUTS_PAGE, "gone").await, Command::alert());
 }
 
 #[tokio::test(start_paused = true)]
@@ -478,10 +478,16 @@ async fn failed_changes_alert_on_their_surface_and_restore_the_state() {
         ZoneContent::Lines(vec!["Audio indisponible".into()])
     );
     // Without a state, actions alert at once.
-    assert_eq!(harness.module.on_dial_rotate(1).await, alert());
-    assert_eq!(harness.module.on_dial_press().await, alert());
-    assert_eq!(harness.press(MAIN_PAGE, MICROPHONE_ITEM).await, alert());
-    assert_eq!(harness.press(OUTPUTS_PAGE, "demo.headset").await, alert());
+    assert_eq!(harness.module.on_dial_rotate(1).await, Command::alert());
+    assert_eq!(harness.module.on_dial_press().await, Command::alert());
+    assert_eq!(
+        harness.press(MAIN_PAGE, MICROPHONE_ITEM).await,
+        Command::alert()
+    );
+    assert_eq!(
+        harness.press(OUTPUTS_PAGE, "demo.headset").await,
+        Command::alert()
+    );
     assert_eq!(harness.page(OUTPUTS_PAGE).items, []);
 
     // Back: the next attempt reads the state again.
@@ -572,7 +578,7 @@ async fn the_zone_tells_when_there_is_no_output() {
         harness.zone(),
         ZoneContent::Lines(vec!["Aucune sortie".into()])
     );
-    assert_eq!(harness.module.on_dial_rotate(1).await, alert());
+    assert_eq!(harness.module.on_dial_rotate(1).await, Command::alert());
 }
 
 #[test]

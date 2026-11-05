@@ -250,7 +250,7 @@ async fn an_unreachable_docker_shows_on_the_key_and_empties_the_pages() {
         (page.title.as_str(), page.items.len()),
         ("Docker indisponible", 0)
     );
-    assert_eq!(harness.press(REDIS, "stop").await, alert());
+    assert_eq!(harness.press(REDIS, "stop").await, Command::alert());
 }
 
 // ---------------------------------------------------------------- Project page
@@ -440,7 +440,7 @@ async fn a_container_page_offers_removal_only_when_stopped() {
     assert_eq!(ids, ["start", "stop", "restart"]);
     assert_eq!(
         harness.press(REDIS, "remove").await,
-        alert(),
+        Command::alert(),
         "not shown, refused"
     );
 
@@ -495,7 +495,7 @@ async fn another_press_cancels_a_pending_confirmation() {
         Some(ContainerStatus::Running)
     );
     // Now running: removal is no longer offered nor done.
-    assert_eq!(harness.press(MIGRATION, "remove").await, alert());
+    assert_eq!(harness.press(MIGRATION, "remove").await, Command::alert());
     assert!(harness.status("outil-migration").is_some());
 }
 
@@ -517,7 +517,7 @@ async fn a_container_gone_meanwhile_is_not_acted_on() {
     });
     harness.settle().await;
     assert!(harness.page(REDIS).is_none());
-    assert_eq!(harness.press(REDIS, "stop").await, alert());
+    assert_eq!(harness.press(REDIS, "stop").await, Command::alert());
 }
 
 #[test]
@@ -662,9 +662,12 @@ async fn compose_is_refused_when_the_containers_disagree_on_their_files() {
         ));
     });
     harness.settle().await;
-    assert_eq!(harness.press(SHOP_UP, "up-plain").await, alert());
+    assert_eq!(harness.press(SHOP_UP, "up-plain").await, Command::alert());
     harness.press(SHOP_DOWN, "down-keep").await;
-    assert_eq!(harness.press(SHOP_DOWN, "down-keep").await, alert());
+    assert_eq!(
+        harness.press(SHOP_DOWN, "down-keep").await,
+        Command::alert()
+    );
     // Its containers are still controlled one by one.
     harness.press(SHOP, "stop-all").await;
     harness.settle().await;

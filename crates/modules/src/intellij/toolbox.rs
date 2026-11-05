@@ -26,6 +26,9 @@ use super::recent::{self, MAX_FILE_BYTES};
 use crate::trust;
 
 /// Folders of the Toolbox installations, under the user's data folder.
+/// Home folder standing for an unknown one: never exists.
+const NO_HOME: &str = "/nonexistent";
+
 const TOOLBOX_APPS: &str = "JetBrains/Toolbox/apps";
 
 /// Folder of system-wide installations.
@@ -113,7 +116,10 @@ impl SystemCatalog {
     /// folders when set). Nothing is read before [`ProjectCatalog::read`].
     #[must_use]
     pub fn new() -> Self {
-        let home = std::env::home_dir().unwrap_or_default();
+        // Without a home folder, nothing of the user's is read (no folder
+        // relative to the manager's): `/nonexistent`, as for the system
+        // users without one.
+        let home = crate::paths::user_home().unwrap_or_else(|| PathBuf::from(NO_HOME));
         let xdg = |variable: &str, fallback: &str| {
             std::env::var_os(variable)
                 .map(PathBuf::from)

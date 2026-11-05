@@ -16,22 +16,19 @@
 //! Only ever launches a fixed program with a fixed argument, never a value
 //! from the configuration; one launch at a time, whatever the instance.
 
-mod icons;
-
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    Command, EventSender, Feedback, ImageData, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
+    Command, ImageData, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
+    ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use crate::background::forward_states;
 use crate::desktop::{
-    AppAttention, AppId, AppState, ClassMatch, DesktopAction, DesktopApp, DesktopError, DesktopHub,
-    DesktopState, DesktopSubscription, ExecutableMatch, Launch, LaunchStart, NotificationRelay,
-    WindowId, forward_notifications,
+    AppAttention, AppEvent, AppId, ClassMatch, DesktopAction, DesktopApp, DesktopHub,
+    ExecutableMatch, FollowedApp, Launch, LaunchStart, NotificationRelay, WindowId,
 };
+use crate::icons::svg;
 
 /// Kind of the Claude module.
 pub const CLAUDE_KIND: &str = "claude";
@@ -63,12 +60,18 @@ const WEB_ORIGIN: &str = "claude.ai";
 /// `PATH`, shipped with GTK).
 const LAUNCHER: &str = "gtk-launch";
 
+/// Key icon: a speech bubble with a spark, a conversation with an assistant
+/// (a generic drawing: no trademark).
+const MODULE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4 3v-3H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M12 8v5M9.5 10.5h5"/></svg>"##;
+
+static MODULE_ICON: LazyLock<ImageData> = LazyLock::new(|| svg(MODULE_SVG));
+
 const MODULE_LABEL: &str = "Claude";
 const OPENING_LABEL: &str = "Ouverture…";
 
 /// Claude Desktop, as the desktop layer follows it.
 #[must_use]
-pub fn desktop_app() -> DesktopApp {
+pub(crate) fn desktop_app() -> DesktopApp {
     DesktopApp {
         id: APP,
         window_class: ClassMatch::Exact(APP_ID.into()),
@@ -114,7 +117,7 @@ impl ClaudeFactory {
     /// Factory following Claude through `desktop` (which follows
     /// [`desktop_app`]).
     #[must_use]
-    pub fn new(desktop: Arc<DesktopHub>) -> Self {
+    pub(crate) fn new(desktop: Arc<DesktopHub>) -> Self {
         Self { desktop }
     }
 }
@@ -137,7 +140,7 @@ impl ModuleFactory for ClaudeFactory {
     }
 
     fn icon(&self) -> Option<ImageData> {
-        Some(icons::MODULE.clone())
+        Some(MODULE_ICON.clone())
     }
 
     fn create(
@@ -145,49 +148,17 @@ impl ModuleFactory for ClaudeFactory {
         ctx: ModuleContext,
         _settings: &Value,
     ) -> Result<Box<dyn Module>, ModuleError> {
-        let desktop = self.desktop.subscribe();
-        let events = ctx.events().clone();
-        ctx.tasks().spawn(forward_states(
-            desktop.states(),
-            events.clone(),
-            ClaudeEvent::Desktop,
-        ));
-        ctx.tasks().spawn(forward_notifications(
-            desktop.notifications(),
-            APP,
-            events.clone(),
-            || ClaudeEvent::Notified,
-        ));
         Ok(Box::new(Claude {
-            desktop,
-            app: AppState::default(),
-            attention: AppAttention::notifications_only(),
-            events,
+            app: FollowedApp::follow(&self.desktop, APP, AppAttention::notifications_only(), &ctx),
             launching: false,
         }))
     }
 }
 
-/// What an instance receives through its event sender.
-#[derive(Debug)]
-enum ClaudeEvent {
-    Desktop(DesktopState),
-    /// Claude sent a notification.
-    Notified,
-    /// The action started from the key ended.
-    Outcome {
-        action: DesktopAction,
-        ok: bool,
-    },
-}
-
 /// One instance: Claude as last known.
-pub struct Claude {
-    desktop: DesktopSubscription,
-    app: AppState,
-    /// Claude asks for something (notification).
-    attention: AppAttention,
-    events: EventSender,
+pub(crate) struct Claude {
+    /// Claude Desktop; in attention on notifications only.
+    app: FollowedApp,
     /// This instance started a launch, under way.
     launching: bool,
 }
@@ -195,76 +166,21 @@ pub struct Claude {
 impl Claude {
     /// The window a press brings to the front.
     fn window_to_front(&self) -> Option<WindowId> {
-        let windows = self.app.windows.as_deref().unwrap_or_default();
+        let windows = self.app.state().windows.as_deref().unwrap_or_default();
         windows.first().map(|window| window.id.clone())
-    }
-
-    fn handle(&mut self, event: ClaudeEvent) -> Vec<Command> {
-        match event {
-            ClaudeEvent::Desktop(state) => {
-                self.app = state.app(APP);
-                self.attention.app_changed(&self.app);
-                Vec::new()
-            }
-            ClaudeEvent::Notified => {
-                self.attention.notified();
-                Vec::new()
-            }
-            ClaudeEvent::Outcome { action, ok } => {
-                if action == DesktopAction::Launch {
-                    self.launching = false;
-                }
-                let feedback = if ok { Feedback::Ok } else { Feedback::Alert };
-                vec![Command::FeedbackOn(ModuleSurface::HomeKey, feedback)]
-            }
-        }
-    }
-
-    /// Hands the outcome of an action back to the instance.
-    fn reporter(
-        &self,
-        action: DesktopAction,
-    ) -> impl FnOnce(Result<(), DesktopError>) + Send + 'static {
-        let events = self.events.clone();
-        move |outcome| {
-            if let Err(error) = &outcome {
-                tracing::warn!(%error, "Claude action failed");
-            }
-            // An instance gone meanwhile needs no outcome.
-            let _ = events.send(ClaudeEvent::Outcome {
-                action,
-                ok: outcome.is_ok(),
-            });
-        }
     }
 
     /// Starts Claude, unless a launch is under way (from any instance).
     fn launch(&mut self) -> Vec<Command> {
-        let report = self.reporter(DesktopAction::Launch);
-        match self.desktop.launch(APP, launch(), report) {
+        match self.app.launch(launch(), ModuleSurface::HomeKey) {
             LaunchStart::Started => {
                 self.launching = true;
                 Vec::new()
             }
             LaunchStart::Busy => Vec::new(),
-            LaunchStart::Refused => alert(),
+            LaunchStart::Refused => Command::alert(),
         }
     }
-
-    fn activate(&self, window: WindowId) -> Vec<Command> {
-        if self
-            .desktop
-            .activate(window, self.reporter(DesktopAction::Activate))
-        {
-            Vec::new()
-        } else {
-            alert()
-        }
-    }
-}
-
-fn alert() -> Vec<Command> {
-    vec![Command::Feedback(Feedback::Alert)]
 }
 
 #[async_trait]
@@ -275,34 +191,29 @@ impl Module for Claude {
         } else {
             MODULE_LABEL
         };
-        let state = if self.attention.is_on() {
-            KeyState::Attention
-        } else if self.app.is_running() {
-            KeyState::Active
-        } else {
-            KeyState::Normal
-        };
-        KeyContent {
-            image: Some(icons::MODULE.clone()),
-            label: Some(label.into()),
-            state,
-        }
+        KeyContent::with_icon(&MODULE_ICON, label).in_state(self.app.key_state(false))
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
-        self.attention.acknowledge();
+        self.app.acknowledge();
         match self.window_to_front() {
-            Some(window) => self.activate(window),
+            Some(window) => self.app.activate(window, ModuleSurface::HomeKey),
             // Closed, or in the system tray only.
             None => self.launch(),
         }
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
-        match event.downcast::<ClaudeEvent>() {
-            Ok(event) => self.handle(*event),
-            Err(_) => Vec::new(),
+        let Ok(event) = event.downcast::<AppEvent>() else {
+            return Vec::new();
+        };
+        let Some(outcome) = self.app.handle(*event) else {
+            return Vec::new();
+        };
+        if outcome.action == DesktopAction::Launch {
+            self.launching = false;
         }
+        vec![outcome.feedback()]
     }
 
     fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {

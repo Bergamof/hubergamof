@@ -143,6 +143,12 @@ impl DesktopHub {
         })
     }
 
+    /// Whether the hub follows `app`.
+    #[must_use]
+    pub fn follows(&self, app: AppId) -> bool {
+        self.launches.contains_key(&app)
+    }
+
     /// A subscription; the first one starts the worker (on the current
     /// Tokio runtime, if any), as does one finding it stopped.
     #[must_use]

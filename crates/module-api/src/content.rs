@@ -69,6 +69,16 @@ impl KeyContent {
         }
     }
 
+    /// A key showing `image` over `label`.
+    #[must_use]
+    pub fn with_icon(image: &ImageData, label: impl Into<String>) -> Self {
+        Self {
+            image: Some(image.clone()),
+            label: Some(label.into()),
+            state: KeyState::Normal,
+        }
+    }
+
     /// The same key in state `state`.
     #[must_use]
     pub fn in_state(self, state: KeyState) -> Self {

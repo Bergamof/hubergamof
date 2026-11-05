@@ -7,7 +7,6 @@
 //! launchers do; `systemd-run` then becomes the application (`exec`).
 
 use std::ffi::OsString;
-use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -59,7 +58,7 @@ impl Launcher {
     /// failure. The process is reaped in the background once it ends.
     pub(super) async fn launch(&self, launch: &Launch) -> Result<(), DesktopError> {
         let mut command = self.command(launch);
-        if let Some(home) = std::env::var_os("HOME").filter(|home| Path::new(home).is_absolute()) {
+        if let Some(home) = crate::paths::user_home() {
             command.current_dir(home);
         }
         let mut child = command

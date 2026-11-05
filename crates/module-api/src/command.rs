@@ -35,6 +35,15 @@ pub enum Command {
     FeedbackOn(ModuleSurface, Feedback),
 }
 
+impl Command {
+    /// Marks the surface that triggered the handler as failed: what a
+    /// handler returns when it cannot even start its action.
+    #[must_use]
+    pub fn alert() -> Vec<Self> {
+        vec![Self::Feedback(Feedback::Alert)]
+    }
+}
+
 /// A surface of the module returning a [`Command::FeedbackOn`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -60,4 +69,24 @@ pub enum Feedback {
     Ok,
     /// The action failed (red warning sign).
     Alert,
+}
+
+impl Feedback {
+    /// The mark of an action that succeeded (`ok`) or failed.
+    #[must_use]
+    pub fn of(ok: bool) -> Self {
+        if ok { Self::Ok } else { Self::Alert }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feedback_follows_the_outcome() {
+        assert_eq!(Feedback::of(true), Feedback::Ok);
+        assert_eq!(Feedback::of(false), Feedback::Alert);
+        assert_eq!(Command::alert(), [Command::Feedback(Feedback::Alert)]);
+    }
 }

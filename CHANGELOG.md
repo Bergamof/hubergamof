@@ -30,6 +30,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Module IntelliJ : touche d'accueil (lance IntelliJ s'il est fermé, en attention quand une fenêtre le demande), page des projets récents (ouverts d'abord) pour passer à la fenêtre d'un projet ou l'ouvrir ; touche en attention quand IntelliJ envoie une notification en arrière-plan (tests lancés, build terminé) jusqu'à l'appui ou son retour au premier plan ; installation Toolbox ou `/opt` détectée, lanceur vérifié avant usage ; simulé en `--demo`.
 - Module Claude Desktop : une touche qui lance Claude s'il est fermé ou seulement dans la barre système, et passe à sa fenêtre sinon ; en attention quand Claude Desktop ou claude.ai dans Brave envoie une notification en arrière-plan, jusqu'à l'appui ou son retour au premier plan ; un lancement à la fois ; simulé en `--demo`.
 
+- API des modules : `Command::alert()`, `Feedback::of(ok)` et `KeyContent::with_icon`, utilitaires communs aux modules.
 ### Modifié
 
 - Interface : supprimer une touche dont le module n'est placé nulle part ailleurs demande confirmation (ses réglages seraient perdus) ; le focus va sur la touche ajoutée, et revient sur le contrôle d'origine après une reconnexion au gestionnaire.

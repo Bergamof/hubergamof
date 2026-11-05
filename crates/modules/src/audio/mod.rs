@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    Command, Feedback, GaugeContent, GaugeLevel, ImageData, ItemId, KeyContent, KeyState, Module,
+    Command, GaugeContent, GaugeLevel, ImageData, ItemId, KeyContent, KeyState, Module,
     ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
     ModuleSurface, NavigationView, PageContent, PageId, PageItem, SettingField, SettingKind,
     ZoneContent,
@@ -47,17 +47,17 @@ const VOLUME_STEP_KEY: &str = "volumeStep";
 const MAX_VOLUME_KEY: &str = "maxVolume";
 
 /// Volume change per dial notch, in percent.
-pub const DEFAULT_VOLUME_STEP: u32 = 5;
+pub(crate) const DEFAULT_VOLUME_STEP: u32 = 5;
 /// Smallest allowed volume step.
-pub const MIN_VOLUME_STEP: u32 = 1;
+pub(crate) const MIN_VOLUME_STEP: u32 = 1;
 /// Largest allowed volume step.
-pub const MAX_VOLUME_STEP: u32 = 25;
+pub(crate) const MAX_VOLUME_STEP: u32 = 25;
 /// Volume the dial does not go beyond, in percent.
 pub const DEFAULT_MAX_VOLUME: u32 = 100;
 /// Smallest allowed ceiling: the dial always reaches 100 %.
-pub const MIN_MAX_VOLUME: u32 = 100;
+pub(crate) const MIN_MAX_VOLUME: u32 = 100;
 /// Largest allowed ceiling (amplification beyond distorts).
-pub const MAX_MAX_VOLUME: u32 = 150;
+pub(crate) const MAX_MAX_VOLUME: u32 = 150;
 
 const PERCENT_UNIT: &str = "%";
 
@@ -255,7 +255,7 @@ impl Audio {
             Vec::new()
         } else {
             self.view = View::Unavailable;
-            alert()
+            Command::alert()
         }
     }
 
@@ -263,7 +263,7 @@ impl Audio {
     /// the state again in case the server came back.
     fn unavailable(&self) -> Vec<Command> {
         self.hub.refresh();
-        alert()
+        Command::alert()
     }
 
     fn toggle_mute(&mut self, direction: Direction, surface: ModuleSurface) -> Vec<Command> {
@@ -318,14 +318,20 @@ impl Audio {
                 state: KeyState::Attention,
             }
         } else {
-            icon_key(&icons::MICROPHONE, MICROPHONE_LABEL)
+            KeyContent::with_icon(&icons::MICROPHONE, MICROPHONE_LABEL)
         };
         PageContent {
             title: MODULE_LABEL.into(),
             items: vec![
                 item(MICROPHONE_ITEM, microphone),
-                item(OUTPUTS_ITEM, icon_key(&icons::SPEAKER, OUTPUTS_LABEL)),
-                item(INPUTS_ITEM, icon_key(&icons::MICROPHONE, INPUTS_LABEL)),
+                item(
+                    OUTPUTS_ITEM,
+                    KeyContent::with_icon(&icons::SPEAKER, OUTPUTS_LABEL),
+                ),
+                item(
+                    INPUTS_ITEM,
+                    KeyContent::with_icon(&icons::MICROPHONE, INPUTS_LABEL),
+                ),
             ],
         }
     }
@@ -350,7 +356,7 @@ impl Audio {
                         };
                         item(
                             &device.name,
-                            icon_key(icon, &device.description).in_state(state),
+                            KeyContent::with_icon(icon, &device.description).in_state(state),
                         )
                     })
                     .collect()
@@ -382,20 +388,8 @@ impl Audio {
     }
 }
 
-fn alert() -> Vec<Command> {
-    vec![Command::Feedback(Feedback::Alert)]
-}
-
 fn item(id: &str, key: KeyContent) -> PageItem {
     PageItem { id: id.into(), key }
-}
-
-fn icon_key(icon: &bergadeck_module_api::ImageData, label: &str) -> KeyContent {
-    KeyContent {
-        image: Some(icon.clone()),
-        label: Some(label.into()),
-        state: KeyState::Normal,
-    }
 }
 
 fn direction_of(page: &PageId) -> Option<Direction> {
@@ -418,7 +412,7 @@ impl Module for Audio {
         } else {
             &icons::SPEAKER
         };
-        icon_key(icon, MODULE_LABEL)
+        KeyContent::with_icon(icon, MODULE_LABEL)
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
@@ -460,7 +454,7 @@ impl Module for Audio {
         };
         if sink.volume.channels().is_empty() {
             // Nothing known of the channels: no volume to set.
-            return alert();
+            return Command::alert();
         }
         let delta = i64::from(ticks).saturating_mul(settings.step());
         let volume = sink.volume.stepped(delta, settings.ceiling());

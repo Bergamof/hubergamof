@@ -13,6 +13,7 @@
 
 mod attention;
 mod backend;
+mod followed_app;
 mod hub;
 mod kwin;
 mod launch_gate;
@@ -24,12 +25,13 @@ mod script_file;
 mod simulated;
 mod system;
 
-pub use attention::{AppAttention, forward_notifications};
+pub(crate) use attention::AppAttention;
 pub use backend::{
     DesktopBackend, DesktopError, NotificationFilter, NotificationStream, WindowChanges,
     WindowFilter,
 };
-pub use hub::{DesktopAction, DesktopHub, DesktopState, DesktopSubscription, LaunchStart};
+pub(crate) use followed_app::{AppEvent, FollowedApp};
+pub(crate) use hub::{DesktopAction, DesktopHub, LaunchStart};
 pub use model::{
     AppId, AppNotification, AppState, ClassMatch, DesktopApp, ExecutableMatch, Launch,
     NotificationHints, NotificationRelay, Window, WindowId,

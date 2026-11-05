@@ -19,7 +19,7 @@
 - Dossier de config : `dataDirectoryName` de `~/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/product-info.json` → `~/.config/JetBrains/<dataDirectoryName>/options/recentProjects.xml` ; repli : `IntelliJIdea*` le plus récemment modifié.
 - `opened="true"` n'est PAS un état en direct (projets à rouvrir) : croiser avec les fenêtres KWin `resourceClass == "jetbrains-idea"` (`startupWmClass` de `product-info.json`) et le titre `projet – fichier` (séparateur ` – `). Le XML sert à retrouver le chemin.
 - Détection du processus : `/proc/<pid>/exe` = `<install>/bin/idea` ou `com.intellij.idea.Main` dans `cmdline`. Piège : un `java` Toolbox (wiremock) utilise le JBR d'IntelliJ → faux positif si on cherche « intellij-idea » dans `cmdline`.
-- Reste à confirmer avec IntelliJ ouvert : `resourceClass`, format du titre, mise à jour de `opened`, effet de `scripts/idea <chemin>` (probablement simple demande d'attention).
+- Confirmé le 2026-11-05 (8b validée sur le deck) : `resourceClass = jetbrains-idea`, titre « projet – fichier », ouverture d'un projet par le lanceur.
 
 ## KWin (KDE Plasma 6, Wayland)
 - `org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript(path, plugin)` → id (-1 si déjà chargé) ; `/Scripting/Script{id}` `org.kde.kwin.Script.run` (**minuscule** : `#[zbus(name = "run")]`) ; `unloadScript(plugin)`.

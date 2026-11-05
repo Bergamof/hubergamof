@@ -28,23 +28,23 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
-    Command, EventSender, Feedback, ImageData, ItemId, KeyContent, KeyState, Module,
-    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    ModuleSurface, PageContent, PageId, PageItem, SettingField, SettingKind,
+    Command, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
+    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId,
+    PageItem, SettingField, SettingKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
 
-pub use catalog::{Catalog, Project, ProjectCatalog, SimulatedCatalog, project_name};
+pub(crate) use catalog::project_name;
+pub use catalog::{Catalog, Project, ProjectCatalog, SimulatedCatalog};
 use toolbox::LAUNCHER;
 pub use toolbox::SystemCatalog;
 use watch::{CatalogHub, CatalogSubscription};
 
 use crate::background::forward_states;
 use crate::desktop::{
-    AppAttention, AppId, AppState, ClassMatch, DesktopAction, DesktopApp, DesktopError, DesktopHub,
-    DesktopState, DesktopSubscription, ExecutableMatch, Launch, LaunchStart, Window, WindowId,
-    forward_notifications,
+    AppAttention, AppEvent, AppId, ClassMatch, DesktopAction, DesktopApp, DesktopHub,
+    ExecutableMatch, FollowedApp, Launch, LaunchStart, Window, WindowId,
 };
 
 /// Kind of the IntelliJ module.
@@ -75,7 +75,7 @@ const OPENING_LABEL: &str = "Ouverture…";
 
 /// IntelliJ, as the desktop layer follows it.
 #[must_use]
-pub fn desktop_app() -> DesktopApp {
+pub(crate) fn desktop_app() -> DesktopApp {
     DesktopApp {
         id: APP,
         window_class: ClassMatch::Prefix(WINDOW_CLASS_PREFIX.into()),
@@ -99,7 +99,7 @@ impl IntellijFactory {
     /// Factory following IntelliJ through `desktop` (which follows
     /// [`desktop_app`]), its installation read from `catalog`.
     #[must_use]
-    pub fn new(desktop: Arc<DesktopHub>, catalog: Arc<dyn ProjectCatalog>) -> Self {
+    pub(crate) fn new(desktop: Arc<DesktopHub>, catalog: Arc<dyn ProjectCatalog>) -> Self {
         Self {
             desktop,
             catalog: CatalogHub::new(catalog),
@@ -167,59 +167,28 @@ impl ModuleFactory for IntellijFactory {
         Some(icons::MODULE.clone())
     }
 
-    fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
-        IntellijSettings::parse(settings).map(drop)
-    }
-
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
         let settings = IntellijSettings::parse(settings)?;
-        let desktop = self.desktop.subscribe();
-        let events = ctx.events().clone();
-        ctx.tasks().spawn(forward_states(
-            desktop.states(),
-            events.clone(),
-            IntellijEvent::Desktop,
-        ));
-        ctx.tasks().spawn(forward_notifications(
-            desktop.notifications(),
-            APP,
-            events.clone(),
-            || IntellijEvent::Notified,
-        ));
         let catalog = self.catalog.subscribe();
         ctx.tasks().spawn(forward_states(
             catalog.states(),
-            events.clone(),
-            IntellijEvent::Catalog,
+            ctx.events().clone(),
+            CatalogRead,
         ));
         Ok(Box::new(Intellij {
             settings,
-            desktop,
+            app: FollowedApp::follow(&self.desktop, APP, AppAttention::with_windows(), &ctx),
             _catalog_subscription: catalog,
-            app: AppState::default(),
             catalog: None,
-            events,
             launching: None,
-            attention: AppAttention::with_windows(),
         }))
     }
 }
 
-/// What an instance receives through its event sender.
+/// The installation as read, `None` until first read (besides the
+/// [`AppEvent`]s of IntelliJ).
 #[derive(Debug)]
-enum IntellijEvent {
-    Desktop(DesktopState),
-    /// `None` until first read.
-    Catalog(Option<Arc<Catalog>>),
-    /// IntelliJ sent a notification.
-    Notified,
-    /// The action started from `surface` ended.
-    Outcome {
-        surface: ModuleSurface,
-        action: DesktopAction,
-        ok: bool,
-    },
-}
+struct CatalogRead(Option<Arc<Catalog>>);
 
 /// What a launch opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,19 +208,16 @@ enum Target {
 }
 
 /// One instance: IntelliJ as last known.
-pub struct Intellij {
+pub(crate) struct Intellij {
     settings: IntellijSettings,
-    desktop: DesktopSubscription,
+    /// IntelliJ; in attention when a window asks or after a notification
+    /// (tests run, build done).
+    app: FollowedApp,
     _catalog_subscription: CatalogSubscription,
-    app: AppState,
     /// `None` until first read.
     catalog: Option<Arc<Catalog>>,
-    events: EventSender,
     /// The launch this instance started, under way.
     launching: Option<Opening>,
-    /// IntelliJ asks for something (window asking, notification of tests
-    /// run or build done).
-    attention: AppAttention,
 }
 
 /// An entry of the projects page.
@@ -283,7 +249,7 @@ impl<'a> Entry<'a> {
 
 impl Intellij {
     fn windows(&self) -> &[Window] {
-        self.app.windows.as_deref().unwrap_or_default()
+        self.app.state().windows.as_deref().unwrap_or_default()
     }
 
     /// The entries of the projects page, in order: open projects (recent
@@ -327,60 +293,7 @@ impl Intellij {
     }
 
     fn unavailable(&self) -> bool {
-        self.catalog.is_some() && self.launcher().is_none() && !self.app.is_running()
-    }
-
-    fn handle(&mut self, event: IntellijEvent) -> Vec<Command> {
-        match event {
-            IntellijEvent::Desktop(state) => {
-                self.app = state.app(APP);
-                self.attention.app_changed(&self.app);
-                Vec::new()
-            }
-            IntellijEvent::Notified => {
-                self.attention.notified();
-                Vec::new()
-            }
-            IntellijEvent::Catalog(catalog) => {
-                if catalog.is_some() {
-                    self.catalog = catalog;
-                }
-                Vec::new()
-            }
-            IntellijEvent::Outcome {
-                surface,
-                action,
-                ok,
-            } => {
-                if action == DesktopAction::Launch {
-                    self.launching = None;
-                }
-                let feedback = if ok { Feedback::Ok } else { Feedback::Alert };
-                vec![Command::FeedbackOn(surface, feedback)]
-            }
-        }
-    }
-
-    /// Hands the outcome of an action started from `surface` back to the
-    /// instance.
-    fn reporter(
-        &self,
-        surface: ModuleSurface,
-        action: DesktopAction,
-    ) -> impl FnOnce(Result<(), DesktopError>) + Send + 'static {
-        let events = self.events.clone();
-        move |outcome| {
-            if let Err(error) = &outcome {
-                // No project path in the logs: only the program and why.
-                tracing::warn!(%error, "IntelliJ action failed");
-            }
-            // An instance gone meanwhile needs no outcome.
-            let _ = events.send(IntellijEvent::Outcome {
-                surface,
-                action,
-                ok: outcome.is_ok(),
-            });
-        }
+        self.catalog.is_some() && self.launcher().is_none() && !self.app.state().is_running()
     }
 
     /// Starts IntelliJ with `args`, unless a launch is under way (from any
@@ -392,27 +305,15 @@ impl Intellij {
         args: Vec<std::ffi::OsString>,
     ) -> Vec<Command> {
         let Some(program) = self.launcher().map(std::path::Path::to_path_buf) else {
-            return alert();
+            return Command::alert();
         };
-        let report = self.reporter(surface, DesktopAction::Launch);
-        match self.desktop.launch(APP, Launch { program, args }, report) {
+        match self.app.launch(Launch { program, args }, surface) {
             LaunchStart::Started => {
                 self.launching = Some(opening);
                 Vec::new()
             }
             LaunchStart::Busy => Vec::new(),
-            LaunchStart::Refused => alert(),
-        }
-    }
-
-    fn activate(&self, window: WindowId, surface: ModuleSurface) -> Vec<Command> {
-        if self
-            .desktop
-            .activate(window, self.reporter(surface, DesktopAction::Activate))
-        {
-            Vec::new()
-        } else {
-            alert()
+            LaunchStart::Refused => Command::alert(),
         }
     }
 
@@ -431,7 +332,7 @@ impl Intellij {
             Some(_) => KeyState::Active,
             None => KeyState::Normal,
         };
-        icon_key(&icons::PROJECT, &label).in_state(state)
+        KeyContent::with_icon(&icons::PROJECT, &label).in_state(state)
     }
 
     fn press_entry(&mut self, page: &PageId, item: &ItemId) -> Vec<Command> {
@@ -450,25 +351,13 @@ impl Intellij {
                 }
             });
         match target {
-            Some(Target::Window(window)) => self.activate(window, surface),
+            Some(Target::Window(window)) => self.app.activate(window, surface),
             Some(Target::Folder(folder)) => {
                 let args = vec![folder.into_os_string()];
                 self.launch(Opening::Project(item.clone()), surface, args)
             }
-            None => alert(),
+            None => Command::alert(),
         }
-    }
-}
-
-fn alert() -> Vec<Command> {
-    vec![Command::Feedback(Feedback::Alert)]
-}
-
-fn icon_key(icon: &ImageData, label: &str) -> KeyContent {
-    KeyContent {
-        image: Some(icon.clone()),
-        label: Some(label.into()),
-        state: KeyState::Normal,
     }
 }
 
@@ -482,19 +371,13 @@ impl Module for Intellij {
         } else {
             MODULE_LABEL
         };
-        let state = if self.attention.is_on() || self.unavailable() {
-            KeyState::Attention
-        } else if self.app.is_running() {
-            KeyState::Active
-        } else {
-            KeyState::Normal
-        };
-        icon_key(&icons::MODULE, label).in_state(state)
+        KeyContent::with_icon(&icons::MODULE, label)
+            .in_state(self.app.key_state(self.unavailable()))
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
-        self.attention.acknowledge();
-        if self.app.is_running() {
+        self.app.acknowledge();
+        if self.app.state().is_running() {
             return vec![Command::OpenPage(MAIN_PAGE.into())];
         }
         self.launch(Opening::Application, ModuleSurface::HomeKey, Vec::new())
@@ -522,10 +405,25 @@ impl Module for Intellij {
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
-        match event.downcast::<IntellijEvent>() {
-            Ok(event) => self.handle(*event),
-            Err(_) => Vec::new(),
+        let event = match event.downcast::<CatalogRead>() {
+            Ok(read) => {
+                if read.0.is_some() {
+                    self.catalog = read.0;
+                }
+                return Vec::new();
+            }
+            Err(event) => event,
+        };
+        let Ok(event) = event.downcast::<AppEvent>() else {
+            return Vec::new();
+        };
+        let Some(outcome) = self.app.handle(*event) else {
+            return Vec::new();
+        };
+        if outcome.action == DesktopAction::Launch {
+            self.launching = None;
         }
+        vec![outcome.feedback()]
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {

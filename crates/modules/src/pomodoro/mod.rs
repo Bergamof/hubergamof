@@ -45,7 +45,7 @@ pub const POMODORO_KIND: &str = "pomodoro";
 const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 2M9.5 2.5h5M12 2.5V6"/></svg>"##;
 
 /// Period of the refresh ticks, while the time runs or the menu is open.
-pub const TICK_PERIOD: Duration = Duration::from_secs(1);
+pub(crate) const TICK_PERIOD: Duration = Duration::from_secs(1);
 
 /// Marker in front of the selected menu entry.
 const SELECTION_MARKER: &str = "›";

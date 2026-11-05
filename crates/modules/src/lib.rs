@@ -121,7 +121,8 @@ impl std::fmt::Debug for ModuleRegistry {
     }
 }
 
-/// The services the built-in modules act on.
+/// The services the built-in modules act on. The wall clock of the clock
+/// module is not one of them: always the system's.
 #[derive(Debug, Clone)]
 pub struct BuiltinServices {
     /// Audio server of the audio module.
@@ -130,8 +131,8 @@ pub struct BuiltinServices {
     pub docker: Arc<dyn docker::DockerBackend>,
     /// Desktop notifications of the pomodoro.
     pub notifier: Arc<dyn notifications::Notifier>,
-    /// Time of the pomodoro, counting suspends.
-    pub clock: Arc<dyn time::Clock>,
+    /// Monotonic time of the pomodoro, counting suspends.
+    pub pomodoro_clock: Arc<dyn time::Clock>,
     /// Desktop session of the modules following applications.
     pub desktop: Arc<dyn desktop::DesktopBackend>,
     /// Installation and recent projects of IntelliJ.
@@ -150,7 +151,7 @@ impl BuiltinServices {
             audio: Arc::new(audio::PactlBackend::new()),
             docker: Arc::new(docker::DockerEngine::new()),
             notifier: Arc::new(notifications::DesktopNotifier::new(session_bus.clone())),
-            clock: Arc::new(time::BootClock),
+            pomodoro_clock: Arc::new(time::BootClock),
             desktop: Arc::new(desktop::SystemDesktop::new(session_bus)),
             intellij: Arc::new(intellij::SystemCatalog::new()),
         }
@@ -165,7 +166,7 @@ impl BuiltinServices {
             audio: Arc::new(audio::SimulatedAudio::demo()),
             docker: Arc::new(docker::SimulatedDocker::demo()),
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
-            clock: Arc::new(time::BootClock),
+            pomodoro_clock: Arc::new(time::BootClock),
             desktop: Arc::new(desktop::SimulatedDesktop::demo()),
             intellij: Arc::new(intellij::SimulatedCatalog::demo()),
         }
@@ -195,7 +196,7 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     registry.register(Arc::new(navigation::NavigationFactory));
     registry.register(Arc::new(pomodoro::PomodoroFactory::new(
         services.notifier,
-        services.clock,
+        services.pomodoro_clock,
     )));
     registry
 }
@@ -273,7 +274,7 @@ mod tests {
             [
                 format!("{:?}", services.audio),
                 format!("{:?}", services.notifier),
-                format!("{:?}", services.clock),
+                format!("{:?}", services.pomodoro_clock),
                 format!("{:?}", services.docker),
                 format!("{:?}", services.desktop),
             ]
@@ -394,7 +395,7 @@ mod tests {
             audio: Arc::clone(&server) as _,
             docker: Arc::new(docker::SimulatedDocker::empty()),
             notifier: Arc::clone(&notifier) as _,
-            clock: Arc::new(SimulatedClock::new()),
+            pomodoro_clock: Arc::new(SimulatedClock::new()),
             desktop: Arc::new(desktop::SimulatedDesktop::empty()),
             intellij: Arc::new(intellij::SimulatedCatalog::default()),
         });

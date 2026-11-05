@@ -60,7 +60,7 @@ use crate::paths::expand_user_home;
 pub const DOCKER_KIND: &str = "docker";
 
 /// Time given for the second press confirming a removal or a `down`.
-pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
 
 const COMPOSE_FILES_KEY: &str = "composeFiles";
 
@@ -463,7 +463,7 @@ impl Docker {
             }
             DockerEvent::Outcome { key, ok } => {
                 self.busy.remove(&key);
-                let feedback = if ok { Feedback::Ok } else { Feedback::Alert };
+                let feedback = Feedback::of(ok);
                 vec![key.feedback(feedback)]
             }
             DockerEvent::ConfirmExpired(token) => {
@@ -513,7 +513,7 @@ impl Docker {
         let request = match self.plan(page, action) {
             Plan::Run(request) => request,
             Plan::Nothing => return vec![key.feedback(Feedback::Ok)],
-            Plan::Refused => return alert(),
+            Plan::Refused => return Command::alert(),
         };
         if action.needs_confirmation() && !self.confirmed(&key) {
             return Vec::new();
@@ -534,7 +534,7 @@ impl Docker {
             self.busy.insert(key);
             Vec::new()
         } else {
-            alert()
+            Command::alert()
         }
     }
 
@@ -608,7 +608,7 @@ impl Docker {
         };
         PageItem {
             id: key.item,
-            key: icon_key(action.icon(), label).in_state(state),
+            key: KeyContent::with_icon(action.icon(), label).in_state(state),
         }
     }
 
@@ -622,7 +622,7 @@ impl Docker {
         ]
         .map(|(id, label, icon)| PageItem {
             id: id.into(),
-            key: icon_key(icon, label),
+            key: KeyContent::with_icon(icon, label),
         });
         let prefix = format!("{}-", project.name);
         let containers = project.containers.iter().map(|container| {
@@ -682,7 +682,7 @@ fn main_page(overview: &Overview) -> PageContent {
         );
         PageItem {
             id: project_id(&project.name).into(),
-            key: icon_key(&icons::PROJECT, &label).in_state(state),
+            key: KeyContent::with_icon(&icons::PROJECT, &label).in_state(state),
         }
     });
     let containers = overview
@@ -699,18 +699,6 @@ fn variants_title(label: &str, project: &Project) -> String {
     format!("{label}{TITLE_SEPARATOR}{}", project.name)
 }
 
-fn alert() -> Vec<Command> {
-    vec![Command::Feedback(Feedback::Alert)]
-}
-
-fn icon_key(icon: &ImageData, label: &str) -> KeyContent {
-    KeyContent {
-        image: Some(icon.clone()),
-        label: Some(label.into()),
-        state: KeyState::Normal,
-    }
-}
-
 /// Key of a container, labelled `label`, opening its page.
 fn container_item(container: &Container, label: &str) -> PageItem {
     let (icon, state) = if container.needs_attention() {
@@ -722,7 +710,7 @@ fn container_item(container: &Container, label: &str) -> PageItem {
     };
     PageItem {
         id: container_id(&container.name).into(),
-        key: icon_key(icon, label).in_state(state),
+        key: KeyContent::with_icon(icon, label).in_state(state),
     }
 }
 
@@ -758,7 +746,7 @@ impl Module for Docker {
                 (label, state)
             }
         };
-        icon_key(&icons::MODULE, &label).in_state(state)
+        KeyContent::with_icon(&icons::MODULE, &label).in_state(state)
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {

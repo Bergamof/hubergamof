@@ -2,8 +2,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use bergadeck_module_api::TaskScope;
 use bergadeck_module_api::testing::TestContext;
+use bergadeck_module_api::{Feedback, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -305,8 +305,8 @@ async fn without_an_installation_nothing_is_launched() {
     let key = harness.module.key();
     assert_eq!(key.label.as_deref(), Some(UNAVAILABLE_LABEL));
     assert_eq!(key.state, KeyState::Attention);
-    assert_eq!(harness.module.on_key_press().await, alert());
-    assert_eq!(harness.press(BERGACAST).await, alert());
+    assert_eq!(harness.module.on_key_press().await, Command::alert());
+    assert_eq!(harness.press(BERGACAST).await, Command::alert());
     assert_eq!(setup.desktop.launches(), []);
 }
 
@@ -376,8 +376,8 @@ async fn projects_with_the_same_name_share_no_window() {
 #[tokio::test(start_paused = true)]
 async fn unknown_items_alert() {
     let mut harness = Setup::demo().instance(&json!({})).await;
-    assert_eq!(harness.press("project//nowhere").await, alert());
-    assert_eq!(harness.press("window/gone").await, alert());
+    assert_eq!(harness.press("project//nowhere").await, Command::alert());
+    assert_eq!(harness.press("window/gone").await, Command::alert());
     let elsewhere = harness
         .module
         .on_item_press(&"other".into(), &BERGADECK.into())
