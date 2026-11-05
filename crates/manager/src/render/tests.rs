@@ -330,18 +330,16 @@ fn image_kind_is_sniffed_from_content() {
 }
 
 #[test]
-fn active_keys_get_a_frame() {
+fn active_keys_are_drawn_without_a_frame() {
     let renderer = renderer();
-    let request = KeyRequest::new(KEY, None, None).in_state(KeyState::Active);
-    let image = renderer.render_key(&request).unwrap();
-    assert_eq!(*image.image().get_pixel(0, 60), ACTIVE_BORDER_COLOR);
-    assert_eq!(*image.image().get_pixel(119, 119), ACTIVE_BORDER_COLOR);
-    assert_eq!(*image.image().get_pixel(60, 60), DEFAULT_BACKGROUND);
-    // The state is part of the cache key.
+    let active = renderer
+        .render_key(&KeyRequest::new(KEY, None, None).in_state(KeyState::Active))
+        .unwrap();
     let normal = renderer
         .render_key(&KeyRequest::new(KEY, None, None))
         .unwrap();
-    assert_eq!(*normal.image().get_pixel(0, 60), DEFAULT_BACKGROUND);
+    assert_eq!(active.image(), normal.image());
+    assert_eq!(*active.image().get_pixel(0, 60), DEFAULT_BACKGROUND);
 }
 
 #[test]

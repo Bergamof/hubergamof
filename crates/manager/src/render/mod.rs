@@ -2,8 +2,8 @@
 //!
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
-//! ("contain") and centred on a background colour, with the frame of its
-//! [`KeyState`]; it also renders strip zones from text lines, a gauge or an
+//! ("contain") and centred on a background colour, with the frame of an
+//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge or an
 //! image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
 //! content (bounded segmented LRU, module `cache`: images used once,
 //! like those of a countdown, do not push out those that come back) and
@@ -46,9 +46,6 @@ pub const TEXT_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
 /// Translucent band behind a key label, keeping it readable on any image.
 pub const LABEL_BAND_COLOR: Rgba<u8> = Rgba([0, 0, 0, 170]);
 
-/// Frame of an [`KeyState::Active`] key.
-pub const ACTIVE_BORDER_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
-
 /// Frame of a [`KeyState::Attention`] key.
 pub const ATTENTION_BORDER_COLOR: Rgba<u8> = Rgba([0xff, 0x8c, 0x00, u8::MAX]);
 
@@ -60,7 +57,7 @@ pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
 pub const DIMMED_TEXT_COLOR: Rgba<u8> = Rgba([0x8a, 0x8a, 0x8a, u8::MAX]);
 
 /// Filled part of a gauge bar.
-pub const GAUGE_FILL_COLOR: Rgba<u8> = ACTIVE_BORDER_COLOR;
+pub const GAUGE_FILL_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
 
 /// Filled part of a dimmed gauge bar.
 pub const GAUGE_DIMMED_FILL_COLOR: Rgba<u8> = Rgba([0x5c, 0x5c, 0x5c, u8::MAX]);
@@ -88,8 +85,6 @@ pub const RENDER_PROBATION_CAPACITY: NonZeroUsize = match NonZeroUsize::new(32) 
     None => NonZeroUsize::MIN,
 };
 
-/// Width of the frame of an active key, relative to the key width.
-const ACTIVE_BORDER_RATIO: f32 = 0.05;
 /// Width of the frame of a key needing attention, relative to the key width.
 const ATTENTION_BORDER_RATIO: f32 = 0.08;
 /// Size of a feedback mark, relative to the smaller side of the surface.
@@ -173,8 +168,8 @@ pub struct KeyRequest<'a> {
     pub label: Option<&'a str>,
     /// Background colour, used when the state does not impose one.
     pub background: Rgba<u8>,
-    /// Visual state, drawn as a frame (and a background for
-    /// [`KeyState::Attention`]).
+    /// Visual state: only [`KeyState::Attention`] is drawn (frame and
+    /// background).
     pub state: KeyState,
 }
 
@@ -207,15 +202,12 @@ struct StateStyle {
 impl StateStyle {
     fn of(state: KeyState) -> Self {
         match state {
-            KeyState::Active => Self {
-                background: None,
-                border: Some((ACTIVE_BORDER_COLOR, ACTIVE_BORDER_RATIO)),
-            },
             KeyState::Attention => Self {
                 background: Some(ATTENTION_BACKGROUND),
                 border: Some((ATTENTION_BORDER_COLOR, ATTENTION_BORDER_RATIO)),
             },
-            // Normal, and states added later that this version cannot draw.
+            // Normal and Active (the module's own icon shows it), and states
+            // added later that this version cannot draw.
             _ => Self {
                 background: None,
                 border: None,

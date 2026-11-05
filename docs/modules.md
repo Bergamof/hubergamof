@@ -15,7 +15,7 @@ Détail de chaque module et des briques communes ; `CLAUDE.md` n'en garde que le
 - `paths.rs` : `user_home()` (HOME absolu ou rien) et `~/` des réglages via `expand_home`.
 - `trust.rs` : fichier que personne d'autre ne peut modifier (propriétaire, droits des ancêtres, liens résolus) ; partagé par compose et IntelliJ.
 - `module-api` fournit aussi `Command::alert()`, `Feedback::of(ok)`, `KeyContent::with_icon`.
-- Icônes : SVG 128×128 (pictogramme coloré sur fond noir) dans `crates/modules/assets/icons/`, embarqués par `icons::asset!("nom")` ; une constante dans le module quand il n'en a qu'une, sous-module `icons.rs` au-delà. Logos officiels Docker, IntelliJ et Claude (glyphes Simple Icons, CC0 ; marques à leurs titulaires, usage personnel — à revoir si le dépôt devient public) ; le reste est dessiné. Docker : baleine (module), cube par conteneur, couches par projet compose, chacun en actif/arrêté/attention avec badge (la couleur ne porte jamais seule l'état). Provenance : `assets/icons/README.md`.
+- Icônes : SVG 128×128 (pictogramme coloré sur fond noir) dans `crates/modules/assets/icons/`, embarqués par `icons::asset!("nom")` ; une constante dans le module quand il n'en a qu'une, sous-module `icons.rs` au-delà. Logos officiels Docker, IntelliJ et Claude (glyphes Simple Icons, CC0 ; marques à leurs titulaires, usage personnel — à revoir si le dépôt devient public) ; le reste est dessiné. Docker : baleine (module), cube par conteneur, couches par projet compose, chacun en actif/arrêté/attention avec badge ; audio : badge tick vert sur l'appareil sélectionné (la couleur ne porte jamais seule l'état). Provenance : `assets/icons/README.md`.
 
 ## Modules
 - **clock** (jiff), **navigation**.
