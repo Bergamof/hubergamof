@@ -4,6 +4,7 @@
 //! their sender, and activating a window gone does nothing.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
@@ -47,6 +48,8 @@ pub struct SimulatedDesktop {
     notifications: broadcast::Sender<Sent>,
     activations: Mutex<Vec<WindowId>>,
     launches: Mutex<Vec<Launch>>,
+    /// Activations and launches fail (recorded all the same).
+    failing: AtomicBool,
 }
 
 impl SimulatedDesktop {
@@ -59,6 +62,7 @@ impl SimulatedDesktop {
             notifications: broadcast::Sender::new(NOTIFICATION_CAPACITY),
             activations: Mutex::default(),
             launches: Mutex::default(),
+            failing: AtomicBool::new(false),
         }
     }
 
@@ -72,8 +76,8 @@ impl SimulatedDesktop {
             DEMO_INTELLIJ_EXECUTABLE.into(),
         ]);
         desktop.set_windows(vec![
-            demo_window("claude", DEMO_CLAUDE_CLASS, "Claude"),
-            demo_window("intellij", DEMO_INTELLIJ_CLASS, "bergadeck – main.rs"),
+            Window::new("claude", DEMO_CLAUDE_CLASS, "Claude"),
+            Window::new("intellij", DEMO_INTELLIJ_CLASS, "bergadeck – main.rs"),
         ]);
         desktop
     }
@@ -106,6 +110,23 @@ impl SimulatedDesktop {
         });
     }
 
+    /// Makes the next activations and launches fail, or succeed again.
+    pub fn fail_actions(&self, failing: bool) {
+        self.failing.store(failing, Ordering::SeqCst);
+    }
+
+    /// The outcome of an action of `program`.
+    fn outcome(&self, program: &str) -> Result<(), DesktopError> {
+        if self.failing.load(Ordering::SeqCst) {
+            Err(DesktopError::Launch {
+                program: program.into(),
+                reason: "simulated failure".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     /// The windows activated so far, oldest first.
     #[must_use]
     pub fn activations(&self) -> Vec<WindowId> {
@@ -116,18 +137,6 @@ impl SimulatedDesktop {
     #[must_use]
     pub fn launches(&self) -> Vec<Launch> {
         lock(&self.launches).clone()
-    }
-}
-
-fn demo_window(id: &str, class: &str, caption: &str) -> Window {
-    Window {
-        id: WindowId(id.into()),
-        class: class.into(),
-        caption: caption.into(),
-        pid: 0,
-        demands_attention: false,
-        active: false,
-        minimized: false,
     }
 }
 
@@ -161,7 +170,7 @@ impl DesktopBackend for SimulatedDesktop {
             true
         });
         lock(&self.activations).push(id.clone());
-        Ok(())
+        self.outcome("kwin")
     }
 
     async fn running(&self, executables: &[ExecutableMatch]) -> Result<Vec<bool>, DesktopError> {
@@ -189,7 +198,7 @@ impl DesktopBackend for SimulatedDesktop {
     async fn launch(&self, launch: &Launch) -> Result<(), DesktopError> {
         tracing::info!(program = %launch.program.display(), "simulated launch");
         lock(&self.launches).push(launch.clone());
-        Ok(())
+        self.outcome(&launch.program.to_string_lossy())
     }
 }
 

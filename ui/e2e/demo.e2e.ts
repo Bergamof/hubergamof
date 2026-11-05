@@ -34,7 +34,7 @@ test('affiche les touches et les molettes de la configuration', async ({ page })
 		'Touche 1 : Audio',
 		'Touche 2 : Pomodoro',
 		'Touche 3 : Docker',
-		'Touche 4 : IntelliJ indisponible',
+		'Touche 4 : IntelliJ',
 		'Touche 5 : Claude indisponible'
 	]);
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);

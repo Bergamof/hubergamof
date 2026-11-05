@@ -3,7 +3,7 @@
 //!
 //! Each module implements [`bergadeck_module_api::Module`] exactly like an
 //! external module would. Available so far: [`audio`], [`clock`],
-//! [`docker`], [`navigation`] and [`pomodoro`]; intellij and claude come
+//! [`docker`], [`intellij`], [`navigation`] and [`pomodoro`]; claude comes
 //! later (the manager shows a placeholder key for kinds missing from the
 //! registry).
 //!
@@ -19,6 +19,7 @@ pub mod clock;
 pub mod desktop;
 pub mod docker;
 mod icons;
+pub mod intellij;
 pub mod navigation;
 pub mod notifications;
 mod paths;
@@ -26,6 +27,7 @@ pub mod pomodoro;
 mod process;
 pub mod session_bus;
 pub mod time;
+mod trust;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -133,6 +135,8 @@ pub struct BuiltinServices {
     pub clock: Arc<dyn time::Clock>,
     /// Desktop session of the modules following applications.
     pub desktop: Arc<dyn desktop::DesktopBackend>,
+    /// Installation and recent projects of IntelliJ.
+    pub intellij: Arc<dyn intellij::ProjectCatalog>,
 }
 
 impl BuiltinServices {
@@ -149,6 +153,7 @@ impl BuiltinServices {
             notifier: Arc::new(notifications::DesktopNotifier::new(session_bus.clone())),
             clock: Arc::new(time::BootClock),
             desktop: Arc::new(desktop::SystemDesktop::new(session_bus)),
+            intellij: Arc::new(intellij::SystemCatalog::new()),
         }
     }
 
@@ -163,6 +168,7 @@ impl BuiltinServices {
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
             clock: Arc::new(time::BootClock),
             desktop: Arc::new(desktop::SimulatedDesktop::demo()),
+            intellij: Arc::new(intellij::SimulatedCatalog::demo()),
         }
     }
 }
@@ -176,6 +182,13 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     registry.register(Arc::new(audio::AudioFactory::new(services.audio)));
     registry.register(Arc::new(clock::ClockFactory::system()));
     registry.register(Arc::new(docker::DockerFactory::new(services.docker)));
+    // One desktop hub for every module following an application: the
+    // backend follows the windows for one hub only.
+    let desktop = desktop::DesktopHub::new(services.desktop, vec![intellij::desktop_app()]);
+    registry.register(Arc::new(intellij::IntellijFactory::new(
+        Arc::clone(&desktop),
+        services.intellij,
+    )));
     registry.register(Arc::new(navigation::NavigationFactory));
     registry.register(Arc::new(pomodoro::PomodoroFactory::new(
         services.notifier,
@@ -222,12 +235,13 @@ mod tests {
                 audio::AUDIO_KIND,
                 clock::CLOCK_KIND,
                 docker::DOCKER_KIND,
+                intellij::INTELLIJ_KIND,
                 navigation::NAVIGATION_KIND,
                 pomodoro::POMODORO_KIND
             ]
         );
         assert!(registry.get(&"clock".into()).is_some());
-        assert!(registry.get(&"intellij".into()).is_none());
+        assert!(registry.get(&"claude".into()).is_none());
         assert_eq!(
             descriptors(&builtin_registry_with(BuiltinServices::system())),
             descriptors(&registry)
@@ -296,7 +310,7 @@ mod tests {
             registry.default_settings(&clock::CLOCK_KIND.into()),
             clock::ClockFactory::system().default_settings()
         );
-        assert_eq!(registry.default_settings(&"intellij".into()), json!({}));
+        assert_eq!(registry.default_settings(&"claude".into()), json!({}));
         assert_eq!(
             registry.default_settings(&docker::DOCKER_KIND.into()),
             json!({ "composeFiles": [] })
@@ -378,6 +392,7 @@ mod tests {
             notifier: Arc::clone(&notifier) as _,
             clock: Arc::new(SimulatedClock::new()),
             desktop: Arc::new(desktop::SimulatedDesktop::empty()),
+            intellij: Arc::new(intellij::SimulatedCatalog::default()),
         });
         let minute = Duration::from_secs(60);
 

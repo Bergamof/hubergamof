@@ -26,6 +26,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Export de la configuration d'un appareil en zip (`config.json` lisible + `images/`) et import, y compris vers un autre modèle (molettes adaptées), après confirmation.
 - Sécurité : routes `/api` refusées quand un autre site les déclenche (`Sec-Fetch-Site`) ; détection SVG stricte ; images inutilisées supprimées au chargement de la configuration.
 - Couche bureau des modules (socle des futurs modules IntelliJ et Claude Desktop) : fenêtres suivies et activées via KWin, applications détectées par leur exécutable, notifications de ces applications observées sur le bus de session (attribuées par l'exécutable de l'expéditeur, les autres jamais conservées), lancement hors du service systemd ; simulée en `--demo`.
+- Module IntelliJ : touche d'accueil (lance IntelliJ s'il est fermé, en attention quand une fenêtre le demande), page des projets récents (ouverts d'abord) pour passer à la fenêtre d'un projet ou l'ouvrir ; installation Toolbox ou `/opt` détectée, lanceur vérifié avant usage ; simulé en `--demo`.
 
 ### Modifié
 

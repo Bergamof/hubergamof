@@ -10,6 +10,7 @@
 - Reste à confirmer manuellement : une vraie notification de demande de permission (champs `desktop-entry`, `summary`, expéditeur = processus principal ?).
 
 ## IntelliJ
+- Implémenté (8b, `crates/modules/src/intellij/`). Vérifié le 2026-11-05 : Toolbox `apps/intellij-idea-ultimate/product-info.json` → `launch[0].launcherPath = bin/idea`, `startupWmClass = jetbrains-idea`, `dataDirectoryName = IntelliJIdea2026.2` ; `recentProjects.xml` : `entry key="$USER_HOME$/…"` → `RecentProjectMetaInfo frameTitle="projet – fichier"` (+ `opened="true"`, non fiable) et `option activationTimestamp` (ms).
 - Dossier de config : `dataDirectoryName` de `~/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/product-info.json` → `~/.config/JetBrains/<dataDirectoryName>/options/recentProjects.xml` ; repli : `IntelliJIdea*` le plus récemment modifié.
 - `opened="true"` n'est PAS un état en direct (projets à rouvrir) : croiser avec les fenêtres KWin `resourceClass == "jetbrains-idea"` (`startupWmClass` de `product-info.json`) et le titre `projet – fichier` (séparateur ` – `). Le XML sert à retrouver le chemin.
 - Détection du processus : `/proc/<pid>/exe` = `<install>/bin/idea` ou `com.intellij.idea.Main` dans `cmdline`. Piège : un `java` Toolbox (wiremock) utilise le JBR d'IntelliJ → faux positif si on cherche « intellij-idea » dans `cmdline`.
@@ -39,3 +40,5 @@
   - arguments : chemins de projets absolus, canonicalisés, dossiers existants, un argument par projet, jamais d'options issues du XML (un absolu ne commence pas par `-`, ce qui écarte aussi les sous-commandes d'IntelliJ) ;
   - XML : parseur sans DTD ni entités externes, fichier borné (≤ 1 Mio), nombre de projets borné ;
   - un lancement à la fois par application (appui ignoré pendant `LAUNCH_CHECK`) ; erreurs sans les chemins de projets.
+- Appliqué en 8b (revue sécurité 8b) : `product-info.json` lui-même doit être de confiance (il désigne le lanceur) ; seul `launcherPath = bin/idea` est accepté (jamais `bin/format.sh` & co) ; lanceur revérifié à chaque lecture du catalogue ; un lancement à la fois pour toutes les instances IntelliJ ; fichiers spéciaux (FIFO) jamais ouverts.
+- Risques acceptés : les dossiers de projets ne passent pas par `trust` (ce sont des arguments ; IntelliJ demande lui-même « Trust project ») ; les chemins de projets figurent dans les `ItemId`, donc dans `liveState` (UI locale seulement) — ne jamais journaliser les `ItemId`.

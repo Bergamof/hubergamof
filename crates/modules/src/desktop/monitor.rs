@@ -27,7 +27,7 @@ use tokio::task::AbortHandle;
 use zbus::fdo::{DBusProxy, MonitoringProxy};
 use zbus::message::Type;
 use zbus::names::{BusName, InterfaceName, MemberName, UniqueName};
-use zbus::{Connection, MatchRule, Message, MessageStream, Variant};
+use zbus::{MatchRule, Message, MessageStream, Variant};
 
 use super::backend::{DesktopError, NotificationFilter, NotificationStream};
 use super::model::{AppNotification, bounded};
@@ -76,7 +76,9 @@ pub(super) async fn observe(
         .await?
         .become_monitor(&[rule], 0)
         .await?;
-    let senders = BusSenders { connection: lookup };
+    let senders = BusSenders {
+        dbus: DBusProxy::new(&lookup).await?,
+    };
     Ok(Box::new(spawn_observer(
         MessageStream::from(monitor),
         filter.clone(),
@@ -93,14 +95,14 @@ trait Senders: Send + Sync + 'static {
 
 /// Senders looked up through the bus, then `/proc`.
 struct BusSenders {
-    connection: Connection,
+    dbus: DBusProxy<'static>,
 }
 
 #[async_trait]
 impl Senders for BusSenders {
     async fn executable(&self, sender: &UniqueName<'_>) -> Option<PathBuf> {
-        let dbus = DBusProxy::new(&self.connection).await.ok()?;
-        let pid = dbus
+        let pid = self
+            .dbus
             .get_connection_unix_process_id(BusName::from(sender.clone()))
             .await
             .ok()?;

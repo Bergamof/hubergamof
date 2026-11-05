@@ -19,7 +19,6 @@
 //! `extends.file`, `env_file`) is not checked; the user chose those files.
 
 use std::ffi::{OsStr, OsString};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -28,6 +27,7 @@ use tokio::process::Command;
 use super::backend::{ComposeAction, DockerError, UpVariant};
 use super::model::ComposeTarget;
 use crate::process::{self, OutputLimits, RunError};
+use crate::trust;
 
 /// Program run, looked up in `PATH`.
 const DOCKER: &str = "docker";
@@ -42,13 +42,6 @@ const COMPOSE_TIMEOUT: Duration = Duration::from_mins(15);
 /// progress there, and what failed last).
 const MAX_ERROR_BYTES: usize = 4 * 1024;
 
-/// Permission bits letting the group or others write.
-const SHARED_WRITE_BITS: u32 = 0o022;
-/// Sticky bit: in such a directory (`/tmp`), only the owner of an entry may
-/// replace it.
-const STICKY_BIT: u32 = 0o1000;
-/// User id of root, trusted as the owner of system directories.
-const ROOT_UID: u32 = 0;
 /// Variables of a project, read by compose from its directory.
 const ENV_FILE: &str = ".env";
 
@@ -248,41 +241,20 @@ async fn trusted_target(target: &ComposeTarget) -> Result<ComposeTarget, DockerE
     Ok(ComposeTarget::new(target.project.clone(), directory, files))
 }
 
-/// `path` with its links resolved, once it and every directory above it
-/// are found to belong to the user or to root and to be writable by nobody
-/// else (a directory with the sticky bit, such as `/tmp`, is fine: nobody
-/// else may replace what the user put there).
+/// `path` with its links resolved, once found trusted (see
+/// [`trust::trusted`]).
 async fn check_trusted(path: &Path) -> Result<PathBuf, DockerError> {
-    check_trusted_for(path, rustix::process::getuid().as_raw()).await
-}
-
-/// [`check_trusted`] for the user `user`.
-async fn check_trusted_for(path: &Path, user: u32) -> Result<PathBuf, DockerError> {
-    let untrusted = |path: &Path, reason: String| DockerError::Untrusted {
-        path: path.display().to_string(),
-        reason,
-    };
-    let resolved = tokio::fs::canonicalize(path)
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || trust::trusted(&path))
         .await
-        .map_err(|error| untrusted(path, error.to_string()))?;
-    for (depth, entry) in resolved.ancestors().enumerate() {
-        let metadata = tokio::fs::metadata(entry)
-            .await
-            .map_err(|error| untrusted(entry, error.to_string()))?;
-        let owner = metadata.uid();
-        if owner != user && owner != ROOT_UID {
-            return Err(untrusted(entry, format!("owned by user {owner}")));
-        }
-        let mode = metadata.permissions().mode();
-        let shared_directory = depth > 0 && metadata.is_dir() && mode & STICKY_BIT != 0;
-        if mode & SHARED_WRITE_BITS != 0 && !shared_directory {
-            return Err(untrusted(
-                entry,
-                format!("writable by others (mode {mode:o})"),
-            ));
-        }
-    }
-    Ok(resolved)
+        .map_err(|error| DockerError::Untrusted {
+            path: String::new(),
+            reason: error.to_string(),
+        })?
+        .map_err(|untrusted| DockerError::Untrusted {
+            path: untrusted.path,
+            reason: untrusted.reason,
+        })
 }
 
 /// The arguments of a call as one line, for errors.
@@ -296,7 +268,7 @@ fn command_line(args: &[OsString]) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs::Permissions;
-    use std::path::PathBuf;
+    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
@@ -478,41 +450,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_files_nobody_else_may_change_are_trusted() {
-        let dir = tempfile::tempdir().unwrap();
-        let project = dir.path().join("project");
-        std::fs::create_dir(&project).unwrap();
-        set_mode(&project, 0o755);
-        let file = project.join("compose.yaml");
-        std::fs::write(&file, "services: {}\n").unwrap();
-        set_mode(&file, 0o644);
-        check_trusted(&file).await.unwrap();
-
-        set_mode(&file, 0o666);
-        let error = check_trusted(&file).await.unwrap_err();
-        assert!(matches!(error, DockerError::Untrusted { .. }), "{error}");
-        set_mode(&file, 0o644);
-
-        // A directory others may write to: they could swap the file.
-        set_mode(&project, 0o777);
-        assert!(check_trusted(&file).await.is_err());
-        // Unless it is sticky, like `/tmp`.
-        set_mode(&project, 0o1777);
-        check_trusted(&file).await.unwrap();
-        set_mode(&project, 0o755);
-
-        // Links are followed: the target is what compose reads.
-        let link = dir.path().join("link.yaml");
-        std::os::unix::fs::symlink(&file, &link).unwrap();
-        check_trusted(&link).await.unwrap();
-        set_mode(&file, 0o646);
-        assert!(check_trusted(&link).await.is_err());
-
-        let missing = check_trusted(&PathBuf::from("/nonexistent/compose.yaml")).await;
-        assert!(missing.is_err());
-    }
-
-    #[tokio::test]
     async fn compose_is_given_resolved_paths_and_a_trusted_env_file() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
@@ -562,18 +499,6 @@ mod tests {
             .map(|(name, _)| name.to_owned())
             .collect();
         assert_eq!(removed, [OsString::from(CONTEXT_VARIABLE)]);
-    }
-
-    #[tokio::test]
-    async fn only_the_user_or_root_may_own_what_compose_reads() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("compose.yaml");
-        std::fs::write(&file, "services: {}\n").unwrap();
-        set_mode(&file, 0o644);
-        let user = rustix::process::getuid().as_raw();
-        check_trusted_for(&file, user).await.unwrap();
-        let other = check_trusted_for(&file, user + 1).await.unwrap_err();
-        assert!(matches!(other, DockerError::Untrusted { .. }), "{other}");
     }
 
     #[tokio::test]

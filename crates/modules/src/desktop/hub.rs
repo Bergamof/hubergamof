@@ -8,7 +8,8 @@
 //!
 //! - follows the windows of the applications, again after a bounded
 //!   backoff when that stops (KWin restarted) or fails (no KWin);
-//! - observes their notifications, likewise;
+//! - observes their notifications, likewise, once a module listens to
+//!   them (the monitor sees the whole session: not without a reason);
 //! - looks at their processes every [`PROCESS_PROBE_INTERVAL`];
 //! - publishes what it knows of each application
 //!   ([`DesktopSubscription::states`]) and hands their notifications on
@@ -81,6 +82,9 @@ pub struct DesktopHub {
     apps: Arc<[DesktopApp]>,
     states: watch::Sender<DesktopState>,
     notifications: broadcast::Sender<AppNotification>,
+    /// Whether a module listens to the notifications: the monitor only
+    /// runs from then on.
+    observing: watch::Sender<bool>,
     control: Mutex<WorkerControl>,
 }
 
@@ -105,6 +109,7 @@ impl DesktopHub {
             apps: apps.into(),
             states: watch::Sender::new(DesktopState::default()),
             notifications: broadcast::Sender::new(NOTIFICATION_CAPACITY),
+            observing: watch::Sender::new(false),
             control: Mutex::new(WorkerControl::default()),
         })
     }
@@ -125,6 +130,7 @@ impl DesktopHub {
             Arc::clone(&self.apps),
             self.states.clone(),
             self.notifications.clone(),
+            self.observing.subscribe(),
         );
         spawn_worker("desktop", worker.run())
     }
@@ -149,9 +155,13 @@ impl DesktopSubscription {
         self.hub.states.subscribe()
     }
 
-    /// The notifications of the applications, from now on.
+    /// The notifications of the applications, from now on; the first call
+    /// starts observing them.
     #[must_use]
     pub fn notifications(&self) -> broadcast::Receiver<AppNotification> {
+        self.hub
+            .observing
+            .send_if_modified(|observing| !std::mem::replace(observing, true));
         self.hub.notifications.subscribe()
     }
 
@@ -216,6 +226,8 @@ struct Worker {
     executables: Vec<ExecutableMatch>,
     windows: Listener<Box<dyn WindowChanges>>,
     observer: Listener<Box<dyn NotificationStream>>,
+    /// Whether to observe the notifications (see [`DesktopHub`]).
+    wanted: watch::Receiver<bool>,
     probe_due: Instant,
     /// Whether the last attempt of each kind succeeded, to log only
     /// transitions.
@@ -230,6 +242,7 @@ impl Worker {
         apps: Arc<[DesktopApp]>,
         states: watch::Sender<DesktopState>,
         notifications: broadcast::Sender<AppNotification>,
+        wanted: watch::Receiver<bool>,
     ) -> Self {
         Self {
             window_filter: WindowFilter::of(&apps),
@@ -241,6 +254,7 @@ impl Worker {
             notifications,
             windows: listener(),
             observer: listener(),
+            wanted,
             probe_due: Instant::now(),
             following: true,
             observing: true,
@@ -251,8 +265,11 @@ impl Worker {
     /// Serves until aborted.
     async fn run(mut self) {
         loop {
-            let (follow_due, observe_due) = (self.windows.due(), self.observer.due());
+            let follow_due = self.windows.due();
+            let observe_due = self.observer.due().filter(|_| *self.wanted.borrow());
             tokio::select! {
+                // Wanted from now on: the next turn starts observing.
+                Ok(()) = self.wanted.changed() => {}
                 () = sleep_until(follow_due) => self.follow().await,
                 () = sleep_until(observe_due) => self.observe().await,
                 () = tokio::time::sleep_until(self.probe_due) => self.probe().await,

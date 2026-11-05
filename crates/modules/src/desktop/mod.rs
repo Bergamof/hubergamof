@@ -31,5 +31,6 @@ pub use model::{
     AppId, AppNotification, AppState, ClassMatch, DesktopApp, ExecutableMatch, Launch, Window,
     WindowId,
 };
+pub(crate) use simulated::DEMO_INTELLIJ_EXECUTABLE;
 pub use simulated::SimulatedDesktop;
 pub use system::SystemDesktop;

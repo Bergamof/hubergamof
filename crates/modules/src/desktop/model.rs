@@ -128,6 +128,23 @@ pub struct Window {
     pub minimized: bool,
 }
 
+impl Window {
+    /// A plain window: neither active, minimised nor asking for attention,
+    /// its process unknown.
+    #[must_use]
+    pub fn new(id: &str, class: &str, caption: &str) -> Self {
+        Self {
+            id: WindowId(id.into()),
+            class: class.into(),
+            caption: bounded(caption.into()),
+            pid: 0,
+            demands_attention: false,
+            active: false,
+            minimized: false,
+        }
+    }
+}
+
 /// `text` cut to [`MAX_TEXT_CHARS`] characters.
 pub(super) fn bounded(mut text: String) -> String {
     if let Some((cut, _)) = text.char_indices().nth(MAX_TEXT_CHARS) {

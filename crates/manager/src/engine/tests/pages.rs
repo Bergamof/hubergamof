@@ -27,7 +27,7 @@ async fn default_configuration_shows_placeholders_and_dial_zones() {
             Some("Audio"),
             Some("25:00 Travail"),
             Some("Docker 4/7"),
-            Some("intellij indisponible"),
+            Some("IntelliJ"),
             Some("claude indisponible"),
             None,
             None,

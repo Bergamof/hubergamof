@@ -303,10 +303,15 @@ impl Client {
             live_state: true,
         })
         .await;
-        let config = match self.receive().await {
-            ServerMessage::Config { serial: of, config } if of == serial => config,
-            other => panic!("expected the configuration, got {other:?}"),
-        };
+        // Live states of the device selected before may still be on their
+        // way (sent before the selection was handled): skipped.
+        let config = self
+            .receive_until(|message| match message {
+                ServerMessage::Config { serial: of, config } if of == serial => Some(config),
+                ServerMessage::LiveState { state } if state.serial != serial => None,
+                other => panic!("expected the configuration, got {other:?}"),
+            })
+            .await;
         let live = match self.receive().await {
             ServerMessage::LiveState { state } if state.serial == serial => state,
             other => panic!("expected the live state, got {other:?}"),

@@ -226,6 +226,7 @@ dependencies = [
  "bollard",
  "futures-util",
  "jiff",
+ "roxmltree",
  "rustix",
  "serde",
  "serde_json",

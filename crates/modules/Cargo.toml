@@ -19,6 +19,8 @@ futures-util.workspace = true
 jiff = "0.2.38"
 serde.workspace = true
 serde_json.workspace = true
+# `recentProjects.xml` of IntelliJ: a parser refusing any DTD (no entities).
+roxmltree = "0.21.2"
 # `CLOCK_BOOTTIME` (monotonic, counting suspends) for the pomodoro; the
 # uid of the user, owner of the compose files Docker may run; `fs`: the
 # KWin scripts are written relative to checked folders (`openat`).

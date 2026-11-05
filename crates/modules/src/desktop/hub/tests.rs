@@ -190,6 +190,7 @@ async fn actions_run_in_the_background_and_report() {
 #[derive(Debug, Default)]
 struct BrokenDesktop {
     follow_attempts: AtomicUsize,
+    observe_attempts: AtomicUsize,
 }
 
 #[async_trait]
@@ -208,6 +209,7 @@ impl DesktopBackend for BrokenDesktop {
         &self,
         _: &NotificationFilter,
     ) -> Result<Box<dyn NotificationStream>, DesktopError> {
+        self.observe_attempts.fetch_add(1, Ordering::SeqCst);
         Err(DesktopError::Bus(zbus::Error::Failure("no bus".into())))
     }
     async fn launch(&self, _: &Launch) -> Result<(), DesktopError> {
@@ -294,4 +296,20 @@ fn without_a_runtime_nothing_is_followed_nor_run() {
         subscription.states().borrow().clone(),
         DesktopState::default()
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn notifications_are_observed_only_once_listened_to() {
+    let desktop = Arc::new(BrokenDesktop::default());
+    let hub = DesktopHub::new(Arc::clone(&desktop) as _, apps());
+    let subscription = hub.subscribe();
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(desktop.observe_attempts.load(Ordering::SeqCst), 0);
+
+    let _notifications = subscription.notifications();
+    tokio::time::sleep(SETTLE).await;
+    assert_eq!(desktop.observe_attempts.load(Ordering::SeqCst), 1);
+    // Retried with a backoff, like following the windows.
+    tokio::time::sleep(Duration::from_secs(7)).await;
+    assert_eq!(desktop.observe_attempts.load(Ordering::SeqCst), 4);
 }
