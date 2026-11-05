@@ -7,7 +7,9 @@ use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::*;
-use crate::desktop::{DEMO_CLAUDE_EXECUTABLE, SimulatedDesktop, Window};
+use crate::desktop::{DEMO_CLAUDE_EXECUTABLE, NotificationHints, SimulatedDesktop, Window};
+
+const BRAVE: &str = "/opt/brave-bin/brave";
 
 /// Longest (simulated) wait for an event.
 const PATIENCE: Duration = Duration::from_secs(30);
@@ -63,12 +65,7 @@ impl Setup {
     /// A notification from `executable`, with the `desktop-entry` hint
     /// `entry`.
     fn notify(&self, executable: &str, entry: Option<&str>) {
-        self.desktop.notify(
-            Path::new(executable),
-            entry,
-            "Claude",
-            "Claude voudrait utiliser un outil",
-        );
+        self.desktop.notify(Path::new(executable), entry);
     }
 }
 
@@ -142,17 +139,26 @@ async fn open_claude_is_brought_to_the_front() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_window_asking_for_attention_is_brought_to_the_front() {
+async fn a_window_asking_for_attention_puts_no_attention() {
     let setup = Setup::demo();
-    let mut asking = window("asking");
-    asking.demands_attention = true;
-    setup.desktop.set_windows(vec![window("other"), asking]);
+    setup
+        .desktop
+        .set_windows(vec![window("first"), window("second")]);
     let mut harness = setup.instance().await;
-    assert_eq!(harness.state(), KeyState::Attention);
+    // Claude Desktop asks whenever it loses the focus.
+    let mut asking = window("second");
+    asking.demands_attention = true;
+    setup.desktop.set_windows(vec![window("first"), asking]);
+    harness.settle().await;
+    assert_eq!(harness.state(), KeyState::Active);
 
     harness.module.on_key_press().await;
     harness.next_commands().await;
-    assert_eq!(setup.desktop.activations(), [WindowId("asking".into())]);
+    assert_eq!(
+        setup.desktop.activations(),
+        [WindowId("first".into())],
+        "the first window, asking or not"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -261,6 +267,51 @@ async fn notifications_are_claude_s_by_their_sender_whatever_their_hint() {
     harness.until(KeyState::Attention).await;
 }
 
+/// Hints of a notification of Brave for `origin`.
+fn from_brave(origin: Option<&str>) -> NotificationHints {
+    NotificationHints {
+        desktop_entry: Some("brave-browser".into()),
+        origin: origin.map(String::from),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn claude_ai_notifications_in_brave_are_claude_s() {
+    let setup = Setup::demo();
+    let mut harness = setup.instance().await;
+    let notify = |executable: &str, hints| {
+        setup.desktop.notify_with(Path::new(executable), hints);
+    };
+    notify(BRAVE, from_brave(Some("mail.example.com")));
+    notify(BRAVE, from_brave(None));
+    notify("/usr/bin/notify-send", from_brave(Some("claude.ai")));
+    notify(DEMO_CLAUDE_EXECUTABLE, from_brave(Some("claude.ai")));
+    harness.settle().await;
+    assert_eq!(
+        harness.state(),
+        KeyState::Active,
+        "another site, no site, or not Brave"
+    );
+
+    notify("/opt/brave.com/brave/brave", from_brave(Some("claude.ai")));
+    harness.until(KeyState::Attention).await;
+    // Pressed: Claude Desktop comes to the front, then the user goes back
+    // to Brave.
+    harness.module.on_key_press().await;
+    harness.next_commands().await;
+    setup.desktop.set_windows(vec![window("claude")]);
+    harness.settle().await;
+    assert_eq!(harness.state(), KeyState::Active);
+    notify(
+        BRAVE,
+        NotificationHints {
+            desktop_entry: None,
+            origin: Some("claude.ai".into()),
+        },
+    );
+    harness.until(KeyState::Attention).await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_notification_while_claude_is_in_front_is_ignored() {
     let setup = Setup::demo();
@@ -303,7 +354,7 @@ fn claude_is_followed_by_its_window_executable_and_entry() {
     assert!(app.executable.is_helper(helper.into_iter()));
     let main = [b"claude-desktop".as_slice(), b"--startup".as_slice()];
     assert!(!app.executable.is_helper(main.into_iter()));
-    assert!(app.may_have_sent(Some(APP_ID)));
-    assert!(app.may_have_sent(None));
-    assert!(!app.may_have_sent(Some("org.kde.konsole")));
+    assert!(app.may_have_sent(&NotificationHints::entry(Some(APP_ID))));
+    assert!(app.may_have_sent(&NotificationHints::entry(None)));
+    assert!(!app.may_have_sent(&NotificationHints::entry(Some("org.kde.konsole"))));
 }

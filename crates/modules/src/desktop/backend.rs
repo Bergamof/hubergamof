@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use super::model::{
-    AppId, AppNotification, ClassMatch, DesktopApp, ExecutableMatch, Launch, Window, WindowId,
+    AppId, AppNotification, ClassMatch, DesktopApp, ExecutableMatch, Launch, NotificationHints,
+    Window, WindowId,
 };
 
 /// Failure to act on the desktop.
@@ -97,21 +98,20 @@ impl NotificationFilter {
         }
     }
 
-    /// Whether a notification with the `desktop-entry` hint `entry` may be
-    /// one of a followed application, so that its sender is worth looking
-    /// up.
+    /// Whether a notification with `hints` may be one of a followed
+    /// application, so that its sender is worth looking up.
     #[must_use]
-    pub fn may_attribute(&self, entry: Option<&str>) -> bool {
-        self.apps.iter().any(|app| app.may_have_sent(entry))
+    pub fn may_attribute(&self, hints: &NotificationHints) -> bool {
+        self.apps.iter().any(|app| app.may_have_sent(hints))
     }
 
-    /// The application that sent a notification with the hint `entry`, from
+    /// The application that sent a notification with `hints`, from
     /// `executable`.
     #[must_use]
-    pub fn attribute(&self, entry: Option<&str>, executable: &Path) -> Option<AppId> {
+    pub fn attribute(&self, hints: &NotificationHints, executable: &Path) -> Option<AppId> {
         self.apps
             .iter()
-            .find(|app| app.sent(entry, executable))
+            .find(|app| app.sent(hints, executable))
             .map(|app| app.id)
     }
 }
@@ -181,6 +181,7 @@ mod tests {
                     helper_argument: None,
                 },
                 desktop_entry: Some("com.anthropic.Claude".into()),
+                relays: Vec::new(),
             },
             DesktopApp {
                 id: AppId("intellij"),
@@ -190,6 +191,7 @@ mod tests {
                     helper_argument: None,
                 },
                 desktop_entry: None,
+                relays: Vec::new(),
             },
         ]
     }
@@ -209,23 +211,36 @@ mod tests {
         let claude = Path::new(CLAUDE_EXE);
         let idea = Path::new("/opt/idea/bin/idea");
         assert_eq!(
-            filter.attribute(Some("com.anthropic.Claude"), claude),
+            filter.attribute(
+                &NotificationHints::entry(Some("com.anthropic.Claude")),
+                claude
+            ),
             Some(AppId("claude"))
         );
-        assert_eq!(filter.attribute(None, idea), Some(AppId("intellij")));
+        assert_eq!(
+            filter.attribute(&NotificationHints::entry(None), idea),
+            Some(AppId("intellij"))
+        );
         assert_eq!(
             filter.attribute(
-                Some("com.anthropic.Claude"),
+                &NotificationHints::entry(Some("com.anthropic.Claude")),
                 Path::new("/usr/bin/notify-send")
             ),
             None,
             "a forged hint"
         );
         // IntelliJ declares no entry: any hint may be its own.
-        assert!(filter.may_attribute(Some("org.kde.konsole")));
+        assert!(filter.may_attribute(&NotificationHints::entry(Some("org.kde.konsole"))));
         let claude_only = NotificationFilter::of(&apps()[..1]);
-        assert!(!claude_only.may_attribute(Some("org.kde.konsole")));
-        assert!(claude_only.may_attribute(None));
-        assert!(!NotificationFilter::default().may_attribute(None));
+        assert!(!claude_only.may_attribute(&NotificationHints::entry(Some("org.kde.konsole"))));
+        assert!(claude_only.may_attribute(&NotificationHints::entry(None)));
+        assert!(!NotificationFilter::default().may_attribute(&NotificationHints::entry(None)));
+        // Another site's notification, from a browser: not even looked up,
+        // although IntelliJ declares no entry.
+        let other_site = NotificationHints {
+            desktop_entry: Some("brave-browser".into()),
+            origin: Some("mail.example.com".into()),
+        };
+        assert!(!filter.may_attribute(&other_site));
     }
 }

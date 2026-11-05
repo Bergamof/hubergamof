@@ -27,6 +27,7 @@ fn apps() -> Vec<DesktopApp> {
                 helper_argument: Some("--type=".into()),
             },
             desktop_entry: Some("com.anthropic.Claude".into()),
+            relays: Vec::new(),
         },
         DesktopApp {
             id: INTELLIJ,
@@ -36,6 +37,7 @@ fn apps() -> Vec<DesktopApp> {
                 helper_argument: None,
             },
             desktop_entry: None,
+            relays: Vec::new(),
         },
     ]
 }
@@ -121,24 +123,17 @@ async fn notifications_are_attributed_to_their_application() {
 
     let claude = Path::new(DEMO_CLAUDE_EXECUTABLE);
     let idea = Path::new("/opt/idea/bin/idea");
-    desktop.notify(claude, Some("org.kde.konsole"), "another entry", "");
+    desktop.notify(claude, Some("org.kde.konsole"));
     desktop.notify(
         Path::new("/usr/bin/notify-send"),
         Some("com.anthropic.Claude"),
-        "forged",
-        "",
     );
-    desktop.notify(claude, Some("com.anthropic.Claude"), "Claude asks", "body");
-    desktop.notify(idea, None, "Build done", "body");
+    desktop.notify(claude, Some("com.anthropic.Claude"));
+    desktop.notify(idea, None);
     tokio::time::sleep(SETTLE).await;
 
-    let first = notifications.try_recv().unwrap();
-    assert_eq!((first.app, first.summary.as_str()), (CLAUDE, "Claude asks"));
-    let second = notifications.try_recv().unwrap();
-    assert_eq!(
-        (second.app, second.summary.as_str()),
-        (INTELLIJ, "Build done")
-    );
+    assert_eq!(notifications.try_recv().unwrap().app, CLAUDE);
+    assert_eq!(notifications.try_recv().unwrap().app, INTELLIJ);
     assert!(notifications.try_recv().is_err());
 }
 

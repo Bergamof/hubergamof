@@ -6,16 +6,19 @@
 //! senders are looked up through the shared connection). Applications do
 //! not tell the manager when they need the user; their notifications do.
 //!
-//! A notification is attributed by the executable of its sender: the
-//! `desktop-entry` hint, which any program may give, only rules out the
-//! notifications naming another application (no lookup for those).
+//! A notification is attributed by the executable of its sender: its hints
+//! (`desktop-entry`, and `x-kde-origin-name` for the browsers relaying a
+//! site), which any program may give, only rule out the notifications of
+//! other applications or sites (no lookup for those: a site's notification
+//! is only ever a relay's).
 //!
 //! Messages are read, and senders looked up, by a task of their own: the
 //! stream only receives the result, so that waiting for it may be cancelled
 //! without losing a notification.
 //!
 //! Privacy: the monitor sees every notification of the session. Those of
-//! other applications are dropped at once, never kept nor logged.
+//! other applications are dropped at once, never kept nor logged; of those
+//! of the followed applications, only the sender is kept.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,7 +33,7 @@ use zbus::names::{BusName, InterfaceName, MemberName, UniqueName};
 use zbus::{MatchRule, Message, MessageStream, Variant};
 
 use super::backend::{DesktopError, NotificationFilter, NotificationStream};
-use super::model::{AppNotification, bounded};
+use super::model::{AppNotification, NotificationHints, bounded};
 use super::processes::executable_of;
 use crate::session_bus::SessionBus;
 
@@ -42,6 +45,10 @@ const NOTIFY_MEMBER: &str = "Notify";
 
 /// Hint naming the desktop entry of the sender.
 const DESKTOP_ENTRY_HINT: &str = "desktop-entry";
+
+/// Hint naming the site behind a browser's notification (set by Chromium
+/// under KDE).
+const ORIGIN_HINT: &str = "x-kde-origin-name";
 
 /// Notifications attributed but not yet taken, past which the observer
 /// waits.
@@ -182,21 +189,26 @@ async fn attributed(
         return None;
     }
     let body = message.body();
-    let (_, _, _, summary, text, _, hints, _): NotifyArguments<'_> = body.deserialize().ok()?;
-    let entry = match hints.get(DESKTOP_ENTRY_HINT) {
-        Some(Variant::Str(entry)) => Some(entry.as_str()),
-        _ => None,
+    // Texts are not even copied: never used.
+    let (_, _, _, _, _, _, hints, _): NotifyArguments<'_> = body.deserialize().ok()?;
+    let hints = NotificationHints {
+        desktop_entry: string_hint(&hints, DESKTOP_ENTRY_HINT),
+        origin: string_hint(&hints, ORIGIN_HINT),
     };
-    if !filter.may_attribute(entry) {
+    if !filter.may_attribute(&hints) {
         return None;
     }
     let executable = senders.executable(header.sender()?).await?;
-    let app = filter.attribute(entry, &executable)?;
-    Some(AppNotification {
-        app,
-        summary: bounded(summary.to_owned()),
-        body: bounded(text.to_owned()),
-    })
+    let app = filter.attribute(&hints, &executable)?;
+    Some(AppNotification { app })
+}
+
+/// The hint `name`, bounded, when it is a string.
+fn string_hint(hints: &HashMap<&str, Variant<'_>>, name: &str) -> Option<String> {
+    match hints.get(name) {
+        Some(Variant::Str(value)) => Some(bounded(value.as_str().to_owned())),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -206,11 +218,16 @@ mod tests {
     use futures_util::stream;
 
     use super::*;
-    use crate::desktop::model::{AppId, ClassMatch, DesktopApp, ExecutableMatch, MAX_TEXT_CHARS};
+    use crate::desktop::model::{
+        AppId, ClassMatch, DesktopApp, ExecutableMatch, MAX_TEXT_CHARS, NotificationRelay,
+    };
 
     const CLAUDE_EXE: &str = "/usr/lib/claude-desktop/claude-desktop";
     const CLAUDE_SENDER: &str = ":1.20";
     const CLAUDE_ENTRY: &str = "com.anthropic.Claude";
+    const BRAVE_EXE: &str = "/opt/brave-bin/brave";
+    const BRAVE_SENDER: &str = ":1.40";
+    const BRAVE_ENTRY: &str = "brave-browser";
 
     /// Claude sends from `:1.20`; every other sender is another program.
     /// Each lookup takes `delay`.
@@ -226,10 +243,10 @@ mod tests {
     impl Senders for FakeSenders {
         async fn executable(&self, sender: &UniqueName<'_>) -> Option<PathBuf> {
             tokio::time::sleep(self.delay).await;
-            Some(if sender.as_str() == CLAUDE_SENDER {
-                CLAUDE_EXE.into()
-            } else {
-                "/usr/bin/notify-send".into()
+            Some(match sender.as_str() {
+                CLAUDE_SENDER => CLAUDE_EXE.into(),
+                BRAVE_SENDER => BRAVE_EXE.into(),
+                _ => "/usr/bin/notify-send".into(),
             })
         }
     }
@@ -243,6 +260,14 @@ mod tests {
                 helper_argument: None,
             },
             desktop_entry: Some(CLAUDE_ENTRY.into()),
+            relays: vec![NotificationRelay {
+                executables: vec![ExecutableMatch {
+                    path: BRAVE_EXE.into(),
+                    helper_argument: None,
+                }],
+                desktop_entry: BRAVE_ENTRY.into(),
+                origin: "claude.ai".into(),
+            }],
         }])
     }
 
@@ -270,8 +295,6 @@ mod tests {
             let message = notify(CLAUDE_SENDER, "Claude needs you", entry);
             let notification = attributed(&message, &filter(), &INSTANT).await.unwrap();
             assert_eq!(notification.app, AppId("claude"));
-            assert_eq!(notification.summary, "Claude needs you");
-            assert_eq!(notification.body, "Body");
         }
     }
 
@@ -290,12 +313,62 @@ mod tests {
         assert_eq!(attributed(&unreadable, &filter(), &INSTANT).await, None);
     }
 
+    /// A notification of Brave, from `sender`, for the site `origin`.
+    fn from_browser(sender: &str, origin: &str) -> Message {
+        let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
+        hints.insert(DESKTOP_ENTRY_HINT, Variant::from(BRAVE_ENTRY));
+        hints.insert(ORIGIN_HINT, Variant::from(origin));
+        let arguments: NotifyArguments<'_> =
+            ("Brave", 0, "", "Claude", "Body", Vec::new(), hints, -1);
+        call(sender, NOTIFY_MEMBER, &arguments)
+    }
+
+    /// Counts the lookups of senders, all Brave.
+    #[derive(Default)]
+    struct CountingSenders {
+        lookups: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Senders for CountingSenders {
+        async fn executable(&self, _: &UniqueName<'_>) -> Option<PathBuf> {
+            self.lookups
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(BRAVE_EXE.into())
+        }
+    }
+
     #[tokio::test]
-    async fn texts_are_bounded() {
-        let long = "x".repeat(MAX_TEXT_CHARS * 3);
-        let message = notify(CLAUDE_SENDER, &long, Some(CLAUDE_ENTRY));
-        let notification = attributed(&message, &filter(), &INSTANT).await.unwrap();
-        assert_eq!(notification.summary.len(), MAX_TEXT_CHARS);
+    async fn a_browser_relays_its_site_only() {
+        let relayed = from_browser(BRAVE_SENDER, "claude.ai");
+        let notification = attributed(&relayed, &filter(), &INSTANT).await.unwrap();
+        assert_eq!(notification.app, AppId("claude"));
+        let forged = from_browser(":1.30", "claude.ai");
+        assert_eq!(attributed(&forged, &filter(), &INSTANT).await, None);
+
+        // Other sites are dropped on their hints, their sender never
+        // looked up.
+        let senders = CountingSenders::default();
+        let long = "claude.ai".repeat(MAX_TEXT_CHARS);
+        for origin in ["mail.example.com", "claude.ai.example.com", long.as_str()] {
+            let other_site = from_browser(BRAVE_SENDER, origin);
+            assert_eq!(attributed(&other_site, &filter(), &senders).await, None);
+        }
+        assert_eq!(senders.lookups.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn hints_that_are_not_strings_are_absent() {
+        let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
+        hints.insert(ORIGIN_HINT, Variant::from(7_u32));
+        assert_eq!(string_hint(&hints, ORIGIN_HINT), None);
+        assert_eq!(string_hint(&hints, DESKTOP_ENTRY_HINT), None);
+        let long = "x".repeat(MAX_TEXT_CHARS * 2);
+        hints.insert(ORIGIN_HINT, Variant::from(long.as_str()));
+        assert_eq!(
+            string_hint(&hints, ORIGIN_HINT).map(|origin| origin.len()),
+            Some(MAX_TEXT_CHARS)
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -314,9 +387,9 @@ mod tests {
             let cancelled = tokio::time::timeout(Duration::from_millis(500), observed.next()).await;
             assert!(cancelled.is_err());
         }
-        let first = observed.next().await.unwrap();
-        let second = observed.next().await.unwrap();
-        assert_eq!([first.summary, second.summary], ["first", "second"]);
+        for _ in 0..2 {
+            assert_eq!(observed.next().await.unwrap().app, AppId("claude"));
+        }
         assert_eq!(observed.next().await, None, "the messages ended");
     }
 

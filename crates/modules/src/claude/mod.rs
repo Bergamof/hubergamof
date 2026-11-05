@@ -2,15 +2,16 @@
 //! front, in attention while Claude asks for something.
 //!
 //! - Closed: pressing starts it (through its desktop entry).
-//! - Open with a window: pressing brings it to the front (the one asking
-//!   for attention first).
+//! - Open with a window: pressing brings its first window to the front.
 //! - Open in the system tray only, or windows not followed (no KWin):
 //!   pressing starts it again, which shows the window of the running
 //!   instance.
-//! - In attention when one of its windows asks for it, or when Claude sent
-//!   a notification (permission asked, answer ready: sent in the
-//!   background) until the key is pressed or Claude is in front. The texts
-//!   are neither shown nor read.
+//! - In attention when Claude sent a notification in the background — the
+//!   desktop application, or claude.ai in Brave (recognised by the browser's
+//!   executable and the site it names) — until the key is pressed or Claude
+//!   Desktop is in front. The texts are neither shown nor read. Its windows
+//!   asking for attention do not count: Claude Desktop asks whenever it
+//!   loses the focus.
 //!
 //! Only ever launches a fixed program with a fixed argument, never a value
 //! from the configuration; one launch at a time, whatever the instance.
@@ -28,8 +29,8 @@ use std::sync::Arc;
 use crate::background::forward_states;
 use crate::desktop::{
     AppAttention, AppId, AppState, ClassMatch, DesktopAction, DesktopApp, DesktopError, DesktopHub,
-    DesktopState, DesktopSubscription, ExecutableMatch, Launch, LaunchStart, WindowId,
-    forward_notifications,
+    DesktopState, DesktopSubscription, ExecutableMatch, Launch, LaunchStart, NotificationRelay,
+    WindowId, forward_notifications,
 };
 
 /// Kind of the Claude module.
@@ -47,6 +48,16 @@ const EXECUTABLE: &str = "/usr/lib/claude-desktop/claude-desktop";
 /// Argument of the Electron helper processes (renderers, GPU…), not Claude
 /// itself.
 const HELPER_ARGUMENT: &str = "--type=";
+
+/// Brave's main executable: Arch/Manjaro package, then Brave's own
+/// packages.
+const BRAVE_EXECUTABLES: [&str; 2] = ["/opt/brave-bin/brave", "/opt/brave.com/brave/brave"];
+
+/// Desktop entry of Brave.
+const BRAVE_ENTRY: &str = "brave-browser";
+
+/// Site of Claude's web version.
+const WEB_ORIGIN: &str = "claude.ai";
 
 /// Starts a desktop entry, as the desktop's launchers do (looked up in
 /// `PATH`, shipped with GTK).
@@ -66,6 +77,22 @@ pub fn desktop_app() -> DesktopApp {
             helper_argument: Some(HELPER_ARGUMENT.into()),
         },
         desktop_entry: Some(APP_ID.into()),
+        relays: vec![web_in_brave()],
+    }
+}
+
+/// claude.ai in Brave: its notifications are Claude's too.
+fn web_in_brave() -> NotificationRelay {
+    NotificationRelay {
+        executables: BRAVE_EXECUTABLES
+            .iter()
+            .map(|path| ExecutableMatch {
+                path: path.into(),
+                helper_argument: None,
+            })
+            .collect(),
+        desktop_entry: BRAVE_ENTRY.into(),
+        origin: WEB_ORIGIN.into(),
     }
 }
 
@@ -134,7 +161,7 @@ impl ModuleFactory for ClaudeFactory {
         Ok(Box::new(Claude {
             desktop,
             app: AppState::default(),
-            attention: AppAttention::default(),
+            attention: AppAttention::notifications_only(),
             events,
             launching: false,
         }))
@@ -158,7 +185,7 @@ enum ClaudeEvent {
 pub struct Claude {
     desktop: DesktopSubscription,
     app: AppState,
-    /// Claude asks for something (window asking, notification).
+    /// Claude asks for something (notification).
     attention: AppAttention,
     events: EventSender,
     /// This instance started a launch, under way.
@@ -166,15 +193,10 @@ pub struct Claude {
 }
 
 impl Claude {
-    /// The window a press brings to the front: the first one asking for
-    /// attention, otherwise the first one.
+    /// The window a press brings to the front.
     fn window_to_front(&self) -> Option<WindowId> {
         let windows = self.app.windows.as_deref().unwrap_or_default();
-        windows
-            .iter()
-            .find(|window| window.demands_attention)
-            .or_else(|| windows.first())
-            .map(|window| window.id.clone())
+        windows.first().map(|window| window.id.clone())
     }
 
     fn handle(&mut self, event: ClaudeEvent) -> Vec<Command> {

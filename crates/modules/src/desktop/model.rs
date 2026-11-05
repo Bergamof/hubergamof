@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-/// Longest window title or notification text kept, in characters: enough to
-/// recognise a project or a request, bounded whatever an application sends.
+/// Longest window title or notification hint kept, in characters: enough
+/// to recognise a project or a site, bounded whatever an application sends.
 pub(super) const MAX_TEXT_CHARS: usize = 512;
 
 /// Identifier of a followed application (`"claude"`, `"intellij"`).
@@ -68,6 +68,67 @@ impl ExecutableMatch {
     }
 }
 
+/// What a notification tells of its sender, through its hints: given by
+/// the sender itself, so they can only rule notifications out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NotificationHints {
+    /// `desktop-entry`: the sender's desktop entry.
+    pub desktop_entry: Option<String>,
+    /// `x-kde-origin-name`: the site behind a browser's notification, set
+    /// by the browser from the site's address (a page cannot choose it, a
+    /// browser extension can).
+    pub origin: Option<String>,
+}
+
+impl NotificationHints {
+    /// Hints naming the desktop entry `entry` only.
+    #[must_use]
+    pub fn entry(entry: Option<&str>) -> Self {
+        Self {
+            desktop_entry: entry.map(String::from),
+            origin: None,
+        }
+    }
+}
+
+/// A program notifying on an application's behalf: a browser showing its
+/// web version. Its notifications are the application's only when they come
+/// from that site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationRelay {
+    /// The program's main process, any of these.
+    pub executables: Vec<ExecutableMatch>,
+    /// `desktop-entry` hint of the program: another one rules the
+    /// notification out.
+    pub desktop_entry: String,
+    /// The site, exactly (`x-kde-origin-name` hint, required).
+    pub origin: String,
+}
+
+impl NotificationRelay {
+    /// Whether a notification with `hints` may be relayed for the
+    /// application.
+    #[must_use]
+    pub fn may_have_sent(&self, hints: &NotificationHints) -> bool {
+        hints.origin.as_deref() == Some(self.origin.as_str())
+            && hints
+                .desktop_entry
+                .as_deref()
+                .is_none_or(|entry| entry == self.desktop_entry)
+    }
+
+    /// Whether a notification with `hints`, sent by `executable`, is
+    /// relayed for the application.
+    #[must_use]
+    pub fn sent(&self, hints: &NotificationHints, executable: &Path) -> bool {
+        self.may_have_sent(hints)
+            && self
+                .executables
+                .iter()
+                .any(|matcher| matcher.matches_executable(executable))
+    }
+}
+
 /// An application followed on the desktop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopApp {
@@ -80,25 +141,45 @@ pub struct DesktopApp {
     /// `desktop-entry` hint its notifications carry, if known: a
     /// notification naming another entry is not its own.
     pub desktop_entry: Option<String>,
+    /// Other programs notifying on its behalf.
+    pub relays: Vec<NotificationRelay>,
 }
 
 impl DesktopApp {
-    /// Whether a notification with the `desktop-entry` hint `entry` may be
-    /// this application's: the hint alone proves nothing (any program may
-    /// give any), but a hint naming another application rules it out.
+    /// Whether a notification with `hints` may be this application's,
+    /// sent by itself or relayed: hints alone prove nothing (any program
+    /// may give any), but hints naming another application rule it out.
     #[must_use]
-    pub fn may_have_sent(&self, entry: Option<&str>) -> bool {
-        match (self.desktop_entry.as_deref(), entry) {
+    pub fn may_have_sent(&self, hints: &NotificationHints) -> bool {
+        self.may_have_sent_itself(hints)
+            || self.relays.iter().any(|relay| relay.may_have_sent(hints))
+    }
+
+    /// Whether a notification with `hints`, sent by `executable`, is this
+    /// application's: its sender runs the application, or relays it.
+    #[must_use]
+    pub fn sent(&self, hints: &NotificationHints, executable: &Path) -> bool {
+        (self.may_have_sent_itself(hints) && self.executable.matches_executable(executable))
+            || self
+                .relays
+                .iter()
+                .any(|relay| relay.sent(hints, executable))
+    }
+
+    /// Whether a notification with `hints` may come from the application
+    /// itself: a notification naming a site comes from a browser, only
+    /// ever a relay's.
+    fn may_have_sent_itself(&self, hints: &NotificationHints) -> bool {
+        if hints.origin.is_some() {
+            return false;
+        }
+        match (
+            self.desktop_entry.as_deref(),
+            hints.desktop_entry.as_deref(),
+        ) {
             (Some(own), Some(entry)) => own == entry,
             _ => true,
         }
-    }
-
-    /// Whether a notification with the hint `entry`, sent by `executable`,
-    /// is this application's: its sender runs the application.
-    #[must_use]
-    pub fn sent(&self, entry: Option<&str>, executable: &Path) -> bool {
-        self.may_have_sent(entry) && self.executable.matches_executable(executable)
     }
 }
 
@@ -157,26 +238,13 @@ fn bounded_text<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Str
     String::deserialize(deserializer).map(bounded)
 }
 
-/// A notification of a followed application. Its texts are the sender's
-/// own: shown, never interpreted.
-#[derive(Clone, PartialEq, Eq)]
+/// A notification of a followed application. Only its sender is kept:
+/// its texts (what Claude asks, extracts of conversations) are neither
+/// copied nor read.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppNotification {
     /// Application that sent it.
     pub app: AppId,
-    /// Its summary, at most [`MAX_TEXT_CHARS`] characters.
-    pub summary: String,
-    /// Its body, at most [`MAX_TEXT_CHARS`] characters.
-    pub body: String,
-}
-
-impl std::fmt::Debug for AppNotification {
-    /// Without its texts, which may be private (what Claude asks), so that
-    /// logging it never leaks them.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AppNotification")
-            .field("app", &self.app)
-            .finish_non_exhaustive()
-    }
 }
 
 /// A program to start, run directly (never through a shell).
@@ -253,6 +321,7 @@ mod tests {
                 helper_argument: Some("--type=".into()),
             },
             desktop_entry: Some("com.anthropic.Claude".into()),
+            relays: Vec::new(),
         }
     }
 
@@ -315,21 +384,76 @@ mod tests {
         let app = claude();
         let claude_exe = Path::new(CLAUDE_EXE);
         let other_exe = Path::new("/usr/bin/notify-send");
-        assert!(app.sent(Some("com.anthropic.Claude"), claude_exe));
-        assert!(app.sent(None, claude_exe));
+        assert!(app.sent(
+            &NotificationHints::entry(Some("com.anthropic.Claude")),
+            claude_exe
+        ));
+        assert!(app.sent(&NotificationHints::entry(None), claude_exe));
         assert!(
-            !app.sent(Some("com.anthropic.Claude"), other_exe),
+            !app.sent(
+                &NotificationHints::entry(Some("com.anthropic.Claude")),
+                other_exe
+            ),
             "a hint alone proves nothing"
         );
-        assert!(!app.sent(Some("org.kde.konsole"), claude_exe));
+        assert!(!app.sent(
+            &NotificationHints::entry(Some("org.kde.konsole")),
+            claude_exe
+        ));
 
-        assert!(app.may_have_sent(None) && app.may_have_sent(Some("com.anthropic.Claude")));
-        assert!(!app.may_have_sent(Some("org.kde.konsole")));
+        assert!(
+            app.may_have_sent(&NotificationHints::entry(None))
+                && app.may_have_sent(&NotificationHints::entry(Some("com.anthropic.Claude")))
+        );
+        assert!(!app.may_have_sent(&NotificationHints::entry(Some("org.kde.konsole"))));
         let without_entry = DesktopApp {
             desktop_entry: None,
+            relays: Vec::new(),
             ..claude()
         };
-        assert!(without_entry.may_have_sent(Some("org.kde.konsole")));
+        assert!(without_entry.may_have_sent(&NotificationHints::entry(Some("org.kde.konsole"))));
+    }
+
+    #[test]
+    fn relays_send_for_their_site_from_their_executables() {
+        let brave = Path::new("/opt/brave-bin/brave");
+        let app = DesktopApp {
+            relays: vec![NotificationRelay {
+                executables: vec![ExecutableMatch {
+                    path: brave.into(),
+                    helper_argument: None,
+                }],
+                desktop_entry: "brave-browser".into(),
+                origin: "claude.ai".into(),
+            }],
+            ..claude()
+        };
+        let hints = |entry: Option<&str>, origin: Option<&str>| NotificationHints {
+            desktop_entry: entry.map(String::from),
+            origin: origin.map(String::from),
+        };
+        let site = hints(Some("brave-browser"), Some("claude.ai"));
+        assert!(app.may_have_sent(&site) && app.sent(&site, brave));
+        assert!(app.sent(&hints(None, Some("claude.ai")), brave));
+        assert!(
+            !app.sent(&site, Path::new("/usr/bin/notify-send")),
+            "forged"
+        );
+        assert!(!app.sent(&site, Path::new(CLAUDE_EXE)), "not the relay");
+        for other in [
+            hints(Some("brave-browser"), Some("mail.example.com")),
+            hints(Some("brave-browser"), Some("claude.ai.example.com")),
+            hints(Some("brave-browser"), None),
+            hints(Some("org.kde.konsole"), Some("claude.ai")),
+        ] {
+            assert!(!app.may_have_sent(&other), "{other:?}");
+            assert!(!app.sent(&other, brave), "{other:?}");
+        }
+        // A site's notification comes from a browser, never from the
+        // application itself, even from its executable.
+        let unnamed = hints(None, Some("mail.example.com"));
+        assert!(!app.may_have_sent(&unnamed));
+        assert!(!app.sent(&unnamed, Path::new(CLAUDE_EXE)));
     }
 
     #[test]
@@ -377,17 +501,5 @@ mod tests {
             windows: Some(Vec::new().into()),
         };
         assert!(in_tray.is_running() && !in_tray.demands_attention() && !in_tray.is_in_front());
-    }
-
-    #[test]
-    fn notifications_never_show_their_texts_in_logs() {
-        let notification = AppNotification {
-            app: AppId("claude"),
-            summary: "secret".into(),
-            body: "secret".into(),
-        };
-        let logged = format!("{notification:?}");
-        assert!(!logged.contains("secret"), "{logged}");
-        assert!(logged.contains("claude"));
     }
 }

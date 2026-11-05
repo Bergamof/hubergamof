@@ -446,6 +446,7 @@ mod tests {
                 helper_argument: None,
             },
             desktop_entry: None,
+            relays: Vec::new(),
         };
         WindowFilter::of(&[
             app("claude", ClassMatch::Exact("com.anthropic.Claude".into())),

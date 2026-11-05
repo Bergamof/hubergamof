@@ -84,6 +84,7 @@ pub fn desktop_app() -> DesktopApp {
             helper_argument: None,
         },
         desktop_entry: None,
+        relays: Vec::new(),
     }
 }
 
@@ -199,7 +200,7 @@ impl ModuleFactory for IntellijFactory {
             catalog: None,
             events,
             launching: None,
-            attention: AppAttention::default(),
+            attention: AppAttention::with_windows(),
         }))
     }
 }

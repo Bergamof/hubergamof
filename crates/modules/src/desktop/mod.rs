@@ -31,8 +31,8 @@ pub use backend::{
 };
 pub use hub::{DesktopAction, DesktopHub, DesktopState, DesktopSubscription, LaunchStart};
 pub use model::{
-    AppId, AppNotification, AppState, ClassMatch, DesktopApp, ExecutableMatch, Launch, Window,
-    WindowId,
+    AppId, AppNotification, AppState, ClassMatch, DesktopApp, ExecutableMatch, Launch,
+    NotificationHints, NotificationRelay, Window, WindowId,
 };
 #[cfg(test)]
 pub(crate) use simulated::DEMO_CLAUDE_EXECUTABLE;

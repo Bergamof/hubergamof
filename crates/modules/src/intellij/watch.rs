@@ -144,12 +144,9 @@ mod tests {
 
     use super::*;
 
-    /// Longest (simulated) wait for a read to start: time does not advance
-    /// by itself while a blocking read runs.
-    const START_PATIENCE: Duration = Duration::from_secs(60);
-
-    /// Most polls a released read may take to be published.
-    const MAX_POLLS: usize = 10;
+    /// Longest (simulated) wait for a read to start or be published: time
+    /// does not advance by itself while a blocking read runs.
+    const PATIENCE: Duration = Duration::from_secs(60);
 
     /// A catalog whose reads tell when they start, then wait for a
     /// release; counted.
@@ -190,8 +187,8 @@ mod tests {
         });
         let hub = CatalogHub::new(Arc::clone(&catalog) as _);
         let subscription = hub.subscribe();
-        let states = subscription.states();
-        tokio::time::timeout(START_PATIENCE, starts.recv())
+        let mut states = subscription.states();
+        tokio::time::timeout(PATIENCE, starts.recv())
             .await
             .expect("a first read");
         for _ in 0..4 {
@@ -202,14 +199,12 @@ mod tests {
 
         // Released: the read waited for is published, and polling goes on.
         release.send(()).unwrap();
-        for _ in 0..MAX_POLLS {
-            if states.borrow().is_some() {
-                break;
-            }
-            pass(CATALOG_POLL).await;
-        }
+        tokio::time::timeout(PATIENCE, states.changed())
+            .await
+            .expect("published")
+            .unwrap();
         assert_eq!(states.borrow().as_deref(), Some(&Catalog::default()));
-        tokio::time::timeout(START_PATIENCE, starts.recv())
+        tokio::time::timeout(PATIENCE, starts.recv())
             .await
             .expect("polling goes on");
         // The released read is the only one before.

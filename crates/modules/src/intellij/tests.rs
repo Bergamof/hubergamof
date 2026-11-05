@@ -470,7 +470,7 @@ async fn a_notification_of_intellij_puts_its_key_in_attention_until_pressed() {
     let idea = Path::new(DEMO_INTELLIJ_EXECUTABLE);
     setup
         .desktop
-        .notify(Path::new("/usr/bin/notify-send"), None, "Tests Passed", "");
+        .notify(Path::new("/usr/bin/notify-send"), None);
     harness.settle().await;
     assert_eq!(
         harness.module.key().state,
@@ -478,9 +478,7 @@ async fn a_notification_of_intellij_puts_its_key_in_attention_until_pressed() {
         "not IntelliJ's"
     );
 
-    setup
-        .desktop
-        .notify(idea, None, "Tests Passed", "268 passed");
+    setup.desktop.notify(idea, None);
     harness
         .until(|module| module.key().state == KeyState::Attention)
         .await;
@@ -496,12 +494,9 @@ async fn a_notification_while_intellij_is_in_front_is_ignored() {
     in_front.active = true;
     setup.desktop.set_windows(vec![in_front]);
     let mut harness = setup.instance(&json!({})).await;
-    setup.desktop.notify(
-        Path::new(DEMO_INTELLIJ_EXECUTABLE),
-        None,
-        "Tests Passed",
-        "",
-    );
+    setup
+        .desktop
+        .notify(Path::new(DEMO_INTELLIJ_EXECUTABLE), None);
     harness.settle().await;
     assert_eq!(harness.module.key().state, KeyState::Active);
 }
@@ -512,12 +507,9 @@ async fn intellij_in_front_ends_the_attention_of_a_notification() {
     let mut harness = setup.instance(&json!({})).await;
     // Sent twice by IntelliJ: once is enough.
     for _ in 0..2 {
-        setup.desktop.notify(
-            Path::new(DEMO_INTELLIJ_EXECUTABLE),
-            None,
-            "Tests Passed",
-            "",
-        );
+        setup
+            .desktop
+            .notify(Path::new(DEMO_INTELLIJ_EXECUTABLE), None);
     }
     harness
         .until(|module| module.key().state == KeyState::Attention)

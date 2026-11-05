@@ -15,16 +15,47 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::model::{AppId, AppNotification, AppState};
 
-/// Whether an application asks for the user's attention: one of its
-/// windows asks for it, or it notified since the user last turned to it.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// Whether an application asks for the user's attention: it notified
+/// since the user last turned to it, or (when its windows are reliable)
+/// one of its windows asks for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppAttention {
+    windows: WindowAttention,
     notified: bool,
     window_asks: bool,
     in_front: bool,
 }
 
+/// Whether the windows asking for attention count: some applications ask
+/// whenever they lose the focus (Claude Desktop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowAttention {
+    Counts,
+    Ignored,
+}
+
 impl AppAttention {
+    /// Attention from the notifications and the windows asking for it.
+    #[must_use]
+    pub fn with_windows() -> Self {
+        Self::new(WindowAttention::Counts)
+    }
+
+    /// Attention from the notifications only.
+    #[must_use]
+    pub fn notifications_only() -> Self {
+        Self::new(WindowAttention::Ignored)
+    }
+
+    fn new(windows: WindowAttention) -> Self {
+        Self {
+            windows,
+            notified: false,
+            window_asks: false,
+            in_front: false,
+        }
+    }
+
     /// The application sent a notification: of no matter while it is in
     /// front, the user is already looking at it.
     pub fn notified(&mut self) {
@@ -36,7 +67,7 @@ impl AppAttention {
     pub fn app_changed(&mut self, app: &AppState) {
         self.in_front = app.is_in_front();
         self.notified &= !self.in_front;
-        self.window_asks = app.demands_attention();
+        self.window_asks = self.windows == WindowAttention::Counts && app.demands_attention();
     }
 
     /// The user pressed the key: ends the attention of the notifications
@@ -97,7 +128,7 @@ mod tests {
 
     #[test]
     fn notifications_ask_until_pressed_or_in_front() {
-        let mut attention = AppAttention::default();
+        let mut attention = AppAttention::with_windows();
         assert!(!attention.is_on());
         attention.notified();
         attention.app_changed(&with_window(false, false));
@@ -116,12 +147,21 @@ mod tests {
 
     #[test]
     fn a_window_asks_for_as_long_as_it_does() {
-        let mut attention = AppAttention::default();
+        let mut attention = AppAttention::with_windows();
         attention.app_changed(&with_window(false, true));
         attention.acknowledge();
         assert!(attention.is_on(), "still asking");
         attention.app_changed(&with_window(false, false));
         assert!(!attention.is_on());
+    }
+
+    #[test]
+    fn windows_asking_may_be_ignored() {
+        let mut attention = AppAttention::notifications_only();
+        attention.app_changed(&with_window(false, true));
+        assert!(!attention.is_on(), "window asking");
+        attention.notified();
+        assert!(attention.is_on(), "notified");
     }
 
     #[tokio::test(start_paused = true)]
@@ -136,11 +176,7 @@ mod tests {
             ctx.events().clone(),
             || "notified",
         ));
-        let notification = |app| AppNotification {
-            app,
-            summary: String::new(),
-            body: String::new(),
-        };
+        let notification = |app| AppNotification { app };
         sender.send(notification(AppId("other"))).unwrap();
         sender.send(notification(APP)).unwrap();
         drop(sender);

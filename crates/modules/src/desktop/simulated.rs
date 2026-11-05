@@ -14,7 +14,7 @@ use super::backend::{
     DesktopBackend, DesktopError, NotificationFilter, NotificationStream, WindowChanges,
     WindowFilter,
 };
-use super::model::{AppNotification, ExecutableMatch, Launch, Window, WindowId, bounded};
+use super::model::{AppNotification, ExecutableMatch, Launch, NotificationHints, Window, WindowId};
 
 /// Notifications a slow observer may fall behind by before missing some.
 const NOTIFICATION_CAPACITY: usize = 16;
@@ -35,9 +35,7 @@ pub(crate) const DEMO_INTELLIJ_EXECUTABLE: &str = "/opt/intellij-idea/bin/idea";
 #[derive(Debug, Clone)]
 struct Sent {
     executable: PathBuf,
-    entry: Option<String>,
-    summary: String,
-    body: String,
+    hints: NotificationHints,
 }
 
 /// The simulated desktop.
@@ -103,13 +101,16 @@ impl SimulatedDesktop {
 
     /// `executable` sends a notification with the `desktop-entry` hint
     /// `entry`.
-    pub fn notify(&self, executable: &Path, entry: Option<&str>, summary: &str, body: &str) {
+    pub fn notify(&self, executable: &Path, entry: Option<&str>) {
+        self.notify_with(executable, NotificationHints::entry(entry));
+    }
+
+    /// `executable` sends a notification with `hints`.
+    pub fn notify_with(&self, executable: &Path, hints: NotificationHints) {
         // No observer: nobody to tell.
         let _receivers = self.notifications.send(Sent {
             executable: executable.to_owned(),
-            entry: entry.map(String::from),
-            summary: summary.into(),
-            body: body.into(),
+            hints,
         });
     }
 
@@ -250,15 +251,8 @@ impl NotificationStream for SimulatedNotifications {
         loop {
             match self.received.recv().await {
                 Ok(sent) => {
-                    if let Some(app) = self
-                        .filter
-                        .attribute(sent.entry.as_deref(), &sent.executable)
-                    {
-                        return Some(AppNotification {
-                            app,
-                            summary: bounded(sent.summary),
-                            body: bounded(sent.body),
-                        });
+                    if let Some(app) = self.filter.attribute(&sent.hints, &sent.executable) {
+                        return Some(AppNotification { app });
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
