@@ -140,6 +140,51 @@ async fn an_idle_session_is_probed_less_often_until_its_windows_change() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_launch_brings_the_next_probe_forward_without_windows() {
+    let desktop = Arc::new(SimulatedDesktop::empty());
+    desktop.set_compositor(false);
+    let hub = hub_on(&desktop);
+    let subscription = hub.subscribe();
+    let mut states = subscription.states();
+    tokio::time::sleep(PROCESS_PROBE_INTERVAL * PROBES_BEFORE_IDLE + SETTLE).await;
+    assert_eq!(states.borrow_and_update().app(CLAUDE).running, Some(false));
+
+    let (reported, outcome) = oneshot::channel();
+    let start = subscription.launch(
+        CLAUDE,
+        Launch {
+            program: "claude".into(),
+            args: Vec::new(),
+        },
+        move |result| {
+            let _ = reported.send(result);
+        },
+    );
+    assert_eq!(start, LaunchStart::Started);
+    outcome.await.unwrap().unwrap();
+    desktop.set_running(vec![DEMO_CLAUDE_EXECUTABLE.into()]);
+    // Idle: the next probe would have come an idle interval later.
+    tokio::time::sleep(PROCESS_PROBE_INTERVAL + SETTLE).await;
+    assert_eq!(states.borrow_and_update().app(CLAUDE).running, Some(true));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_new_title_does_not_end_idle_probing() {
+    let desktop = Arc::new(SimulatedDesktop::empty());
+    desktop.set_windows(vec![window("claude", DEMO_CLAUDE_CLASS)]);
+    let hub = hub_on(&desktop);
+    let _subscription = hub.subscribe();
+    tokio::time::sleep(PROCESS_PROBE_INTERVAL * PROBES_BEFORE_IDLE + SETTLE).await;
+
+    let mut renamed = window("claude", DEMO_CLAUDE_CLASS);
+    renamed.caption = "Autre conversation".into();
+    desktop.set_windows(vec![renamed]);
+    let before = desktop.probes();
+    tokio::time::sleep(IDLE_PROBE_INTERVAL.checked_sub(SETTLE).unwrap()).await;
+    assert!(desktop.probes() - before <= 1, "still idle");
+}
+
+#[tokio::test(start_paused = true)]
 async fn notifications_are_attributed_to_their_application() {
     let desktop = Arc::new(SimulatedDesktop::empty());
     let hub = hub_on(&desktop);

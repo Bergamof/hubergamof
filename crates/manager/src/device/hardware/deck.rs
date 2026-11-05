@@ -23,10 +23,10 @@ use crate::device::strip::{check_image_size, check_strip_region};
 use crate::device::{DeckBackend, DeviceError, INPUT_EVENT_CAPACITY, InputEvent};
 
 /// How long one input read waits for data before queued commands are
-/// processed; bounds the latency of image writes (not of presses: a read
-/// returns as soon as a report comes). Long enough for the thread of an
-/// idle device to wake up rarely (40 times a second).
-pub const INPUT_READ_TIMEOUT: Duration = Duration::from_millis(25);
+/// processed; bounds the latency of image writes. Paid once per write (the
+/// painter waits for each before sending the next): longer would slow down
+/// every page shown, until the writes of a frame are sent together.
+pub const INPUT_READ_TIMEOUT: Duration = Duration::from_millis(10);
 
 type Reply = oneshot::Sender<Result<(), DeviceError>>;
 

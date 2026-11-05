@@ -74,7 +74,8 @@ pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
 /// Number of reused rendered images kept in the cache (see
 /// module `cache`): the faces of a few pages of the largest device (32 keys)
 /// on several devices. Bounded in number, the images of one surface being
-/// alike: at most ~15 MB of pixels with the largest touch zones.
+/// alike: at most ~20 MB with the largest touch zones (pixels of these and
+/// of the probation images, and their PNG).
 pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(192) {
     Some(capacity) => capacity,
     None => NonZeroUsize::MIN,

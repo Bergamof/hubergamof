@@ -12,7 +12,7 @@
 //!   them (the monitor sees the whole session: not without a reason);
 //! - looks at their processes every [`PROCESS_PROBE_INTERVAL`], less often
 //!   ([`IDLE_PROBE_INTERVAL`]) while nothing changes, again often as soon as
-//!   their windows change (an application started or quit);
+//!   a window of theirs appears or goes, or one of them was launched;
 //! - publishes what it knows of each application
 //!   ([`DesktopSubscription::states`]) and hands their notifications on
 //!   ([`DesktopSubscription::notifications`]).
@@ -26,7 +26,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Notify, broadcast, watch};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
@@ -121,6 +121,8 @@ pub struct DesktopHub {
     /// Whether a module listens to the notifications: the monitor only
     /// runs from then on.
     observing: watch::Sender<bool>,
+    /// Told when a launch succeeded: the processes are looked at soon.
+    launched: Arc<Notify>,
     control: Mutex<WorkerControl>,
 }
 
@@ -150,6 +152,7 @@ impl DesktopHub {
             states: watch::Sender::new(DesktopState::default()),
             notifications: broadcast::Sender::new(NOTIFICATION_CAPACITY),
             observing: watch::Sender::new(false),
+            launched: Arc::new(Notify::new()),
             control: Mutex::new(WorkerControl::default()),
         })
     }
@@ -177,6 +180,7 @@ impl DesktopHub {
             self.states.clone(),
             self.notifications.clone(),
             self.observing.subscribe(),
+            Arc::clone(&self.launched),
         );
         spawn_worker("desktop", worker.run())
     }
@@ -248,9 +252,14 @@ impl DesktopSubscription {
             return LaunchStart::Busy;
         };
         let backend = Arc::clone(&self.hub.backend);
+        let launched = Arc::clone(&self.hub.launched);
         let launching = async move {
             let outcome = backend.launch(&launch).await;
             drop(pass);
+            if outcome.is_ok() {
+                // Kept for the worker if it is busy: never missed.
+                launched.notify_one();
+            }
             outcome
         };
         if spawn_action(launching, Err(DesktopError::Panicked), report) {
@@ -291,6 +300,7 @@ struct Worker {
     /// Whether to observe the notifications (see [`DesktopHub`]).
     wanted: watch::Receiver<bool>,
     probe_due: Instant,
+    launched: Arc<Notify>,
     /// Looks at the processes in a row that changed nothing.
     quiet_probes: u32,
     /// Whether the last attempt of each kind succeeded, to log only
@@ -307,6 +317,7 @@ impl Worker {
         states: watch::Sender<DesktopState>,
         notifications: broadcast::Sender<AppNotification>,
         wanted: watch::Receiver<bool>,
+        launched: Arc<Notify>,
     ) -> Self {
         Self {
             window_filter: WindowFilter::of(&apps),
@@ -320,6 +331,7 @@ impl Worker {
             observer: listener(),
             wanted,
             probe_due: Instant::now(),
+            launched,
             quiet_probes: 0,
             following: true,
             observing: true,
@@ -332,7 +344,9 @@ impl Worker {
         loop {
             let follow_due = self.windows.due();
             let observe_due = self.observer.due().filter(|_| *self.wanted.borrow());
+            let launched = Arc::clone(&self.launched);
             tokio::select! {
+                () = launched.notified() => self.probe_soon(),
                 // Wanted from now on: the next turn starts observing.
                 Ok(()) = self.wanted.changed() => {}
                 () = sleep_until(follow_due) => self.follow().await,
@@ -388,10 +402,19 @@ impl Worker {
         self.probe_due = Instant::now() + interval;
     }
 
+    /// Brings the next look at the processes forward: something started or
+    /// ended.
+    fn probe_soon(&mut self) {
+        self.quiet_probes = 0;
+        self.probe_due = self.probe_due.min(Instant::now() + PROCESS_PROBE_INTERVAL);
+    }
+
     /// Hands the windows of each application on; `None`: not followed. A
-    /// change brings the next look at the processes forward.
+    /// window appearing or going (not a new title or focus) brings the next
+    /// look at the processes forward.
     fn publish_windows(&mut self, windows: Option<&[Window]>) {
-        let changed = self.update(|index, state| {
+        let before = self.window_ids();
+        self.update(|index, state| {
             let class = &self.apps[index].window_class;
             state.windows = windows.map(|windows| {
                 windows
@@ -401,10 +424,23 @@ impl Worker {
                     .collect()
             });
         });
-        if changed {
-            self.quiet_probes = 0;
-            self.probe_due = self.probe_due.min(Instant::now() + PROCESS_PROBE_INTERVAL);
+        if self.window_ids() != before {
+            self.probe_soon();
         }
+    }
+
+    /// The identifiers of the windows of each application, as published.
+    fn window_ids(&self) -> Vec<Option<Vec<WindowId>>> {
+        let state = self.states.borrow();
+        self.apps
+            .iter()
+            .map(|app| {
+                state
+                    .app(app.id)
+                    .windows
+                    .map(|windows| windows.iter().map(|window| window.id.clone()).collect())
+            })
+            .collect()
     }
 
     /// Applies `change` to the state of each application (by its index),
