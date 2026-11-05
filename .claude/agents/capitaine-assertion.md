@@ -1,6 +1,7 @@
 ---
 name: capitaine-assertion
 description: Spécialiste stratégie et qualité des tests du projet Bergadeck. À solliciter après l'ajout de fonctionnalités ou de tests ; rend un rapport, ne modifie rien.
+model: sonnet
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 ---
 

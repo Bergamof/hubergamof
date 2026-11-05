@@ -1,6 +1,7 @@
 ---
 name: turbo-escargot
 description: Spécialiste performances du projet Bergadeck. À solliciter après des changements du cœur Rust (boucle appareil, rendu d'images, WebSocket) ou du bundle UI ; rend un rapport, ne modifie rien.
+model: sonnet
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 ---
 

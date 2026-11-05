@@ -1,6 +1,7 @@
 ---
 name: cerbere-le-paranoiaque
 description: Spécialiste sécurité et CVE du projet Bergadeck. À solliciter après des changements du serveur local, des modules qui lancent des commandes ou pilotent Docker, ou des dépendances ; rend un rapport, ne modifie rien.
+model: opus
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: gardien-du-phare
 description: Spécialiste UX et accessibilité (WCAG 2.2 AA, Lighthouse) du projet Bergadeck. À solliciter après toute modification de l'interface ui/ ; rend un rapport, ne modifie rien.
+model: sonnet
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 ---
 

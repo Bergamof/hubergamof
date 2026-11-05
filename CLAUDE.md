@@ -35,20 +35,20 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Conventions et pièges par techno : `.claude/rules/rust.md`, `ui.md`, `ci-packaging.md` (chargés selon les fichiers touchés).
 - Spécialistes en lecture seule (`.claude/agents/`), qui rendent des rapports :
 
-| Agent | Rôle |
-|---|---|
-| `gardien-du-phare` | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) |
-| `turbo-escargot` | performances |
-| `cerbere-le-paranoiaque` | sécurité & CVE |
-| `maniaque-du-plumeau` | architecture & clean code |
-| `capitaine-assertion` | stratégie de tests |
+| Agent | Modèle | Rôle |
+|---|---|---|
+| `gardien-du-phare` | sonnet | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) |
+| `turbo-escargot` | sonnet | performances |
+| `cerbere-le-paranoiaque` | opus | sécurité & CVE |
+| `maniaque-du-plumeau` | opus | architecture & clean code |
+| `capitaine-assertion` | sonnet | stratégie de tests |
 
 ## Méthode de travail
 - Tâche non triviale : d'abord un plan d'action (choix techniques et fonctionnels justifiés, étapes, livrables, spécialistes mobilisés, risques), puis attendre le « go » d'Adrien avant de coder. Écart significatif en cours de route → resoumettre.
 - Les spécialistes rendent des rapports (sévérité, localisation, recommandation) que la session principale doit suivre.
 - Boucle : dev → rapports des spécialistes concernés → corrections → nouvelle passe, jusqu'à zéro bloquant/majeur. Désaccord avec un spécialiste : enjeu significatif → Adrien.
 - Ne solliciter que les spécialistes concernés par la modification (chaque appel repart de zéro et coûte des tokens). Garder le contexte léger : filtrer les sorties de build/tests (erreurs, résumé) plutôt que les afficher en entier.
-- Réutiliser les spécialistes existants ; jamais de suppression d'agent sans accord d'Adrien. Piège appris → l'ajouter au fichier `.claude/rules/` de la techno (ou à la définition du spécialiste concerné).
+- Réutiliser les spécialistes existants ; jamais de suppression d'agent sans accord d'Adrien. Modèle fixé dans le frontmatter (`model:`) : opus là où une omission coûte cher (sécurité, architecture), sonnet pour le reste. Piège appris → l'ajouter au fichier `.claude/rules/` de la techno (ou à la définition du spécialiste concerné).
 
 ## Définition de « done » (sauf indication contraire d'Adrien)
 - Terminé seulement quand toutes les CI déclenchées par les modifications sont vertes sur le dernier commit poussé. Des tests locaux verts ne suffisent pas.
