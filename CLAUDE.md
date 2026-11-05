@@ -97,7 +97,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Tray sous GNOME : nécessite l'extension AppIndicator (présente par défaut sur Ubuntu).
 - `ui/src/lib/generated/` est généré : ne jamais l'éditer à la main, lancer `make gen-types` (supprime le dossier puis régénère). `cargo test --workspace` le régénère aussi. Exclu de Prettier/ESLint (non formaté par ts-rs).
 - SvelteKit 3 n'a plus l'alias `$lib` : imports via sous-chemins Node `#lib/*` (ex. `import type … from '#lib/generated/index.js'`).
-- `pnpm test:e2e` : `globalSetup` compile le gestionnaire, chaque test « demo » en lance un (port libre, config temporaire) ; le projet « sans-gestionnaire » sert le build sur `127.0.0.1:4173` avec proxy vers 7878 : rien ne doit tourner sur 7878. Lighthouse audite `hubergamof --demo` sur 7881.
+- `pnpm test:e2e` : le `webServer` de Playwright construit l'UI puis la sert (il démarre avant `globalSetup`, d'où le build ici et pas dans le setup), `globalSetup` compile le gestionnaire, chaque test « demo » en lance un (port libre, config temporaire) ; le projet « sans-gestionnaire » sert le build sur `127.0.0.1:4173` avec proxy vers 7878 : rien ne doit tourner sur 7878. Lighthouse audite `hubergamof --demo` sur 7881.
 - `.cargo/config.toml` fixe `TS_RS_EXPORT_DIR` et `TS_RS_LARGE_INT=number` (u64/i64 → `number` en TS, pas `bigint`).
 - `DeviceModel` reprend un pour un `elgato_streamdeck::info::Kind` (+ `virtual`) ; champs optionnels sérialisés à `null` (`T | null` en TS).
 - Requêtes vers des API publiques (crates.io, npm, GitHub) : User-Agent générique, jamais d'information personnelle.

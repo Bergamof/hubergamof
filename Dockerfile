@@ -52,7 +52,7 @@ RUN --mount=type=cache,id=hubergamof-cargo-registry,target=/usr/local/cargo/regi
     && install -D -m 0755 target/release/hubergamof /out/hubergamof
 
 # ---------------------------------------------------------------------- Runtime
-FROM debian:trixie-slim@sha256:89c1ea91e897f0fe0a3731595330bc45b8bdef4047464a07116f891a94054b31
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 LABEL org.opencontainers.image.title="hubergamof" \
       org.opencontainers.image.description="Stream Deck manager for Linux (demo mode)" \

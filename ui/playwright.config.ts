@@ -26,9 +26,10 @@ export default defineConfig({
 			use: { ...devices['Desktop Chrome'] }
 		}
 	],
-	// Serves the build made by the global setup.
+	// Builds then serves the UI: Playwright starts this server before the global setup runs,
+	// so a clean checkout (CI) has no build yet.
 	webServer: {
-		command: `pnpm preview --host 127.0.0.1 --port ${PREVIEW_PORT} --strictPort`,
+		command: `pnpm build && pnpm preview --host 127.0.0.1 --port ${PREVIEW_PORT} --strictPort`,
 		url: `http://127.0.0.1:${PREVIEW_PORT}`,
 		reuseExistingServer: !isCi
 	}
