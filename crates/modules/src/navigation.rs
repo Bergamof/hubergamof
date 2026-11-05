@@ -8,13 +8,13 @@ use hubergamof_module_api::{
 };
 use serde_json::Value;
 
-use crate::icons::svg;
+use crate::icons::{asset, svg};
 
 /// Kind of the navigation module.
 pub const NAVIGATION_KIND: &str = "navigation";
 
 /// Icon of the module: scrolling arrows.
-const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>"##;
+const ICON_SVG: &str = asset!("navigation");
 
 /// Creates [`Navigation`] instances.
 #[derive(Debug, Clone, Copy, Default)]

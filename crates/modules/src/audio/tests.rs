@@ -411,10 +411,28 @@ async fn device_pages_list_devices_and_select_the_default() {
         ]
     );
 
+    let icon_of = |harness: &Harness, name: &str| harness.item(OUTPUTS_PAGE, name).image;
+    assert_eq!(
+        icon_of(&harness, "demo.speakers").as_ref(),
+        Some(&*icons::SPEAKER_SELECTED)
+    );
+    assert_eq!(
+        icon_of(&harness, "demo.headset").as_ref(),
+        Some(&*icons::SPEAKER)
+    );
+
     assert_eq!(harness.press(OUTPUTS_PAGE, "demo.headset").await, []);
     assert_eq!(
         harness.item(OUTPUTS_PAGE, "demo.headset").state,
         KeyState::Active
+    );
+    assert_eq!(
+        icon_of(&harness, "demo.headset").as_ref(),
+        Some(&*icons::SPEAKER_SELECTED)
+    );
+    assert_eq!(
+        icon_of(&harness, "demo.speakers").as_ref(),
+        Some(&*icons::SPEAKER)
     );
     assert_eq!(
         harness.item(OUTPUTS_PAGE, "demo.speakers").state,

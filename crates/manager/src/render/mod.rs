@@ -2,8 +2,8 @@
 //!
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
-//! ("contain") and centred on a background colour, with the frame of its
-//! [`KeyState`]; it also renders strip zones from text lines, a gauge or an
+//! ("contain") and centred on a background colour, with the frame of an
+//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge or an
 //! image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
 //! content (bounded segmented LRU, module `cache`: images used once,
 //! like those of a countdown, do not push out those that come back) and
@@ -43,15 +43,6 @@ pub const DEFAULT_BACKGROUND: Rgba<u8> = Rgba([0, 0, 0, u8::MAX]);
 /// Colour of label and zone text.
 pub const TEXT_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
 
-/// Translucent band behind a key label, keeping it readable on any image.
-pub const LABEL_BAND_COLOR: Rgba<u8> = Rgba([0, 0, 0, 170]);
-
-/// Frame of an [`KeyState::Active`] key.
-pub const ACTIVE_BORDER_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
-
-/// Frame of a [`KeyState::Attention`] key.
-pub const ATTENTION_BORDER_COLOR: Rgba<u8> = Rgba([0xff, 0x8c, 0x00, u8::MAX]);
-
 /// Background of a [`KeyState::Attention`] key (dark orange), visible around
 /// and behind a transparent image.
 pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
@@ -60,7 +51,7 @@ pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
 pub const DIMMED_TEXT_COLOR: Rgba<u8> = Rgba([0x8a, 0x8a, 0x8a, u8::MAX]);
 
 /// Filled part of a gauge bar.
-pub const GAUGE_FILL_COLOR: Rgba<u8> = ACTIVE_BORDER_COLOR;
+pub const GAUGE_FILL_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
 
 /// Filled part of a dimmed gauge bar.
 pub const GAUGE_DIMMED_FILL_COLOR: Rgba<u8> = Rgba([0x5c, 0x5c, 0x5c, u8::MAX]);
@@ -88,10 +79,6 @@ pub const RENDER_PROBATION_CAPACITY: NonZeroUsize = match NonZeroUsize::new(32) 
     None => NonZeroUsize::MIN,
 };
 
-/// Width of the frame of an active key, relative to the key width.
-const ACTIVE_BORDER_RATIO: f32 = 0.05;
-/// Width of the frame of a key needing attention, relative to the key width.
-const ATTENTION_BORDER_RATIO: f32 = 0.08;
 /// Size of a feedback mark, relative to the smaller side of the surface.
 const FEEDBACK_MARK_RATIO: f32 = 0.7;
 
@@ -101,11 +88,11 @@ const OK_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 const ALERT_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 6 L96 90 H4 Z" fill="#d93025" stroke="#d93025" stroke-width="6" stroke-linejoin="round"/><rect x="44.5" y="32" width="11" height="34" rx="5" fill="#ffffff"/><circle cx="50" cy="77" r="6.5" fill="#ffffff"/></svg>"##;
 
 /// Key label font size, relative to the key height.
-const LABEL_FONT_RATIO: f32 = 0.16;
-/// Maximum number of lines of a key label.
-const LABEL_MAX_LINES: usize = 2;
-/// Horizontal and vertical padding around a label, relative to the key width.
+const LABEL_FONT_RATIO: f32 = 0.13;
+/// Horizontal padding around a label, relative to the key width.
 const LABEL_PADDING_RATIO: f32 = 0.05;
+/// Vertical padding above and below a label, relative to the key height.
+const LABEL_VERTICAL_PADDING_RATIO: f32 = 0.03;
 /// Font size of the first zone line, relative to the zone height.
 const ZONE_TITLE_FONT_RATIO: f32 = 0.30;
 /// Font size of the other zone lines, relative to the zone height.
@@ -173,8 +160,8 @@ pub struct KeyRequest<'a> {
     pub label: Option<&'a str>,
     /// Background colour, used when the state does not impose one.
     pub background: Rgba<u8>,
-    /// Visual state, drawn as a frame (and a background for
-    /// [`KeyState::Attention`]).
+    /// Visual state: only [`KeyState::Attention`] is drawn (frame and
+    /// background).
     pub state: KeyState,
 }
 
@@ -198,29 +185,14 @@ impl<'a> KeyRequest<'a> {
     }
 }
 
-/// How a [`KeyState`] is drawn: background and frame.
-struct StateStyle {
-    background: Option<Rgba<u8>>,
-    border: Option<(Rgba<u8>, f32)>,
-}
-
-impl StateStyle {
-    fn of(state: KeyState) -> Self {
-        match state {
-            KeyState::Active => Self {
-                background: None,
-                border: Some((ACTIVE_BORDER_COLOR, ACTIVE_BORDER_RATIO)),
-            },
-            KeyState::Attention => Self {
-                background: Some(ATTENTION_BACKGROUND),
-                border: Some((ATTENTION_BORDER_COLOR, ATTENTION_BORDER_RATIO)),
-            },
-            // Normal, and states added later that this version cannot draw.
-            _ => Self {
-                background: None,
-                border: None,
-            },
-        }
+/// Background of a key in `state`, if the state imposes one. No state draws
+/// a frame: the icons carry the state.
+fn state_background(state: KeyState) -> Option<Rgba<u8>> {
+    match state {
+        KeyState::Attention => Some(ATTENTION_BACKGROUND),
+        // Normal, Active (the module's own icon shows it), and states added
+        // later that this version cannot draw.
+        _ => None,
     }
 }
 
@@ -374,8 +346,7 @@ impl Renderer {
             .source
             .map(|source| self.digests.digest(source))
             .transpose()?;
-        let style = StateStyle::of(request.state);
-        let background = style.background.unwrap_or(request.background);
+        let background = state_background(request.state).unwrap_or(request.background);
         let key = CacheKey::Key {
             source: digest.as_ref().map(|digest| digest.digest),
             size: (request.size.width, request.size.height),
@@ -390,12 +361,14 @@ impl Renderer {
                 (Some(source), None) => Some(source.read()?),
                 (None, _) => None,
             };
-            let mut canvas = self.compose(bytes.as_deref(), request.size, background)?;
-            if let Some(label) = request.label.filter(|label| !label.trim().is_empty()) {
+            let label = request
+                .label
+                .map(str::trim)
+                .filter(|label| !label.is_empty());
+            let icon_area = icon_area(request.size, label.is_some());
+            let mut canvas = self.compose(bytes.as_deref(), request.size, icon_area, background)?;
+            if let Some(label) = label {
                 self.draw_label(&mut canvas, label)?;
-            }
-            if let Some((color, ratio)) = style.border {
-                draw_border(&mut canvas, color, ratio);
             }
             Ok(keep_opaque(canvas, background))
         })
@@ -428,7 +401,7 @@ impl Renderer {
         check_size(size)?;
         check_source_length(bytes.len())?;
         let kind = ImageKind::sniff(bytes).ok_or(RenderError::UnsupportedFormat)?;
-        self.compose(Some(bytes), size, DEFAULT_BACKGROUND)?;
+        self.compose(Some(bytes), size, size, DEFAULT_BACKGROUND)?;
         Ok(kind)
     }
 
@@ -546,10 +519,13 @@ impl Renderer {
         Ok(rendered)
     }
 
+    /// Draws `bytes` scaled to fit `icon_area`, centred in it, on a canvas of
+    /// `size`.
     fn compose(
         &self,
         bytes: Option<&[u8]>,
         size: ImageSize,
+        icon_area: ImageSize,
         background: Rgba<u8>,
     ) -> Result<RgbaImage, RenderError> {
         let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
@@ -557,38 +533,34 @@ impl Renderer {
             return Ok(canvas);
         };
         let foreground = match source::decode(bytes, self.text.svg_options())? {
-            Decoded::Raster(image) => contain(&image, size),
-            Decoded::Vector(tree) => source::rasterize_svg(&tree, size.width, size.height)?,
+            Decoded::Raster(image) => contain(&image, icon_area),
+            Decoded::Vector(tree) => {
+                source::rasterize_svg(&tree, icon_area.width, icon_area.height)?
+            }
         };
         let x = i64::from((size.width - foreground.width()) / 2);
-        let y = i64::from((size.height - foreground.height()) / 2);
+        let y = i64::from((icon_area.height - foreground.height()) / 2);
         imageops::overlay(&mut canvas, &foreground, x, y);
         Ok(canvas)
     }
 
+    /// Draws `label` on one line, shortened with an ellipsis if needed, at the
+    /// bottom of `canvas`.
     fn draw_label(&self, canvas: &mut RgbaImage, label: &str) -> Result<(), RenderError> {
         let width = f32_from(canvas.width());
         let height = f32_from(canvas.height());
         let size = height * LABEL_FONT_RATIO;
-        let padding = width * LABEL_PADDING_RATIO;
-        let lines = self
-            .text
-            .wrap(label, size, width - 2.0 * padding, LABEL_MAX_LINES)?;
-        let line_height = TextRenderer::line_height(size);
-        let text_top = height - padding - line_height * count_f32(lines.len());
-        darken_bottom(canvas, text_top - padding);
-        let lines: Vec<TextLine> = lines
-            .into_iter()
-            .enumerate()
-            .map(|(index, text)| TextLine {
-                text,
-                size,
-                center_x: width / 2.0,
-                baseline: text_top + line_height * count_f32(index) + TextRenderer::ascent(size),
-                color: TEXT_COLOR,
-            })
-            .collect();
-        self.text.draw(canvas, &lines)
+        let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
+        let text_top =
+            height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
+        let line = TextLine {
+            text: self.text.fit(label, size, max_width)?,
+            size,
+            center_x: width / 2.0,
+            baseline: text_top + TextRenderer::ascent(size),
+            color: TEXT_COLOR,
+        };
+        self.text.draw(canvas, &[line])
     }
 
     fn draw_zone_lines(&self, canvas: &mut RgbaImage, lines: &[String]) -> Result<(), RenderError> {
@@ -688,34 +660,6 @@ fn scaled_dimension(dimension: u32, scale: f32, max: u32) -> u32 {
         .clamp(1.0, f32_from(max)) as u32
 }
 
-/// Blends [`LABEL_BAND_COLOR`] over the rows from `top` (in pixels, may be
-/// fractional or negative) to the bottom of `canvas`.
-fn darken_bottom(canvas: &mut RgbaImage, top: f32) {
-    let first_row = (0..canvas.height())
-        .find(|row| f32_from(*row) >= top.floor())
-        .unwrap_or(canvas.height());
-    let band = RgbaImage::from_pixel(
-        canvas.width(),
-        canvas.height() - first_row,
-        LABEL_BAND_COLOR,
-    );
-    imageops::overlay(canvas, &band, 0, i64::from(first_row));
-}
-
-/// Draws a frame of `color` along the edges of `canvas`, `ratio` of its
-/// width thick (at least one pixel).
-fn draw_border(canvas: &mut RgbaImage, color: Rgba<u8>, ratio: f32) {
-    let (width, height) = canvas.dimensions();
-    let thickness = scaled_dimension(width, ratio, (width.min(height) / 2).max(1));
-    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
-        let inside =
-            x >= thickness && y >= thickness && x < width - thickness && y < height - thickness;
-        if !inside {
-            *pixel = color;
-        }
-    }
-}
-
 /// Draws the gauge bar at the bottom of `canvas`, filled to `level` from the
 /// left; returns its top row.
 fn draw_gauge_bar(canvas: &mut RgbaImage, level: GaugeLevel, dimmed: bool) -> f32 {
@@ -775,9 +719,19 @@ fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
     canvas
 }
 
-/// Small counts (line numbers) as `f32`.
-fn count_f32(value: usize) -> f32 {
-    f32_from(u32::try_from(value).unwrap_or(u32::MAX))
+/// Part of a key of `size` left to its image: all of it, or what is above
+/// the label line, so that the image is never covered.
+fn icon_area(size: ImageSize, labelled: bool) -> ImageSize {
+    if !labelled {
+        return size;
+    }
+    let height = f32_from(size.height);
+    let line = TextRenderer::line_height(height * LABEL_FONT_RATIO);
+    let strip = line + height * 2.0 * LABEL_VERTICAL_PADDING_RATIO;
+    ImageSize {
+        width: size.width,
+        height: scaled_dimension(size.height, 1.0 - strip / height, size.height),
+    }
 }
 
 fn check_size(size: ImageSize) -> Result<(), RenderError> {

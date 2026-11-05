@@ -198,6 +198,14 @@ async fn the_main_page_shows_projects_then_containers_by_name() {
         ]
     );
     assert_eq!(
+        harness.item(MAIN_PAGE, SHOP).image.as_ref(),
+        Some(&*icons::PROJECT_RUNNING)
+    );
+    assert_eq!(
+        harness.item(MAIN_PAGE, MONITORING).image.as_ref(),
+        Some(&*icons::PROJECT_STOPPED)
+    );
+    assert_eq!(
         harness.item(MAIN_PAGE, REDIS).image.as_ref(),
         Some(&*icons::RUNNING)
     );

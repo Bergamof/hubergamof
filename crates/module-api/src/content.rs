@@ -42,7 +42,8 @@ pub enum KeyState {
     /// Nothing special.
     #[default]
     Normal,
-    /// On, running, selected (toggle on, timer running…).
+    /// On, running, selected (toggle on, timer running…). The host draws
+    /// nothing for it: the module shows it through its own icon.
     Active,
     /// Needs the user's attention (finished timer, failed container…).
     Attention,

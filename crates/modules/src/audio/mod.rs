@@ -337,9 +337,13 @@ impl Audio {
     }
 
     fn devices_page(&self, direction: Direction) -> PageContent {
-        let (title, icon) = match direction {
-            Direction::Output => (OUTPUTS_LABEL, &icons::SPEAKER),
-            Direction::Input => (INPUTS_LABEL, &icons::MICROPHONE),
+        let (title, icon, selected_icon) = match direction {
+            Direction::Output => (OUTPUTS_LABEL, &icons::SPEAKER, &icons::SPEAKER_SELECTED),
+            Direction::Input => (
+                INPUTS_LABEL,
+                &icons::MICROPHONE,
+                &icons::MICROPHONE_SELECTED,
+            ),
         };
         let items = self
             .snapshot()
@@ -349,10 +353,10 @@ impl Audio {
                     .devices(direction)
                     .iter()
                     .map(|device| {
-                        let state = if default == Some(device.name.as_str()) {
-                            KeyState::Active
+                        let (icon, state) = if default == Some(device.name.as_str()) {
+                            (selected_icon, KeyState::Active)
                         } else {
-                            KeyState::Normal
+                            (icon, KeyState::Normal)
                         };
                         item(
                             &device.name,

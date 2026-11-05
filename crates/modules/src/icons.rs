@@ -1,5 +1,18 @@
 //! Helpers shared by the SVG icons of the built-in modules.
 
+/// Source of the icon `assets/icons/<name>.svg`, embedded at compile time.
+macro_rules! asset {
+    ($name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/icons/",
+            $name,
+            ".svg"
+        ))
+    };
+}
+pub(crate) use asset;
+
 use hubergamof_module_api::ImageData;
 
 /// Wraps the source of an SVG icon (drawn by the host).

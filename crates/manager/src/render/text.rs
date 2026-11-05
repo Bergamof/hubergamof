@@ -115,45 +115,6 @@ impl TextRenderer {
         Ok(with_ellipsis(&characters[..fitting]))
     }
 
-    /// Splits `text` on words into at most `max_lines` lines of `max_width`;
-    /// the last line is shortened with an ellipsis if text remains.
-    ///
-    /// # Errors
-    ///
-    /// [`RenderError::Svg`] if the text cannot be laid out.
-    pub fn wrap(
-        &self,
-        text: &str,
-        size: f32,
-        max_width: f32,
-        max_lines: usize,
-    ) -> Result<Vec<String>, RenderError> {
-        let mut lines: Vec<String> = Vec::new();
-        if max_lines == 0 {
-            return Ok(lines);
-        }
-        let mut words = text.split_whitespace().peekable();
-        while let Some(word) = words.next() {
-            let mut line = word.to_owned();
-            if lines.len() + 1 >= max_lines {
-                for rest in words.by_ref() {
-                    line = format!("{line} {rest}");
-                }
-            } else {
-                while let Some(next) = words.peek() {
-                    let candidate = format!("{line} {next}");
-                    if self.width(&candidate, size)? > max_width {
-                        break;
-                    }
-                    line = candidate;
-                    words.next();
-                }
-            }
-            lines.push(self.fit(&line, size, max_width)?);
-        }
-        Ok(lines)
-    }
-
     /// Draws `lines` over `canvas`.
     ///
     /// # Errors
@@ -254,26 +215,6 @@ mod tests {
         assert!(fitted.ends_with(ELLIPSIS));
         assert!(fitted.len() > ELLIPSIS.len_utf8());
         assert!(text.width(&fitted, SIZE).unwrap() <= 60.0);
-    }
-
-    #[test]
-    fn wrap_splits_on_words_and_limits_lines() {
-        let text = text();
-        let lines = text
-            .wrap("Docker compose up now please", SIZE, 90.0, 2)
-            .unwrap();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[1].ends_with(ELLIPSIS));
-        assert!(
-            lines
-                .iter()
-                .all(|line| text.width(line, SIZE).unwrap() <= 90.0)
-        );
-        assert_eq!(text.wrap("Mic", SIZE, 90.0, 2).unwrap(), ["Mic"]);
-        assert_eq!(
-            text.wrap("   ", SIZE, 90.0, 2).unwrap(),
-            Vec::<String>::new()
-        );
     }
 
     #[test]

@@ -528,7 +528,8 @@ async fn key_states_are_drawn_and_published() {
     let state = fixture.live().to_live_state().unwrap();
     assert_eq!(state.page.keys[0].state, KeyState::Active);
     let active = fixture.deck.inner.key_image(0).unwrap();
-    assert_ne!(normal.get_pixel(0, 36), active.get_pixel(0, 36));
+    // The host draws no frame for an active key: its module's icon says it.
+    assert_eq!(normal.get_pixel(0, 36), active.get_pixel(0, 36));
 }
 
 // ---------------------------------------------------------------- Panics

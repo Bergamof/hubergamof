@@ -14,14 +14,14 @@ use jiff::civil::DateTime;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::icons::svg;
+use crate::icons::{asset, svg};
 use tokio::sync::watch;
 
 /// Kind of the clock module.
 pub const CLOCK_KIND: &str = "clock";
 
 /// Icon of the module: a clock face.
-const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>"##;
+const ICON_SVG: &str = asset!("clock");
 
 const SHOW_SECONDS_KEY: &str = "showSeconds";
 const SHOW_DATE_KEY: &str = "showDate";
