@@ -145,7 +145,5 @@ impl LiveSnapshot {
 }
 
 fn data_url(image: Option<&Arc<Rendered>>) -> Result<Option<String>, RenderError> {
-    image
-        .map(|rendered| rendered.data_url().map(str::to_owned))
-        .transpose()
+    image.map(|rendered| rendered.data_url()).transpose()
 }

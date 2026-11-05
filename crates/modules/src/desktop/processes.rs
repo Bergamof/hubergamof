@@ -36,8 +36,8 @@ fn executable_in(process: &Path) -> Option<PathBuf> {
     })
 }
 
-/// For each of `executables`, in the same order,, whether a process of `uid` listed under
-/// `proc_root` runs it (helpers aside).
+/// For each of `executables`, in the same order, whether a process of `uid`
+/// listed under `proc_root` runs it (helpers aside).
 ///
 /// Processes of other users are skipped (their executable cannot be read
 /// anyway), as are those that end while being looked at.

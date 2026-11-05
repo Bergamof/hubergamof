@@ -10,7 +10,9 @@
 //!   backoff when that stops (KWin restarted) or fails (no KWin);
 //! - observes their notifications, likewise, once a module listens to
 //!   them (the monitor sees the whole session: not without a reason);
-//! - looks at their processes every [`PROCESS_PROBE_INTERVAL`];
+//! - looks at their processes every [`PROCESS_PROBE_INTERVAL`], less often
+//!   ([`IDLE_PROBE_INTERVAL`]) while nothing changes, again often as soon as
+//!   their windows change (an application started or quit);
 //! - publishes what it knows of each application
 //!   ([`DesktopSubscription::states`]) and hands their notifications on
 //!   ([`DesktopSubscription::notifications`]).
@@ -42,6 +44,15 @@ use crate::background::{
 
 /// Time between two looks at the processes.
 const PROCESS_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Time between two looks at the processes once [`PROBES_BEFORE_IDLE`] in a
+/// row found nothing new: an idle session costs a walk of `/proc` less
+/// often. Without KWin (no window to tell a change), what the key shows
+/// lags by this much at most.
+const IDLE_PROBE_INTERVAL: Duration = Duration::from_secs(6);
+
+/// Looks at the processes finding nothing new before slowing down.
+const PROBES_BEFORE_IDLE: u32 = 5;
 
 /// First wait before following the windows, or observing the
 /// notifications, again.
@@ -280,6 +291,8 @@ struct Worker {
     /// Whether to observe the notifications (see [`DesktopHub`]).
     wanted: watch::Receiver<bool>,
     probe_due: Instant,
+    /// Looks at the processes in a row that changed nothing.
+    quiet_probes: u32,
     /// Whether the last attempt of each kind succeeded, to log only
     /// transitions.
     following: bool,
@@ -307,6 +320,7 @@ impl Worker {
             observer: listener(),
             wanted,
             probe_due: Instant::now(),
+            quiet_probes: 0,
             following: true,
             observing: true,
             probing: true,
@@ -355,18 +369,29 @@ impl Worker {
     }
 
     async fn probe(&mut self) {
-        self.probe_due = Instant::now() + PROCESS_PROBE_INTERVAL;
         let running = guarded(self.backend.running(&self.executables)).await;
         log_transition(&mut self.probing, &running, "look at the processes");
         let running = running.ok();
-        self.update(|index, state| {
+        let changed = self.update(|index, state| {
             state.running = running.as_ref().and_then(|found| found.get(index).copied());
         });
+        self.quiet_probes = if changed {
+            0
+        } else {
+            self.quiet_probes.saturating_add(1)
+        };
+        let interval = if self.quiet_probes >= PROBES_BEFORE_IDLE {
+            IDLE_PROBE_INTERVAL
+        } else {
+            PROCESS_PROBE_INTERVAL
+        };
+        self.probe_due = Instant::now() + interval;
     }
 
-    /// Hands the windows of each application on; `None`: not followed.
-    fn publish_windows(&self, windows: Option<&[Window]>) {
-        self.update(|index, state| {
+    /// Hands the windows of each application on; `None`: not followed. A
+    /// change brings the next look at the processes forward.
+    fn publish_windows(&mut self, windows: Option<&[Window]>) {
+        let changed = self.update(|index, state| {
             let class = &self.apps[index].window_class;
             state.windows = windows.map(|windows| {
                 windows
@@ -376,11 +401,15 @@ impl Worker {
                     .collect()
             });
         });
+        if changed {
+            self.quiet_probes = 0;
+            self.probe_due = self.probe_due.min(Instant::now() + PROCESS_PROBE_INTERVAL);
+        }
     }
 
     /// Applies `change` to the state of each application (by its index),
-    /// publishing only when something changed.
-    fn update(&self, mut change: impl FnMut(usize, &mut AppState)) {
+    /// publishing only when something changed; whether it did.
+    fn update(&self, mut change: impl FnMut(usize, &mut AppState)) -> bool {
         self.states.send_if_modified(|current| {
             let mut changed = false;
             for (index, app) in self.apps.iter().enumerate() {
@@ -390,7 +419,7 @@ impl Worker {
                 changed |= *state != before;
             }
             changed
-        });
+        })
     }
 
     fn forward(&self, notification: AppNotification) {

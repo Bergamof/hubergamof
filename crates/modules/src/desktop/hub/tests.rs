@@ -114,6 +114,32 @@ async fn changes_are_published_as_they_come() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_idle_session_is_probed_less_often_until_its_windows_change() {
+    let desktop = Arc::new(SimulatedDesktop::empty());
+    let hub = hub_on(&desktop);
+    let subscription = hub.subscribe();
+    let mut states = subscription.states();
+    tokio::time::sleep(SETTLE).await;
+    states.borrow_and_update();
+
+    // Nothing changes: past the first probes, one every idle interval.
+    let quiet = PROCESS_PROBE_INTERVAL * PROBES_BEFORE_IDLE;
+    tokio::time::sleep(quiet).await;
+    let before = desktop.probes();
+    tokio::time::sleep(IDLE_PROBE_INTERVAL * 3).await;
+    assert_eq!(desktop.probes() - before, 3, "idle");
+
+    // A window appears: the application is seen running without waiting.
+    desktop.set_running(vec![DEMO_CLAUDE_EXECUTABLE.into()]);
+    desktop.set_windows(vec![window("claude", DEMO_CLAUDE_CLASS)]);
+    tokio::time::sleep(PROCESS_PROBE_INTERVAL + SETTLE).await;
+    assert_eq!(states.borrow_and_update().app(CLAUDE).running, Some(true));
+    let before = desktop.probes();
+    tokio::time::sleep(PROCESS_PROBE_INTERVAL * 2).await;
+    assert_eq!(desktop.probes() - before, 2, "often again");
+}
+
+#[tokio::test(start_paused = true)]
 async fn notifications_are_attributed_to_their_application() {
     let desktop = Arc::new(SimulatedDesktop::empty());
     let hub = hub_on(&desktop);

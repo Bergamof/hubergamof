@@ -35,6 +35,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Interface servie précompressée (brotli, gzip) aux navigateurs qui l'acceptent.
 ### Modifié
 
+- Performances : processus regardés moins souvent quand rien ne change ; un appareil inactif réveille son thread 40 fois par seconde au lieu de 100 ; cache de rendu réduit (192 images réutilisées) et data URL plus gardées en mémoire.
 - Sécurité : configuration bornée (instances, touches, molettes, libellés de 64 caractères, réglages de 16 Kio, identifiants `[A-Za-z0-9_-]`) ; erreurs internes masquées aussi sur le WebSocket ; dossiers de configuration en 0700 (ceux d'un appareil existant y sont ramenés au chargement) ; archives à fin ambiguë (octets après le commentaire compris) ou ZIP64 refusées ; 512 images au plus par appareil ; l'interface ouverte depuis le tray démarre dans son propre scope systemd.
 - Interface : supprimer une touche dont le module n'est placé nulle part ailleurs demande confirmation (ses réglages seraient perdus) ; le focus va sur la touche ajoutée, et revient sur le contrôle d'origine après une reconnexion au gestionnaire.
 - Contrat : `moduleCatalog` envoie des `CatalogModule` (descripteur, icône, réglages par défaut choisis par le module) ; `selectDevice` porte `liveState` : l'état en direct n'est plus envoyé qu'aux clients qui le demandent.

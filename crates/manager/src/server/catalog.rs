@@ -33,7 +33,7 @@ pub fn module_catalog(registry: &ModuleRegistry, renderer: &Renderer) -> Arc<[Ca
 fn icon_data_url(renderer: &Renderer, kind: &ModuleKind, bytes: Arc<[u8]>) -> Option<String> {
     let to_data_url = || -> Result<String, RenderError> {
         let icon = renderer.render_image(UI_IMAGE_SIZE, &ImageSource::Bytes(bytes))?;
-        icon.data_url().map(str::to_owned)
+        icon.data_url()
     };
     to_data_url()
         .inspect_err(|error| tracing::warn!(kind = %kind.0, %error, "cannot render module icon"))

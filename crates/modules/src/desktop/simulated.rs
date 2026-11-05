@@ -4,7 +4,7 @@
 //! their sender, and activating a window gone does nothing.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
@@ -43,6 +43,8 @@ struct Sent {
 pub struct SimulatedDesktop {
     windows: watch::Sender<Vec<Window>>,
     running: Mutex<Vec<PathBuf>>,
+    /// Looks at the processes so far.
+    probes: AtomicUsize,
     notifications: broadcast::Sender<Sent>,
     activations: Mutex<Vec<WindowId>>,
     launches: Mutex<Vec<Launch>>,
@@ -59,6 +61,7 @@ impl SimulatedDesktop {
         Self {
             windows: watch::Sender::new(Vec::new()),
             running: Mutex::default(),
+            probes: AtomicUsize::new(0),
             notifications: broadcast::Sender::new(NOTIFICATION_CAPACITY),
             activations: Mutex::default(),
             launches: Mutex::default(),
@@ -97,6 +100,12 @@ impl SimulatedDesktop {
     /// Replaces the executables of the running processes.
     pub fn set_running(&self, executables: Vec<PathBuf>) {
         *lock(&self.running) = executables;
+    }
+
+    /// How many times the processes were looked at.
+    #[must_use]
+    pub fn probes(&self) -> usize {
+        self.probes.load(Ordering::SeqCst)
     }
 
     /// `executable` sends a notification with the `desktop-entry` hint
@@ -187,6 +196,7 @@ impl DesktopBackend for SimulatedDesktop {
     }
 
     async fn running(&self, executables: &[ExecutableMatch]) -> Result<Vec<bool>, DesktopError> {
+        self.probes.fetch_add(1, Ordering::SeqCst);
         let running = lock(&self.running);
         Ok(executables
             .iter()

@@ -33,7 +33,7 @@ Détail de chaque module et des briques communes ; `CLAUDE.md` n'en garde que le
 - `followed_app.rs` : `FollowedApp`, ce qu'un module garde de son appli (état, `AppAttention`, activation, lancement, issues des actions en `AppEvent`) ; vérifie que le hub suit l'appli.
 - `attention.rs` : `AppAttention` (`with_windows` / `notifications_only`) : fenêtre qui demande l'attention, ou notification reçue hors premier plan → attention jusqu'à l'appui ou au premier plan.
 - `hub.rs` : lancements par `DesktopSubscription::launch(app, …)` → `LaunchStart`, un à la fois par appli toutes instances confondues (`launch_gate.rs`).
-- `kwin.rs` (script filtré + objet `Report` réservé à KWin, activation ponctuelle), `script_file.rs` (écriture par descripteur), `monitor.rs` (`BecomeMonitor` au premier `notifications()` seulement, attribution par l'exécutable de l'expéditeur, tâche dédiée), `processes.rs` (`/proc/*/exe`), `launcher.rs` (`systemd-run --user --scope`, depuis `$HOME`).
+- `kwin.rs` (script filtré + objet `Report` réservé à KWin, activation ponctuelle), `script_file.rs` (écriture par descripteur), `monitor.rs` (`BecomeMonitor` au premier `notifications()` seulement, attribution par l'exécutable de l'expéditeur, tâche dédiée), `processes.rs` (`/proc/*/exe`, toutes les 2 s, 6 s après 5 sondages sans changement, de nouveau 2 s dès que les fenêtres changent), `launcher.rs` (`systemd-run --user --scope`, depuis `$HOME`).
 
 ## IntelliJ (`intellij/`)
 - `catalog.rs` : `ProjectCatalog` injecté (`SystemCatalog` / `SimulatedCatalog`) ; fenêtre ↔ projet par le titre « projet – fichier ».

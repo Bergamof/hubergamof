@@ -279,13 +279,19 @@ fn a_countdown_does_not_push_icons_out_of_the_cache() {
 }
 
 #[test]
-fn data_url_is_a_png_and_encoded_once() {
+fn data_url_is_a_png_encoded_once() {
     let rendered = renderer()
         .render_key(&KeyRequest::new(KEY, None, Some("A")))
         .unwrap();
     let url = rendered.data_url().unwrap();
     assert!(url.starts_with("data:image/png;base64,iVBORw0KGgo"));
-    assert!(std::ptr::eq(url, rendered.data_url().unwrap()));
+    // The PNG is kept and shared; the URL is made from it each time.
+    let png = rendered.png().unwrap();
+    assert!(Arc::ptr_eq(&png, &rendered.png().unwrap()));
+    assert_eq!(
+        url,
+        format!("data:image/png;base64,{}", BASE64.encode(&*png))
+    );
 }
 
 #[test]

@@ -72,8 +72,10 @@ pub const GAUGE_TRACK_COLOR: Rgba<u8> = Rgba([0x2a, 0x2a, 0x2a, u8::MAX]);
 pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
 
 /// Number of reused rendered images kept in the cache (see
-/// module `cache`).
-pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(480) {
+/// module `cache`): the faces of a few pages of the largest device (32 keys)
+/// on several devices. Bounded in number, the images of one surface being
+/// alike: at most ~15 MB of pixels with the largest touch zones.
+pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(192) {
     Some(capacity) => capacity,
     None => NonZeroUsize::MIN,
 };
@@ -221,12 +223,13 @@ impl StateStyle {
     }
 }
 
-/// A rendered image, with its data URL encoded lazily once.
+/// A rendered image, with its PNG encoding made lazily once (the data URL
+/// is derived from it on demand rather than kept: base64 is cheap, a kept
+/// copy would cost more than the PNG itself).
 #[derive(Debug)]
 pub struct Rendered {
     image: Arc<RgbaImage>,
     png: OnceLock<Arc<[u8]>>,
-    data_url: OnceLock<String>,
 }
 
 impl Rendered {
@@ -234,7 +237,6 @@ impl Rendered {
         Self {
             image: Arc::new(image),
             png: OnceLock::new(),
-            data_url: OnceLock::new(),
         }
     }
 
@@ -244,18 +246,16 @@ impl Rendered {
         &self.image
     }
 
-    /// The image as a `data:image/png;base64,…` URL, encoded on first call.
+    /// The image as a `data:image/png;base64,…` URL, from its PNG.
     ///
     /// # Errors
     ///
     /// [`RenderError::Encode`].
-    pub fn data_url(&self) -> Result<&str, RenderError> {
-        if let Some(url) = self.data_url.get() {
-            return Ok(url);
-        }
-        let url = format!("{PNG_DATA_URL_PREFIX}{}", BASE64.encode(self.png()?));
-        // A concurrent caller may have won the race; both values are equal.
-        Ok(self.data_url.get_or_init(|| url))
+    pub fn data_url(&self) -> Result<String, RenderError> {
+        Ok(format!(
+            "{PNG_DATA_URL_PREFIX}{}",
+            BASE64.encode(self.png()?)
+        ))
     }
 
     /// The image encoded as PNG, on first call.
