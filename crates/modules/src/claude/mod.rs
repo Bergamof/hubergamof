@@ -166,7 +166,7 @@ pub(crate) struct Claude {
 impl Claude {
     /// The window a press brings to the front.
     fn window_to_front(&self) -> Option<WindowId> {
-        let windows = self.app.state().windows.as_deref().unwrap_or_default();
+        let windows = self.app.windows();
         windows.first().map(|window| window.id.clone())
     }
 

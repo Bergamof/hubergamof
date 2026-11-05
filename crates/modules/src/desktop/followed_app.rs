@@ -12,7 +12,7 @@ use bergadeck_module_api::{
 use super::attention::{AppAttention, forward_notifications};
 use super::backend::DesktopError;
 use super::hub::{DesktopAction, DesktopHub, DesktopState, DesktopSubscription, LaunchStart};
-use super::model::{AppId, AppState, Launch, WindowId};
+use super::model::{AppId, AppState, Launch, Window, WindowId};
 use crate::background::forward_states;
 
 /// What a [`FollowedApp`] hands its instance through the event sender, to
@@ -99,6 +99,12 @@ impl FollowedApp {
     #[must_use]
     pub fn state(&self) -> &AppState {
         &self.state
+    }
+
+    /// Its windows as followed (none when they cannot be).
+    #[must_use]
+    pub fn windows(&self) -> &[Window] {
+        self.state.windows.as_deref().unwrap_or_default()
     }
 
     /// State of its key: in attention (when it asks, or `also_attention`),

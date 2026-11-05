@@ -249,7 +249,7 @@ impl<'a> Entry<'a> {
 
 impl Intellij {
     fn windows(&self) -> &[Window] {
-        self.app.state().windows.as_deref().unwrap_or_default()
+        self.app.windows()
     }
 
     /// The entries of the projects page, in order: open projects (recent
