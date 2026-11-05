@@ -3,11 +3,11 @@
 ## Claude Desktop — « Claude demande quelque chose »
 - Mécanisme : connexion D-Bus de session en monitor (`org.freedesktop.DBus.Monitoring.BecomeMonitor`) avec règle `interface='org.freedesktop.Notifications',member='Notify'` (+ signal `com.canonical.Unity.LauncherEntry`, jamais émis par Electron hors Unity mais écouté au cas où).
 - Une connexion monitor ne peut plus rien envoyer : utiliser une 2ᵉ connexion pour `GetConnectionUnixProcessID`.
-- Filtre : hint `desktop-entry == "com.anthropic.Claude"` (ou exécutable émetteur `/usr/lib/claude-desktop/claude-desktop`), jamais sur le texte (traduit, change selon les versions). Ignorer les messages `NameLost`/`NameAcquired`.
+- Filtre (implémenté, `desktop/monitor.rs`) : attribution par l'**exécutable de l'expéditeur** (`/usr/lib/claude-desktop/claude-desktop`) ; le hint `desktop-entry`, que n'importe quel programme peut fournir, sert seulement à écarter sans recherche les notifications d'une autre appli (revue sécurité 8a). Jamais sur le texte (traduit, change selon les versions). Ignorer les messages `NameLost`/`NameAcquired`. Lecture du flux et recherche de l'expéditeur dans une tâche dédiée (attente annulable sans perte).
 - Vie privée : le monitor voit toutes les notifications de la session ; ne rien journaliser hors du filtre Claude.
 - Limite : pas de notification si la session concernée est déjà au premier plan. Signal complémentaire KDE : `demandsAttention` de la fenêtre `com.anthropic.Claude` (script KWin persistant, actif car `dockBounceEnabled=true`).
 - Lancé ? processus dont `/proc/<pid>/exe` = `/usr/lib/claude-desktop/claude-desktop` sans `--type=`, ou fenêtre KWin `resourceClass == "com.anthropic.Claude"`. Lancement : `gtk-launch com.anthropic.Claude`. Relancer une appli ouverte sous Wayland ne fait que demander l'attention → activation par script KWin.
-- Reste à confirmer manuellement : une vraie notification de demande de permission (champs `desktop-entry`, `summary`).
+- Reste à confirmer manuellement : une vraie notification de demande de permission (champs `desktop-entry`, `summary`, expéditeur = processus principal ?).
 
 ## IntelliJ
 - Dossier de config : `dataDirectoryName` de `~/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/product-info.json` → `~/.config/JetBrains/<dataDirectoryName>/options/recentProjects.xml` ; repli : `IntelliJIdea*` le plus récemment modifié.
@@ -19,10 +19,23 @@
 - `org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript(path, plugin)` → id (-1 si déjà chargé) ; `/Scripting/Script{id}` `org.kde.kwin.Script.run` (**minuscule** : `#[zbus(name = "run")]`) ; `unloadScript(plugin)`.
 - Retour vers Rust : le script appelle `callDBus(<nom unique :1.x>, path, iface, "Report", JSON.stringify(...))` sur un objet exposé par zbus.
 - JS : `workspace.windowList()`, `workspace.activeWindow = w` (active réellement), `workspace.windowAdded/windowActivated`, `w.demandsAttentionChanged`, `w.captionChanged` ; propriétés `internalId` (`String()`), `resourceClass`, `desktopFileName`, `caption`, `pid`, `normalWindow`, `minimized`, `demandsAttention`.
-- Robustesse : nom de plugin fixe par usage, `unloadScript` défensif au démarrage et déchargement garanti ; fichiers `.js` dans `$XDG_RUNTIME_DIR/bergadeck/` ; chaînes injectées échappées via `serde_json::to_string`.
+- Robustesse : nom de plugin fixe par usage (un seul suivi à la fois, numéro de génération pour qu'un nettoyage tardif ne décharge pas un suivi plus récent), `unloadScript` défensif avant chaque chargement ; déchargement en tâche de fond à la fin du suivi, rattrapé au démarrage suivant si le gestionnaire s'arrête avant ; fichiers `.js` dans `$XDG_RUNTIME_DIR/bergadeck/` écrits par descripteur (`openat`, dossiers vérifiés 0700 et au nom de l'utilisateur, fichier 0600 recréé) ; valeurs injectées en littéraux JSON (`serde_json`, U+2028/U+2029 échappés).
+- `run` exécute le script avant de rendre la main : un script ponctuel (activation) peut être déchargé aussitôt.
+- Suivi des fenêtres (implémenté, `desktop/kwin.rs`) : script filtré par classe, `Report(json)` sur un objet zbus accepté seulement de l'expéditeur propriétaire de `org.kde.KWin` ; abonnement à `NameOwnerChanged` **avant** la lecture du propriétaire, propriétaire relu après chargement ; fin du suivi au redémarrage de KWin.
+- Validé le 2026-11-05 sur Plasma 6 (session d'Adrien) : fenêtres, activation, processus, monitor (faux Claude ignoré).
 - GNOME : pas d'API sans extension (« Window Calls » : `org.gnome.Shell.Extensions.Windows`), sinon simple clignotement (accepté).
 
 ## zbus 6
-- `Value` → `Variant`/`OwnedVariant` ; plus d'API bloquante. Features utilisées : `default-features = false`, `tokio`, `proxy`, `service`. Nouvelles dépendances (`zruntime`, `zcheapstr`, `zbus_utils`) à passer dans `cargo deny`.
+- `Value` → `Variant`/`OwnedVariant` ; plus d'API bloquante. Les builders (`connection::Builder::session()`, `proxy::Builder::path()`, `Message::method_call()`) ne renvoient plus de `Result` : l'erreur sort au `build()`.
+- Proxies : zbus dérive les membres en PascalCase (`unload_script` → `UnloadScript`) ; les API KDE sont en lowerCamelCase → `#[zbus(name = "unloadScript")]` obligatoire, sinon « no slot matched » dans le journal de KWin. Features utilisées : `default-features = false`, `tokio`, `proxy`, `service`. Nouvelles dépendances (`zruntime`, `zcheapstr`, `zbus_utils`) à passer dans `cargo deny`.
 - Blocs `#[interface]` : clippy pedantic signale `unused_self`, `needless_pass_by_value`, `used_underscore_binding` (imposés par zbus) → `#[expect(..., reason = …)]` locaux.
 - Tray (SNI) : `ItemIsMenu=true` fait ouvrir le menu au clic gauche sur Plasma ≥ 6.4 mais appelle `Activate` ailleurs → on garde `false` (clic gauche = UI, clic droit = menu). Libellés dbusmenu : échapper `_`.
+
+## Lancement d'applications
+- Hors du groupe de contrôle du service (sinon un arrêt/redémarrage de `bergadeck.service` tue l'appli) : `systemd-run --user --scope --collect --quiet --slice=app.slice -- <programme> <args>` (`desktop/launcher.rs`), sans shell, depuis `$HOME`, sorties ignorées, échec précoce détecté en 2 s.
+- Contraintes pour la 8b (revue sécurité 8a), à respecter quand `Launch` vient de fichiers d'IntelliJ :
+  - programme et arguments jamais issus de `DeviceConfig` ni d'un réglage WebSocket : dérivés par le gestionnaire de `product-info.json`/`recentProjects.xml` (un réglage « dossier d'installation » passerait `is_setting_path` + les contrôles ci-dessous) ;
+  - programme : chemin absolu, `launcherPath` relatif sans `..`, canonicalisé et contenu dans l'installation canonicalisée, fichier régulier exécutable à l'utilisateur ou root, non modifiable par groupe/autres (comme `compose.rs`) ;
+  - arguments : chemins de projets absolus, canonicalisés, dossiers existants, un argument par projet, jamais d'options issues du XML (un absolu ne commence pas par `-`, ce qui écarte aussi les sous-commandes d'IntelliJ) ;
+  - XML : parseur sans DTD ni entités externes, fichier borné (≤ 1 Mio), nombre de projets borné ;
+  - un lancement à la fois par application (appui ignoré pendant `LAUNCH_CHECK`) ; erreurs sans les chemins de projets.

@@ -3,13 +3,14 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::OnceCell;
-use zbus::{Connection, Variant, proxy};
+use zbus::{Variant, proxy};
+
+use crate::session_bus::SessionBus;
 
 /// Application name shown by the notification server.
 const APP_NAME: &str = "Bergadeck";
@@ -87,48 +88,6 @@ trait Notifications {
         hints: HashMap<&str, Variant<'_>>,
         expire_timeout: i32,
     ) -> zbus::Result<u32>;
-}
-
-/// The D-Bus session bus, connected on first use and shared by every clone
-/// (one connection for all the modules of the manager). A failed connection
-/// is retried at the next use.
-#[derive(Clone, Default)]
-pub struct SessionBus {
-    connection: Arc<OnceCell<Connection>>,
-}
-
-impl SessionBus {
-    /// Bus of the desktop session, not connected yet.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Bus already connected through `connection` (tests: a peer-to-peer
-    /// connection to a fake service).
-    #[must_use]
-    pub fn with_connection(connection: Connection) -> Self {
-        Self {
-            connection: Arc::new(OnceCell::new_with(Some(connection))),
-        }
-    }
-
-    /// The connection, opened now if needed.
-    ///
-    /// # Errors
-    ///
-    /// [`zbus::Error`] when the session bus cannot be reached.
-    pub async fn connection(&self) -> zbus::Result<&Connection> {
-        self.connection.get_or_try_init(Connection::session).await
-    }
-}
-
-impl fmt::Debug for SessionBus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SessionBus")
-            .field("connected", &self.connection.initialized())
-            .finish()
-    }
 }
 
 /// Notifier of the desktop session, through `bus`.
@@ -219,9 +178,10 @@ impl Notifier for SimulatedNotifier {
 #[cfg(test)]
 mod tests {
     use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
 
     use zbus::connection::Builder;
-    use zbus::{Guid, OwnedVariant, interface};
+    use zbus::{Connection, Guid, OwnedVariant, interface};
 
     use super::*;
 
@@ -344,14 +304,6 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, NotifyError::Timeout), "{error}");
         assert_eq!(started.elapsed(), NOTIFY_TIMEOUT);
-    }
-
-    #[test]
-    fn the_session_bus_connects_only_when_used() {
-        let bus = SessionBus::new();
-        assert_eq!(format!("{bus:?}"), "SessionBus { connected: false }");
-        let shared = bus.clone();
-        assert!(Arc::ptr_eq(&bus.connection, &shared.connection));
     }
 
     #[tokio::test]

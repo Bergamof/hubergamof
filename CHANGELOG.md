@@ -25,6 +25,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Image personnalisée des touches (PNG, JPEG ou SVG), envoyée depuis l'interface et affichée rendue par le gestionnaire.
 - Export de la configuration d'un appareil en zip (`config.json` lisible + `images/`) et import, y compris vers un autre modèle (molettes adaptées), après confirmation.
 - Sécurité : routes `/api` refusées quand un autre site les déclenche (`Sec-Fetch-Site`) ; détection SVG stricte ; images inutilisées supprimées au chargement de la configuration.
+- Couche bureau des modules (socle des futurs modules IntelliJ et Claude Desktop) : fenêtres suivies et activées via KWin, applications détectées par leur exécutable, notifications de ces applications observées sur le bus de session (attribuées par l'exécutable de l'expéditeur, les autres jamais conservées), lancement hors du service systemd ; simulée en `--demo`.
 
 ### Modifié
 

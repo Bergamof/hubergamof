@@ -1,4 +1,4 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 # Product names written as such in the docs ("..": keep the default list).
-doc-valid-idents = ["PulseAudio", "PipeWire", ".."]
+doc-valid-idents = ["PulseAudio", "PipeWire", "KWin", "IntelliJ", "JetBrains", ".."]

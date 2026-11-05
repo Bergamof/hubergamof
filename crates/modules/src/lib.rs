@@ -16,6 +16,7 @@
 pub mod audio;
 mod background;
 pub mod clock;
+pub mod desktop;
 pub mod docker;
 mod icons;
 pub mod navigation;
@@ -23,6 +24,7 @@ pub mod notifications;
 mod paths;
 pub mod pomodoro;
 mod process;
+pub mod session_bus;
 pub mod time;
 
 use std::collections::BTreeMap;
@@ -129,20 +131,24 @@ pub struct BuiltinServices {
     pub notifier: Arc<dyn notifications::Notifier>,
     /// Time of the pomodoro, counting suspends.
     pub clock: Arc<dyn time::Clock>,
+    /// Desktop session of the modules following applications.
+    pub desktop: Arc<dyn desktop::DesktopBackend>,
 }
 
 impl BuiltinServices {
-    /// The user's session: `pactl`, the Docker Engine, and the session bus;
+    /// The user's session: `pactl`, the Docker Engine, the session bus and
+    /// the desktop (KWin, `/proc`);
     /// Docker and the bus are connected on first use, the bus shared by the
     /// modules that need it.
     #[must_use]
     pub fn system() -> Self {
-        let session_bus = notifications::SessionBus::new();
+        let session_bus = session_bus::SessionBus::new();
         Self {
             audio: Arc::new(audio::PactlBackend::new()),
             docker: Arc::new(docker::DockerEngine::new()),
-            notifier: Arc::new(notifications::DesktopNotifier::new(session_bus)),
+            notifier: Arc::new(notifications::DesktopNotifier::new(session_bus.clone())),
             clock: Arc::new(time::BootClock),
+            desktop: Arc::new(desktop::SystemDesktop::new(session_bus)),
         }
     }
 
@@ -156,6 +162,7 @@ impl BuiltinServices {
             docker: Arc::new(docker::SimulatedDocker::demo()),
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
             clock: Arc::new(time::BootClock),
+            desktop: Arc::new(desktop::SimulatedDesktop::demo()),
         }
     }
 }
@@ -250,6 +257,7 @@ mod tests {
                 format!("{:?}", services.notifier),
                 format!("{:?}", services.clock),
                 format!("{:?}", services.docker),
+                format!("{:?}", services.desktop),
             ]
         };
         let simulated = names(BuiltinServices::simulated());
@@ -271,6 +279,14 @@ mod tests {
             "{simulated:?}"
         );
         assert!(system[3].starts_with("DockerEngine "), "{system:?}");
+        assert!(
+            simulated[4].starts_with("SimulatedDesktop "),
+            "{simulated:?}"
+        );
+        assert!(
+            system[4].starts_with("SystemDesktop { bus: SessionBus { connected: false }"),
+            "{system:?}"
+        );
     }
 
     #[test]
@@ -361,6 +377,7 @@ mod tests {
             docker: Arc::new(docker::SimulatedDocker::empty()),
             notifier: Arc::clone(&notifier) as _,
             clock: Arc::new(SimulatedClock::new()),
+            desktop: Arc::new(desktop::SimulatedDesktop::empty()),
         });
         let minute = Duration::from_secs(60);
 

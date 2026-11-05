@@ -27,7 +27,10 @@ use tokio::task::AbortHandle;
 
 use super::backend::{ComposeAction, ContainerAction, DockerBackend, DockerChanges, DockerError};
 use super::model::{ComposeTarget, Container};
-use crate::background::{Backoff, Listener, ReadPacer, catch_panic, sleep_until};
+use crate::background::{
+    Backoff, Listener, ReadPacer, WorkerControl, catch_panic, sleep_until, spawn_action,
+    spawn_worker,
+};
 
 /// Time from the first change of a burst to the list that covers it.
 const READ_COALESCE_DELAY: Duration = Duration::from_millis(100);
@@ -70,18 +73,12 @@ pub(super) enum Request {
     },
 }
 
-#[derive(Debug, Default)]
-struct Control {
-    subscribers: usize,
-    worker: Option<AbortHandle>,
-}
-
 /// Shared access to a Docker host, see the [module documentation](self).
 #[derive(Debug)]
 pub(super) struct DockerHub {
     backend: Arc<dyn DockerBackend>,
     states: watch::Sender<DockerView>,
-    control: Mutex<Control>,
+    control: Mutex<WorkerControl>,
 }
 
 impl DockerHub {
@@ -89,56 +86,36 @@ impl DockerHub {
         Arc::new(Self {
             backend,
             states: watch::Sender::new(DockerView::Loading),
-            control: Mutex::new(Control::default()),
+            control: Mutex::new(WorkerControl::default()),
         })
     }
 
     /// A subscription; the first one starts the worker (on the current
     /// Tokio runtime, if any), as does one finding it stopped.
     pub(super) fn subscribe(self: &Arc<Self>) -> Subscription {
-        let mut control = self.lock();
-        control.subscribers += 1;
-        let running = control
-            .worker
-            .as_ref()
-            .is_some_and(|worker| !worker.is_finished());
-        if !running {
-            control.worker = self.start_worker();
-        }
+        self.lock().subscribe(|| self.start_worker());
         Subscription {
             hub: Arc::clone(self),
         }
     }
 
     fn start_worker(&self) -> Option<AbortHandle> {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!("no Tokio runtime: Docker is not listed");
-            return None;
-        };
         let worker = Worker::new(Arc::clone(&self.backend), self.states.clone());
-        Some(runtime.spawn(worker.run()).abort_handle())
+        spawn_worker("docker", worker.run())
     }
 
     fn unsubscribe(&self) {
-        let mut control = self.lock();
-        control.subscribers = control.subscribers.saturating_sub(1);
-        if control.subscribers == 0
-            && let Some(worker) = control.worker.take()
-        {
-            // The worker only reads: stopping it mid-call loses nothing.
-            worker.abort();
-        }
+        // The worker only reads: stopping it mid-call loses nothing.
+        self.lock().unsubscribe();
     }
 
     /// Stops the worker as a crash would.
     #[cfg(test)]
     pub(super) fn crash_worker(&self) {
-        if let Some(worker) = &self.lock().worker {
-            worker.abort();
-        }
+        self.lock().crash();
     }
 
-    fn lock(&self) -> MutexGuard<'_, Control> {
+    fn lock(&self) -> MutexGuard<'_, WorkerControl> {
         // Every update keeps the control consistent: a poisoned lock is
         // still valid.
         self.control.lock().unwrap_or_else(PoisonError::into_inner)
@@ -165,17 +142,12 @@ impl Subscription {
         request: Request,
         report: impl FnOnce(Result<(), DockerError>) + Send + 'static,
     ) -> bool {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return false;
-        };
         let backend = Arc::clone(&self.hub.backend);
-        runtime.spawn(async move {
-            let outcome = catch_panic(Box::pin(execute(backend.as_ref(), request)))
-                .await
-                .unwrap_or(Err(DockerError::Panicked));
-            report(outcome);
-        });
-        true
+        spawn_action(
+            async move { execute(backend.as_ref(), request).await },
+            Err(DockerError::Panicked),
+            report,
+        )
     }
 }
 
@@ -438,7 +410,7 @@ mod tests {
         assert!(matches!(outcome.await.unwrap(), Err(DockerError::Panicked)));
         // The worker still serves.
         idle(MAX_BACKOFF).await;
-        assert!(!hub.lock().worker.as_ref().unwrap().is_finished());
+        assert!(hub.lock().is_running());
     }
 
     #[tokio::test(start_paused = true)]

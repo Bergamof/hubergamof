@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use bergadeck_module_api::EventSender;
 use tokio::sync::watch;
+use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
 /// When to read the state of a service again after it notified changes.
@@ -149,6 +150,85 @@ impl<C> Listener<C> {
     fn retry_later(&mut self) {
         self.due = Some(Instant::now() + self.backoff.next_delay());
     }
+}
+
+/// The subscribers of a shared worker: the first subscription starts it
+/// (as does one finding it stopped), the last one stops it.
+#[derive(Debug, Default)]
+pub(crate) struct WorkerControl {
+    subscribers: usize,
+    worker: Option<AbortHandle>,
+}
+
+impl WorkerControl {
+    /// Counts a subscriber, starting the worker with `start` unless it runs
+    /// (`start` gives `None` when it cannot, without a Tokio runtime).
+    pub(crate) fn subscribe(&mut self, start: impl FnOnce() -> Option<AbortHandle>) {
+        self.subscribers += 1;
+        let running = self
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished());
+        if !running {
+            self.worker = start();
+        }
+    }
+
+    /// Counts a subscriber gone, stopping the worker with the last one.
+    pub(crate) fn unsubscribe(&mut self) {
+        self.subscribers = self.subscribers.saturating_sub(1);
+        if self.subscribers == 0
+            && let Some(worker) = self.worker.take()
+        {
+            worker.abort();
+        }
+    }
+
+    /// Whether the worker runs.
+    #[cfg(test)]
+    pub(crate) fn is_running(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+    }
+
+    /// Stops the worker as a crash would.
+    #[cfg(test)]
+    pub(crate) fn crash(&self) {
+        if let Some(worker) = &self.worker {
+            worker.abort();
+        }
+    }
+}
+
+/// Spawns the worker `name` on the current Tokio runtime, `None` without
+/// one.
+pub(crate) fn spawn_worker(
+    name: &str,
+    worker: impl Future<Output = ()> + Send + 'static,
+) -> Option<AbortHandle> {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::debug!(worker = name, "no Tokio runtime: worker not started");
+        return None;
+    };
+    Some(runtime.spawn(worker).abort_handle())
+}
+
+/// Runs `action` in a task of its own (outliving whoever asked), then hands
+/// its outcome to `report`, `panicked` if it panicked; `false` without a
+/// Tokio runtime to run it on.
+pub(crate) fn spawn_action<R: Send + 'static>(
+    action: impl Future<Output = R> + Send + 'static,
+    panicked: R,
+    report: impl FnOnce(R) + Send + 'static,
+) -> bool {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return false;
+    };
+    runtime.spawn(async move {
+        report(catch_panic(Box::pin(action)).await.unwrap_or(panicked));
+    });
+    true
 }
 
 /// A backend call panicked.

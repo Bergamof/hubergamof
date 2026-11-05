@@ -66,6 +66,10 @@ La configuration des appareils est, pour l'instant, stockée dans le dépôt : `
 
 Interface : <http://127.0.0.1:7878> (ou via l'icône de la barre système).
 
+## Vie privée
+
+Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre attention, le gestionnaire observe les notifications de bureau de la session (`org.freedesktop.Notifications`). Seules celles envoyées par ces applications, reconnues par l'exécutable de l'expéditeur, sont gardées le temps d'être affichées ; les autres sont ignorées sans être conservées ni journalisées. Les fenêtres sont suivies par un script KWin qui ne transmet que celles des applications suivies. Un journal de débogage de zbus (`RUST_LOG=zbus=trace`) afficherait en revanche les messages du bus : à éviter hors diagnostic.
+
 ## CI
 
 `.github/workflows/ci.yml` vérifie chaque pull request (et chaque push sur `main`) : lint, tests, contrat TypeScript à jour, tests e2e, build, image Docker, sécurité (cargo-deny, `pnpm audit`, gitleaks, Trivy) et Lighthouse. Un job final commente la PR avec un compte rendu.

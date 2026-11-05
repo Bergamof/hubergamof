@@ -20,15 +20,17 @@ jiff = "0.2.38"
 serde.workspace = true
 serde_json.workspace = true
 # `CLOCK_BOOTTIME` (monotonic, counting suspends) for the pomodoro; the
-# uid of the user, owner of the compose files Docker may run.
-rustix = { version = "1.1.6", default-features = false, features = ["process", "std", "time"] }
+# uid of the user, owner of the compose files Docker may run; `fs`: the
+# KWin scripts are written relative to checked folders (`openat`).
+rustix = { version = "1.1.6", default-features = false, features = ["fs", "process", "std", "time"] }
 thiserror.workspace = true
 # `process` + `io-util`: the audio module drives `pactl`, the Docker module
 # `docker compose`; `fs`: the compose files are checked before.
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "sync", "time"] }
 tracing.workspace = true
-# Desktop notifications (`org.freedesktop.Notifications`) of the pomodoro.
-zbus = { workspace = true, features = ["proxy"] }
+# Desktop notifications (`org.freedesktop.Notifications`) of the pomodoro;
+# `service`: the object receiving the window reports of the KWin script.
+zbus = { workspace = true, features = ["proxy", "service"] }
 
 [dev-dependencies]
 bergadeck-module-api = { workspace = true, features = ["testing"] }
