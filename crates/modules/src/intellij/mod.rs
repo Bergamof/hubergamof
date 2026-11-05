@@ -2,7 +2,8 @@
 //! to the front from the keys.
 //!
 //! - Home key: `IntelliJ`, active while it runs, in attention when one of
-//!   its windows asks for it. Pressed while IntelliJ is closed: starts it;
+//!   its windows asks for it, or when IntelliJ sent a notification (tests
+//!   run, build done) until the key is pressed or IntelliJ is in front. Pressed while IntelliJ is closed: starts it;
 //!   while it runs: opens the projects page.
 //! - Projects page: the open projects first, then the recent ones, most
 //!   recent first, at most `maxProjects`. Pressing an open project brings
@@ -40,9 +41,12 @@ pub use toolbox::SystemCatalog;
 use watch::{CatalogHub, CatalogSubscription};
 
 use crate::background::forward_states;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
+
 use crate::desktop::{
-    AppId, AppState, ClassMatch, DesktopApp, DesktopHub, DesktopState, DesktopSubscription,
-    ExecutableMatch, Launch, Window, WindowId,
+    AppId, AppNotification, AppState, ClassMatch, DesktopApp, DesktopHub, DesktopState,
+    DesktopSubscription, ExecutableMatch, Launch, Window, WindowId,
 };
 
 /// Kind of the IntelliJ module.
@@ -180,6 +184,10 @@ impl ModuleFactory for IntellijFactory {
             events.clone(),
             IntellijEvent::Desktop,
         ));
+        ctx.tasks().spawn(forward_notifications(
+            desktop.notifications(),
+            events.clone(),
+        ));
         let catalog = self.catalog.subscribe();
         ctx.tasks().spawn(forward_states(
             catalog.states(),
@@ -195,7 +203,28 @@ impl ModuleFactory for IntellijFactory {
             events,
             launching: None,
             app_launching: Arc::clone(&self.launching),
+            notified: false,
         }))
+    }
+}
+
+/// Tells the instance each time IntelliJ sends a notification (tests run,
+/// build done…: IntelliJ only sends them while in the background); their
+/// texts are neither kept nor read. Ends with the instance.
+async fn forward_notifications(
+    mut notifications: broadcast::Receiver<AppNotification>,
+    events: EventSender,
+) {
+    loop {
+        match notifications.recv().await {
+            Ok(notification) if notification.app == APP => {
+                if !events.send(IntellijEvent::Notified) {
+                    return;
+                }
+            }
+            Ok(_) | Err(RecvError::Lagged(_)) => {}
+            Err(RecvError::Closed) => return,
+        }
     }
 }
 
@@ -205,6 +234,8 @@ enum IntellijEvent {
     Desktop(DesktopState),
     /// `None` until first read.
     Catalog(Option<Arc<Catalog>>),
+    /// IntelliJ sent a notification.
+    Notified,
     /// The action started from `surface` ended.
     Outcome {
         surface: ModuleSurface,
@@ -243,6 +274,9 @@ pub struct Intellij {
     launching: Option<Opening>,
     /// A launch is under way, from any instance.
     app_launching: Arc<AtomicBool>,
+    /// IntelliJ sent a notification since it was last in front or the home
+    /// key last pressed.
+    notified: bool,
 }
 
 /// An entry of the projects page.
@@ -325,6 +359,12 @@ impl Intellij {
         match event {
             IntellijEvent::Desktop(state) => {
                 self.app = state.app(APP);
+                let in_front = self.windows().iter().any(|window| window.active);
+                self.notified &= !in_front;
+                Vec::new()
+            }
+            IntellijEvent::Notified => {
+                self.notified = true;
                 Vec::new()
             }
             IntellijEvent::Catalog(catalog) => {
@@ -476,7 +516,7 @@ impl Module for Intellij {
         } else {
             MODULE_LABEL
         };
-        let state = if self.app.demands_attention() || self.unavailable() {
+        let state = if self.notified || self.app.demands_attention() || self.unavailable() {
             KeyState::Attention
         } else if self.app.is_running() {
             KeyState::Active
@@ -487,6 +527,7 @@ impl Module for Intellij {
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
+        self.notified = false;
         if self.app.is_running() {
             return vec![Command::OpenPage(MAIN_PAGE.into())];
         }

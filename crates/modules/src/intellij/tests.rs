@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bergadeck_module_api::TaskScope;
@@ -461,6 +461,56 @@ async fn polling_is_shared_and_stops_with_the_last_instance() {
     let reads = setup.catalog.reads();
     tokio::time::sleep(CATALOG_POLL * 4).await;
     assert_eq!(setup.catalog.reads(), reads, "stopped");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_notification_of_intellij_puts_its_key_in_attention_until_pressed() {
+    let setup = Setup::demo();
+    let mut harness = setup.instance(&json!({})).await;
+    let idea = Path::new(DEMO_INTELLIJ_EXECUTABLE);
+    setup
+        .desktop
+        .notify(Path::new("/usr/bin/notify-send"), None, "Tests Passed", "");
+    harness.settle().await;
+    assert_eq!(
+        harness.module.key().state,
+        KeyState::Active,
+        "not IntelliJ's"
+    );
+
+    setup
+        .desktop
+        .notify(idea, None, "Tests Passed", "268 passed");
+    harness
+        .until(|module| module.key().state == KeyState::Attention)
+        .await;
+    assert_eq!(harness.home_label(), MODULE_LABEL, "no text shown");
+    harness.module.on_key_press().await;
+    assert_eq!(harness.module.key().state, KeyState::Active);
+}
+
+#[tokio::test(start_paused = true)]
+async fn intellij_in_front_ends_the_attention_of_a_notification() {
+    let setup = Setup::demo();
+    let mut harness = setup.instance(&json!({})).await;
+    // Sent twice by IntelliJ: once is enough.
+    for _ in 0..2 {
+        setup.desktop.notify(
+            Path::new(DEMO_INTELLIJ_EXECUTABLE),
+            None,
+            "Tests Passed",
+            "",
+        );
+    }
+    harness
+        .until(|module| module.key().state == KeyState::Attention)
+        .await;
+    let mut in_front = Window::new("intellij", "jetbrains-idea", "bergadeck – main.rs");
+    in_front.active = true;
+    setup.desktop.set_windows(vec![in_front]);
+    harness
+        .until(|module| module.key().state == KeyState::Active)
+        .await;
 }
 
 #[test]
