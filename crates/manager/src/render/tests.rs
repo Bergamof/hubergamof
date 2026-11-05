@@ -108,10 +108,39 @@ fn label_changes_the_image() {
         .unwrap();
     assert_eq!(labelled.image().dimensions(), (120, 120));
     assert_ne!(plain.image(), labelled.image());
-    // The label sits at the bottom: the top is untouched.
-    assert_eq!(*labelled.image().get_pixel(60, 10), RED);
-    assert_ne!(*labelled.image().get_pixel(1, 118), RED);
-    assert!(labelled.image().pixels().all(|pixel| pixel.0[3] == 255));
+    // The image sits above the label, whole: its last row is not covered.
+    let image = labelled.image();
+    assert_eq!(*image.get_pixel(60, 10), RED);
+    assert_eq!(*image.get_pixel(60, 85), RED);
+    assert_ne!(*image.get_pixel(60, 119), RED);
+    assert!(image.pixels().all(|pixel| pixel.0[3] == 255));
+}
+
+#[test]
+fn a_long_label_stays_on_one_line_below_the_image() {
+    let source = png(120, 120, RED);
+    let rendered = renderer()
+        .render_key(&KeyRequest::new(
+            KEY,
+            Some(&source),
+            Some("Un libellé beaucoup trop long pour tenir sur une touche"),
+        ))
+        .unwrap();
+    let image = rendered.image();
+    // Text is white: none above the label strip, some inside it.
+    let is_text = |pixel: &Rgba<u8>| pixel.0[1] > 200;
+    let strip_top = 90;
+    assert!(
+        image
+            .enumerate_pixels()
+            .filter(|(_, y, _)| *y < strip_top)
+            .all(|(_, _, pixel)| !is_text(pixel))
+    );
+    assert!(
+        image
+            .enumerate_pixels()
+            .any(|(_, y, pixel)| y >= strip_top && is_text(pixel))
+    );
 }
 
 #[test]
@@ -343,11 +372,11 @@ fn active_keys_are_drawn_without_a_frame() {
 }
 
 #[test]
-fn keys_needing_attention_are_framed_on_orange() {
+fn keys_needing_attention_get_an_orange_background_and_no_frame() {
     let request = KeyRequest::new(KEY, None, Some("Fini")).in_state(KeyState::Attention);
     let rendered = renderer().render_key(&request).unwrap();
     let image = rendered.image();
-    assert_eq!(*image.get_pixel(2, 2), ATTENTION_BORDER_COLOR);
+    assert_eq!(*image.get_pixel(2, 2), ATTENTION_BACKGROUND);
     assert_eq!(*image.get_pixel(60, 30), ATTENTION_BACKGROUND);
 }
 
