@@ -2,8 +2,7 @@ import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { expect, test } from './demo-manager.js';
 
 // Each test runs against its own `bergadeck --demo` with the default layout of a Stream Deck+:
-// keys Audio, Pomodoro, Docker, IntelliJ, Claude (the last two not provided yet, until the
-// step that brings them); dials Horloge, Audio, Pomodoro, Navigation.
+// keys Audio, Pomodoro, Docker, IntelliJ, Claude; dials Horloge, Audio, Pomodoro, Navigation.
 
 function key(page: Page, name: string | RegExp): Locator {
 	return page.getByRole('button', { name: typeof name === 'string' ? `Touche ${name}` : name });
@@ -35,7 +34,7 @@ test('affiche les touches et les molettes de la configuration', async ({ page })
 		'Touche 2 : Pomodoro',
 		'Touche 3 : Docker',
 		'Touche 4 : IntelliJ',
-		'Touche 5 : Claude indisponible'
+		'Touche 5 : Claude'
 	]);
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
 	await expectNames(page.getByRole('button', { name: /^Molette / }), [

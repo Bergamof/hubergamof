@@ -3,8 +3,9 @@
 //!
 //! - Home key: `IntelliJ`, active while it runs, in attention when one of
 //!   its windows asks for it, or when IntelliJ sent a notification (tests
-//!   run, build done) until the key is pressed or IntelliJ is in front. Pressed while IntelliJ is closed: starts it;
-//!   while it runs: opens the projects page.
+//!   run, build done) until the key is pressed or IntelliJ is in front.
+//!   Pressed while IntelliJ is closed: starts it; while it runs: opens the
+//!   projects page.
 //! - Projects page: the open projects first, then the recent ones, most
 //!   recent first, at most `maxProjects`. Pressing an open project brings
 //!   its window to the front; another one opens it in IntelliJ.
@@ -24,7 +25,6 @@ mod toolbox;
 mod watch;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use bergadeck_module_api::{
@@ -41,12 +41,10 @@ pub use toolbox::SystemCatalog;
 use watch::{CatalogHub, CatalogSubscription};
 
 use crate::background::forward_states;
-use tokio::sync::broadcast;
-use tokio::sync::broadcast::error::RecvError;
-
 use crate::desktop::{
-    AppId, AppNotification, AppState, ClassMatch, DesktopApp, DesktopHub, DesktopState,
-    DesktopSubscription, ExecutableMatch, Launch, Window, WindowId,
+    AppAttention, AppId, AppState, ClassMatch, DesktopAction, DesktopApp, DesktopError, DesktopHub,
+    DesktopState, DesktopSubscription, ExecutableMatch, Launch, LaunchStart, Window, WindowId,
+    forward_notifications,
 };
 
 /// Kind of the IntelliJ module.
@@ -94,8 +92,6 @@ pub fn desktop_app() -> DesktopApp {
 pub struct IntellijFactory {
     desktop: Arc<DesktopHub>,
     catalog: Arc<CatalogHub>,
-    /// A launch of IntelliJ is under way, from any instance: one at a time.
-    launching: Arc<AtomicBool>,
 }
 
 impl IntellijFactory {
@@ -106,7 +102,6 @@ impl IntellijFactory {
         Self {
             desktop,
             catalog: CatalogHub::new(catalog),
-            launching: Arc::default(),
         }
     }
 }
@@ -186,7 +181,9 @@ impl ModuleFactory for IntellijFactory {
         ));
         ctx.tasks().spawn(forward_notifications(
             desktop.notifications(),
+            APP,
             events.clone(),
+            || IntellijEvent::Notified,
         ));
         let catalog = self.catalog.subscribe();
         ctx.tasks().spawn(forward_states(
@@ -202,29 +199,8 @@ impl ModuleFactory for IntellijFactory {
             catalog: None,
             events,
             launching: None,
-            app_launching: Arc::clone(&self.launching),
-            notified: false,
+            attention: AppAttention::default(),
         }))
-    }
-}
-
-/// Tells the instance each time IntelliJ sends a notification (tests run,
-/// build done…: IntelliJ only sends them while in the background); their
-/// texts are neither kept nor read. Ends with the instance.
-async fn forward_notifications(
-    mut notifications: broadcast::Receiver<AppNotification>,
-    events: EventSender,
-) {
-    loop {
-        match notifications.recv().await {
-            Ok(notification) if notification.app == APP => {
-                if !events.send(IntellijEvent::Notified) {
-                    return;
-                }
-            }
-            Ok(_) | Err(RecvError::Lagged(_)) => {}
-            Err(RecvError::Closed) => return,
-        }
     }
 }
 
@@ -239,7 +215,7 @@ enum IntellijEvent {
     /// The action started from `surface` ended.
     Outcome {
         surface: ModuleSurface,
-        launch: bool,
+        action: DesktopAction,
         ok: bool,
     },
 }
@@ -272,11 +248,9 @@ pub struct Intellij {
     events: EventSender,
     /// The launch this instance started, under way.
     launching: Option<Opening>,
-    /// A launch is under way, from any instance.
-    app_launching: Arc<AtomicBool>,
-    /// IntelliJ sent a notification since it was last in front or the home
-    /// key last pressed.
-    notified: bool,
+    /// IntelliJ asks for something (window asking, notification of tests
+    /// run or build done).
+    attention: AppAttention,
 }
 
 /// An entry of the projects page.
@@ -359,12 +333,11 @@ impl Intellij {
         match event {
             IntellijEvent::Desktop(state) => {
                 self.app = state.app(APP);
-                let in_front = self.windows().iter().any(|window| window.active);
-                self.notified &= !in_front;
+                self.attention.app_changed(&self.app);
                 Vec::new()
             }
             IntellijEvent::Notified => {
-                self.notified = true;
+                self.attention.notified();
                 Vec::new()
             }
             IntellijEvent::Catalog(catalog) => {
@@ -375,10 +348,10 @@ impl Intellij {
             }
             IntellijEvent::Outcome {
                 surface,
-                launch,
+                action,
                 ok,
             } => {
-                if launch {
+                if action == DesktopAction::Launch {
                     self.launching = None;
                 }
                 let feedback = if ok { Feedback::Ok } else { Feedback::Alert };
@@ -392,8 +365,8 @@ impl Intellij {
     fn reporter(
         &self,
         surface: ModuleSurface,
-        launch: bool,
-    ) -> impl FnOnce(Result<(), crate::desktop::DesktopError>) + Send + 'static {
+        action: DesktopAction,
+    ) -> impl FnOnce(Result<(), DesktopError>) + Send + 'static {
         let events = self.events.clone();
         move |outcome| {
             if let Err(error) = &outcome {
@@ -403,7 +376,7 @@ impl Intellij {
             // An instance gone meanwhile needs no outcome.
             let _ = events.send(IntellijEvent::Outcome {
                 surface,
-                launch,
+                action,
                 ok: outcome.is_ok(),
             });
         }
@@ -420,30 +393,22 @@ impl Intellij {
         let Some(program) = self.launcher().map(std::path::Path::to_path_buf) else {
             return alert();
         };
-        let free =
-            self.app_launching
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire);
-        if free.is_err() {
-            return Vec::new();
+        let report = self.reporter(surface, DesktopAction::Launch);
+        match self.desktop.launch(APP, Launch { program, args }, report) {
+            LaunchStart::Started => {
+                self.launching = Some(opening);
+                Vec::new()
+            }
+            LaunchStart::Busy => Vec::new(),
+            LaunchStart::Refused => alert(),
         }
-        let report = self.reporter(surface, true);
-        let app_launching = Arc::clone(&self.app_launching);
-        let started = self
-            .desktop
-            .launch(Launch { program, args }, move |outcome| {
-                app_launching.store(false, Ordering::Release);
-                report(outcome);
-            });
-        if !started {
-            self.app_launching.store(false, Ordering::Release);
-            return alert();
-        }
-        self.launching = Some(opening);
-        Vec::new()
     }
 
     fn activate(&self, window: WindowId, surface: ModuleSurface) -> Vec<Command> {
-        if self.desktop.activate(window, self.reporter(surface, false)) {
+        if self
+            .desktop
+            .activate(window, self.reporter(surface, DesktopAction::Activate))
+        {
             Vec::new()
         } else {
             alert()
@@ -516,7 +481,7 @@ impl Module for Intellij {
         } else {
             MODULE_LABEL
         };
-        let state = if self.notified || self.app.demands_attention() || self.unavailable() {
+        let state = if self.attention.is_on() || self.unavailable() {
             KeyState::Attention
         } else if self.app.is_running() {
             KeyState::Active
@@ -527,7 +492,7 @@ impl Module for Intellij {
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
-        self.notified = false;
+        self.attention.acknowledge();
         if self.app.is_running() {
             return vec![Command::OpenPage(MAIN_PAGE.into())];
         }

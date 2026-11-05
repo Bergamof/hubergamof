@@ -12,7 +12,7 @@ use crate::engine::*;
 use crate::render::ImageKind;
 
 #[tokio::test]
-async fn default_configuration_shows_placeholders_and_dial_zones() {
+async fn default_configuration_shows_the_builtin_modules_and_dial_zones() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     let live = fixture.live();
     assert_eq!(live.page.id, HOME_PAGE_ID);
@@ -28,7 +28,7 @@ async fn default_configuration_shows_placeholders_and_dial_zones() {
             Some("25:00 Travail"),
             Some("Docker 4/7"),
             Some("IntelliJ"),
-            Some("claude indisponible"),
+            Some("Claude"),
             None,
             None,
             None,

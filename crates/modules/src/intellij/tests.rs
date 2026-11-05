@@ -490,6 +490,23 @@ async fn a_notification_of_intellij_puts_its_key_in_attention_until_pressed() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_notification_while_intellij_is_in_front_is_ignored() {
+    let setup = Setup::demo();
+    let mut in_front = Window::new("intellij", "jetbrains-idea", "bergadeck – main.rs");
+    in_front.active = true;
+    setup.desktop.set_windows(vec![in_front]);
+    let mut harness = setup.instance(&json!({})).await;
+    setup.desktop.notify(
+        Path::new(DEMO_INTELLIJ_EXECUTABLE),
+        None,
+        "Tests Passed",
+        "",
+    );
+    harness.settle().await;
+    assert_eq!(harness.module.key().state, KeyState::Active);
+}
+
+#[tokio::test(start_paused = true)]
 async fn intellij_in_front_ends_the_attention_of_a_notification() {
     let setup = Setup::demo();
     let mut harness = setup.instance(&json!({})).await;

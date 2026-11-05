@@ -177,12 +177,47 @@ async fn actions_run_in_the_background_and_report() {
     let (launched, outcome) = oneshot::channel();
     drop(subscription);
     let subscription = hub.subscribe();
-    subscription.launch(launch.clone(), move |result| {
+    let started = subscription.launch(INTELLIJ, launch.clone(), move |result| {
         launched.send(result).unwrap();
     });
+    assert_eq!(started, LaunchStart::Started);
+    // Busy or refused: the report is dropped, never called.
+    let report = |_| panic!("never reported");
+    assert_eq!(
+        subscription.launch(INTELLIJ, launch.clone(), report),
+        LaunchStart::Busy,
+        "one at a time"
+    );
+    assert_eq!(
+        subscription.launch(AppId("unknown"), launch.clone(), report),
+        LaunchStart::Refused,
+        "not followed"
+    );
+    let claude = Launch {
+        program: "gtk-launch".into(),
+        args: vec!["com.anthropic.Claude".into()],
+    };
+    let (claude_launched, claude_outcome) = oneshot::channel();
+    let started = subscription.launch(CLAUDE, claude.clone(), move |result| {
+        claude_launched.send(result).unwrap();
+    });
+    assert_eq!(
+        started,
+        LaunchStart::Started,
+        "one at a time per application"
+    );
     drop(subscription);
     outcome.await.unwrap().unwrap();
-    assert_eq!(desktop.launches(), [launch]);
+    claude_outcome.await.unwrap().unwrap();
+    let recorded = desktop.launches();
+    assert_eq!(recorded.len(), 2);
+    assert!(recorded.contains(&launch) && recorded.contains(&claude));
+    let (launched, outcome) = oneshot::channel();
+    let started = hub.subscribe().launch(INTELLIJ, launch, move |result| {
+        launched.send(result).unwrap();
+    });
+    assert_eq!(started, LaunchStart::Started, "free again once reported");
+    outcome.await.unwrap().unwrap();
 }
 
 /// A session without compositor nor bus, whose processes cannot be read and
@@ -243,11 +278,17 @@ async fn a_broken_session_shows_nothing_known_and_is_retried_with_a_backoff() {
         program: "idea".into(),
         args: Vec::new(),
     };
-    subscription.launch(launch, move |result| {
+    subscription.launch(INTELLIJ, launch.clone(), move |result| {
         launched.send(result).unwrap();
     });
     let error = outcome.await.unwrap().unwrap_err();
     assert!(matches!(error, DesktopError::Panicked), "{error}");
+    let (launched, outcome) = oneshot::channel();
+    let started = subscription.launch(INTELLIJ, launch, move |result| {
+        launched.send(result).unwrap();
+    });
+    assert_eq!(started, LaunchStart::Started, "free again after a panic");
+    outcome.await.unwrap().unwrap_err();
 }
 
 #[test]

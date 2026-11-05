@@ -219,6 +219,15 @@ impl AppState {
             .any(|window| window.demands_attention)
     }
 
+    /// Whether one of its windows has the focus.
+    #[must_use]
+    pub fn is_in_front(&self) -> bool {
+        self.windows
+            .iter()
+            .flat_map(|windows| windows.iter())
+            .any(|window| window.active)
+    }
+
     /// Whether it has the window `id`.
     #[must_use]
     pub fn has_window(&self, id: &WindowId) -> bool {
@@ -346,7 +355,7 @@ mod tests {
     #[test]
     fn the_state_tells_running_attention_and_windows() {
         let unknown = AppState::default();
-        assert!(!unknown.is_running() && !unknown.demands_attention());
+        assert!(!unknown.is_running() && !unknown.demands_attention() && !unknown.is_in_front());
         let state = AppState {
             running: Some(false),
             windows: Some(vec![window("1", false), window("2", true)].into()),
@@ -355,11 +364,19 @@ mod tests {
         assert!(state.demands_attention());
         assert!(state.has_window(&WindowId("2".into())));
         assert!(!state.has_window(&WindowId("3".into())));
+        assert!(!state.is_in_front());
+        let mut active = window("1", false);
+        active.active = true;
+        let in_front = AppState {
+            running: Some(true),
+            windows: Some(vec![window("2", false), active].into()),
+        };
+        assert!(in_front.is_in_front());
         let in_tray = AppState {
             running: Some(true),
             windows: Some(Vec::new().into()),
         };
-        assert!(in_tray.is_running() && !in_tray.demands_attention());
+        assert!(in_tray.is_running() && !in_tray.demands_attention() && !in_tray.is_in_front());
     }
 
     #[test]

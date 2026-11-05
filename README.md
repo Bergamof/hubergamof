@@ -68,7 +68,7 @@ Interface : <http://127.0.0.1:7878> (ou via l'icône de la barre système).
 
 ## Vie privée
 
-Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre attention, le gestionnaire observe les notifications de bureau de la session (`org.freedesktop.Notifications`). Seules celles envoyées par ces applications, reconnues par l'exécutable de l'expéditeur, sont gardées le temps d'être affichées ; les autres sont ignorées sans être conservées ni journalisées. Les fenêtres sont suivies par un script KWin qui ne transmet que celles des applications suivies. Un journal de débogage de zbus (`RUST_LOG=zbus=trace`) afficherait en revanche les messages du bus : à éviter hors diagnostic.
+Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre attention, le gestionnaire observe les notifications de bureau de la session (`org.freedesktop.Notifications`). Seules celles envoyées par ces applications, reconnues par l'exécutable de l'expéditeur, sont retenues, pour mettre leur touche en attention : leur texte n'est ni affiché ni conservé ; les autres sont ignorées sans être conservées ni journalisées. Les fenêtres sont suivies par un script KWin qui ne transmet que celles des applications suivies. Un journal de débogage de zbus (`RUST_LOG=zbus=trace`) afficherait en revanche les messages du bus : à éviter hors diagnostic.
 
 ## CI
 

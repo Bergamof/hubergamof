@@ -16,7 +16,8 @@
 //!   ([`DesktopSubscription::notifications`]).
 //!
 //! Actions (activating a window, launching a program) run each in a task
-//! of its own, outliving the instance that asked.
+//! of its own, outliving the instance that asked; one launch of each
+//! application at a time, whatever the instance or device asking.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -31,6 +32,7 @@ use super::backend::{
     DesktopBackend, DesktopError, NotificationFilter, NotificationStream, WindowChanges,
     WindowFilter,
 };
+use super::launch_gate::LaunchGate;
 use super::model::{
     AppId, AppNotification, AppState, DesktopApp, ExecutableMatch, Launch, Window, WindowId,
 };
@@ -75,11 +77,34 @@ impl DesktopState {
     }
 }
 
+/// An action a module asks of the desktop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopAction {
+    /// Bringing a window to the front.
+    Activate,
+    /// Starting an application.
+    Launch,
+}
+
+/// How a launch request went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchStart {
+    /// Started: its outcome will be reported.
+    Started,
+    /// Another launch of the application is under way: nothing done.
+    Busy,
+    /// Not started (application not followed, no Tokio runtime): its
+    /// outcome will never be reported.
+    Refused,
+}
+
 /// Shared access to the desktop, see the [module documentation](self).
 #[derive(Debug)]
 pub struct DesktopHub {
     backend: Arc<dyn DesktopBackend>,
     apps: Arc<[DesktopApp]>,
+    /// One launch at a time, per application.
+    launches: BTreeMap<AppId, LaunchGate>,
     states: watch::Sender<DesktopState>,
     notifications: broadcast::Sender<AppNotification>,
     /// Whether a module listens to the notifications: the monitor only
@@ -106,6 +131,10 @@ impl DesktopHub {
         );
         Arc::new(Self {
             backend,
+            launches: apps
+                .iter()
+                .map(|app| (app.id, LaunchGate::default()))
+                .collect(),
             apps: apps.into(),
             states: watch::Sender::new(DesktopState::default()),
             notifications: broadcast::Sender::new(NOTIFICATION_CAPACITY),
@@ -186,16 +215,32 @@ impl DesktopSubscription {
         spawn_action(activation, Err(DesktopError::Panicked), report)
     }
 
-    /// Starts `launch` in the background, then hands the outcome to
-    /// `report`; `false` without a Tokio runtime.
+    /// Starts `launch` of `app` in the background, unless another launch
+    /// of it is under way, then hands the outcome to `report` (dropped
+    /// unused unless [`LaunchStart::Started`]).
     pub fn launch(
         &self,
+        app: AppId,
         launch: Launch,
         report: impl FnOnce(Result<(), DesktopError>) + Send + 'static,
-    ) -> bool {
+    ) -> LaunchStart {
+        let Some(gate) = self.hub.launches.get(&app) else {
+            return LaunchStart::Refused;
+        };
+        let Some(pass) = gate.enter() else {
+            return LaunchStart::Busy;
+        };
         let backend = Arc::clone(&self.hub.backend);
-        let launching = async move { backend.launch(&launch).await };
-        spawn_action(launching, Err(DesktopError::Panicked), report)
+        let launching = async move {
+            let outcome = backend.launch(&launch).await;
+            drop(pass);
+            outcome
+        };
+        if spawn_action(launching, Err(DesktopError::Panicked), report) {
+            LaunchStart::Started
+        } else {
+            LaunchStart::Refused
+        }
     }
 }
 

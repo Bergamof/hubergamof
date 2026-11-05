@@ -11,9 +11,11 @@
 //! Without KWin (GNOME…), windows are not followed: modules only know
 //! whether the application runs, and can launch it.
 
+mod attention;
 mod backend;
 mod hub;
 mod kwin;
+mod launch_gate;
 mod launcher;
 mod model;
 mod monitor;
@@ -22,15 +24,18 @@ mod script_file;
 mod simulated;
 mod system;
 
+pub use attention::{AppAttention, forward_notifications};
 pub use backend::{
     DesktopBackend, DesktopError, NotificationFilter, NotificationStream, WindowChanges,
     WindowFilter,
 };
-pub use hub::{DesktopHub, DesktopState, DesktopSubscription};
+pub use hub::{DesktopAction, DesktopHub, DesktopState, DesktopSubscription, LaunchStart};
 pub use model::{
     AppId, AppNotification, AppState, ClassMatch, DesktopApp, ExecutableMatch, Launch, Window,
     WindowId,
 };
+#[cfg(test)]
+pub(crate) use simulated::DEMO_CLAUDE_EXECUTABLE;
 pub(crate) use simulated::DEMO_INTELLIJ_EXECUTABLE;
 pub use simulated::SimulatedDesktop;
 pub use system::SystemDesktop;

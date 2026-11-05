@@ -2,10 +2,9 @@
 //! from.
 //!
 //! Each module implements [`bergadeck_module_api::Module`] exactly like an
-//! external module would. Available so far: [`audio`], [`clock`],
-//! [`docker`], [`intellij`], [`navigation`] and [`pomodoro`]; claude comes
-//! later (the manager shows a placeholder key for kinds missing from the
-//! registry).
+//! external module would: [`audio`], [`claude`], [`clock`], [`docker`],
+//! [`intellij`], [`navigation`] and [`pomodoro`] (the manager shows a
+//! placeholder key for kinds missing from the registry).
 //!
 //! Modules acting on the desktop (audio server, notifications, Docker…)
 //! run against the [`BuiltinServices`] given to
@@ -15,6 +14,7 @@
 
 pub mod audio;
 mod background;
+pub mod claude;
 pub mod clock;
 pub mod desktop;
 pub mod docker;
@@ -36,7 +36,6 @@ use bergadeck_module_api::{ModuleFactory, ModuleKind};
 use serde_json::{Map, Value};
 
 /// Built-in modules shown on the home page of a new device, in key order.
-/// Kinds not implemented yet show a placeholder key.
 pub const DEFAULT_HOME_MODULES: [&str; 5] = ["audio", "pomodoro", "docker", "intellij", "claude"];
 
 /// Built-in modules assigned to the dials of a new device, from left to
@@ -184,7 +183,11 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     registry.register(Arc::new(docker::DockerFactory::new(services.docker)));
     // One desktop hub for every module following an application: the
     // backend follows the windows for one hub only.
-    let desktop = desktop::DesktopHub::new(services.desktop, vec![intellij::desktop_app()]);
+    let desktop = desktop::DesktopHub::new(
+        services.desktop,
+        vec![claude::desktop_app(), intellij::desktop_app()],
+    );
+    registry.register(Arc::new(claude::ClaudeFactory::new(Arc::clone(&desktop))));
     registry.register(Arc::new(intellij::IntellijFactory::new(
         Arc::clone(&desktop),
         services.intellij,
@@ -233,6 +236,7 @@ mod tests {
             kinds,
             [
                 audio::AUDIO_KIND,
+                claude::CLAUDE_KIND,
                 clock::CLOCK_KIND,
                 docker::DOCKER_KIND,
                 intellij::INTELLIJ_KIND,
@@ -241,7 +245,7 @@ mod tests {
             ]
         );
         assert!(registry.get(&"clock".into()).is_some());
-        assert!(registry.get(&"claude".into()).is_none());
+        assert!(registry.get(&"unknown".into()).is_none());
         assert_eq!(
             descriptors(&builtin_registry_with(BuiltinServices::system())),
             descriptors(&registry)
@@ -310,7 +314,7 @@ mod tests {
             registry.default_settings(&clock::CLOCK_KIND.into()),
             clock::ClockFactory::system().default_settings()
         );
-        assert_eq!(registry.default_settings(&"claude".into()), json!({}));
+        assert_eq!(registry.default_settings(&"unknown".into()), json!({}));
         assert_eq!(
             registry.default_settings(&docker::DOCKER_KIND.into()),
             json!({ "composeFiles": [] })

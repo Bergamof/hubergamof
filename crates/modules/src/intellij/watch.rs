@@ -140,11 +140,22 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
 
+    use tokio::sync::mpsc as async_mpsc;
+
     use super::*;
 
-    /// A catalog whose reads wait for a release, counted.
+    /// Longest (simulated) wait for a read to start: time does not advance
+    /// by itself while a blocking read runs.
+    const START_PATIENCE: Duration = Duration::from_secs(60);
+
+    /// Most polls a released read may take to be published.
+    const MAX_POLLS: usize = 10;
+
+    /// A catalog whose reads tell when they start, then wait for a
+    /// release; counted.
     #[derive(Debug)]
     struct StuckCatalog {
+        started: async_mpsc::UnboundedSender<()>,
         release: Mutex<mpsc::Receiver<()>>,
         reads: AtomicUsize,
     }
@@ -152,6 +163,7 @@ mod tests {
     impl ProjectCatalog for StuckCatalog {
         fn read(&self) -> Result<Catalog, String> {
             self.reads.fetch_add(1, Ordering::SeqCst);
+            let _ = self.started.send(());
             let release = self.release.lock().unwrap();
             release.recv().map_err(|error| error.to_string())?;
             Ok(Catalog::default())
@@ -170,13 +182,18 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_stuck_read_is_never_doubled() {
         let (release, waiting) = mpsc::channel();
+        let (started, mut starts) = async_mpsc::unbounded_channel();
         let catalog = Arc::new(StuckCatalog {
+            started,
             release: Mutex::new(waiting),
             reads: AtomicUsize::new(0),
         });
         let hub = CatalogHub::new(Arc::clone(&catalog) as _);
         let subscription = hub.subscribe();
         let states = subscription.states();
+        tokio::time::timeout(START_PATIENCE, starts.recv())
+            .await
+            .expect("a first read");
         for _ in 0..4 {
             pass(READ_TIMEOUT + CATALOG_POLL).await;
         }
@@ -185,12 +202,18 @@ mod tests {
 
         // Released: the read waited for is published, and polling goes on.
         release.send(()).unwrap();
-        while states.borrow().is_none() {
+        for _ in 0..MAX_POLLS {
+            if states.borrow().is_some() {
+                break;
+            }
             pass(CATALOG_POLL).await;
         }
         assert_eq!(states.borrow().as_deref(), Some(&Catalog::default()));
-        pass(CATALOG_POLL + CATALOG_POLL).await;
-        assert_eq!(catalog.reads.load(Ordering::SeqCst), 2, "polling goes on");
+        tokio::time::timeout(START_PATIENCE, starts.recv())
+            .await
+            .expect("polling goes on");
+        // The released read is the only one before.
+        assert_eq!(catalog.reads.load(Ordering::SeqCst), 2);
         // The runtime waits for blocking reads when it shuts down.
         drop(release);
         drop(subscription);

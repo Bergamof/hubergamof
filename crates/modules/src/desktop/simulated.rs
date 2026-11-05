@@ -50,6 +50,8 @@ pub struct SimulatedDesktop {
     launches: Mutex<Vec<Launch>>,
     /// Activations and launches fail (recorded all the same).
     failing: AtomicBool,
+    /// Windows can be followed (KWin); otherwise following them fails.
+    compositor: AtomicBool,
 }
 
 impl SimulatedDesktop {
@@ -63,6 +65,7 @@ impl SimulatedDesktop {
             activations: Mutex::default(),
             launches: Mutex::default(),
             failing: AtomicBool::new(false),
+            compositor: AtomicBool::new(true),
         }
     }
 
@@ -110,6 +113,12 @@ impl SimulatedDesktop {
         });
     }
 
+    /// Whether following the windows works from now on (without, as under
+    /// GNOME, it fails).
+    pub fn set_compositor(&self, present: bool) {
+        self.compositor.store(present, Ordering::SeqCst);
+    }
+
     /// Makes the next activations and launches fail, or succeed again.
     pub fn fail_actions(&self, failing: bool) {
         self.failing.store(failing, Ordering::SeqCst);
@@ -148,6 +157,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[async_trait]
 impl DesktopBackend for SimulatedDesktop {
     async fn windows(&self, filter: &WindowFilter) -> Result<Box<dyn WindowChanges>, DesktopError> {
+        if !self.compositor.load(Ordering::SeqCst) {
+            return Err(DesktopError::NoCompositor("simulated".into()));
+        }
         Ok(Box::new(SimulatedWindows {
             windows: self.windows.subscribe(),
             filter: filter.clone(),
