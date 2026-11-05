@@ -338,13 +338,19 @@ mod tests {
             services(dir.path(), builtin_services(true)).unwrap(),
         );
         let devices = VirtualDevices::new(discovery.clone());
+        let engines = supervisor.engines();
+        let mut changes = engines.changes();
         let deck = devices.attach(virtual_plus_info(DEMO_SERIAL));
-        let engine = loop {
-            if let Some(engine) = supervisor.engines().get(DEMO_SERIAL) {
-                break engine;
+        let engine = tokio::time::timeout(WAIT, async {
+            loop {
+                if let Some(engine) = engines.get(DEMO_SERIAL) {
+                    break engine;
+                }
+                changes.changed().await.unwrap();
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        };
+        })
+        .await
+        .expect("the demo engine starts");
         assert_eq!(engine.live().borrow().page.title, "Accueil");
         let screen = deck.screen();
         assert!(screen.keys.iter().all(Option::is_some));

@@ -18,13 +18,6 @@ use crate::engine::feedback::FEEDBACK_DURATION;
 use crate::engine::*;
 use crate::render::ImageKind;
 
-/// Lets the engine task run until it is idle.
-async fn settle() {
-    for _ in 0..16 {
-        tokio::task::yield_now().await;
-    }
-}
-
 fn fragile_with(settings: serde_json::Value) -> ModuleInstance {
     instance(FRAGILE_KIND, FRAGILE_KIND, settings)
 }
@@ -635,9 +628,16 @@ async fn a_failed_creation_leaves_no_task_behind() {
     fixture
         .configure(vec![fragile("abandon")], &[FRAGILE_KIND], &[])
         .await;
-    settle().await;
     assert_eq!(fixture.labels()[0].as_deref(), Some("fragile indisponible"));
-    assert_eq!(fixture.probe.abandoned_tasks.load(Ordering::SeqCst), 0);
+    // Its task was alive (counted at creation) until aborted.
+    let alive = &fixture.probe.abandoned_tasks;
+    tokio::time::timeout(WAIT, async {
+        while alive.load(Ordering::SeqCst) > 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the task of the failed creation is aborted");
 }
 
 #[tokio::test]

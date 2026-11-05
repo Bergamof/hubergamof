@@ -149,6 +149,22 @@ async fn instances_share_one_subscription_and_one_read_per_change() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_volume_notch_costs_one_change_and_one_read() {
+    let audio = Arc::new(SimulatedAudio::demo());
+    let hub = hub_on(&audio);
+    let probe = Probe::new(&hub);
+    idle(SETTLE).await;
+    let reads = audio.snapshot_reads();
+
+    let seq = probe.set_volume(30).unwrap();
+    idle(SETTLE).await;
+    assert_eq!(probe.state().applied, seq);
+    // The change, then one read for it and its echo together: two pactl calls.
+    assert_eq!(audio.applied().len(), 1);
+    assert_eq!(audio.snapshot_reads(), reads + 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn changes_of_several_instances_are_applied_in_order() {
     let audio = Arc::new(SimulatedAudio::demo());
     let hub = hub_on(&audio);
@@ -526,9 +542,14 @@ async fn a_volume_notch_costs_two_pactl_calls() {
     // Leave time to a read the echo would cause.
     tokio::time::sleep(MIN_READ_INTERVAL * 3).await;
     let calls = calls(dir.path());
-    let round_trip = &calls[4..];
-    // The echo of `subscribe` usually lands within the debounce (two calls);
-    // on a loaded machine it may come after the read and cost one more.
+    let first_change = calls
+        .iter()
+        .position(|call| call.starts_with("set-sink-volume "))
+        .expect("the change was applied");
+    let round_trip = &calls[first_change..];
+    // The echo of `subscribe` usually lands within the debounce (two calls,
+    // exactly in `a_volume_notch_costs_one_change_and_one_read`); on a
+    // loaded machine it may come after the read and cost one more.
     assert!(
         (2..=3).contains(&round_trip.len()) && round_trip[0].starts_with("set-sink-volume "),
         "{round_trip:?}"

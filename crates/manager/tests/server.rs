@@ -674,6 +674,9 @@ async fn selected_device_streams_config_and_live_state() {
 #[tokio::test]
 async fn live_states_are_only_sent_to_clients_asking_for_them() {
     let server = Running::start().await;
+    // Asks for them: proves a live state of the new look was sent.
+    let mut watcher = server.connect().await;
+    let (_, _) = watcher.select(DEMO_SERIAL).await;
     let mut client = server.connect().await;
     client
         .send(&ClientMessage::SelectDevice {
@@ -702,8 +705,11 @@ async fn live_states_are_only_sent_to_clients_asking_for_them() {
             index: 0,
         })
         .await;
-    // Long enough for a live state of the new look to be due.
-    tokio::time::sleep(MIN_LIVE_STATE_INTERVAL * 3).await;
+    watcher
+        .live_state_where(|state| state.page.keys[0].label.as_deref() == Some("count 1"))
+        .await;
+    // Past the throttling interval, it would have been sent to both.
+    tokio::time::sleep(MIN_LIVE_STATE_INTERVAL * 2).await;
     client.ping().await;
     server.stop().await;
 }
@@ -844,7 +850,22 @@ async fn device_changes_are_announced_and_followed() {
         .await;
     assert_eq!(devices.len(), 1);
     assert_eq!(server.devices.discovery.devices().len(), 1);
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let engines = &server.devices.context.engines;
+    let mut changes = engines.changes();
+    tokio::time::timeout(WAIT, async {
+        while engines.get(second).is_some() {
+            changes.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("the engine of the unplugged device stops");
+    client
+        .send(&ClientMessage::SelectDevice {
+            serial: second.into(),
+            live_state: true,
+        })
+        .await;
+    assert_eq!(client.error().await, ErrorCode::UnknownDevice);
     client.ping().await;
     server.stop().await;
 }
