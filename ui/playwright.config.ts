@@ -11,6 +11,8 @@ export default defineConfig({
 	globalSetup: './e2e/global-setup.ts',
 	forbidOnly: isCi,
 	retries: isCi ? 1 : 0,
+	// A test passing only on its retry fails the run: retried, but never hidden.
+	failOnFlakyTests: isCi,
 	reporter: isCi ? [['list'], ['html', { open: 'never' }]] : 'list',
 	projects: [
 		{

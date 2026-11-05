@@ -7,14 +7,18 @@
 //!   shell that routes on the client;
 //! - HTML pages carry a CSP allowing exactly their inline scripts (the
 //!   `SvelteKit` bootstrap) by hash;
+//! - a file precompressed by the build (`.br`, `.gz` next to it) is served
+//!   compressed to a client accepting that encoding;
 //! - without a UI build, a plain text page explains how to make one.
 
 use std::borrow::Cow;
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode, Uri};
+use axum::http::header::{
+    ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_SECURITY_POLICY, CONTENT_TYPE, VARY,
+};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -35,6 +39,10 @@ const IMMUTABLE_PREFIX: &str = "_app/immutable/";
 
 /// Directory of the `SvelteKit` runtime files.
 const APP_PREFIX: &str = "_app/";
+
+/// Encodings of the precompressed files, preferred first: (`Content-Encoding`,
+/// file extension).
+const PRECOMPRESSED: [(&str, &str); 2] = [("br", "br"), ("gzip", "gz")];
 
 const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const CACHE_REVALIDATE: &str = "no-cache";
@@ -68,21 +76,62 @@ impl AssetSource for EmbeddedUi {
 }
 
 /// Handler of every `GET`/`HEAD` that is not another route.
-pub(super) async fn serve_ui(State(state): State<AppState>, uri: Uri) -> Response {
+pub(super) async fn serve_ui(
+    State(state): State<AppState>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
     let assets = state.assets.as_ref();
     let Some(path) = asset_path(uri.path()) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let accepted = headers
+        .get(ACCEPT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
     if let Some(content) = assets.get(&path) {
-        return file_response(&path, content);
+        return file_response(assets, &path, content, accepted);
     }
     if looks_like_file(uri.path().trim_start_matches('/')) {
         return StatusCode::NOT_FOUND.into_response();
     }
     match assets.get(FALLBACK_FILE) {
-        Some(content) => file_response(FALLBACK_FILE, content),
+        Some(content) => file_response(assets, FALLBACK_FILE, content, accepted),
         None => missing_ui_response(),
     }
+}
+
+/// The precompressed variant of `path` the client accepts, with its
+/// `Content-Encoding`.
+fn precompressed(
+    assets: &dyn AssetSource,
+    path: &str,
+    accepted: &str,
+) -> Option<(&'static str, Cow<'static, [u8]>)> {
+    PRECOMPRESSED
+        .iter()
+        .filter(|(encoding, _)| accepts_encoding(accepted, encoding))
+        .find_map(|(encoding, extension)| {
+            assets
+                .get(&format!("{path}.{extension}"))
+                .map(|content| (*encoding, content))
+        })
+}
+
+/// Whether the `Accept-Encoding` value `accepted` allows `encoding`: listed
+/// (or `*`) without a zero quality.
+fn accepts_encoding(accepted: &str, encoding: &str) -> bool {
+    accepted.split(',').any(|item| {
+        let mut parts = item.split(';').map(str::trim);
+        let name = parts.next().unwrap_or_default();
+        let refused = parts.any(|parameter| {
+            parameter
+                .strip_prefix("q=")
+                .and_then(|quality| quality.parse::<f32>().ok())
+                .is_some_and(|quality| quality <= 0.0)
+        });
+        (name.eq_ignore_ascii_case(encoding) || name == "*") && !refused
+    })
 }
 
 /// Relative path of the requested file, `None` when the path tries to leave
@@ -109,7 +158,12 @@ fn looks_like_file(path: &str) -> bool {
     path.starts_with(APP_PREFIX) || file_name.contains('.')
 }
 
-fn file_response(path: &str, content: Cow<'static, [u8]>) -> Response {
+fn file_response(
+    assets: &dyn AssetSource,
+    path: &str,
+    content: Cow<'static, [u8]>,
+    accepted: &str,
+) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let content_type = if needs_charset(&mime) {
         format!("{mime}; charset=utf-8")
@@ -127,12 +181,21 @@ fn file_response(path: &str, content: Cow<'static, [u8]>) -> Response {
         headers.insert(CONTENT_TYPE, value);
     }
     headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache));
+    // Caches keep each encoding apart.
+    headers.insert(VARY, HeaderValue::from_static("accept-encoding"));
     if mime == mime_guess::mime::TEXT_HTML
         && let Ok(policy) = HeaderValue::from_str(&html_content_security_policy(&content))
     {
         headers.insert(CONTENT_SECURITY_POLICY, policy);
     }
-    *response.body_mut() = Body::from(content);
+    let body = match precompressed(assets, path, accepted) {
+        Some((encoding, compressed)) => {
+            headers.insert(CONTENT_ENCODING, HeaderValue::from_static(encoding));
+            compressed
+        }
+        None => content,
+    };
+    *response.body_mut() = Body::from(body);
     response
 }
 
@@ -251,6 +314,75 @@ mod tests {
         ));
         assert!(!policy.contains("unsafe-eval"));
         assert!(html_content_security_policy(b"<p>no script</p>").ends_with("script-src 'self'"));
+    }
+
+    /// Files of a build, by path.
+    struct Files(Vec<(&'static str, &'static [u8])>);
+
+    impl AssetSource for Files {
+        fn get(&self, path: &str) -> Option<Cow<'static, [u8]>> {
+            self.0
+                .iter()
+                .find(|(name, _)| *name == path)
+                .map(|(_, content)| Cow::Borrowed(*content))
+        }
+    }
+
+    #[test]
+    fn accepted_encodings_are_parsed() {
+        assert!(accepts_encoding("gzip, deflate, br, zstd", "br"));
+        assert!(accepts_encoding("GZIP;q=0.5", "gzip"));
+        assert!(accepts_encoding("*", "br"));
+        assert!(!accepts_encoding("br;q=0, gzip", "br"));
+        assert!(!accepts_encoding("br;q=0.0", "br"));
+        assert!(!accepts_encoding("brotli", "br"));
+        assert!(!accepts_encoding("", "gzip"));
+    }
+
+    #[test]
+    fn precompressed_files_are_preferred_when_accepted() {
+        let files = Files(vec![
+            ("a.js", b"plain"),
+            ("a.js.br", b"brotli"),
+            ("a.js.gz", b"gzip"),
+            ("b.js", b"plain"),
+            ("b.js.gz", b"gzip"),
+        ]);
+        let pick = |path, accepted| precompressed(&files, path, accepted);
+        assert_eq!(
+            pick("a.js", "gzip, br"),
+            Some(("br", Cow::Borrowed(&b"brotli"[..])))
+        );
+        assert_eq!(
+            pick("a.js", "gzip"),
+            Some(("gzip", Cow::Borrowed(&b"gzip"[..])))
+        );
+        assert_eq!(
+            pick("b.js", "br, gzip"),
+            Some(("gzip", Cow::Borrowed(&b"gzip"[..])))
+        );
+        assert_eq!(pick("b.js", "br"), None);
+        assert_eq!(pick("a.js", ""), None);
+    }
+
+    #[test]
+    fn a_compressed_page_keeps_the_policy_of_its_scripts() {
+        let page: &[u8] = b"<script>go()</script>";
+        let files = Files(vec![(INDEX_FILE, page), ("index.html.gz", b"compressed")]);
+        let response = file_response(&files, INDEX_FILE, Cow::Borrowed(page), "gzip");
+        let headers = response.headers();
+        assert_eq!(headers[CONTENT_ENCODING], "gzip");
+        assert_eq!(headers[VARY], "accept-encoding");
+        assert_eq!(
+            headers[CONTENT_SECURITY_POLICY].to_str().unwrap(),
+            html_content_security_policy(page)
+        );
+        assert!(
+            headers[CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
     }
 
     #[test]

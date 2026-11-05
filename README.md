@@ -21,12 +21,14 @@ Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme
 | PipeWire (`pactl`, `wpctl`) | module Audio | présent par défaut sur Arch/KDE et Ubuntu 24.04 |
 | Docker (utilisateur dans le groupe `docker`) | module Docker, `make docker` | [docs.docker.com](https://docs.docker.com/engine/install/) |
 | [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) 0.20 | `make deny` / `make check` | `cargo install --locked cargo-deny` |
+| [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) 0.9 | `make coverage` (composant `llvm-tools-preview` installé par rustup) | `cargo install --locked cargo-llvm-cov` |
+| [zizmor](https://docs.zizmor.sh/) 1.31 (facultatif) | `make lint-workflows` (audit des workflows, bloquant en CI) | `cargo install --locked zizmor` |
 | GNOME uniquement : extension AppIndicator | icône de barre système | activée par défaut sur Ubuntu |
 
 ## Activation automatique de l'environnement
 
 ### Rust (rustup)
-1. Rien à installer à la main : à la première commande `cargo` dans le dossier, rustup lit `rust-toolchain.toml` et installe la 1.99.1 avec `rustfmt` et `clippy`.
+1. Rien à installer à la main : à la première commande `cargo` dans le dossier, rustup lit `rust-toolchain.toml` et installe la 1.99.1 avec `rustfmt`, `clippy` et `llvm-tools-preview` (couverture).
 2. Le basculement est automatique dans ce dossier (et ses sous-dossiers).
 3. Vérification : `rustc --version` → `rustc 1.99.1 …`.
 
@@ -46,11 +48,13 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 | `make run` | gestionnaire sur le matériel réel |
 | `make check` | toutes les vérifications locales (lint, tests, contrat TS, versions, cargo-deny) |
 | `make lint` / `make fmt` | lint en vérification / formatage |
-| `make test` / `make test-e2e` | tests Rust + Vitest / tests Playwright : chaque test lance son propre `bergadeck --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
+| `make test` / `make test-e2e` | tests Rust + Vitest (composants Svelte dans Chromium, mode navigateur) / tests Playwright : chaque test lance son propre `bergadeck --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
+| `make coverage` | tests Rust et Vitest instrumentés, en échec sous le plancher de couverture (mesure − 2 points, jamais baissé) |
+| `make test-docker` | module Docker contre le vrai Docker de la machine (conteneurs `bergadeck-it-*` créés puis supprimés) |
 | `make gen-types` | régénère les types TypeScript du contrat (`ui/src/lib/generated/`) |
 | `make build` | UI puis binaire release `target/release/bergadeck` qui l'embarque |
 | `make docker` | image de build reproductible (mode `--demo`, pas l'usage normal) |
-| `make lighthouse` | audit Lighthouse de l'UI servie par `bergadeck --demo` (port 7881) : Accessibilité et Bonnes pratiques ≥ 90 |
+| `make lighthouse` | audit Lighthouse de l'UI servie par `bergadeck --demo` (port 7881) : Accessibilité, Bonnes pratiques et Performance ≥ 90 |
 | `make install` / `make uninstall` | installe/retire le binaire (`~/.local/bin`), le service systemd utilisateur et la règle udev |
 
 ## Installation sur le poste
@@ -72,9 +76,9 @@ Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre
 
 ## CI
 
-`.github/workflows/ci.yml` vérifie chaque pull request (et chaque push sur `main`) : lint, tests, contrat TypeScript à jour, tests e2e, build, image Docker, sécurité (cargo-deny, `pnpm audit`, gitleaks, Trivy) et Lighthouse. Un job final commente la PR avec un compte rendu.
+`.github/workflows/ci.yml` vérifie chaque pull request (et chaque push sur `main`, plus une fois par semaine) : lint (dont zizmor), tests avec couverture, contrat TypeScript à jour, tests e2e, build, image Docker, intégration avec un vrai Docker (si la PR touche le module), sécurité (cargo-deny, `pnpm audit`, gitleaks, Trivy) et Lighthouse. Un job final commente la PR avec un compte rendu.
 
-Recommandé : protéger `main` en rendant obligatoires les jobs `lint`, `test`, `contract`, `e2e`, `build`, `docker`, `security` et `lighthouse`.
+Recommandé : protéger `main` en rendant obligatoires les jobs `lint`, `test`, `contract`, `e2e`, `build`, `docker`, `docker-it`, `security` et `lighthouse`.
 
 ## Licence
 

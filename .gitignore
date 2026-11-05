@@ -8,6 +8,7 @@ node_modules/
 /ui/test-results/
 /ui/playwright-report/
 /ui/coverage/
+/ui/.vitest/
 /ui/vite.config.ts.timestamp-*
 
 # Lighthouse CI

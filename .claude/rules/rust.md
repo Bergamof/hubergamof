@@ -22,7 +22,7 @@ paths:
 - Serveur : `127.0.0.1` uniquement + contrôle `Host`/`Origin` (pas de jeton de session, cf. décisions de `CLAUDE.md`).
 
 ## Pièges
-- Tests d'intégration marqués `#![cfg(test)]` pour que `allow-unwrap-in-tests` de clippy s'applique.
+- Tests d'intégration marqués `#![cfg(test)]` pour que `allow-unwrap-in-tests` de clippy s'applique ; condition en plus (feature) dans un second `#![cfg(…)]`, pas dans `cfg(all(test, …))` que clippy ne reconnaît pas.
 - Tests manuels du binaire : `--config-dir` vers un dossier temporaire, jamais `config/` du dépôt.
 - Toute modification d'un type du contrat (y compris sa rustdoc) impose `make gen-types` dans le même commit.
 - Tests asynchrones des modules en temps simulé (`#[tokio::test(start_paused = true)]`), jamais en temps réel (instable sous charge) : `spawn_blocking` est compatible, tokio suspend l'avance automatique du temps tant qu'une tâche bloquante tourne. Attendre une condition (événement, état) plutôt qu'une durée. Effet d'une tâche `spawn_blocking` (compteur, appel) : son thread démarre en temps réel, l'attendre via un signal `tokio::sync::mpsc` envoyé par la tâche, sous `timeout`, jamais par un `recv` bloquant de `std` (gèle le runtime) ; son résultat publié : `timeout(…, watch.changed())`, jamais une boucle bornée d'avances du temps simulé (elles s'enchaînent avant que le thread ait fini).

@@ -39,6 +39,10 @@ updates:
       lint-format:
         patterns: ["eslint", "@eslint/*", "eslint-config-*", "typescript-eslint", "globals", "prettier", "prettier-plugin-*"]
         update-types: [minor, patch]
+      # @vitest/* exigent exactement la version de vitest : toujours ensemble,
+      # majeures comprises.
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
       ui-minor-patch:
         update-types: [minor, patch]
 

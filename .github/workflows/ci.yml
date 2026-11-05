@@ -3,9 +3,8 @@
 # Chaque job de vérification expose `outputs.summary` (résumé chiffré) et figure
 # dans les `needs` du job `report`, qui commente la PR.
 #
-# Actions : celles de GitHub (actions/*, docker/*) sont référencées par version
-# majeure ; les actions tierces sont épinglées par SHA de commit (chaîne
-# d'approvisionnement), avec la version en commentaire. Dependabot met les deux à jour.
+# Actions : toutes épinglées par SHA de commit (chaîne d'approvisionnement, exigé
+# par zizmor), version en commentaire ; Dependabot les met à jour.
 name: CI
 
 on:
@@ -13,6 +12,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  # Hebdomadaire : dérive des dépendances, de Docker et des runners hors PR.
+  schedule:
+    - cron: "17 5 * * 1"
 
 permissions:
   contents: read
@@ -31,8 +33,17 @@ env:
   PNPM: pnpm
   CARGO_TERM_COLOR: never
   FORCE_COLOR: "0"
+  # Outils hors Dependabot, montés à la main : version ET somme SHA-256 de
+  # l'archive linux x64 (sha256sum de l'archive téléchargée, recoupée avec le
+  # fichier de sommes de la release).
   GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  # Installés par taiki-e/install-action (sommes vérifiées par l'action) ;
+  # versions montées à la main, comme celles ci-dessus.
+  ZIZMOR_VERSION: 1.31.1
+  CARGO_LLVM_COV_VERSION: 0.9.1
 
 jobs:
   lint:
@@ -41,7 +52,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -69,7 +80,7 @@ jobs:
         run: >-
           .github/scripts/install-release-binary.sh rhysd/actionlint "v$ACTIONLINT_VERSION"
           "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          "actionlint_${ACTIONLINT_VERSION}_checksums.txt" actionlint
+          "$ACTIONLINT_SHA256" actionlint
       # actionlint vérifie aussi les scripts `run:` avec shellcheck (préinstallé sur le runner).
       - name: Pipeline (actionlint, shellcheck)
         id: tooling
@@ -77,6 +88,15 @@ jobs:
         run: |
           actionlint
           shellcheck --external-sources --source-path=SCRIPTDIR/.. packaging/*.sh .github/scripts/*.sh
+      - name: Install zizmor
+        if: ${{ !cancelled() }}
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: zizmor@${{ env.ZIZMOR_VERSION }}
+      - name: Workflows (zizmor)
+        id: workflows
+        if: ${{ !cancelled() }}
+        run: make lint-workflows 2>&1 | tee zizmor.log
 
       - name: Summary
         id: summary
@@ -87,43 +107,58 @@ jobs:
           SHELL_EXEC: ${{ steps.shell-exec.outcome }}
           VERSIONS: ${{ steps.versions.outcome }}
           TOOLING: ${{ steps.tooling.outcome }}
+          WORKFLOWS: ${{ steps.workflows.outcome }}
         run: |
           icon() { [[ "$1" == success ]] && echo "✅" || echo "❌"; }
           rust_issues=$(grep -cE '^(error|warning)(\[[A-Za-z0-9_:]+\])?: ' lint-rust.log || true)
           ui_problems=$(sed -nE 's/.*✖ ([0-9]+) problems?.*/\1/p' lint-ui.log 2>/dev/null | tail -1)
           # svelte-check sans terminal : « COMPLETED n FILES e ERRORS w WARNINGS … ».
           svelte_check=$(sed -nE 's/.*COMPLETED [0-9]+ FILES ([0-9]+) ERRORS ([0-9]+) WARNINGS.*/\1 erreur(s), \2 avertissement(s)/p' lint-ui.log 2>/dev/null | tail -1)
-          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · shell hors tests $(icon "$SHELL_EXEC") · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING")" >> "$GITHUB_OUTPUT"
+          zizmor=$(grep -oE '^[0-9]+ findings?' zizmor.log 2>/dev/null | tail -1)
+          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · shell hors tests $(icon "$SHELL_EXEC") · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING") · zizmor $(icon "$WORKFLOWS") ${zizmor:-0 finding}" >> "$GITHUB_OUTPUT"
 
+  # Les tests tournent instrumentés : mêmes tests que `make test`, plus la
+  # couverture, en échec sous le plancher (cliquet, voir Makefile et vite.config.ts).
   test:
-    name: Tests
+    name: Tests & couverture
     runs-on: ubuntu-latest
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          cache-key: debug
+          cache-key: coverage
       - uses: ./.github/actions/setup-ui
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
+      # Composants Svelte testés dans un vrai Chromium (mode navigateur de Vitest).
+      - name: Install Chromium
+        working-directory: ui
+        run: pnpm exec playwright install --with-deps chromium
 
-      - name: Rust (cargo test)
+      - name: Rust (cargo llvm-cov)
         id: rust
-        run: make test-rust 2>&1 | tee test-rust.log
-      - name: UI (Vitest)
+        run: make coverage-rust 2>&1 | tee test-rust.log
+      - name: UI (Vitest, couverture v8)
         id: ui
         if: ${{ !cancelled() }}
-        run: make test-ui 2>&1 | tee test-ui.log
+        run: make coverage-ui 2>&1 | tee test-ui.log
 
       - name: Summary
         id: summary
         if: always()
         run: |
           rust=$(awk '/^test result:/ { passed += $4; failed += $6 } END { printf "%d réussi(s), %d échoué(s)", passed, failed }' test-rust.log 2>/dev/null || echo "—")
+          # Ligne TOTAL de cargo llvm-cov : régions, fonctions puis lignes ; garder le dernier pourcentage.
+          rust_lines=$(awk '/^TOTAL/ { n = 0; for (i = 1; i <= NF; i++) if ($i ~ /%$/) pct[++n] = $i; print pct[n] }' test-rust.log 2>/dev/null)
           vitest=$(grep -E '^[[:space:]]*Tests[[:space:]]' test-ui.log 2>/dev/null | tail -1 | sed -E 's/^[[:space:]]*Tests[[:space:]]+//' || true)
-          echo "summary=Rust : ${rust} · Vitest : ${vitest:-—}" >> "$GITHUB_OUTPUT"
+          ui_lines=$(sed -nE 's/^Lines[[:space:]]*:[[:space:]]*([0-9.]+%).*/\1/p' test-ui.log 2>/dev/null | tail -1)
+          echo "summary=Rust : ${rust}, lignes ${rust_lines:-—} · Vitest : ${vitest:-—}, lignes ${ui_lines:-—}" >> "$GITHUB_OUTPUT"
 
   contract:
     name: Contrat TS
@@ -131,7 +166,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -160,7 +195,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-ui
@@ -176,7 +211,7 @@ jobs:
         run: make test-e2e 2>&1 | tee e2e.log
       - name: Upload report
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report
           path: ui/playwright-report/
@@ -195,7 +230,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -207,7 +242,7 @@ jobs:
         id: build
         run: make build
       - name: Upload binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bergadeck-linux-x86_64
           path: target/release/bergadeck
@@ -228,12 +263,12 @@ jobs:
     env:
       IMAGE: bergadeck:ci
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build (no push)
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: false
@@ -299,7 +334,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # Historique complet pour le scan de secrets.
@@ -330,7 +365,7 @@ jobs:
         run: >-
           .github/scripts/install-release-binary.sh gitleaks/gitleaks "v$GITLEAKS_VERSION"
           "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          "gitleaks_${GITLEAKS_VERSION}_checksums.txt" gitleaks
+          "$GITLEAKS_SHA256" gitleaks
       - name: Secrets (gitleaks)
         id: gitleaks
         if: ${{ !cancelled() }}
@@ -371,7 +406,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-ui
@@ -385,7 +420,7 @@ jobs:
         run: make lighthouse
       - name: Upload reports
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lighthouse-reports
           path: .lighthouseci/
@@ -402,15 +437,62 @@ jobs:
             .lighthouseci/reports/manifest.json 2>/dev/null || true)
           echo "summary=${scores:-pas de rapport}" >> "$GITHUB_OUTPUT"
 
+  # Le module Docker contre un vrai démon (feature `docker-it`) : sur une PR
+  # seulement si elle touche ce qu'il exerce, toujours sur main et chaque semaine.
+  docker-it:
+    name: Intégration Docker
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Concerned?
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          relevant='^(crates/modules/(src/docker/|src/(process|trust|paths)\.rs|tests/docker_engine\.rs|Cargo\.toml)|Cargo\.lock|rust-toolchain\.toml|Makefile|\.github/)'
+          if [[ "$EVENT" != pull_request ]] || git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qE "$relevant"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/setup-rust
+        if: steps.scope.outputs.run == 'true'
+        with:
+          cache-key: debug
+      - name: Docker (cargo test --features docker-it)
+        id: it
+        if: steps.scope.outputs.run == 'true'
+        run: make test-docker 2>&1 | tee docker-it.log
+      - name: Summary
+        id: summary
+        if: always()
+        env:
+          RUN: ${{ steps.scope.outputs.run }}
+        run: |
+          if [[ "$RUN" != true ]]; then
+            echo "summary=non concerné (module Docker inchangé)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)
+          result=$(awk '/^test result:/ { passed += $4; failed += $6 } END { printf "%d réussi(s), %d échoué(s)", passed, failed }' docker-it.log 2>/dev/null || echo "—")
+          echo "summary=${result} · Docker ${docker_version:-—}" >> "$GITHUB_OUTPUT"
+
   report:
     name: Compte rendu
-    needs: [lint, test, contract, e2e, build, docker, security, lighthouse]
+    needs: [lint, test, contract, e2e, build, docker, docker-it, security, lighthouse]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           NEEDS: ${{ toJSON(needs) }}
         with:

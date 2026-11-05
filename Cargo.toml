@@ -47,3 +47,10 @@ expect_used = "warn"
 dbg_macro = "warn"
 todo = "warn"
 print_stdout = "warn"
+
+# Binaire installé plus léger. Une panique journalise toujours son message et
+# son fichier:ligne (compilés dans le binaire) ; seules les traces complètes
+# (`RUST_BACKTRACE`) perdent les noms de fonctions. Pas de `panic = "abort"` :
+# les paniques des modules sont rattrapées et isolées par le moteur.
+[profile.release]
+strip = "symbols"

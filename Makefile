@@ -31,7 +31,8 @@ MODULE_API_PACKAGE := bergadeck-module-api
 # Pas d'invite interactive de Corepack au premier téléchargement de pnpm.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 
-.PHONY: help dev run lint lint-rust lint-ui lint-shell-exec fmt test test-rust test-ui test-e2e \
+.PHONY: help dev run lint lint-rust lint-ui lint-shell-exec lint-workflows fmt test test-rust test-ui test-e2e \
+	coverage coverage-rust coverage-ui test-docker \
 	gen-types check-types check-versions check deny ui-deps ui-build build \
 	lighthouse docker install uninstall clean
 
@@ -70,6 +71,11 @@ SHELL_EXEC_ROOTS ?= crates
 lint-shell-exec: ## Interdit tout lancement de shell dans le code Rust hors tests
 	"$(CURDIR)/.github/scripts/check-shell-exec.sh" $(SHELL_EXEC_ROOTS)
 
+# Audit de sécurité des workflows GitHub (injections, permissions, épinglage) ;
+# hors ligne : pas de jeton. Outil installé à part (CI : taiki-e/install-action).
+lint-workflows: ## zizmor sur .github (bloquant)
+	zizmor --offline --format plain .github
+
 lint-ui: ui-deps ## Prettier + ESLint + svelte-check
 	cd "$(UI_DIR)" && $(PNPM) run lint
 	cd "$(UI_DIR)" && $(PNPM) run check
@@ -85,6 +91,26 @@ test-rust: ## cargo test sur tout le workspace
 
 test-ui: ui-deps ## Vitest
 	cd "$(UI_DIR)" && $(PNPM) run test
+
+# Cliquet : couverture mesurée moins 2 points, relevée quand des tests s'ajoutent,
+# jamais baissée sans accord. Côté UI, le plancher est dans ui/vite.config.ts.
+RUST_COVERAGE_FLOOR_LINES := 91
+RUST_COVERAGE_FLOOR_FUNCTIONS := 89
+RUST_COVERAGE_FLOOR_REGIONS := 90
+
+coverage: coverage-rust coverage-ui ## Couverture des tests (Rust + UI), en échec sous le plancher
+
+coverage-rust: ## Couverture Rust (cargo-llvm-cov, composant llvm-tools-preview)
+	$(CARGO) llvm-cov --workspace --locked --summary-only \
+		--fail-under-lines $(RUST_COVERAGE_FLOOR_LINES) \
+		--fail-under-functions $(RUST_COVERAGE_FLOOR_FUNCTIONS) \
+		--fail-under-regions $(RUST_COVERAGE_FLOOR_REGIONS)
+
+coverage-ui: ui-deps ## Couverture UI (Vitest, v8)
+	cd "$(UI_DIR)" && $(PNPM) run test:coverage
+
+test-docker: ## Module Docker contre le vrai Docker de la machine (feature docker-it)
+	$(CARGO) test -p bergadeck-modules --locked --features docker-it --test docker_engine
 
 test-e2e: ui-deps ## Tests Playwright (navigateurs : pnpm exec playwright install chromium)
 	cd "$(UI_DIR)" && $(PNPM) run test:e2e

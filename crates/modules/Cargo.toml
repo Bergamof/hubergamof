@@ -34,6 +34,11 @@ tracing.workspace = true
 # `service`: the object receiving the window reports of the KWin script.
 zbus = { workspace = true, features = ["proxy", "service"] }
 
+[features]
+# Integration tests against the real Docker of the machine (`make test-docker`,
+# CI job `docker-it`): never part of `cargo test --workspace`.
+docker-it = []
+
 [dev-dependencies]
 bergadeck-module-api = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

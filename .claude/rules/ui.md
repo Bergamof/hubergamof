@@ -22,3 +22,5 @@ paths:
 - Fixture Playwright : le premier paramètre doit être déstructuré ; `({}, use)` est refusé par ESLint (`no-empty-pattern`) → dépendre d'une fixture utilisée (`browserName`…).
 - Erreurs du gestionnaire : texte français + détail anglais dans `<span lang="en">` (`Problem`).
 - Bouton dont le texte visible inclut une description (sélecteur de modules) : ne pas restreindre son nom accessible au seul titre (`aria-labelledby`) — WCAG 2.5.3 « Label in Name », signalé par axe.
+- Tests de composants : `*.browser.spec.ts` (projet Vitest `components`, Chromium de Playwright) ; `render` de `vitest-browser-svelte` 3 est asynchrone (`await`), noms accessibles et `toHaveTextContent` comparés en entier → regex (`^…`) pour un début.
+- `@vitest/*` exige exactement la version de `vitest` (groupe Dependabot `vitest`).

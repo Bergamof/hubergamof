@@ -1,0 +1,6 @@
+# Configuration de zizmor (`make lint-workflows`, bloquant en CI).
+rules:
+  # Syntaxe `uses: $/…` (juillet 2026) refusée par actionlint 1.7.12 : à adopter
+  # quand actionlint la connaîtra (vérifier à chaque montée d'actionlint).
+  self-repository:
+    disable: true

@@ -31,13 +31,16 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Module Claude Desktop : une touche qui lance Claude s'il est fermé ou seulement dans la barre système, et passe à sa fenêtre sinon ; en attention quand Claude Desktop ou claude.ai dans Brave envoie une notification en arrière-plan, jusqu'à l'appui ou son retour au premier plan ; un lancement à la fois ; simulé en `--demo`.
 
 - API des modules : `Command::alert()`, `Feedback::of(ok)` et `KeyContent::with_icon`, utilitaires communs aux modules.
+- Qualité : couverture des tests mesurée (cargo-llvm-cov, Vitest v8) avec plancher en cliquet ; tests de composants Svelte dans un vrai navigateur ; tests du module Docker contre un vrai Docker (`make test-docker`, job CI dédié) ; audit des workflows par zizmor.
+- Interface servie précompressée (brotli, gzip) aux navigateurs qui l'acceptent.
 ### Modifié
 
 - Sécurité : configuration bornée (instances, touches, molettes, libellés de 64 caractères, réglages de 16 Kio, identifiants `[A-Za-z0-9_-]`) ; erreurs internes masquées aussi sur le WebSocket ; dossiers de configuration en 0700 (ceux d'un appareil existant y sont ramenés au chargement) ; archives à fin ambiguë (octets après le commentaire compris) ou ZIP64 refusées ; 512 images au plus par appareil ; l'interface ouverte depuis le tray démarre dans son propre scope systemd.
 - Interface : supprimer une touche dont le module n'est placé nulle part ailleurs demande confirmation (ses réglages seraient perdus) ; le focus va sur la touche ajoutée, et revient sur le contrôle d'origine après une reconnexion au gestionnaire.
 - Contrat : `moduleCatalog` envoie des `CatalogModule` (descripteur, icône, réglages par défaut choisis par le module) ; `selectDevice` porte `liveState` : l'état en direct n'est plus envoyé qu'aux clients qui le demandent.
 - API des modules : un réglage chemin (`path`, `pathList`) doit être absolu ou commencer par `~/`.
-- Tests e2e et Lighthouse lancés contre `bergadeck --demo`.
+- Tests e2e et Lighthouse lancés contre `bergadeck --demo` ; Lighthouse exige aussi Performance ≥ 0,9 ; un test e2e qui ne passe qu'à la relance fait échouer la CI.
+- CI : toutes les actions épinglées par SHA ; gitleaks et actionlint vérifiés contre une somme SHA-256 épinglée ; binaire release sans table des symboles.
 - Contrat : `KeyView.active` remplacé par `state` (`normal`/`active`/`attention`) ; `Command::Redraw` et `ImageFormat` supprimés.
 - Isolation des modules : panique → placeholder et alerte, budget de 500 ms par gestionnaire ; appui résolu sur ce qui est affiché.
 - Icône de barre système : plus d'avertissement `Broken pipe` à l'arrêt.
