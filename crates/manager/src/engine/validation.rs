@@ -3,9 +3,9 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use bergadeck_module_api::{ModuleCapabilities, ModuleInstanceId};
-use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::DeviceConfig;
+use hubergamof_module_api::{ModuleCapabilities, ModuleInstanceId};
+use hubergamof_modules::ModuleRegistry;
+use hubergamof_protocol::DeviceConfig;
 
 use super::EngineError;
 
@@ -104,7 +104,7 @@ mod tests {
     fn modules_panicking_while_validating_refuse_the_configuration() {
         use std::sync::Arc;
 
-        use bergadeck_module_api::{
+        use hubergamof_module_api::{
             Module, ModuleContext, ModuleDescriptor, ModuleError, ModuleFactory,
         };
         use serde_json::{Value, json};

@@ -1,6 +1,6 @@
 //! Placement of page items on the key grid, with vertical scrolling by rows.
 
-use bergadeck_protocol::DeviceCapabilities;
+use hubergamof_protocol::DeviceCapabilities;
 
 /// Key grid of a device: items fill it row by row; a page with more rows than
 /// the device scrolls, `row` being the first visible one.
@@ -49,7 +49,7 @@ impl KeyGrid {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_protocol::ImageSize;
+    use hubergamof_protocol::ImageSize;
 
     use super::*;
 

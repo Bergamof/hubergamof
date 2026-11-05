@@ -9,7 +9,7 @@ use std::fs;
 use std::process::Command;
 use std::time::Duration;
 
-use bergadeck_modules::docker::{
+use hubergamof_modules::docker::{
     ComposeAction, ComposeTarget, Container, ContainerAction, ContainerStatus, DockerBackend,
     DockerChanges, DockerEngine, UpVariant,
 };
@@ -40,7 +40,7 @@ fn docker(args: &[&str]) -> String {
 
 /// A name of this run, so that parallel runs never meet.
 fn unique(what: &str) -> String {
-    format!("bergadeck-it-{what}-{}", std::process::id())
+    format!("hubergamof-it-{what}-{}", std::process::id())
 }
 
 /// Runs `docker` with these arguments when dropped, whatever the outcome

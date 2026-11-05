@@ -1,17 +1,17 @@
 # shellcheck shell=bash disable=SC2034  # variables consommées par les scripts qui sourcent ce fichier
-# Bergadeck — constantes et fonctions partagées par install.sh et uninstall.sh.
+# HuBergamof — constantes et fonctions partagées par install.sh et uninstall.sh.
 # Ce fichier est sourcé, jamais exécuté directement.
 
 PACKAGING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$PACKAGING_DIR")"
 readonly PACKAGING_DIR REPO_ROOT
 
-readonly SERVICE_NAME="bergadeck.service"
+readonly SERVICE_NAME="hubergamof.service"
 readonly BIN_DIR="$HOME/.local/bin"
-readonly INSTALLED_BINARY="$BIN_DIR/bergadeck"
+readonly INSTALLED_BINARY="$BIN_DIR/hubergamof"
 readonly UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 readonly INSTALLED_UNIT="$UNIT_DIR/$SERVICE_NAME"
-readonly UDEV_RULE_NAME="70-bergadeck.rules"
+readonly UDEV_RULE_NAME="70-hubergamof.rules"
 readonly UDEV_RULE_SOURCE="$PACKAGING_DIR/udev/$UDEV_RULE_NAME"
 readonly UDEV_RULE_TARGET="/etc/udev/rules.d/$UDEV_RULE_NAME"
 

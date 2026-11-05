@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use bergadeck_module_api::Feedback;
-use bergadeck_protocol::ImageSize;
+use hubergamof_module_api::Feedback;
+use hubergamof_protocol::ImageSize;
 use tokio::task::spawn_blocking;
 
 use super::EngineError;

@@ -24,7 +24,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use bergadeck_module_api::{EventSender, Feedback, ModuleSurface};
+use hubergamof_module_api::{EventSender, Feedback, ModuleSurface};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;

@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use bergadeck_module_api::ImageData;
+use hubergamof_module_api::ImageData;
 
 use crate::icons::svg;
 

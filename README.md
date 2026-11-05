@@ -1,4 +1,4 @@
-# Bergadeck
+# HuBergamof
 
 Gestionnaire de Stream Deck pour Linux, à base de modules, avec une interface de configuration web locale synchronisée en temps réel.
 
@@ -48,13 +48,13 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 | `make run` | gestionnaire sur le matériel réel |
 | `make check` | toutes les vérifications locales (lint, tests avec planchers de couverture, contrat TS, versions, cargo-deny) |
 | `make lint` / `make fmt` | lint en vérification / formatage |
-| `make test` / `make test-e2e` | tests Rust + Vitest (composants Svelte dans Chromium, mode navigateur) / tests Playwright : chaque test lance son propre `bergadeck --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
+| `make test` / `make test-e2e` | tests Rust + Vitest (composants Svelte dans Chromium, mode navigateur) / tests Playwright : chaque test lance son propre `hubergamof --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
 | `make coverage` | tests Rust et Vitest instrumentés, en échec sous le plancher de couverture (mesure − 2 points, jamais baissé) |
-| `make test-docker` | module Docker contre le vrai Docker de la machine (conteneurs `bergadeck-it-*` créés puis supprimés) |
+| `make test-docker` | module Docker contre le vrai Docker de la machine (conteneurs `hubergamof-it-*` créés puis supprimés) |
 | `make gen-types` | régénère les types TypeScript du contrat (`ui/src/lib/generated/`) |
-| `make build` | UI puis binaire release `target/release/bergadeck` qui l'embarque |
+| `make build` | UI puis binaire release `target/release/hubergamof` qui l'embarque |
 | `make docker` | image de build reproductible (mode `--demo`, pas l'usage normal) |
-| `make lighthouse` | audit Lighthouse de l'UI servie par `bergadeck --demo` (port 7881) : Accessibilité, Bonnes pratiques et Performance ≥ 90 |
+| `make lighthouse` | audit Lighthouse de l'UI servie par `hubergamof --demo` (port 7881) : Accessibilité, Bonnes pratiques et Performance ≥ 90 |
 | `make install` / `make uninstall` | installe/retire le binaire (`~/.local/bin`), le service systemd utilisateur et la règle udev |
 
 ## Installation sur le poste
@@ -64,7 +64,7 @@ make build
 make install
 ```
 
-`make install` copie le binaire, installe le service utilisateur `bergadeck.service` (démarré avec la session) et, après confirmation, la règle udev `packaging/udev/70-bergadeck.rules` (avec `sudo`) qui donne accès aux Stream Deck sans être root. Débrancher puis rebrancher l'appareil ensuite. Options : `packaging/install.sh --no-udev`, `--yes`.
+`make install` copie le binaire, installe le service utilisateur `hubergamof.service` (démarré avec la session) et, après confirmation, la règle udev `packaging/udev/70-hubergamof.rules` (avec `sudo`) qui donne accès aux Stream Deck sans être root. Débrancher puis rebrancher l'appareil ensuite. Options : `packaging/install.sh --no-udev`, `--yes`.
 
 La configuration des appareils est, pour l'instant, stockée dans le dépôt : `config/devices/<numéro de série>/` (ignoré par git ; un exemple versionné est dans `config/example/`). L'interface permet de l'exporter et de l'importer en `.zip`.
 

@@ -1,4 +1,4 @@
-//! Private files of the compositor scripts, in `$XDG_RUNTIME_DIR/bergadeck/`.
+//! Private files of the compositor scripts, in `$XDG_RUNTIME_DIR/hubergamof/`.
 //!
 //! Checks and writes go through file descriptors (`openat` relative to the
 //! folder checked, no link followed), so that what is checked is what is
@@ -17,7 +17,7 @@ use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, mkdirat, open, openat, 
 use rustix::io::Errno;
 
 /// Folder of the scripts, under `$XDG_RUNTIME_DIR`.
-const SCRIPT_FOLDER: &str = "bergadeck";
+const SCRIPT_FOLDER: &str = "hubergamof";
 
 /// Permissions of that folder: the user's only.
 const PRIVATE_FOLDER_MODE: u32 = 0o700;

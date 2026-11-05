@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bergadeck_protocol::DeviceInfo;
+use hubergamof_protocol::DeviceInfo;
 use image::RgbaImage;
 use tokio::sync::broadcast;
 
@@ -33,7 +33,7 @@ pub const INPUT_EVENT_CAPACITY: usize = 256;
 /// One connected device (real or virtual).
 ///
 /// Images are given at the device size (see
-/// [`bergadeck_protocol::DeviceCapabilities`]); conversion to the device wire
+/// [`hubergamof_protocol::DeviceCapabilities`]); conversion to the device wire
 /// format (JPEG/BMP, rotation) is the backend's job. Images are shared
 /// (`Arc`) because the caller usually keeps them (render cache, live state).
 /// Writes may be buffered until [`DeckBackend::flush`].

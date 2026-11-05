@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, Cursor, Read, Write};
 
-use bergadeck_protocol::{DeviceConfig, is_safe_image_name};
+use hubergamof_protocol::{DeviceConfig, is_safe_image_name};
 use thiserror::Error;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -257,7 +257,7 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_protocol::DeviceModel;
+    use hubergamof_protocol::DeviceModel;
 
     use super::*;
 

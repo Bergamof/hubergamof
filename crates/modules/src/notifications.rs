@@ -13,7 +13,7 @@ use zbus::{Variant, proxy};
 use crate::session_bus::SessionBus;
 
 /// Application name shown by the notification server.
-const APP_NAME: &str = "Bergadeck";
+const APP_NAME: &str = "HuBergamof";
 
 /// Longest wait for the notification server, so that a stalled bus does not
 /// keep a background task alive forever.

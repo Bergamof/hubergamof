@@ -1,9 +1,9 @@
-//! API implemented by Bergadeck modules.
+//! API implemented by HuBergamof modules.
 //!
 //! A module drives part of a Stream Deck: the key that represents it on the
 //! home page, the pages of keys it opens, the dial it may be assigned to and
 //! the touch strip zone above that dial. Built-in modules
-//! (`bergadeck-modules`) use this API exactly like future external modules
+//! (`hubergamof-modules`) use this API exactly like future external modules
 //! will.
 //!
 //! This crate is licensed under the MPL-2.0 so that third-party modules are
@@ -36,7 +36,7 @@
 //! use std::time::Duration;
 //!
 //! use async_trait::async_trait;
-//! use bergadeck_module_api::{
+//! use hubergamof_module_api::{
 //!     Command, EventSender, Feedback, KeyContent, Module, ModuleCapabilities, ModuleContext,
 //!     ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, SettingField, SettingKind,
 //!     TaskScope, parse_settings,

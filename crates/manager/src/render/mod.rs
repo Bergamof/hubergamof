@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use bergadeck_module_api::{Feedback, GaugeContent, GaugeLevel, KeyState};
-use bergadeck_protocol::ImageSize;
+use hubergamof_module_api::{Feedback, GaugeContent, GaugeLevel, KeyState};
+use hubergamof_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
 use resvg::usvg;
@@ -481,7 +481,7 @@ impl Renderer {
     }
 
     /// Renders a strip zone with centred lines, the first one larger. The
-    /// layout is made for at most [`bergadeck_module_api::MAX_ZONE_LINES`] lines (the engine
+    /// layout is made for at most [`hubergamof_module_api::MAX_ZONE_LINES`] lines (the engine
     /// truncates longer zones); more would overflow the zone.
     ///
     /// # Errors

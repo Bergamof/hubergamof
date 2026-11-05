@@ -199,7 +199,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-ui
-      # Les tests « demo » tournent contre `bergadeck --demo` (cargo run, binaire debug).
+      # Les tests « demo » tournent contre `hubergamof --demo` (cargo run, binaire debug).
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: debug
@@ -244,14 +244,14 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: bergadeck-linux-x86_64
-          path: target/release/bergadeck
+          name: hubergamof-linux-x86_64
+          path: target/release/hubergamof
           retention-days: 7
       - name: Summary
         id: summary
         if: always()
         run: |
-          binary=$(du -h target/release/bergadeck 2>/dev/null | cut -f1)
+          binary=$(du -h target/release/hubergamof 2>/dev/null | cut -f1)
           ui=$(du -sh ui/build 2>/dev/null | cut -f1)
           echo "summary=binaire ${binary:-absent}, UI ${ui:-absente}" >> "$GITHUB_OUTPUT"
 
@@ -261,7 +261,7 @@ jobs:
     outputs:
       summary: ${{ steps.summary.outputs.summary }}
     env:
-      IMAGE: bergadeck:ci
+      IMAGE: hubergamof:ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -287,8 +287,8 @@ jobs:
           PORT: "7878"
           MAX_ATTEMPTS: "30"
         run: |
-          docker run --detach --name bergadeck-smoke --network host "$IMAGE" --demo --no-tray --port "$PORT"
-          trap 'docker logs bergadeck-smoke; docker rm --force bergadeck-smoke >/dev/null' EXIT
+          docker run --detach --name hubergamof-smoke --network host "$IMAGE" --demo --no-tray --port "$PORT"
+          trap 'docker logs hubergamof-smoke; docker rm --force hubergamof-smoke >/dev/null' EXIT
           url="http://127.0.0.1:${PORT}/"
           # Attente bornée du démarrage (1 s entre deux tentatives).
           status=000
@@ -414,7 +414,7 @@ jobs:
         with:
           cache-key: debug
       # Assertions (Accessibilité et Bonnes pratiques ≥ 0,9) dans lighthouserc.json.
-      # Audit de l'UI servie par `bergadeck --demo` (startServerCommand), éditeur affiché.
+      # Audit de l'UI servie par `hubergamof --demo` (startServerCommand), éditeur affiché.
       - name: Lighthouse CI
         id: lhci
         run: make lighthouse

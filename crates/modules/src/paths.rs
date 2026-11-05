@@ -1,9 +1,9 @@
 //! Paths written in the settings by hand (see
-//! [`bergadeck_module_api::expand_home`]).
+//! [`hubergamof_module_api::expand_home`]).
 
 use std::path::{Path, PathBuf};
 
-use bergadeck_module_api::expand_home;
+use hubergamof_module_api::expand_home;
 
 /// The home folder of the user running the manager, when known and
 /// absolute (a relative one would resolve against the manager's folder).

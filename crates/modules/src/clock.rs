@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory, NavigationView, RedrawHandle, SettingField, SettingKind, ZoneContent,
     parse_settings,
@@ -254,7 +254,7 @@ fn format_date(now: DateTime) -> String {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use bergadeck_module_api::TaskScope;
+    use hubergamof_module_api::TaskScope;
     use jiff::civil::date;
     use serde_json::json;
     use tokio::time::Instant;

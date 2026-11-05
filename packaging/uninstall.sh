@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bergadeck — désinstallation pour l'utilisateur courant (idempotente).
+# HuBergamof — désinstallation pour l'utilisateur courant (idempotente).
 # Retire le service utilisateur, le binaire et, après confirmation, la règle udev.
 # La configuration (dossier config/ du dépôt) est conservée.
 set -euo pipefail
@@ -11,7 +11,7 @@ usage_text() {
 	cat <<EOF
 Usage : $(basename "$0") [--no-udev] [--yes]
 
-Désinstalle Bergadeck pour l'utilisateur courant (la configuration est conservée).
+Désinstalle HuBergamof pour l'utilisateur courant (la configuration est conservée).
   --no-udev  ne pas retirer la règle udev (aucun appel à sudo)
   -y, --yes  accepter la suppression de la règle udev sans la demander
   -h, --help afficher cette aide
@@ -65,7 +65,7 @@ main() {
 	remove_unit
 	remove_binary
 	remove_udev_rule
-	info "Bergadeck désinstallé (configuration conservée dans $REPO_ROOT/config)."
+	info "HuBergamof désinstallé (configuration conservée dans $REPO_ROOT/config)."
 }
 
 main "$@"

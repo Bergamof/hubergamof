@@ -1,7 +1,7 @@
 //! What a client is told of a failure: internal details (paths, task
 //! failures) stay in the manager's logs, over HTTP as over the WebSocket.
 
-use bergadeck_protocol::ErrorCode;
+use hubergamof_protocol::ErrorCode;
 
 /// Message of an internal error, its detail logged.
 pub(super) const INTERNAL_MESSAGE: &str = "internal error, see the manager logs";

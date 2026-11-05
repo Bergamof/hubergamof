@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use crate::desktop::{DEMO_INTELLIJ_EXECUTABLE, Window};
 
 /// Separates the project name from the file in IntelliJ window titles
-/// (`bergadeck – main.rs`).
+/// (`hubergamof – main.rs`).
 const TITLE_SEPARATOR: &str = " – ";
 
 /// A recent project.
@@ -96,7 +96,11 @@ impl SimulatedCatalog {
         };
         Self::new(Catalog {
             launcher: Some(DEMO_INTELLIJ_EXECUTABLE.into()),
-            projects: vec![project("bergadeck"), project("bergacast"), project("notes")],
+            projects: vec![
+                project("hubergamof"),
+                project("bergacast"),
+                project("notes"),
+            ],
         })
     }
 
@@ -134,14 +138,14 @@ mod tests {
 
     #[test]
     fn windows_are_matched_by_the_project_in_their_title() {
-        assert_eq!(project_name("bergadeck – main.rs"), "bergadeck");
+        assert_eq!(project_name("hubergamof – main.rs"), "hubergamof");
         assert_eq!(
             project_name("betgamof – BankrollService.kt [betgamof-backend.business.main]"),
             "betgamof"
         );
-        assert_eq!(project_name("bergadeck"), "bergadeck");
+        assert_eq!(project_name("hubergamof"), "hubergamof");
         let project = &SimulatedCatalog::demo().read().unwrap().projects[0];
-        assert!(project.shown_in(&window("bergadeck – main.rs")));
+        assert!(project.shown_in(&window("hubergamof – main.rs")));
         assert!(!project.shown_in(&window("bergacast – main.rs")));
         assert!(!project.shown_in(&window("Welcome to IntelliJ IDEA")));
     }

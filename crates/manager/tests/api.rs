@@ -8,16 +8,16 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
-use bergadeck_manager::config_store::{ConfigStore, IMAGES_DIR, MAX_ARCHIVE_BYTES, read_archive};
-use bergadeck_manager::device::DeviceDiscovery;
-use bergadeck_manager::device::virtual_deck::{VirtualDevices, virtual_plus_info};
-use bergadeck_manager::engine::{EngineHandle, EngineServices, Supervisor};
-use bergadeck_manager::render::{MAX_SOURCE_BYTES, Renderer};
-use bergadeck_manager::server::{
+use hubergamof_manager::config_store::{ConfigStore, IMAGES_DIR, MAX_ARCHIVE_BYTES, read_archive};
+use hubergamof_manager::device::DeviceDiscovery;
+use hubergamof_manager::device::virtual_deck::{VirtualDevices, virtual_plus_info};
+use hubergamof_manager::engine::{EngineHandle, EngineServices, Supervisor};
+use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
+use hubergamof_manager::server::{
     AccessPolicy, AssetSource, ServerContext, SimulatedInput, module_catalog, router,
 };
-use bergadeck_modules::{BuiltinServices, builtin_registry_with};
-use bergadeck_protocol::{
+use hubergamof_modules::{BuiltinServices, builtin_registry_with};
+use hubergamof_protocol::{
     ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, ImageSize,
     ImageUploaded,
 };

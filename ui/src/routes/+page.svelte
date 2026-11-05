@@ -54,12 +54,12 @@
 </script>
 
 <svelte:head>
-	<title>Bergadeck</title>
+	<title>HuBergamof</title>
 </svelte:head>
 
 <div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-6">
 	<header class="flex flex-wrap items-center justify-between gap-4">
-		<h1 class="text-2xl font-bold tracking-tight">Bergadeck</h1>
+		<h1 class="text-2xl font-bold tracking-tight">HuBergamof</h1>
 		<p role="status" aria-live="polite" class="flex items-center gap-2 text-sm">
 			<span
 				aria-hidden="true"
@@ -100,7 +100,7 @@
 			<div class="m-auto flex flex-col items-center gap-2 text-center">
 				<p class="text-zinc-600 dark:text-zinc-400">Connexion au gestionnaire…</p>
 				<p class="text-sm text-zinc-600 dark:text-zinc-400">
-					Si rien ne se passe, vérifiez que le service bergadeck est lancé.
+					Si rien ne se passe, vérifiez que le service hubergamof est lancé.
 				</p>
 			</div>
 		{:else if deck.devices.length === 0}

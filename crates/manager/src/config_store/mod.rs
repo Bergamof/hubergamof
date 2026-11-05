@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bergadeck_protocol::{ConfigError, DeviceConfig, DeviceInfo, ErrorCode, is_safe_image_name};
+use hubergamof_protocol::{ConfigError, DeviceConfig, DeviceInfo, ErrorCode, is_safe_image_name};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;

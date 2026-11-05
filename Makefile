@@ -1,4 +1,4 @@
-# Bergadeck — commandes de développement, de vérification et d'installation.
+# HuBergamof — commandes de développement, de vérification et d'installation.
 #
 # pnpm est lancé via Corepack (`corepack pnpm`, livré avec Node 24) depuis `ui/` :
 # Corepack lit `packageManager` dans `ui/package.json` et exécute exactement la
@@ -17,16 +17,16 @@ CARGO ?= cargo
 DOCKER ?= docker
 # Version de Lighthouse CI utilisée en local et en CI (`make lighthouse`).
 LHCI_VERSION ?= 0.15.1
-DOCKER_IMAGE ?= bergadeck:dev
+DOCKER_IMAGE ?= hubergamof:dev
 # Origines du serveur de dev Vite (port par défaut 5173), autorisées par le
 # gestionnaire en plus des siennes (contrôle strict Host/Origin).
 VITE_DEV_ORIGINS := http://localhost:5173 http://127.0.0.1:5173
 
 UI_DIR := ui
 GENERATED_DIR := $(UI_DIR)/src/lib/generated
-MANAGER_PACKAGE := bergadeck
-PROTOCOL_PACKAGE := bergadeck-protocol
-MODULE_API_PACKAGE := bergadeck-module-api
+MANAGER_PACKAGE := hubergamof
+PROTOCOL_PACKAGE := hubergamof-protocol
+MODULE_API_PACKAGE := hubergamof-module-api
 
 # Pas d'invite interactive de Corepack au premier téléchargement de pnpm.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
@@ -112,7 +112,7 @@ coverage-ui: ui-deps ## Couverture UI (Vitest, v8)
 	cd "$(UI_DIR)" && $(PNPM) run test:coverage
 
 test-docker: ## Module Docker contre le vrai Docker de la machine (feature docker-it)
-	$(CARGO) test -p bergadeck-modules --locked --features docker-it --test docker_engine
+	$(CARGO) test -p hubergamof-modules --locked --features docker-it --test docker_engine
 
 test-e2e: ui-deps ## Tests Playwright (navigateurs : pnpm exec playwright install chromium)
 	cd "$(UI_DIR)" && $(PNPM) run test:e2e

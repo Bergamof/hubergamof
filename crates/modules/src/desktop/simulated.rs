@@ -81,7 +81,7 @@ impl SimulatedDesktop {
         ]);
         desktop.set_windows(vec![
             Window::new("claude", DEMO_CLAUDE_CLASS, "Claude"),
-            Window::new("intellij", DEMO_INTELLIJ_CLASS, "bergadeck – main.rs"),
+            Window::new("intellij", DEMO_INTELLIJ_CLASS, "hubergamof – main.rs"),
         ]);
         desktop
     }

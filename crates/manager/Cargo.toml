@@ -1,5 +1,5 @@
 [package]
-name = "bergadeck"
+name = "hubergamof"
 description = "Stream Deck manager for Linux with a live web configuration UI."
 version.workspace = true
 edition.workspace = true
@@ -12,11 +12,11 @@ publish.workspace = true
 # that their public API is documented and tested on its own; the binary wires
 # them.
 [lib]
-name = "bergadeck_manager"
+name = "hubergamof_manager"
 path = "src/lib.rs"
 
 [[bin]]
-name = "bergadeck"
+name = "hubergamof"
 path = "src/main.rs"
 
 [dependencies]
@@ -26,9 +26,9 @@ async-trait.workspace = true
 # to answer `invalidMessage` instead of rejecting the request).
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "tracing", "ws"] }
 base64.workspace = true
-bergadeck-module-api.workspace = true
-bergadeck-modules.workspace = true
-bergadeck-protocol.workspace = true
+hubergamof-module-api.workspace = true
+hubergamof-modules.workspace = true
+hubergamof-protocol.workspace = true
 clap.workspace = true
 # Synchronous API driven from a dedicated thread per device: the crate's
 # `async` feature relies on `block_in_place` and serialises reads and writes.

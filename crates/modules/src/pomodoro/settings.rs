@@ -3,7 +3,7 @@
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
-use bergadeck_module_api::{SettingField, SettingKind};
+use hubergamof_module_api::{SettingField, SettingKind};
 use serde::Deserialize;
 
 const WORK_MINUTES_KEY: &str = "workMinutes";
@@ -150,7 +150,7 @@ fn integer(default: u32, range: &RangeInclusive<u32>, unit: Option<&str>) -> Set
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_module_api::ModuleError;
+    use hubergamof_module_api::ModuleError;
     use serde_json::json;
 
     use super::*;

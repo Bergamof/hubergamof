@@ -27,7 +27,7 @@ mod watch;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
     ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId,
     PageItem, SettingField, SettingKind,

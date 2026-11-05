@@ -1,6 +1,6 @@
 [package]
-name = "bergadeck-protocol"
-description = "Bergadeck WebSocket protocol and device configuration model, exported to TypeScript."
+name = "hubergamof-protocol"
+description = "HuBergamof WebSocket protocol and device configuration model, exported to TypeScript."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ publish.workspace = true
 
 [dependencies]
 # MPL-2.0 module API: owns the catalog types and identifiers shared with modules.
-bergadeck-module-api = { workspace = true, features = ["ts"] }
+hubergamof-module-api = { workspace = true, features = ["ts"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -38,7 +38,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		onadd
 	}: Props = $props();
 
-	const DRAG_TYPE = 'application/x-bergadeck-key';
+	const DRAG_TYPE = 'application/x-hubergamof-key';
 	const overflows = $derived(keys.length >= columns * visibleRows);
 	let dropTarget: number | undefined = $state();
 

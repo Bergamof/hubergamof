@@ -36,7 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, EventSender, Feedback, ImageData, ItemId, KeyContent, KeyState, Module,
     ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
     ModuleSurface, PageContent, PageId, PageItem, SettingField, SettingKind, TaskSpawner,

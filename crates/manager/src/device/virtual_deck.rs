@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use bergadeck_protocol::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize, MAX_BRIGHTNESS};
+use hubergamof_protocol::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize, MAX_BRIGHTNESS};
 use image::{RgbaImage, imageops};
 use tokio::sync::broadcast;
 
@@ -296,7 +296,7 @@ impl VirtualDevices {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_protocol::DeviceModel;
+    use hubergamof_protocol::DeviceModel;
     use image::Rgba;
 
     use super::*;

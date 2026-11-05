@@ -1,7 +1,7 @@
 //! Description of everything a device should show, compared between redraws
 //! to rewrite only what changed.
 
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
     ModuleInstanceId, PageId, ZoneContent,
 };
@@ -145,7 +145,7 @@ fn image_source(image: ImageData) -> ImageSource {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_module_api::GaugeLevel;
+    use hubergamof_module_api::GaugeLevel;
 
     use super::*;
 

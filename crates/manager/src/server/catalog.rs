@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::{CatalogModule, ModuleKind};
+use hubergamof_modules::ModuleRegistry;
+use hubergamof_protocol::{CatalogModule, ModuleKind};
 
 use super::UI_IMAGE_SIZE;
 use crate::render::{ImageSource, RenderError, Renderer};
@@ -45,7 +45,7 @@ mod tests {
     use async_trait::async_trait;
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
-    use bergadeck_module_api::{
+    use hubergamof_module_api::{
         ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
         ModuleFactory,
     };

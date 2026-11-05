@@ -10,25 +10,25 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
-use bergadeck_manager::config_store::ConfigStore;
-use bergadeck_manager::device::DeviceDiscovery;
-use bergadeck_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
-use bergadeck_manager::engine::{EngineServices, Supervisor};
-use bergadeck_manager::render::Renderer;
-use bergadeck_manager::server::{
+use futures_util::{SinkExt as _, StreamExt as _};
+use hubergamof_manager::config_store::ConfigStore;
+use hubergamof_manager::device::DeviceDiscovery;
+use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
+use hubergamof_manager::engine::{EngineServices, Supervisor};
+use hubergamof_manager::render::Renderer;
+use hubergamof_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
     MIN_LIVE_STATE_INTERVAL, MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH,
     module_catalog, router,
 };
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory,
 };
-use bergadeck_modules::{BuiltinServices, builtin_registry_with};
-use bergadeck_protocol::{
+use hubergamof_modules::{BuiltinServices, builtin_registry_with};
+use hubergamof_protocol::{
     ClientMessage, DeviceConfig, ErrorCode, LiveState, ModuleInstance, ServerMessage,
 };
-use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::net::TcpStream;
@@ -44,7 +44,7 @@ const DEV_ORIGIN: &str = "http://localhost:5173";
 const WAIT: Duration = Duration::from_secs(5);
 const COUNTER_KIND: &str = "counter";
 
-const INDEX_HTML: &str = "<!doctype html><html><head><title>Bergadeck</title></head>\
+const INDEX_HTML: &str = "<!doctype html><html><head><title>HuBergamof</title></head>\
      <body><script>start();</script></body></html>";
 const FALLBACK_HTML: &str = "<!doctype html><html><body>shell</body></html>";
 const IMMUTABLE_JS: &str = "_app/immutable/entry/start.abc123.js";

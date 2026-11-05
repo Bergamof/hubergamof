@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Bergadeck — build reproductible et mode démonstration (`--demo`, appareil virtuel).
+# HuBergamof — build reproductible et mode démonstration (`--demo`, appareil virtuel).
 # L'exécution réelle passe par le service systemd utilisateur (USB, D-Bus et audio
 # de la session), pas par ce conteneur.
 #
@@ -10,8 +10,8 @@
 # Le gestionnaire n'écoute que sur 127.0.0.1 (pas d'option d'écoute externe, par
 # choix : contrôle strict Host/Origin) ; un `-p` ne le rendrait pas joignable.
 # L'image s'utilise donc avec le réseau de l'hôte :
-#   docker run --rm --network host bergadeck:dev
-#   docker run --rm --network host bergadeck:dev --demo --no-tray --port 7979
+#   docker run --rm --network host hubergamof:dev
+#   docker run --rm --network host hubergamof:dev --demo --no-tray --port 7979
 # L'interface est alors sur http://127.0.0.1:7878/ (ou le port choisi).
 
 # --------------------------------------------------------------------------- UI
@@ -24,7 +24,7 @@ RUN corepack enable
 
 # Dépendances d'abord, pour profiter du cache tant que le lockfile ne change pas.
 COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=bergadeck-pnpm-store,target=/pnpm/store \
+RUN --mount=type=cache,id=hubergamof-pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 COPY ui/ ./
@@ -46,29 +46,29 @@ COPY crates/ crates/
 # L'UI est embarquée dans le binaire : elle doit exister avant la compilation.
 COPY --from=ui /src/ui/build/ ui/build/
 
-RUN --mount=type=cache,id=bergadeck-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=bergadeck-target,target=/src/target \
-    cargo build --release --locked -p bergadeck \
-    && install -D -m 0755 target/release/bergadeck /out/bergadeck
+RUN --mount=type=cache,id=hubergamof-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=hubergamof-target,target=/src/target \
+    cargo build --release --locked -p hubergamof \
+    && install -D -m 0755 target/release/hubergamof /out/hubergamof
 
 # ---------------------------------------------------------------------- Runtime
 FROM debian:trixie-slim@sha256:89c1ea91e897f0fe0a3731595330bc45b8bdef4047464a07116f891a94054b31
 
-LABEL org.opencontainers.image.title="bergadeck" \
+LABEL org.opencontainers.image.title="hubergamof" \
       org.opencontainers.image.description="Stream Deck manager for Linux (demo mode)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends libudev1 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --home-dir /home/bergadeck --uid 10001 \
-       --user-group --shell /usr/sbin/nologin bergadeck
+    && useradd --system --create-home --home-dir /home/hubergamof --uid 10001 \
+       --user-group --shell /usr/sbin/nologin hubergamof
 
-COPY --from=build /out/bergadeck /usr/local/bin/bergadeck
+COPY --from=build /out/hubergamof /usr/local/bin/hubergamof
 
-USER bergadeck
-WORKDIR /home/bergadeck
+USER hubergamof
+WORKDIR /home/hubergamof
 
-ENTRYPOINT ["bergadeck"]
+ENTRYPOINT ["hubergamof"]
 # Pas de session D-Bus dans le conteneur : pas de tray.
 CMD ["--demo", "--no-tray"]

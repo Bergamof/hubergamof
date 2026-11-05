@@ -20,7 +20,7 @@ export interface InstanceChanges {
 	settings: JsonValue;
 }
 
-/** Highest brightness, in percent: `MAX_BRIGHTNESS` of `bergadeck_protocol` (constants are not exported to TS). */
+/** Highest brightness, in percent: `MAX_BRIGHTNESS` of `hubergamof_protocol` (constants are not exported to TS). */
 export const MAX_BRIGHTNESS = 100;
 
 /**

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, EventSender, Feedback, GaugeContent, GaugeLevel, ImageData, KeyContent, KeyState,
     Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
     ModuleFactory, NavigationView, ZoneContent,

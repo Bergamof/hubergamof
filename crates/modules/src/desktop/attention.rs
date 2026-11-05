@@ -9,7 +9,7 @@
 
 use std::any::Any;
 
-use bergadeck_module_api::EventSender;
+use hubergamof_module_api::EventSender;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -109,7 +109,7 @@ pub async fn forward_notifications<E: Any + Send>(
 mod tests {
     use std::sync::Arc;
 
-    use bergadeck_module_api::testing::TestContext;
+    use hubergamof_module_api::testing::TestContext;
 
     use super::*;
     use crate::desktop::Window;

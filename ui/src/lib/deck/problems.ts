@@ -28,7 +28,7 @@ export function problemOf(code: ErrorCode, message: string): Problem {
 			};
 		case 'invalidArchive':
 			return {
-				text: 'Fichier refusé : ce n’est pas un export Bergadeck valide.',
+				text: 'Fichier refusé : ce n’est pas un export HuBergamof valide.',
 				detail: message
 			};
 		default:

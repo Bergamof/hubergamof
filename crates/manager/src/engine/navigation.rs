@@ -1,7 +1,7 @@
 //! Navigation state of a device: stack of module pages above the home page
 //! and first visible row of the displayed page.
 
-use bergadeck_module_api::{ModuleInstanceId, PageId};
+use hubergamof_module_api::{ModuleInstanceId, PageId};
 
 /// A module page on the navigation stack.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bergadeck — installation pour l'utilisateur courant (idempotente) :
+# HuBergamof — installation pour l'utilisateur courant (idempotente) :
 #   1. binaire release dans ~/.local/bin ;
 #   2. service systemd utilisateur, activé et (re)démarré ;
 #   3. règle udev pour accéder aux Stream Deck sans root (sudo, après confirmation).
@@ -9,7 +9,7 @@ set -euo pipefail
 # shellcheck source=packaging/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-readonly RELEASE_BINARY="$REPO_ROOT/target/release/bergadeck"
+readonly RELEASE_BINARY="$REPO_ROOT/target/release/hubergamof"
 readonly UNIT_TEMPLATE="$PACKAGING_DIR/systemd/$SERVICE_NAME"
 # La configuration reste pour l'instant dans le dépôt (déplacement vers ~/.config prévu).
 readonly CONFIG_DIR="$REPO_ROOT/config"
@@ -19,7 +19,7 @@ usage_text() {
 	cat <<EOF
 Usage : $(basename "$0") [--no-udev] [--yes]
 
-Installe Bergadeck pour l'utilisateur courant.
+Installe HuBergamof pour l'utilisateur courant.
   --no-udev  ne pas installer la règle udev (aucun appel à sudo)
   -y, --yes  accepter l'installation de la règle udev sans la demander
   -h, --help afficher cette aide
@@ -95,7 +95,7 @@ main() {
 	install_binary
 	install_unit
 	install_udev_rule
-	info "Bergadeck installé. État : systemctl --user status $SERVICE_NAME"
+	info "HuBergamof installé. État : systemctl --user status $SERVICE_NAME"
 }
 
 main "$@"

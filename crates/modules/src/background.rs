@@ -8,7 +8,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::task::Poll;
 use std::time::Duration;
 
-use bergadeck_module_api::EventSender;
+use hubergamof_module_api::EventSender;
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;

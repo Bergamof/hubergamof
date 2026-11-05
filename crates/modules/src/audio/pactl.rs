@@ -821,7 +821,7 @@ esac"#;
         ));
 
         let missing = PactlBackend {
-            program: "/nonexistent/bergadeck/pactl".into(),
+            program: "/nonexistent/hubergamof/pactl".into(),
             leading_args: Vec::new(),
         };
         assert!(matches!(

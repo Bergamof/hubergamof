@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn an_unreadable_proc_is_an_error() {
-        let missing = PathBuf::from("/nonexistent/bergadeck-proc");
+        let missing = PathBuf::from("/nonexistent/hubergamof-proc");
         assert!(running(&missing, own_uid(), &[idea()]).is_err());
     }
 

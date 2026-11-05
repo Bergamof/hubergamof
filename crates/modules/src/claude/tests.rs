@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use bergadeck_module_api::testing::TestContext;
-use bergadeck_module_api::{Feedback, KeyState, TaskScope};
+use hubergamof_module_api::testing::TestContext;
+use hubergamof_module_api::{Feedback, KeyState, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 

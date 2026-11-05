@@ -2,7 +2,7 @@
 //! zone shows where the user is.
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory, NavigationView, ZoneContent,
 };

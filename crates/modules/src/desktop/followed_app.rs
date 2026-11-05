@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, EventSender, Feedback, KeyState, ModuleContext, ModuleSurface,
 };
 
@@ -185,7 +185,7 @@ impl FollowedApp {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_module_api::testing::TestContext;
+    use hubergamof_module_api::testing::TestContext;
 
     use super::*;
     use crate::desktop::SimulatedDesktop;

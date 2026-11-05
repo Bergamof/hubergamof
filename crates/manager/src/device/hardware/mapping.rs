@@ -1,13 +1,13 @@
-//! Translation between `elgato-streamdeck` types and Bergadeck types. Pure
+//! Translation between `elgato-streamdeck` types and HuBergamof types. Pure
 //! functions, tested without hardware.
 
-use bergadeck_protocol::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 use elgato_streamdeck::StreamDeckInput;
 use elgato_streamdeck::info::Kind;
+use hubergamof_protocol::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 
 use crate::device::{InputEvent, TouchPoint};
 
-/// Bergadeck model of a hardware kind.
+/// HuBergamof model of a hardware kind.
 #[must_use]
 pub fn model_of(kind: Kind) -> DeviceModel {
     match kind {

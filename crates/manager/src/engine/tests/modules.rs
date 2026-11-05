@@ -4,8 +4,8 @@
 
 use std::sync::atomic::Ordering;
 
-use bergadeck_module_api::{Command, Feedback, HANDLER_BUDGET, ItemId, KeyState, ModuleSurface};
-use bergadeck_protocol::{ErrorCode, ModuleInstance};
+use hubergamof_module_api::{Command, Feedback, HANDLER_BUDGET, ItemId, KeyState, ModuleSurface};
+use hubergamof_protocol::{ErrorCode, ModuleInstance};
 use image::RgbaImage;
 use serde_json::json;
 use tokio::time::Instant;

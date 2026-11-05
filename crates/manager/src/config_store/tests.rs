@@ -1,5 +1,5 @@
-use bergadeck_modules::DEFAULT_HOME_MODULES;
-use bergadeck_protocol::{
+use hubergamof_modules::DEFAULT_HOME_MODULES;
+use hubergamof_protocol::{
     DeviceCapabilities, DeviceModel, ImageSize, ModuleInstanceId, ModuleKind,
 };
 use tempfile::TempDir;

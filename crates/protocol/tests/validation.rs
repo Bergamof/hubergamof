@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use bergadeck_protocol::{
+use hubergamof_protocol::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, MAX_BRIGHTNESS, MAX_DIALS,
     MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH, MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES,
     MAX_SETTINGS_BYTES, ModuleInstance, ModuleInstanceId, is_identifier, is_safe_image_name,

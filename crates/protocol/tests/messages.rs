@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 
-use bergadeck_protocol::{
+use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
     DeviceModel, DialView, ErrorCode, ImageSize, KeyState, KeyView, LiveState, ModuleCapabilities,
     ModuleDescriptor, ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, ZoneView,

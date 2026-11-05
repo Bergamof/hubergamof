@@ -12,14 +12,14 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use futures_util::FutureExt as _;
+use hubergamof_module_api::{
     Command, EventSender, HANDLER_BUDGET, ItemId, KeyContent, Module, ModuleContext, ModuleError,
     ModuleEvent, ModuleInstanceId, ModuleKind, NavigationView, PageContent, PageId, RedrawHandle,
     TaskScope, ZoneContent,
 };
-use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::ModuleInstance;
-use futures_util::FutureExt as _;
+use hubergamof_modules::ModuleRegistry;
+use hubergamof_protocol::ModuleInstance;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
@@ -412,7 +412,7 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::AtomicUsize;
 
-    use bergadeck_module_api::{ModuleCapabilities, ModuleDescriptor, ModuleFactory};
+    use hubergamof_module_api::{ModuleCapabilities, ModuleDescriptor, ModuleFactory};
     use serde_json::json;
 
     use super::*;

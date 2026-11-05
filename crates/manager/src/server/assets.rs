@@ -48,7 +48,7 @@ const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const CACHE_REVALIDATE: &str = "no-cache";
 
 /// Shown instead of the UI when the binary was built without it.
-pub const MISSING_UI_MESSAGE: &str = "L'interface web de Bergadeck n'est pas construite.\n\
+pub const MISSING_UI_MESSAGE: &str = "L'interface web de HuBergamof n'est pas construite.\n\
      Lancez `make ui-build` puis recompilez le gestionnaire.\n";
 
 /// Where the UI files come from.

@@ -1,7 +1,7 @@
 //! Module catalog: what each module kind offers and which settings it takes.
 //!
 //! The UI builds settings forms generically from these descriptors. These types
-//! are part of the wire contract: `bergadeck-protocol` re-exports them and
+//! are part of the wire contract: `hubergamof-protocol` re-exports them and
 //! exports them to TypeScript, so their JSON format must stay stable.
 
 use serde::de::DeserializeOwned;
@@ -14,7 +14,7 @@ use crate::{ModuleError, ModuleKind, is_setting_path, parse_settings};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 // Not exported on its own: the contract sends it flattened into
-// `bergadeck_protocol::CatalogModule`.
+// `hubergamof_protocol::CatalogModule`.
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ModuleDescriptor {
     /// Module kind, referenced by the `kind` of a configured module instance.

@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bergadeck_protocol::{DeviceConfig, DeviceInfo};
+use hubergamof_protocol::{DeviceConfig, DeviceInfo};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use super::{EngineError, LiveSnapshot};

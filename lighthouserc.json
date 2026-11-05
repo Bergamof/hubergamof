@@ -1,7 +1,7 @@
 {
   "ci": {
     "collect": {
-      "startServerCommand": "rm -rf target/lighthouse-config && cargo run --quiet --locked --package bergadeck -- --demo --no-tray --port 7881 --config-dir target/lighthouse-config",
+      "startServerCommand": "rm -rf target/lighthouse-config && cargo run --quiet --locked --package hubergamof -- --demo --no-tray --port 7881 --config-dir target/lighthouse-config",
       "startServerReadyPattern": "web interface ready",
       "startServerReadyTimeout": 900000,
       "url": ["http://127.0.0.1:7881/"],

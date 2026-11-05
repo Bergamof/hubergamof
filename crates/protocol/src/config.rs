@@ -90,7 +90,7 @@ fn empty_settings() -> serde_json::Value {
 /// Reason a [`DeviceConfig`] is rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConfigError {
-    /// The schema version is not supported by this version of Bergadeck.
+    /// The schema version is not supported by this version of HuBergamof.
     #[error("unsupported schema version {found} (supported: {CURRENT_SCHEMA_VERSION})")]
     UnsupportedSchemaVersion {
         /// Version found in the configuration.

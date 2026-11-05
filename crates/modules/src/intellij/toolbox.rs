@@ -402,7 +402,7 @@ mod tests {
             fs::set_permissions(root.path(), Permissions::from_mode(0o755)).unwrap();
             let fixture = Self { root };
             fixture.install("intellij-idea-ultimate", "IU", "bin/idea");
-            fixture.projects(&["bergadeck", "bergacast"]);
+            fixture.projects(&["hubergamof", "bergacast"]);
             fixture
         }
 
@@ -479,7 +479,7 @@ mod tests {
             launcher.ends_with("intellij-idea-ultimate/bin/idea"),
             "{launcher:?}"
         );
-        assert_eq!(names(&catalog), ["bergadeck", "bergacast"]);
+        assert_eq!(names(&catalog), ["hubergamof", "bergacast"]);
         assert!(catalog.projects[0].path.is_absolute());
     }
 
@@ -488,10 +488,10 @@ mod tests {
         let fixture = Fixture::new();
         let catalog = fixture.catalog();
         assert_eq!(names(&catalog.read().unwrap()).len(), 2);
-        fixture.projects(&["notes", "bergadeck", "bergacast"]);
+        fixture.projects(&["notes", "hubergamof", "bergacast"]);
         assert_eq!(
             names(&catalog.read().unwrap()),
-            ["notes", "bergadeck", "bergacast"]
+            ["notes", "hubergamof", "bergacast"]
         );
     }
 
@@ -499,7 +499,7 @@ mod tests {
     fn removed_project_folders_are_skipped() {
         let fixture = Fixture::new();
         fs::remove_dir(fixture.path("home/projets/bergacast")).unwrap();
-        assert_eq!(names(&fixture.catalog().read().unwrap()), ["bergadeck"]);
+        assert_eq!(names(&fixture.catalog().read().unwrap()), ["hubergamof"]);
     }
 
     #[test]
@@ -559,7 +559,7 @@ mod tests {
         fs::remove_dir_all(fixture.path("home/.local/share")).unwrap();
         let catalog = fixture.catalog().read().unwrap();
         assert_eq!(catalog.launcher, None);
-        assert_eq!(names(&catalog), ["bergadeck", "bergacast"]);
+        assert_eq!(names(&catalog), ["hubergamof", "bergacast"]);
     }
 
     fn toolbox_install(fixture: &Fixture) -> PathBuf {
@@ -673,7 +673,7 @@ mod tests {
         )
         .unwrap();
         let catalog = fixture.catalog().read().unwrap();
-        assert_eq!(names(&catalog), ["bergadeck", "bergacast"]);
+        assert_eq!(names(&catalog), ["hubergamof", "bergacast"]);
         assert!(catalog.launcher.is_some());
     }
 
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn project_links_are_resolved() {
         let fixture = Fixture::new();
-        let real = fixture.path("home/projets/bergadeck");
+        let real = fixture.path("home/projets/hubergamof");
         let link = fixture.path("home/projets/raccourci");
         std::os::unix::fs::symlink(&real, &link).unwrap();
         fixture.projects(&["raccourci"]);

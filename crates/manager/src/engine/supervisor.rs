@@ -226,7 +226,7 @@ async fn run_engine(deck: Arc<dyn DeckBackend>, services: EngineServices, engine
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_protocol::DeviceConfig;
+    use hubergamof_protocol::DeviceConfig;
     use tokio::sync::mpsc;
 
     use super::*;

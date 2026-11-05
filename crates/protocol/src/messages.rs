@@ -131,7 +131,7 @@ pub enum ErrorCode {
     /// The image was refused: unsupported or undecodable format, content not
     /// matching the declared type, or too large.
     InvalidImage,
-    /// The configuration archive was refused: not a Bergadeck export,
+    /// The configuration archive was refused: not a HuBergamof export,
     /// unexpected entries, missing image, or too large.
     InvalidArchive,
     /// Unexpected failure inside the manager.

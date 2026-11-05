@@ -1,4 +1,4 @@
-// Bergadeck: reports the followed windows to the manager (constants above).
+// HuBergamof: reports the followed windows to the manager (constants above).
 // Only the windows of the followed classes are reported.
 
 function followed(window) {

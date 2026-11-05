@@ -2,7 +2,7 @@
 //! module instances and its navigation, and drawing what they show.
 //!
 //! - The home page shows the key of each module of `config.home`; a module
-//!   opens pages of keys ([`bergadeck_module_api::Command::OpenPage`]). Pages
+//!   opens pages of keys ([`hubergamof_module_api::Command::OpenPage`]). Pages
 //!   larger than the key grid scroll by rows.
 //! - Dial `i` drives the module `config.dials[i]`; the touch strip zone above
 //!   it shows that module's zone.
@@ -30,9 +30,9 @@ mod validation;
 
 use std::sync::Arc;
 
-use bergadeck_module_api::ModuleInstanceId;
-use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::ErrorCode;
+use hubergamof_module_api::ModuleInstanceId;
+use hubergamof_modules::ModuleRegistry;
+use hubergamof_protocol::ErrorCode;
 use thiserror::Error;
 
 pub use device_engine::DeviceEngine;

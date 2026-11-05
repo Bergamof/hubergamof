@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, Feedback, ModuleInstanceId, ModuleSurface, NavigationView, PageContent, PageId,
     RedrawHandle,
 };
-use bergadeck_protocol::{DeviceConfig, ModuleInstance};
+use hubergamof_protocol::{DeviceConfig, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio::task::spawn_blocking;

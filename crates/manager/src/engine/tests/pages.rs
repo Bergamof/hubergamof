@@ -1,7 +1,7 @@
 //! Pages, navigation, configuration and drawing.
 
-use bergadeck_module_api::{GaugeContent, GaugeLevel, KeyState};
-use bergadeck_protocol::ErrorCode;
+use hubergamof_module_api::{GaugeContent, GaugeLevel, KeyState};
+use hubergamof_protocol::ErrorCode;
 use image::RgbaImage;
 use serde_json::json;
 

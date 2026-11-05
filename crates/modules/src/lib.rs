@@ -1,7 +1,7 @@
-//! Built-in Bergadeck modules and the registry the manager instantiates them
+//! Built-in HuBergamof modules and the registry the manager instantiates them
 //! from.
 //!
-//! Each module implements [`bergadeck_module_api::Module`] exactly like an
+//! Each module implements [`hubergamof_module_api::Module`] exactly like an
 //! external module would: [`audio`], [`claude`], [`clock`], [`docker`],
 //! [`intellij`], [`navigation`] and [`pomodoro`] (the manager shows a
 //! placeholder key for kinds missing from the registry).
@@ -32,7 +32,7 @@ mod trust;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bergadeck_module_api::{ModuleFactory, ModuleKind};
+use hubergamof_module_api::{ModuleFactory, ModuleKind};
 use serde_json::{Map, Value};
 
 /// Built-in modules shown on the home page of a new device, in key order.
@@ -205,12 +205,12 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
 mod tests {
     use std::time::Duration;
 
-    use bergadeck_module_api::testing::TestContext;
-    use bergadeck_module_api::{Module, ModuleEvent, NavigationView, TaskScope, ZoneContent};
+    use hubergamof_module_api::testing::TestContext;
+    use hubergamof_module_api::{Module, ModuleEvent, NavigationView, TaskScope, ZoneContent};
     use serde_json::json;
     use tokio::sync::mpsc::UnboundedReceiver;
 
-    use bergadeck_module_api::ModuleDescriptor;
+    use hubergamof_module_api::ModuleDescriptor;
 
     use super::*;
     use crate::time::testing::SimulatedClock;

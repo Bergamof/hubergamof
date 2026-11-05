@@ -1,5 +1,5 @@
 //! Local web server: the UI files and the `/ws` WebSocket of the contract
-//! ([`bergadeck_protocol::ClientMessage`] / [`bergadeck_protocol::ServerMessage`]).
+//! ([`hubergamof_protocol::ClientMessage`] / [`hubergamof_protocol::ServerMessage`]).
 //!
 //! - Listens on `127.0.0.1` only.
 //! - Every request goes through the [`AccessPolicy`] (`Host`, and `Origin`
@@ -25,7 +25,7 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::middleware;
 use axum::response::Response;
 use axum::routing::get;
-use bergadeck_protocol::{CatalogModule, ImageSize};
+use hubergamof_protocol::{CatalogModule, ImageSize};
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};

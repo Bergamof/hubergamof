@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use bergadeck_module_api::{Feedback, KeyState, ModuleInstanceId};
-use bergadeck_protocol::{DialView, KeyView, LiveState, PageView, ZoneView};
+use hubergamof_module_api::{Feedback, KeyState, ModuleInstanceId};
+use hubergamof_protocol::{DialView, KeyView, LiveState, PageView, ZoneView};
 
 use crate::render::{RenderError, Rendered};
 

@@ -1,6 +1,6 @@
 //! Helpers shared by the SVG icons of the built-in modules.
 
-use bergadeck_module_api::ImageData;
+use hubergamof_module_api::ImageData;
 
 /// Wraps the source of an SVG icon (drawn by the host).
 pub(crate) fn svg(source: &str) -> ImageData {

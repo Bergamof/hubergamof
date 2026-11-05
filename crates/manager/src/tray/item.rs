@@ -21,10 +21,10 @@ pub const ITEM_PATH: ObjectPath<'static> =
     ObjectPath::from_static_str_unchecked("/StatusNotifierItem");
 
 /// Id of the tray item on D-Bus.
-pub const TRAY_ID: &str = "bergadeck";
+pub const TRAY_ID: &str = "hubergamof";
 
 /// Title of the tray item.
-pub const TRAY_TITLE: &str = "Bergadeck";
+pub const TRAY_TITLE: &str = "HuBergamof";
 
 /// Generic freedesktop icon (present in every icon theme).
 pub const TRAY_ICON: &str = "input-keyboard";

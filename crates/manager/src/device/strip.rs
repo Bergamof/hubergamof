@@ -1,6 +1,6 @@
 //! Touch strip geometry: one zone of equal width above each dial.
 
-use bergadeck_protocol::{DeviceInfo, ImageSize};
+use hubergamof_protocol::{DeviceInfo, ImageSize};
 use image::RgbaImage;
 
 use super::DeviceError;
@@ -130,7 +130,7 @@ pub(crate) fn check_strip_region(
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_protocol::{DeviceCapabilities, DeviceModel};
+    use hubergamof_protocol::{DeviceCapabilities, DeviceModel};
 
     use super::*;
 

@@ -172,16 +172,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
-name = "bergadeck"
+name = "hubergamof"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
  "base64 0.23.1",
- "bergadeck-module-api",
- "bergadeck-modules",
- "bergadeck-protocol",
+ "hubergamof-module-api",
+ "hubergamof-modules",
+ "hubergamof-protocol",
  "clap",
  "elgato-streamdeck",
  "futures-util",
@@ -206,7 +206,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bergadeck-module-api"
+name = "hubergamof-module-api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -218,11 +218,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bergadeck-modules"
+name = "hubergamof-modules"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bergadeck-module-api",
+ "hubergamof-module-api",
  "bollard",
  "futures-util",
  "jiff",
@@ -238,10 +238,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bergadeck-protocol"
+name = "hubergamof-protocol"
 version = "0.1.0"
 dependencies = [
- "bergadeck-module-api",
+ "hubergamof-module-api",
  "serde",
  "serde_json",
  "thiserror",

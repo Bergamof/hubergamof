@@ -17,7 +17,7 @@
 //! from the configuration; one launch at a time, whatever the instance.
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     Command, ImageData, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
     ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
 };

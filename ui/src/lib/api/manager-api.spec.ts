@@ -43,7 +43,7 @@ describe('URLs', () => {
 describe('exportFileName', () => {
 	it('names the archive after the device and the local day', () => {
 		expect(exportFileName('DECK', new Date(2026, 0, 5, 23, 59))).toBe(
-			'bergadeck-DECK-2026-01-05.zip'
+			'hubergamof-DECK-2026-01-05.zip'
 		);
 	});
 });
@@ -157,7 +157,7 @@ describe('importArchive', () => {
 			json(400, { code: 'invalidArchive', message: 'no config.json' })
 		);
 		await expect(api.importArchive('DECK', new File(['x'], 'a.zip'))).resolves.toMatchObject({
-			problem: { text: expect.stringMatching(/export Bergadeck/), detail: 'no config.json' }
+			problem: { text: expect.stringMatching(/export HuBergamof/), detail: 'no config.json' }
 		});
 		const huge = new File([new Uint8Array(MAX_ARCHIVE_BYTES + 1)], 'big.zip');
 		await expect(api.importArchive('DECK', huge)).resolves.toMatchObject({

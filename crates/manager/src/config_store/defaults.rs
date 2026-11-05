@@ -1,7 +1,7 @@
 //! Configuration generated for a device seen for the first time.
 
-use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::{
+use hubergamof_modules::ModuleRegistry;
+use hubergamof_protocol::{
     CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, ModuleInstance, ModuleInstanceId, ModuleKind,
 };
 use serde_json::Value;

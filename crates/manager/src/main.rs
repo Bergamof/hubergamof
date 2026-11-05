@@ -1,4 +1,4 @@
-//! `bergadeck` — Stream Deck manager for Linux.
+//! `hubergamof` — Stream Deck manager for Linux.
 //!
 //! Attaches devices (real or `--demo`), runs a page engine per device, serves
 //! the web UI on `127.0.0.1` and shows a tray icon, until Ctrl-C, SIGTERM or
@@ -10,19 +10,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use bergadeck_manager::config_store::ConfigStore;
-use bergadeck_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
-use bergadeck_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
-use bergadeck_manager::device::{self, DeviceDiscovery};
-use bergadeck_manager::engine::{EngineServices, Supervisor};
-use bergadeck_manager::render::Renderer;
-use bergadeck_manager::server::{
+use clap::Parser;
+use hubergamof_manager::config_store::ConfigStore;
+use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
+use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
+use hubergamof_manager::device::{self, DeviceDiscovery};
+use hubergamof_manager::engine::{EngineServices, Supervisor};
+use hubergamof_manager::render::Renderer;
+use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, module_catalog,
 };
-use bergadeck_manager::tray::{TrayIcon, quit_on};
-use bergadeck_modules::{BuiltinServices, builtin_registry_with};
-use bergadeck_protocol::CatalogModule;
-use clap::Parser;
+use hubergamof_manager::tray::{TrayIcon, quit_on};
+use hubergamof_modules::{BuiltinServices, builtin_registry_with};
+use hubergamof_protocol::CatalogModule;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
         demo = cli.demo,
         port = cli.port,
         config_dir = %cli.config_dir.display(),
-        "bergadeck starting"
+        "hubergamof starting"
     );
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let (shutdown, stopping) = watch::channel(false);
@@ -263,8 +263,8 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use bergadeck_manager::device::DeckBackend as _;
-    use bergadeck_manager::engine::LiveSnapshot;
+    use hubergamof_manager::device::DeckBackend as _;
+    use hubergamof_manager::engine::LiveSnapshot;
 
     use super::*;
 
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn defaults_apply_without_arguments() {
-        let cli = Cli::try_parse_from(["bergadeck"]).unwrap();
+        let cli = Cli::try_parse_from(["hubergamof"]).unwrap();
         assert!(!cli.demo);
         assert_eq!(cli.port, DEFAULT_PORT);
         assert_eq!(cli.config_dir, PathBuf::from("config"));
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn options_are_parsed() {
         let cli = Cli::try_parse_from([
-            "bergadeck",
+            "hubergamof",
             "--demo",
             "--port",
             "9000",
@@ -321,12 +321,12 @@ mod tests {
 
     #[test]
     fn invalid_port_is_rejected() {
-        assert!(Cli::try_parse_from(["bergadeck", "--port", "70000"]).is_err());
+        assert!(Cli::try_parse_from(["hubergamof", "--port", "70000"]).is_err());
     }
 
     #[test]
     fn invalid_dev_origin_is_rejected() {
-        assert!(Cli::try_parse_from(["bergadeck", "--dev-origin", "localhost:5173"]).is_err());
+        assert!(Cli::try_parse_from(["hubergamof", "--dev-origin", "localhost:5173"]).is_err());
     }
 
     #[tokio::test]

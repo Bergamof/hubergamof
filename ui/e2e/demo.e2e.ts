@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { expect, test } from './demo-manager.js';
 
-// Each test runs against its own `bergadeck --demo` with the default layout of a Stream Deck+:
+// Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
 // keys Audio, Pomodoro, Docker, IntelliJ, Claude; dials Horloge, Audio, Pomodoro, Navigation.
 
 function key(page: Page, name: string | RegExp): Locator {
@@ -300,7 +300,7 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	const download = page.waitForEvent('download');
 	await page.getByRole('link', { name: 'Exporter la configuration' }).click();
 	const archive = await (await download).path();
-	expect((await download).suggestedFilename()).toMatch(/^bergadeck-.+-\d{4}-\d{2}-\d{2}\.zip$/);
+	expect((await download).suggestedFilename()).toMatch(/^hubergamof-.+-\d{4}-\d{2}-\d{2}\.zip$/);
 
 	await key(page, /^Touche 5 : Claude/).click();
 	await removeSelectedKey(page);
@@ -332,7 +332,7 @@ test('refuse un fichier qui n’est pas un export', async ({ page }) => {
 	});
 	await page.getByRole('button', { name: 'Remplacer' }).click();
 	await expect(page.getByRole('alert')).toContainText('Configuration non importée');
-	await expect(page.getByRole('alert')).toContainText('export Bergadeck');
+	await expect(page.getByRole('alert')).toContainText('export HuBergamof');
 	await expect(key(page, '1 : Audio')).toBeVisible();
 });
 

@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn longer_text_is_wider() {
         let text = text();
-        assert!(text.width("Bergadeck", SIZE).unwrap() > text.width("Berg", SIZE).unwrap());
+        assert!(text.width("HuBergamof", SIZE).unwrap() > text.width("Berg", SIZE).unwrap());
         assert!(text.width("", SIZE).unwrap().abs() < f32::EPSILON);
     }
 

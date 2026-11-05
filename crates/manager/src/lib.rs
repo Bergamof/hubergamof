@@ -1,4 +1,4 @@
-//! Core of the `bergadeck` manager: device access, image rendering,
+//! Core of the `hubergamof` manager: device access, image rendering,
 //! per-device configuration storage, the page engine, the web server and the
 //! tray icon.
 //!

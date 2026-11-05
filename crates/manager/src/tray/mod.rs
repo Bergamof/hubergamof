@@ -12,11 +12,11 @@ mod item;
 mod menu;
 mod watcher;
 
-use bergadeck_modules::desktop::{Launch, scoped_command};
+use hubergamof_modules::desktop::{Launch, scoped_command};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bergadeck_protocol::DeviceInfo;
+use hubergamof_protocol::DeviceInfo;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;

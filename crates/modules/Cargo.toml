@@ -1,6 +1,6 @@
 [package]
-name = "bergadeck-modules"
-description = "Built-in Bergadeck modules."
+name = "hubergamof-modules"
+description = "Built-in HuBergamof modules."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-bergadeck-module-api.workspace = true
+hubergamof-module-api.workspace = true
 # Docker Engine API over the local Unix socket only (`DOCKER_HOST=unix://…`).
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 # Event stream of `bollard`, and running several container actions at once.
@@ -40,7 +40,7 @@ zbus = { workspace = true, features = ["proxy", "service"] }
 docker-it = []
 
 [dev-dependencies]
-bergadeck-module-api = { workspace = true, features = ["testing"] }
+hubergamof-module-api = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 # `net`: a fake Docker daemon on a Unix socket.
 tokio = { workspace = true, features = ["net", "rt", "test-util"] }

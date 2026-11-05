@@ -7,7 +7,7 @@ import { REPOSITORY_ROOT } from './demo-manager.js';
  */
 export default function globalSetup(): void {
 	execFileSync('pnpm', ['build'], { stdio: 'inherit' });
-	execFileSync('cargo', ['build', '--quiet', '--locked', '--package', 'bergadeck'], {
+	execFileSync('cargo', ['build', '--quiet', '--locked', '--package', 'hubergamof'], {
 		cwd: REPOSITORY_ROOT,
 		stdio: 'inherit'
 	});

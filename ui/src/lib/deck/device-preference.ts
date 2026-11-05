@@ -4,7 +4,7 @@ export interface DevicePreference {
 	save(serial: string): void;
 }
 
-const STORAGE_KEY = 'bergadeck.selectedDevice';
+const STORAGE_KEY = 'hubergamof.selectedDevice';
 
 /**
  * Backed by `localStorage`. Storage may be unavailable (private browsing, blocked site

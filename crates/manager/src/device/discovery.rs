@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use bergadeck_protocol::DeviceInfo;
+use hubergamof_protocol::DeviceInfo;
 use tokio::sync::broadcast;
 
 use super::DeckBackend;

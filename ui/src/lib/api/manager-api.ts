@@ -66,7 +66,7 @@ export function exportFileName(serial: string, date: Date): string {
 	const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
 		.map((part) => String(part).padStart(2, '0'))
 		.join('-');
-	return `bergadeck-${serial}-${day}.zip`;
+	return `hubergamof-${serial}-${day}.zip`;
 }
 
 function isApiError(value: unknown): value is ApiError {

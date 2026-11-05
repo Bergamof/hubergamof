@@ -5,14 +5,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bergadeck_module_api::{
+use hubergamof_module_api::{
     ChoiceOption, Command, EventSender, Feedback, GaugeContent, ItemId, KeyContent, KeyState,
     Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
     ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle, SettingField,
     SettingKind, ZoneContent, parse_settings,
 };
-use bergadeck_modules::ModuleRegistry;
-use bergadeck_protocol::{
+use hubergamof_modules::ModuleRegistry;
+use hubergamof_protocol::{
     DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ImageSize, ModuleInstance,
 };
 use image::RgbaImage;

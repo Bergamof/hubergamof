@@ -1,6 +1,6 @@
 //! Device errors.
 
-use bergadeck_protocol::MAX_BRIGHTNESS;
+use hubergamof_protocol::MAX_BRIGHTNESS;
 use thiserror::Error;
 
 /// Failure of a device operation.

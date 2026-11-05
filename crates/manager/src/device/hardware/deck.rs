@@ -11,9 +11,9 @@ use std::thread;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bergadeck_protocol::{DeviceInfo, MAX_BRIGHTNESS};
 use elgato_streamdeck::images::{ImageRect, convert_image};
 use elgato_streamdeck::{StreamDeck, StreamDeckError};
+use hubergamof_protocol::{DeviceInfo, MAX_BRIGHTNESS};
 use image::{DynamicImage, RgbaImage};
 use tokio::sync::{broadcast, oneshot};
 
@@ -180,7 +180,7 @@ fn owned(image: &RgbaImage) -> DynamicImage {
 struct Worker {
     deck: StreamDeck,
     tracker: InputTracker,
-    strip_size: Option<bergadeck_protocol::ImageSize>,
+    strip_size: Option<hubergamof_protocol::ImageSize>,
     commands: mpsc::Receiver<Command>,
     events: broadcast::Sender<InputEvent>,
     connected: Arc<AtomicBool>,

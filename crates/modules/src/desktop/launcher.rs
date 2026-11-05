@@ -168,11 +168,11 @@ mod tests {
         let failed = launcher.launch(&launch("false", &[])).await.unwrap_err();
         assert!(matches!(failed, DesktopError::Launch { .. }), "{failed}");
         let missing = launcher
-            .launch(&launch("/nonexistent/bergadeck-app", &[]))
+            .launch(&launch("/nonexistent/hubergamof-app", &[]))
             .await
             .unwrap_err();
         assert!(
-            missing.to_string().contains("/nonexistent/bergadeck-app"),
+            missing.to_string().contains("/nonexistent/hubergamof-app"),
             "{missing}"
         );
         let without_wrapper = Launcher {

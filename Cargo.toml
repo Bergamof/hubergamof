@@ -11,9 +11,9 @@ repository = ""
 publish = false
 
 [workspace.dependencies]
-bergadeck-protocol = { path = "crates/protocol" }
-bergadeck-module-api = { path = "crates/module-api" }
-bergadeck-modules = { path = "crates/modules" }
+hubergamof-protocol = { path = "crates/protocol" }
+hubergamof-module-api = { path = "crates/module-api" }
+hubergamof-modules = { path = "crates/modules" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"

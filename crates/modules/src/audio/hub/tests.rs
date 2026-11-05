@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use bergadeck_module_api::ModuleEvent;
-use bergadeck_module_api::testing::TestContext;
+use hubergamof_module_api::ModuleEvent;
+use hubergamof_module_api::testing::TestContext;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 

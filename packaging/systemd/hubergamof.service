@@ -1,4 +1,4 @@
-# Bergadeck — service systemd utilisateur (gabarit).
+# HuBergamof — service systemd utilisateur (gabarit).
 # packaging/install.sh remplace @CONFIG_DIR@ par le chemin absolu, échappé, du
 # dossier de configuration, puis installe l'unité dans ~/.config/systemd/user/.
 #
@@ -9,13 +9,13 @@
 # systemd --user ; le tray se ré-enregistre si le StatusNotifierWatcher arrive après.
 
 [Unit]
-Description=Bergadeck Stream Deck manager
+Description=HuBergamof Stream Deck manager
 PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/bergadeck --config-dir "@CONFIG_DIR@"
+ExecStart=%h/.local/bin/hubergamof --config-dir "@CONFIG_DIR@"
 Restart=on-failure
 RestartSec=2
 

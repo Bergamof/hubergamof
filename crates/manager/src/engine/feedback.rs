@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use bergadeck_module_api::Feedback;
+use hubergamof_module_api::Feedback;
 use tokio::time::Instant;
 
 use super::frame::KeyTarget;

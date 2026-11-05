@@ -1,6 +1,6 @@
 [package]
-name = "bergadeck-module-api"
-description = "API implemented by Bergadeck modules (built-in and external)."
+name = "hubergamof-module-api"
+description = "API implemented by HuBergamof modules (built-in and external)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,7 +18,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 # `rt` for the task scope of module instances (`JoinSet`), nothing else.
 tokio = { workspace = true, features = ["rt"] }
-# TypeScript bindings of the catalog types, enabled by `bergadeck-protocol`
+# TypeScript bindings of the catalog types, enabled by `hubergamof-protocol`
 # (the wire contract); modules do not need them.
 ts-rs = { workspace = true, optional = true }
 

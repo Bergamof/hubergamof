@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
-use bergadeck_module_api::TaskScope;
-use bergadeck_module_api::testing::TestContext;
+use hubergamof_module_api::TaskScope;
+use hubergamof_module_api::testing::TestContext;
 use serde_json::json;
 use tokio::sync::mpsc;
 

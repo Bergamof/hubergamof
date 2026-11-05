@@ -2,8 +2,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use bergadeck_module_api::testing::TestContext;
-use bergadeck_module_api::{Feedback, TaskScope};
+use hubergamof_module_api::testing::TestContext;
+use hubergamof_module_api::{Feedback, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -15,7 +15,7 @@ use crate::desktop::{DEMO_INTELLIJ_EXECUTABLE, SimulatedDesktop};
 /// Longest (simulated) wait for an event.
 const PATIENCE: Duration = Duration::from_secs(30);
 
-const BERGADECK: &str = "project//home/demo/projets/bergadeck";
+const HUBERGAMOF: &str = "project//home/demo/projets/hubergamof";
 const BERGACAST: &str = "project//home/demo/projets/bergacast";
 const NOTES: &str = "project//home/demo/projets/notes";
 
@@ -173,7 +173,7 @@ async fn open_projects_come_first() {
     assert_eq!(
         harness.items(),
         [
-            (BERGADECK.into(), "bergadeck".into(), KeyState::Active),
+            (HUBERGAMOF.into(), "hubergamof".into(), KeyState::Active),
             (BERGACAST.into(), "bergacast".into(), KeyState::Normal),
             (NOTES.into(), "notes".into(), KeyState::Normal),
         ]
@@ -184,10 +184,10 @@ async fn open_projects_come_first() {
 async fn an_open_project_is_brought_to_the_front() {
     let setup = Setup::demo();
     let mut harness = setup.instance(&json!({})).await;
-    assert_eq!(harness.press(BERGADECK).await, []);
+    assert_eq!(harness.press(HUBERGAMOF).await, []);
     assert_eq!(
         harness.next_commands().await,
-        [item_feedback(BERGADECK, Feedback::Ok)]
+        [item_feedback(HUBERGAMOF, Feedback::Ok)]
     );
     assert_eq!(setup.desktop.activations(), [WindowId("intellij".into())]);
     assert_eq!(setup.desktop.launches(), []);
@@ -286,10 +286,10 @@ async fn activating_a_window_closed_meanwhile_alerts() {
     tokio::time::sleep(Duration::from_millis(10)).await;
     assert_eq!(harness.items()[0].2, KeyState::Active);
 
-    assert_eq!(harness.press(BERGADECK).await, []);
+    assert_eq!(harness.press(HUBERGAMOF).await, []);
     assert_eq!(
         harness.next_commands().await,
-        [item_feedback(BERGADECK, Feedback::Alert)]
+        [item_feedback(HUBERGAMOF, Feedback::Alert)]
     );
     assert_eq!(setup.desktop.activations(), []);
 }
@@ -314,7 +314,7 @@ async fn without_an_installation_nothing_is_launched() {
 async fn windows_asking_for_attention_show_on_their_keys() {
     let setup = Setup::demo();
     let mut harness = setup.instance(&json!({})).await;
-    let mut asking = Window::new("intellij", "jetbrains-idea", "bergadeck – main.rs");
+    let mut asking = Window::new("intellij", "jetbrains-idea", "hubergamof – main.rs");
     asking.demands_attention = true;
     setup.desktop.set_windows(vec![asking]);
     harness
@@ -328,7 +328,7 @@ async fn windows_of_projects_not_listed_can_be_brought_to_the_front() {
     let setup = Setup::demo();
     let mut harness = setup.instance(&json!({})).await;
     setup.desktop.set_windows(vec![
-        Window::new("intellij", "jetbrains-idea", "bergadeck – main.rs"),
+        Window::new("intellij", "jetbrains-idea", "hubergamof – main.rs"),
         Window::new("neuf", "jetbrains-idea", "nouveau-projet – lib.rs"),
     ]);
     harness
@@ -380,7 +380,7 @@ async fn unknown_items_alert() {
     assert_eq!(harness.press("window/gone").await, Command::alert());
     let elsewhere = harness
         .module
-        .on_item_press(&"other".into(), &BERGADECK.into())
+        .on_item_press(&"other".into(), &HUBERGAMOF.into())
         .await;
     assert_eq!(elsewhere, []);
 }
@@ -490,7 +490,7 @@ async fn a_notification_of_intellij_puts_its_key_in_attention_until_pressed() {
 #[tokio::test(start_paused = true)]
 async fn a_notification_while_intellij_is_in_front_is_ignored() {
     let setup = Setup::demo();
-    let mut in_front = Window::new("intellij", "jetbrains-idea", "bergadeck – main.rs");
+    let mut in_front = Window::new("intellij", "jetbrains-idea", "hubergamof – main.rs");
     in_front.active = true;
     setup.desktop.set_windows(vec![in_front]);
     let mut harness = setup.instance(&json!({})).await;
@@ -514,7 +514,7 @@ async fn intellij_in_front_ends_the_attention_of_a_notification() {
     harness
         .until(|module| module.key().state == KeyState::Attention)
         .await;
-    let mut in_front = Window::new("intellij", "jetbrains-idea", "bergadeck – main.rs");
+    let mut in_front = Window::new("intellij", "jetbrains-idea", "hubergamof – main.rs");
     in_front.active = true;
     setup.desktop.set_windows(vec![in_front]);
     harness

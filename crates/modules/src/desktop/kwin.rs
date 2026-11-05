@@ -39,16 +39,16 @@ use crate::session_bus::SessionBus;
 const KWIN_SERVICE: &str = "org.kde.KWin";
 
 /// Plugin name of the script following the windows.
-const WINDOWS_PLUGIN: &str = "bergadeck-windows";
+const WINDOWS_PLUGIN: &str = "hubergamof-windows";
 
 /// Plugin name of the one-shot activation script.
-const ACTIVATE_PLUGIN: &str = "bergadeck-activate";
+const ACTIVATE_PLUGIN: &str = "hubergamof-activate";
 
 /// Path of the objects receiving the reports, one per following.
-const REPORT_PATH: &str = "/org/bergadeck/Windows";
+const REPORT_PATH: &str = "/org/hubergamof/Windows";
 
 /// Interface of those objects.
-const REPORT_INTERFACE: &str = "org.bergadeck.Windows1";
+const REPORT_INTERFACE: &str = "org.hubergamof.Windows1";
 
 /// Largest report accepted: far above a few windows, bounded whatever KWin
 /// sends.
@@ -281,7 +281,7 @@ impl Reporter {
     }
 }
 
-#[interface(name = "org.bergadeck.Windows1")]
+#[interface(name = "org.hubergamof.Windows1")]
 impl Reporter {
     /// The followed windows, as a JSON array.
     #[expect(
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn scripts_get_their_values_as_literals() {
-        let script = windows_script(":1.42", "/org/bergadeck/Windows/0", &filter());
+        let script = windows_script(":1.42", "/org/hubergamof/Windows/0", &filter());
         assert!(script.contains("const BUS = \":1.42\";\n"), "{script}");
         assert!(script.contains(r#"const CLASSES = ["com.anthropic.Claude"];"#));
         assert!(script.contains(r#"const PREFIXES = ["jetbrains-"];"#));

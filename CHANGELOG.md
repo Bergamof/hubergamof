@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Modifié
+
+- Projet renommé Bergadeck → HuBergamof (crates, binaire, service systemd, règle udev, documentation) ; renommage seul, sans changement fonctionnel.
+
 ### Ajouté
 
 - Initialisation du projet : workspace Cargo, interface SvelteKit, outillage qualité, CI, empaquetage.
@@ -40,7 +44,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Interface : supprimer une touche dont le module n'est placé nulle part ailleurs demande confirmation (ses réglages seraient perdus) ; le focus va sur la touche ajoutée, et revient sur le contrôle d'origine après une reconnexion au gestionnaire.
 - Contrat : `moduleCatalog` envoie des `CatalogModule` (descripteur, icône, réglages par défaut choisis par le module) ; `selectDevice` porte `liveState` : l'état en direct n'est plus envoyé qu'aux clients qui le demandent.
 - API des modules : un réglage chemin (`path`, `pathList`) doit être absolu ou commencer par `~/`.
-- Tests e2e et Lighthouse lancés contre `bergadeck --demo` ; Lighthouse exige aussi Performance ≥ 0,9 ; un test e2e qui ne passe qu'à la relance fait échouer la CI.
+- Tests e2e et Lighthouse lancés contre `hubergamof --demo` ; Lighthouse exige aussi Performance ≥ 0,9 ; un test e2e qui ne passe qu'à la relance fait échouer la CI.
 - CI : toutes les actions épinglées par SHA ; gitleaks et actionlint vérifiés contre une somme SHA-256 épinglée ; binaire release sans table des symboles.
 - Contrat : `KeyView.active` remplacé par `state` (`normal`/`active`/`attention`) ; `Command::Redraw` et `ImageFormat` supprimés.
 - Isolation des modules : panique → placeholder et alerte, budget de 500 ms par gestionnaire ; appui résolu sur ce qui est affiché.

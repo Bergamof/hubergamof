@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use super::errors::client_message;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
-use bergadeck_protocol::{ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage};
+use hubergamof_protocol::{ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;

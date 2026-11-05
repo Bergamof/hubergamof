@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use bergadeck_module_api::{GaugeContent, GaugeLevel};
+use hubergamof_module_api::{GaugeContent, GaugeLevel};
 
 use super::*;
 
