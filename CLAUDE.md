@@ -92,6 +92,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 
 ## Pièges et conventions spécifiques
 - Wayland : mise au premier plan via script KWin sous KDE ; sous GNOME la fenêtre peut seulement clignoter (accepté). Relancer une appli déjà ouverte ne l'active pas.
+- Risques acceptés et décisions de sécurité (autres comptes Unix, unité systemd, bornes) : `docs/security.md`.
 - Intégrations Claude Desktop / IntelliJ / KWin / zbus 6 (mécanismes, pièges) : `docs/integrations-desktop.md` — à lire avant de toucher ces modules ; détail des modules : `docs/modules.md` (à tenir à jour avec eux).
 - Tray sous GNOME : nécessite l'extension AppIndicator (présente par défaut sur Ubuntu).
 - `ui/src/lib/generated/` est généré : ne jamais l'éditer à la main, lancer `make gen-types` (supprime le dossier puis régénère). `cargo test --workspace` le régénère aussi. Exclu de Prettier/ESLint (non formaté par ts-rs).

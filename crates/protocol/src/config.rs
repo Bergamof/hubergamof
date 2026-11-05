@@ -17,6 +17,27 @@ pub const MAX_BRIGHTNESS: u8 = 100;
 /// Longest accepted image file name.
 pub const MAX_IMAGE_NAME_LENGTH: usize = 128;
 
+// Bounds of a configuration: well above any real use, so that an imported
+// or received configuration cannot hold the manager back at every start.
+
+/// Most module instances of a device.
+pub const MAX_MODULES: usize = 256;
+
+/// Most keys of the home page.
+pub const MAX_HOME_KEYS: usize = 256;
+
+/// Most dials of a configuration (4 on a Stream Deck+).
+pub const MAX_DIALS: usize = 16;
+
+/// Longest key label, in characters (a few words fit on a key).
+pub const MAX_LABEL_CHARS: usize = 64;
+
+/// Longest module instance id or module kind.
+pub const MAX_IDENTIFIER_LENGTH: usize = 64;
+
+/// Largest settings of an instance, serialized as JSON.
+pub const MAX_SETTINGS_BYTES: usize = 16 * 1024;
+
 /// Full configuration of one device.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +113,26 @@ pub enum ConfigError {
         /// Unknown module id.
         module: ModuleInstanceId,
     },
+    /// More of something than a configuration may hold.
+    #[error("too many {what}: {count} (at most {max})")]
+    TooMany {
+        /// What there are too many of.
+        what: &'static str,
+        /// How many there are.
+        count: usize,
+        /// The bound.
+        max: usize,
+    },
+    /// A module instance id or kind is empty, too long or has characters
+    /// other than ASCII letters, digits, `-` and `_` (shown escaped).
+    #[error("invalid identifier {0:?}")]
+    InvalidIdentifier(String),
+    /// A label longer than [`MAX_LABEL_CHARS`].
+    #[error("module `{0}` has a label longer than {MAX_LABEL_CHARS} characters")]
+    LabelTooLong(ModuleInstanceId),
+    /// Settings larger than [`MAX_SETTINGS_BYTES`] once serialized.
+    #[error("module `{0}` has settings larger than {MAX_SETTINGS_BYTES} bytes")]
+    SettingsTooLarge(ModuleInstanceId),
     /// An image file name is empty or could escape the `images/` directory.
     #[error("module `{module}` has invalid image name `{image}`")]
     InvalidImageName {
@@ -114,6 +155,8 @@ impl DeviceConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.validate_schema_version()?;
         self.validate_brightness()?;
+        self.validate_sizes()?;
+        self.validate_instances()?;
         let known_ids = self.validate_module_ids()?;
         self.validate_home(&known_ids)?;
         self.validate_dials(&known_ids)?;
@@ -136,6 +179,43 @@ impl DeviceConfig {
         } else {
             Err(ConfigError::BrightnessOutOfRange(self.brightness))
         }
+    }
+
+    fn validate_sizes(&self) -> Result<(), ConfigError> {
+        let counts = [
+            ("module instances", self.modules.len(), MAX_MODULES),
+            ("home keys", self.home.len(), MAX_HOME_KEYS),
+            ("dials", self.dials.len(), MAX_DIALS),
+        ];
+        match counts.into_iter().find(|(_, count, max)| count > max) {
+            Some((what, count, max)) => Err(ConfigError::TooMany { what, count, max }),
+            None => Ok(()),
+        }
+    }
+
+    /// Identifiers, labels and settings of each instance: also written to
+    /// the logs and drawn on keys, so bounded and plain.
+    fn validate_instances(&self) -> Result<(), ConfigError> {
+        for module in &self.modules {
+            for identifier in [&module.id.0, &module.kind.0] {
+                if !is_identifier(identifier) {
+                    return Err(ConfigError::InvalidIdentifier(identifier.clone()));
+                }
+            }
+            if module
+                .label
+                .as_ref()
+                .is_some_and(|label| label.chars().count() > MAX_LABEL_CHARS)
+            {
+                return Err(ConfigError::LabelTooLong(module.id.clone()));
+            }
+            let settings =
+                serde_json::to_vec(&module.settings).map_or(usize::MAX, |json| json.len());
+            if settings > MAX_SETTINGS_BYTES {
+                return Err(ConfigError::SettingsTooLarge(module.id.clone()));
+            }
+        }
+        Ok(())
     }
 
     fn validate_module_ids(&self) -> Result<HashSet<&ModuleInstanceId>, ConfigError> {
@@ -186,6 +266,17 @@ impl DeviceConfig {
         }
         Ok(())
     }
+}
+
+/// Whether `identifier` is a valid module instance id or module kind: ASCII
+/// letters, digits, `-` and `_`, at most [`MAX_IDENTIFIER_LENGTH`].
+#[must_use]
+pub fn is_identifier(identifier: &str) -> bool {
+    !identifier.is_empty()
+        && identifier.len() <= MAX_IDENTIFIER_LENGTH
+        && identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 /// Whether `name` is a plain file name of the device `images/` directory:

@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+use super::errors::client_message;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use bergadeck_protocol::{ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage};
 use tokio::sync::broadcast;
@@ -397,7 +398,7 @@ impl Session {
     async fn send_error(&mut self, code: ErrorCode, message: &str) -> Result<(), Closed> {
         self.send(&ServerMessage::Error {
             code,
-            message: message.to_owned(),
+            message: client_message(code, message, "WebSocket request"),
         })
         .await
     }

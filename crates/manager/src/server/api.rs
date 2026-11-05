@@ -12,6 +12,9 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+use super::errors::INTERNAL_MESSAGE;
+use super::errors::client_message;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -35,8 +38,6 @@ const PNG: &str = "image/png";
 const ZIP: &str = "application/zip";
 /// Upload of unknown type: the format is read from the content.
 const UNKNOWN_TYPE: &str = "application/octet-stream";
-/// What clients learn of an internal failure; details go to the logs.
-const INTERNAL_MESSAGE: &str = "internal error, see the manager logs";
 
 /// Routes under `/api`.
 pub(super) fn routes() -> Router<AppState> {
@@ -64,15 +65,9 @@ struct Failure {
 
 impl Failure {
     fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        let message = if code == ErrorCode::Internal {
-            tracing::error!(error = %message.into(), "API request failed");
-            INTERNAL_MESSAGE.to_owned()
-        } else {
-            message.into()
-        };
         Self {
             code,
-            message,
+            message: client_message(code, message, "API request"),
             status: None,
         }
     }

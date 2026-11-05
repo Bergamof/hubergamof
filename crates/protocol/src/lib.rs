@@ -20,8 +20,9 @@ mod messages;
 pub use api::{ApiError, ImageUploaded};
 pub use catalog::CatalogModule;
 pub use config::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_IMAGE_NAME_LENGTH,
-    ModuleInstance, is_safe_image_name,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS,
+    MAX_IDENTIFIER_LENGTH, MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES,
+    ModuleInstance, is_identifier, is_safe_image_name,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{DialView, KeyView, LiveState, PageView, ZoneView};

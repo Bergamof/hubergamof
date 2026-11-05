@@ -12,6 +12,7 @@
 mod api;
 mod assets;
 mod catalog;
+mod errors;
 mod security;
 mod session;
 

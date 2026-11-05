@@ -32,6 +32,7 @@ pub use backend::{
 };
 pub(crate) use followed_app::{AppEvent, FollowedApp};
 pub(crate) use hub::{DesktopAction, DesktopHub, LaunchStart};
+pub use launcher::scoped_command;
 pub use model::{
     AppId, AppNotification, AppState, ClassMatch, DesktopApp, ExecutableMatch, Launch,
     NotificationHints, NotificationRelay, Window, WindowId,

@@ -518,10 +518,12 @@ impl DeviceEngine {
             .as_ref()
             .is_none_or(|last| last.page != frame.page)
         {
+            // Debug-escaped: page ids and titles come from modules (Docker
+            // project names chosen by anyone with access to Docker).
             tracing::info!(
                 serial = %self.serial(),
-                page = %frame.page.id,
-                title = %frame.page.title,
+                page = ?frame.page.id,
+                title = ?frame.page.title,
                 row = frame.page.row,
                 rows = frame.page.row_count,
                 "page shown"

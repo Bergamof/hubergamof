@@ -92,6 +92,19 @@ fn missing_config_is_created_from_defaults() {
 }
 
 #[test]
+fn device_folders_are_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, store) = store();
+    store.load(&plus()).unwrap();
+    let folder = config_file(&dir, &plus().serial);
+    let mode = fs::metadata(folder.parent().unwrap())
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, PRIVATE_DIR_MODE);
+}
+
+#[test]
 fn devices_without_dials_get_no_dial_modules() {
     let (_dir, store) = store();
     let config = store.load(&mk2()).unwrap().config;
@@ -510,4 +523,24 @@ fn imported_configs_are_fitted_to_the_target_device() {
     let on_plus = fit_to_device(mk2_config, &plus(), 0);
     assert_eq!(on_plus.dials, vec![None; 4]);
     check_config(&on_plus, &plus()).unwrap();
+}
+
+#[test]
+fn stored_images_are_bounded_in_number() {
+    let (_dir, store) = store();
+    let images = store.device_dir(DEMO_SERIAL).unwrap().join(IMAGES_DIR);
+    fs::create_dir_all(&images).unwrap();
+    for index in 0..MAX_STORED_IMAGES {
+        fs::write(images.join(format!("{index}.png")), b"").unwrap();
+    }
+    let mut png = PNG_SIGNATURE.to_vec();
+    png.extend_from_slice(b"rest");
+    assert!(matches!(
+        store.store_image(DEMO_SERIAL, &png, ImageKind::Png),
+        Err(ConfigStoreError::TooManyImages)
+    ));
+    fs::remove_file(images.join("0.png")).unwrap();
+    store
+        .store_image(DEMO_SERIAL, &png, ImageKind::Png)
+        .unwrap();
 }

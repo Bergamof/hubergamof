@@ -49,6 +49,10 @@ pub const IMAGES_DIR: &str = "images";
 pub const INVALID_BACKUP_PREFIX: &str = "config.json.invalid-";
 
 /// Longest accepted serial number.
+/// Most images a device stores: far more than its keys use, bounding what
+/// uploads may pile up before unused ones are removed at the next load.
+pub const MAX_STORED_IMAGES: usize = 512;
+
 const MAX_SERIAL_LENGTH: usize = 64;
 /// Number of hexadecimal digest characters in a stored image name.
 const IMAGE_DIGEST_LENGTH: usize = 32;
@@ -114,6 +118,10 @@ pub enum ConfigStoreError {
     /// The image is larger than [`MAX_SOURCE_BYTES`].
     #[error("image is larger than {MAX_SOURCE_BYTES} bytes")]
     ImageTooLarge,
+    /// The device already stores [`MAX_STORED_IMAGES`] images (unused ones
+    /// are removed when the configuration is next loaded).
+    #[error("the device already stores {MAX_STORED_IMAGES} images")]
+    TooManyImages,
     /// An image of an archive cannot be drawn.
     #[error("image `{name}` cannot be drawn: {reason}")]
     UnreadableImage {
@@ -141,9 +149,10 @@ impl ConfigStoreError {
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
             | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,
-            Self::ImageKindMismatch { .. } | Self::ImageTooLarge | Self::UnreadableImage { .. } => {
-                ErrorCode::InvalidImage
-            }
+            Self::ImageKindMismatch { .. }
+            | Self::ImageTooLarge
+            | Self::TooManyImages
+            | Self::UnreadableImage { .. } => ErrorCode::InvalidImage,
             Self::Archive(_) | Self::MissingImage(_) => ErrorCode::InvalidArchive,
             Self::Io { .. } | Self::Json { .. } => ErrorCode::Internal,
         }
@@ -292,6 +301,7 @@ impl ConfigStore {
         let name = image_name(bytes, kind);
         let path = self.image_path(serial, &name)?;
         if !path.exists() {
+            self.check_room_for_images(serial, 1)?;
             write_bytes_atomically(&path, bytes)?;
         }
         Ok(name)
@@ -338,6 +348,13 @@ impl ConfigStore {
         serial: &str,
         import: &PreparedImport,
     ) -> Result<Vec<String>, ConfigStoreError> {
+        let mut new_images = 0;
+        for (name, _) in &import.images {
+            if !self.image_path(serial, name)?.exists() {
+                new_images += 1;
+            }
+        }
+        self.check_room_for_images(serial, new_images)?;
         let mut created = Vec::new();
         for (name, bytes) in &import.images {
             let path = self.image_path(serial, name)?;
@@ -392,6 +409,22 @@ impl ConfigStore {
             tracing::info!(%serial, count = unused.len(), "removing unused images");
             self.remove_images(serial, &unused);
         }
+    }
+
+    /// Fails with [`ConfigStoreError::TooManyImages`] when `adding` more
+    /// images would take device `serial` beyond [`MAX_STORED_IMAGES`]:
+    /// uploads are bounded in size, not in number otherwise.
+    fn check_room_for_images(&self, serial: &str, adding: usize) -> Result<(), ConfigStoreError> {
+        let dir = self.device_dir(serial)?.join(IMAGES_DIR);
+        let stored = match fs::read_dir(&dir) {
+            Ok(entries) => entries.count(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
+            Err(source) => return Err(io_error(&dir, source)),
+        };
+        if stored + adding > MAX_STORED_IMAGES {
+            return Err(ConfigStoreError::TooManyImages);
+        }
+        Ok(())
     }
 
     /// Path of image `name` of a device; the name must be a plain file name.
@@ -570,11 +603,25 @@ fn write_atomically(path: &Path, config: &DeviceConfig) -> Result<(), ConfigStor
     write_bytes_atomically(path, &json)
 }
 
+/// Creates `dir` and its missing parents, readable by the user only (the
+/// service umask would let other accounts list serials and images).
+fn create_private_dir(dir: &Path) -> Result<(), ConfigStoreError> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(PRIVATE_DIR_MODE)
+        .create(dir)
+        .map_err(|source| io_error(dir, source))
+}
+
+/// Mode of the folders the store creates.
+const PRIVATE_DIR_MODE: u32 = 0o700;
+
 /// Writes `bytes` to a temporary file next to `path`, flushes it to disk and
 /// renames it over `path`: readers see either the old or the new content.
 fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), ConfigStoreError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(dir).map_err(|source| io_error(dir, source))?;
+    create_private_dir(dir)?;
     let mut file = NamedTempFile::new_in(dir).map_err(|source| io_error(dir, source))?;
     file.write_all(bytes)
         .and_then(|()| file.as_file().sync_all())

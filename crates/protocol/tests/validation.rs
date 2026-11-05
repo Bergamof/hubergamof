@@ -5,8 +5,9 @@
 use std::path::Path;
 
 use bergadeck_protocol::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, MAX_BRIGHTNESS,
-    MAX_IMAGE_NAME_LENGTH, ModuleInstance, ModuleInstanceId, is_safe_image_name,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, MAX_BRIGHTNESS, MAX_DIALS,
+    MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH, MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES,
+    MAX_SETTINGS_BYTES, ModuleInstance, ModuleInstanceId, is_identifier, is_safe_image_name,
 };
 use serde_json::json;
 
@@ -164,4 +165,95 @@ fn example_configurations_load_and_validate() {
         checked += 1;
     }
     assert!(checked > 0, "no example configuration found");
+}
+
+#[test]
+fn oversized_configurations_are_rejected() {
+    let mut config = valid_config();
+    config.modules = (0..=MAX_MODULES)
+        .map(|index| module(&format!("m{index}")))
+        .collect();
+    assert_eq!(
+        config.validate(),
+        Err(ConfigError::TooMany {
+            what: "module instances",
+            count: MAX_MODULES + 1,
+            max: MAX_MODULES
+        })
+    );
+
+    let mut config = valid_config();
+    config.home = vec!["clock".into(); MAX_HOME_KEYS + 1];
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::TooMany {
+            what: "home keys",
+            ..
+        })
+    ));
+
+    let mut config = valid_config();
+    config.dials = vec![None; MAX_DIALS + 1];
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::TooMany { what: "dials", .. })
+    ));
+}
+
+#[test]
+fn identifiers_are_plain_and_bounded() {
+    for valid in [
+        "clock",
+        "docker-2",
+        "my_module",
+        &"a".repeat(MAX_IDENTIFIER_LENGTH),
+    ] {
+        assert!(is_identifier(valid), "{valid}");
+    }
+    for invalid in [
+        "",
+        "a b",
+        "line\nbreak",
+        "é",
+        "../x",
+        &"a".repeat(MAX_IDENTIFIER_LENGTH + 1),
+    ] {
+        assert!(!is_identifier(invalid), "{invalid:?}");
+    }
+    let mut config = valid_config();
+    config.modules[0].id = "evil\nINFO forged".into();
+    config.home.clear();
+    config.dials.clear();
+    let error = config.validate().unwrap_err();
+    assert_eq!(
+        error,
+        ConfigError::InvalidIdentifier("evil\nINFO forged".into())
+    );
+    assert!(!error.to_string().contains('\n'), "escaped: {error}");
+
+    let mut config = valid_config();
+    config.modules[0].kind = "bad kind".into();
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::InvalidIdentifier(_))
+    ));
+}
+
+#[test]
+fn labels_and_settings_are_bounded() {
+    let mut config = valid_config();
+    config.modules[0].label = Some("é".repeat(MAX_LABEL_CHARS));
+    config.validate().unwrap();
+    config.modules[0].label = Some("é".repeat(MAX_LABEL_CHARS + 1));
+    assert_eq!(
+        config.validate(),
+        Err(ConfigError::LabelTooLong("clock".into()))
+    );
+
+    let mut config = valid_config();
+    config.modules[0].settings = serde_json::json!({ "text": "x".repeat(MAX_SETTINGS_BYTES) });
+    assert_eq!(
+        config.validate(),
+        Err(ConfigError::SettingsTooLarge("clock".into()))
+    );
 }

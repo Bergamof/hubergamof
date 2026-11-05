@@ -65,6 +65,11 @@ pub enum ArchiveError {
     /// The same entry twice.
     #[error("an archive entry appears twice")]
     DuplicateEntry,
+    /// Several end of central directory records could be the archive's
+    /// (one hidden in the comment), or a ZIP64 one: which entries would be
+    /// read is unclear, never needed by an export.
+    #[error("ambiguous or ZIP64 end of archive")]
+    AmbiguousEnd,
     /// No `config.json`.
     #[error("archive has no {ARCHIVE_CONFIG_ENTRY}")]
     MissingConfig,
@@ -113,17 +118,50 @@ const END_OF_CENTRAL_DIRECTORY: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
 const END_OF_CENTRAL_DIRECTORY_LEN: usize = 22;
 /// Offset of its total entry count.
 const ENTRY_COUNT_OFFSET: usize = 10;
+/// Offset of its comment length.
+const COMMENT_LENGTH_OFFSET: usize = 20;
+/// Longest comment, hence how far from the end the record may start.
+const MAX_COMMENT_LEN: usize = u16::MAX as usize;
+/// Signature of the ZIP64 end of central directory locator, right before
+/// the record.
+const ZIP64_LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];
+/// Size of that locator.
+const ZIP64_LOCATOR_LEN: usize = 20;
 
-/// Entry count the archive declares, read from its last end of central
+/// A little-endian `u16` of `bytes` at `offset`.
+fn u16_at(bytes: &[u8], offset: usize) -> Option<usize> {
+    let field = bytes.get(offset..offset + 2)?;
+    Some(usize::from(u16::from_le_bytes([field[0], field[1]])))
+}
+
+/// Entry count the archive declares, read from its end of central
 /// directory record before parsing the directory itself (which allocates
-/// for every entry). `None` when there is no such record.
-fn declared_entry_count(bytes: &[u8]) -> Option<usize> {
-    let last_start = bytes.len().checked_sub(END_OF_CENTRAL_DIRECTORY_LEN)?;
-    let start = (0..=last_start)
-        .rev()
-        .find(|&start| bytes[start..].starts_with(&END_OF_CENTRAL_DIRECTORY))?;
-    let count = bytes.get(start + ENTRY_COUNT_OFFSET..start + ENTRY_COUNT_OFFSET + 2)?;
-    Some(usize::from(u16::from_le_bytes([count[0], count[1]])))
+/// for every entry); `None` without a record (not a zip).
+///
+/// The record is the one whose comment runs to the end of the archive:
+/// another one doing so too (hidden in the comment) or a ZIP64 one could
+/// make the zip reader use another count, and is refused.
+fn declared_entry_count(bytes: &[u8]) -> Result<Option<usize>, ArchiveError> {
+    let Some(last_start) = bytes.len().checked_sub(END_OF_CENTRAL_DIRECTORY_LEN) else {
+        return Ok(None);
+    };
+    let first_start = last_start.saturating_sub(MAX_COMMENT_LEN);
+    let mut records = (first_start..=last_start).filter(|&start| {
+        bytes[start..].starts_with(&END_OF_CENTRAL_DIRECTORY)
+            && u16_at(bytes, start + COMMENT_LENGTH_OFFSET).is_some_and(|comment| {
+                start + END_OF_CENTRAL_DIRECTORY_LEN + comment == bytes.len()
+            })
+    });
+    let Some(start) = records.next() else {
+        return Ok(None);
+    };
+    let zip64 = start
+        .checked_sub(ZIP64_LOCATOR_LEN)
+        .is_some_and(|locator| bytes[locator..].starts_with(&ZIP64_LOCATOR));
+    if records.next().is_some() || zip64 {
+        return Err(ArchiveError::AmbiguousEnd);
+    }
+    Ok(u16_at(bytes, start + ENTRY_COUNT_OFFSET))
 }
 
 /// What an entry of an archive holds.
@@ -165,7 +203,7 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
         return Err(ArchiveError::TooLarge);
     }
     // 0xFFFF (ZIP64, whose real count lies elsewhere) is refused too.
-    let declared = declared_entry_count(bytes);
+    let declared = declared_entry_count(bytes)?;
     if declared.is_some_and(|count| count > MAX_ARCHIVE_ENTRIES) {
         return Err(ArchiveError::TooManyEntries);
     }
@@ -376,6 +414,36 @@ mod tests {
             zip.by_name(ARCHIVE_CONFIG_ENTRY).unwrap().compression(),
             CompressionMethod::Deflated
         );
+    }
+
+    /// `archive` with `comment` appended, its end record saying so.
+    fn with_comment(mut archive: Vec<u8>, comment: &[u8]) -> Vec<u8> {
+        let length_at = archive.len() - 2;
+        let length = u16::try_from(comment.len()).unwrap().to_le_bytes();
+        archive[length_at..].copy_from_slice(&length);
+        archive.extend_from_slice(comment);
+        archive
+    }
+
+    #[test]
+    fn an_end_record_hidden_in_the_comment_is_refused() {
+        let archive = zip_with(&[(ARCHIVE_CONFIG_ENTRY, b"{}")]);
+        // A plain comment is fine (read further on, refused as a config).
+        let commented = with_comment(archive.clone(), b"exported");
+        assert!(!matches!(
+            read_archive(&commented),
+            Err(ArchiveError::AmbiguousEnd)
+        ));
+
+        // A forged record declaring 3 entries, its empty comment running
+        // to the end, like the real one.
+        let mut forged = END_OF_CENTRAL_DIRECTORY.to_vec();
+        forged.extend_from_slice(&[0, 0, 0, 0, 3, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(forged.len(), END_OF_CENTRAL_DIRECTORY_LEN);
+        assert!(matches!(
+            read_archive(&with_comment(archive, &forged)),
+            Err(ArchiveError::AmbiguousEnd)
+        ));
     }
 
     #[test]

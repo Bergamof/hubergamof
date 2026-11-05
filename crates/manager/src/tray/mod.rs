@@ -12,7 +12,7 @@ mod item;
 mod menu;
 mod watcher;
 
-use std::process::Command;
+use bergadeck_modules::desktop::{Launch, scoped_command};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -63,10 +63,15 @@ pub fn device_labels(devices: &[DeviceInfo]) -> Vec<String> {
         .collect()
 }
 
-/// Opens `url` in the browser without a shell; the child is reaped on a
+/// Opens `url` in the browser without a shell, in a scope of its own (a
+/// browser it starts outlives the service); the child is reaped on a
 /// separate thread.
 fn open_url(url: &str) {
-    match Command::new(URL_OPENER).arg(url).spawn() {
+    let opener = Launch {
+        program: URL_OPENER.into(),
+        args: vec![url.into()],
+    };
+    match scoped_command(&opener).spawn() {
         Ok(mut child) => {
             std::thread::spawn(move || {
                 if let Err(error) = child.wait() {

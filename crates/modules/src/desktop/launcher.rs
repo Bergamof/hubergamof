@@ -32,6 +32,23 @@ const SCOPE_PREFIX: [&str; 7] = [
     "--",
 ];
 
+/// `launch` as a command started in a scope of its own, from the user's home
+/// folder, for callers outside the desktop hub (the tray opening the
+/// interface): a browser started by the manager must outlive its service.
+#[must_use]
+pub fn scoped_command(launch: &Launch) -> std::process::Command {
+    let [wrapper, wrapper_args @ ..] = SCOPE_PREFIX;
+    let mut command = std::process::Command::new(wrapper);
+    command
+        .args(wrapper_args)
+        .arg(&launch.program)
+        .args(&launch.args);
+    if let Some(home) = crate::paths::user_home() {
+        command.current_dir(home);
+    }
+    command
+}
+
 /// Starts programs, through a fixed prefix.
 #[derive(Debug, Clone)]
 pub(super) struct Launcher {
