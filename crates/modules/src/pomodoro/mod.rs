@@ -32,7 +32,7 @@ use tokio::sync::oneshot;
 pub use menu::MENU_TIMEOUT;
 pub use settings::PomodoroSettings;
 
-use crate::icons::svg;
+use crate::icons::{asset, svg};
 use crate::notifications::{Notification, Notifier};
 use crate::time::{Clock, ClockInstant};
 use menu::{MENU_ENTRIES, Menu, MenuEntry};
@@ -42,7 +42,7 @@ use timer::{Phase, StepEnd, Timer};
 pub const POMODORO_KIND: &str = "pomodoro";
 
 /// Icon of the module: a timer.
-const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 2M9.5 2.5h5M12 2.5V6"/></svg>"##;
+const ICON_SVG: &str = asset!("pomodoro");
 
 /// Period of the refresh ticks, while the time runs or the menu is open.
 pub(crate) const TICK_PERIOD: Duration = Duration::from_secs(1);

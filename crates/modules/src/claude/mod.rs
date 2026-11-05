@@ -28,7 +28,7 @@ use crate::desktop::{
     AppAttention, AppEvent, AppId, ClassMatch, DesktopAction, DesktopApp, DesktopHub,
     ExecutableMatch, FollowedApp, Launch, LaunchStart, NotificationRelay, WindowId,
 };
-use crate::icons::svg;
+use crate::icons::{asset, svg};
 
 /// Kind of the Claude module.
 pub const CLAUDE_KIND: &str = "claude";
@@ -62,7 +62,7 @@ const LAUNCHER: &str = "gtk-launch";
 
 /// Key icon: a speech bubble with a spark, a conversation with an assistant
 /// (a generic drawing: no trademark).
-const MODULE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4 3v-3H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M12 8v5M9.5 10.5h5"/></svg>"##;
+const MODULE_SVG: &str = asset!("claude");
 
 static MODULE_ICON: LazyLock<ImageData> = LazyLock::new(|| svg(MODULE_SVG));
 

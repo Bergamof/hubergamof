@@ -667,12 +667,12 @@ impl Docker {
 /// The projects, then the other containers.
 fn main_page(overview: &Overview) -> PageContent {
     let projects = overview.projects.iter().map(|project| {
-        let state = if project.needs_attention() {
-            KeyState::Attention
+        let (icon, state) = if project.needs_attention() {
+            (&icons::PROJECT_ATTENTION, KeyState::Attention)
         } else if project.running() > 0 {
-            KeyState::Active
+            (&icons::PROJECT_RUNNING, KeyState::Active)
         } else {
-            KeyState::Normal
+            (&icons::PROJECT_STOPPED, KeyState::Normal)
         };
         let label = format!(
             "{} {}/{}",
@@ -682,7 +682,7 @@ fn main_page(overview: &Overview) -> PageContent {
         );
         PageItem {
             id: project_id(&project.name).into(),
-            key: KeyContent::with_icon(&icons::PROJECT, &label).in_state(state),
+            key: KeyContent::with_icon(icon, &label).in_state(state),
         }
     });
     let containers = overview
