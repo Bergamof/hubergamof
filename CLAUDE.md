@@ -88,6 +88,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - 2026-10-28 — Config dans le projet (`config/devices/`, ignoré par git ; `config/example/` versionné) ; déplacement vers `~/.config` prévu plus tard.
 - 2026-10-28 — Un thread par appareil matériel (sans la feature `async` d'`elgato-streamdeck`) : `HidDevice` n'est pas `Sync`, la feature utilise `block_in_place`.
 - 2026-10-28 — Texte rendu via `usvg`/`resvg` (pas `ab_glyph`, qui tire `ttf-parser`, RUSTSEC-2026-0192).
+- 2026-11-05 — Icônes par défaut des modules : logos officiels (Docker, IntelliJ, Claude) en pictogrammes colorés sur fond noir, usage personnel non distribué (Adrien) ; remplace « jamais de marque ». À revoir si le dépôt devient public. SVG dans `crates/modules/assets/icons/` (`icons::asset!`).
 - 2026-10-28 — Extensibilité : trait `Module` dès maintenant ; chargement externe (WASM ou sous-processus) plus tard, jamais de `.so`.
 
 ## Pièges et conventions spécifiques

@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Icônes des modules : pictogrammes colorés sur fond noir, logos officiels pour Docker, IntelliJ et Claude, icônes distinctes pour conteneurs et projets compose Docker selon leur état.
 - Projet renommé Bergadeck → HuBergamof (crates, binaire, service systemd, règle udev, documentation) ; renommage seul, sans changement fonctionnel.
 
 ### Ajouté
