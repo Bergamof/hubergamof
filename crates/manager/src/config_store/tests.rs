@@ -105,6 +105,28 @@ fn device_folders_are_private() {
 }
 
 #[test]
+fn folders_of_an_older_version_become_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, store) = store();
+    store.load(&plus()).unwrap();
+    let device = config_file(&dir, &plus().serial)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let images = device.join(IMAGES_DIR);
+    fs::create_dir_all(&images).unwrap();
+    for folder in [&device, &images] {
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    store.load(&plus()).unwrap();
+    for folder in [&device, &images] {
+        let mode = fs::metadata(folder).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, PRIVATE_DIR_MODE, "{}", folder.display());
+    }
+}
+
+#[test]
 fn devices_without_dials_get_no_dial_modules() {
     let (_dir, store) = store();
     let config = store.load(&mk2()).unwrap().config;

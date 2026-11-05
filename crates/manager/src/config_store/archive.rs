@@ -138,27 +138,28 @@ fn u16_at(bytes: &[u8], offset: usize) -> Option<usize> {
 /// directory record before parsing the directory itself (which allocates
 /// for every entry); `None` without a record (not a zip).
 ///
-/// The record is the one whose comment runs to the end of the archive:
-/// another one doing so too (hidden in the comment) or a ZIP64 one could
-/// make the zip reader use another count, and is refused.
+/// Like the zip reader, a record is any signature whose comment fits in
+/// the archive. Exactly one is accepted, its comment running to the end:
+/// another one (hidden in the comment), bytes after the comment or a ZIP64
+/// record could make the zip reader use another count, and are refused.
 fn declared_entry_count(bytes: &[u8]) -> Result<Option<usize>, ArchiveError> {
     let Some(last_start) = bytes.len().checked_sub(END_OF_CENTRAL_DIRECTORY_LEN) else {
         return Ok(None);
     };
     let first_start = last_start.saturating_sub(MAX_COMMENT_LEN);
-    let mut records = (first_start..=last_start).filter(|&start| {
-        bytes[start..].starts_with(&END_OF_CENTRAL_DIRECTORY)
-            && u16_at(bytes, start + COMMENT_LENGTH_OFFSET).is_some_and(|comment| {
-                start + END_OF_CENTRAL_DIRECTORY_LEN + comment == bytes.len()
-            })
+    let mut records = (first_start..=last_start).filter_map(|start| {
+        let end =
+            start + END_OF_CENTRAL_DIRECTORY_LEN + u16_at(bytes, start + COMMENT_LENGTH_OFFSET)?;
+        (bytes[start..].starts_with(&END_OF_CENTRAL_DIRECTORY) && end <= bytes.len())
+            .then_some((start, end))
     });
-    let Some(start) = records.next() else {
+    let Some((start, end)) = records.next() else {
         return Ok(None);
     };
     let zip64 = start
         .checked_sub(ZIP64_LOCATOR_LEN)
         .is_some_and(|locator| bytes[locator..].starts_with(&ZIP64_LOCATOR));
-    if records.next().is_some() || zip64 {
+    if records.next().is_some() || end != bytes.len() || zip64 {
         return Err(ArchiveError::AmbiguousEnd);
     }
     Ok(u16_at(bytes, start + ENTRY_COUNT_OFFSET))
@@ -441,7 +442,25 @@ mod tests {
         forged.extend_from_slice(&[0, 0, 0, 0, 3, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(forged.len(), END_OF_CENTRAL_DIRECTORY_LEN);
         assert!(matches!(
-            read_archive(&with_comment(archive, &forged)),
+            read_archive(&with_comment(archive.clone(), &forged)),
+            Err(ArchiveError::AmbiguousEnd)
+        ));
+
+        // The same record followed by bytes the comment does not cover.
+        let mut trailing = with_comment(archive, &forged);
+        trailing.push(0);
+        assert!(matches!(
+            read_archive(&trailing),
+            Err(ArchiveError::AmbiguousEnd)
+        ));
+    }
+
+    #[test]
+    fn bytes_after_the_end_record_are_refused() {
+        let mut archive = zip_with(&[(ARCHIVE_CONFIG_ENTRY, b"{}")]);
+        archive.push(0);
+        assert!(matches!(
+            read_archive(&archive),
             Err(ArchiveError::AmbiguousEnd)
         ));
     }

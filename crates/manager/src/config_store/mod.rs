@@ -48,11 +48,11 @@ pub const IMAGES_DIR: &str = "images";
 /// Prefix of the backup name given to an invalid configuration file.
 pub const INVALID_BACKUP_PREFIX: &str = "config.json.invalid-";
 
-/// Longest accepted serial number.
 /// Most images a device stores: far more than its keys use, bounding what
 /// uploads may pile up before unused ones are removed at the next load.
 pub const MAX_STORED_IMAGES: usize = 512;
 
+/// Longest accepted serial number.
 const MAX_SERIAL_LENGTH: usize = 64;
 /// Number of hexadecimal digest characters in a stored image name.
 const IMAGE_DIGEST_LENGTH: usize = 32;
@@ -231,6 +231,7 @@ impl ConfigStore {
     pub fn load(&self, device: &DeviceInfo) -> Result<LoadedConfig, ConfigStoreError> {
         let _guard = self.lock();
         let path = self.config_path(&device.serial)?;
+        self.make_device_private(&device.serial)?;
         let outcome = match read_config(&path) {
             Ok(Some(config)) => match check_config(&config, device) {
                 Ok(()) => {
@@ -440,6 +441,14 @@ impl ConfigStore {
         Ok(self.device_dir(serial)?.join(IMAGES_DIR).join(name))
     }
 
+    /// Brings the folders of a device created before they were private
+    /// (by an older version) back to [`PRIVATE_DIR_MODE`].
+    fn make_device_private(&self, serial: &str) -> Result<(), ConfigStoreError> {
+        let dir = self.device_dir(serial)?;
+        restrict_existing_dir(&dir)?;
+        restrict_existing_dir(&dir.join(IMAGES_DIR))
+    }
+
     fn config_path(&self, serial: &str) -> Result<PathBuf, ConfigStoreError> {
         Ok(self.device_dir(serial)?.join(CONFIG_FILE))
     }
@@ -611,6 +620,22 @@ fn create_private_dir(dir: &Path) -> Result<(), ConfigStoreError> {
         .recursive(true)
         .mode(PRIVATE_DIR_MODE)
         .create(dir)
+        .map_err(|source| io_error(dir, source))
+}
+
+/// Sets an existing folder of the store to [`PRIVATE_DIR_MODE`]; a missing
+/// one, or a link (never followed), is left alone.
+fn restrict_existing_dir(dir: &Path) -> Result<(), ConfigStoreError> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = match fs::symlink_metadata(dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(io_error(dir, source)),
+    };
+    if !metadata.is_dir() || metadata.permissions().mode() & 0o777 == PRIVATE_DIR_MODE {
+        return Ok(());
+    }
+    fs::set_permissions(dir, fs::Permissions::from_mode(PRIVATE_DIR_MODE))
         .map_err(|source| io_error(dir, source))
 }
 
