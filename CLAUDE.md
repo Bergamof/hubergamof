@@ -127,7 +127,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Fait aussi : étape 7a (UI de configuration sans miroir : touches, molettes, réglages, luminosité) + corrections des revues UX/tests/architecture/perf.
 - Fait aussi : étape 7b (images de touche, export/import zip).
 - Fait aussi : étape 8a (couche bureau `desktop/` + revues architecture/sécurité), validée en réel sur la session Plasma d'Adrien (fenêtres, activation, processus, monitor) ; aucun module ne la consomme encore.
-- Fait aussi : module IntelliJ (8b), catalogue validé en réel (installation Toolbox, projets récents) ; lancement et passage à la fenêtre à valider sur le deck.
+- Fait aussi : module IntelliJ (8b), validé sur le vrai Stream Deck+ (catalogue Toolbox, projets récents, lancement, passage à la fenêtre, attention après les tests).
 - Fait aussi : notifications d'IntelliJ (spike : texte seul, envoyé en double) → touche d'accueil en attention, sans message (décision d'Adrien).
 - Prochaines étapes : module Claude Desktop (8c), revue des spécialistes (9).
 - Ouverts : option `--bind` pour le conteneur ? CodeQL/zizmor à arbitrer avec `cerbere-le-paranoiaque` ; couverture de tests en CI ; test d'intégration contre un vrai Docker (job CI dédié) à proposer ; risques acceptés Docker : fichiers nommés par un compose de confiance (`include`, `extends`, `env_file`) non contrôlés, fin de stderr de compose dans les journaux.
