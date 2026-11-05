@@ -70,6 +70,10 @@ pub enum ArchiveError {
     /// read is unclear, never needed by an export.
     #[error("ambiguous or ZIP64 end of archive")]
     AmbiguousEnd,
+    /// No end of central directory record where an export puts it: not a
+    /// zip, or one the zip reader would look for further back.
+    #[error("no end of archive")]
+    NoEnd,
     /// No `config.json`.
     #[error("archive has no {ARCHIVE_CONFIG_ENTRY}")]
     MissingConfig,
@@ -122,6 +126,10 @@ const ENTRY_COUNT_OFFSET: usize = 10;
 const COMMENT_LENGTH_OFFSET: usize = 20;
 /// Longest comment, hence how far from the end the record may start.
 const MAX_COMMENT_LEN: usize = u16::MAX as usize;
+/// How much further back than the longest comment the records are looked
+/// for: the zip reader (9.3) starts its own search a few bytes earlier,
+/// and none of the records it could pick may escape the check.
+const SEARCH_MARGIN: usize = 64;
 /// Signature of the ZIP64 end of central directory locator, right before
 /// the record.
 const ZIP64_LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];
@@ -136,33 +144,32 @@ fn u16_at(bytes: &[u8], offset: usize) -> Option<usize> {
 
 /// Entry count the archive declares, read from its end of central
 /// directory record before parsing the directory itself (which allocates
-/// for every entry); `None` without a record (not a zip).
+/// for every entry).
 ///
 /// Like the zip reader, a record is any signature whose comment fits in
 /// the archive. Exactly one is accepted, its comment running to the end:
 /// another one (hidden in the comment), bytes after the comment or a ZIP64
 /// record could make the zip reader use another count, and are refused.
-fn declared_entry_count(bytes: &[u8]) -> Result<Option<usize>, ArchiveError> {
-    let Some(last_start) = bytes.len().checked_sub(END_OF_CENTRAL_DIRECTORY_LEN) else {
-        return Ok(None);
-    };
-    let first_start = last_start.saturating_sub(MAX_COMMENT_LEN);
+fn declared_entry_count(bytes: &[u8]) -> Result<usize, ArchiveError> {
+    let last_start = bytes
+        .len()
+        .checked_sub(END_OF_CENTRAL_DIRECTORY_LEN)
+        .ok_or(ArchiveError::NoEnd)?;
+    let first_start = last_start.saturating_sub(MAX_COMMENT_LEN + SEARCH_MARGIN);
     let mut records = (first_start..=last_start).filter_map(|start| {
         let end =
             start + END_OF_CENTRAL_DIRECTORY_LEN + u16_at(bytes, start + COMMENT_LENGTH_OFFSET)?;
         (bytes[start..].starts_with(&END_OF_CENTRAL_DIRECTORY) && end <= bytes.len())
             .then_some((start, end))
     });
-    let Some((start, end)) = records.next() else {
-        return Ok(None);
-    };
+    let (start, end) = records.next().ok_or(ArchiveError::NoEnd)?;
     let zip64 = start
         .checked_sub(ZIP64_LOCATOR_LEN)
         .is_some_and(|locator| bytes[locator..].starts_with(&ZIP64_LOCATOR));
     if records.next().is_some() || end != bytes.len() || zip64 {
         return Err(ArchiveError::AmbiguousEnd);
     }
-    Ok(u16_at(bytes, start + ENTRY_COUNT_OFFSET))
+    u16_at(bytes, start + ENTRY_COUNT_OFFSET).ok_or(ArchiveError::NoEnd)
 }
 
 /// What an entry of an archive holds.
@@ -205,7 +212,7 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
     }
     // 0xFFFF (ZIP64, whose real count lies elsewhere) is refused too.
     let declared = declared_entry_count(bytes)?;
-    if declared.is_some_and(|count| count > MAX_ARCHIVE_ENTRIES) {
+    if declared > MAX_ARCHIVE_ENTRIES {
         return Err(ArchiveError::TooManyEntries);
     }
     let mut zip = ZipArchive::new(Cursor::new(bytes))?;
@@ -214,7 +221,7 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
     }
     // The zip reader keeps one entry per name: fewer entries than declared
     // means a name appears twice, and which one would be read is ambiguous.
-    if declared.is_some_and(|count| count != zip.len()) {
+    if declared != zip.len() {
         return Err(ArchiveError::DuplicateEntry);
     }
     let mut config = None;
@@ -334,7 +341,7 @@ mod tests {
         ));
         assert!(matches!(
             read_archive(b"not a zip"),
-            Err(ArchiveError::Zip(_))
+            Err(ArchiveError::NoEnd)
         ));
     }
 
@@ -451,6 +458,20 @@ mod tests {
         trailing.push(0);
         assert!(matches!(
             read_archive(&trailing),
+            Err(ArchiveError::AmbiguousEnd)
+        ));
+    }
+
+    #[test]
+    fn an_end_record_the_check_does_not_reach_is_refused() {
+        // The only record, before the window a full comment allows, its
+        // comment ending 3 bytes before the end: the zip reader would take it.
+        let mut archive = END_OF_CENTRAL_DIRECTORY.to_vec();
+        archive.extend_from_slice(&[0; 16]);
+        archive.extend_from_slice(&u16::MAX.to_le_bytes());
+        archive.resize(archive.len() + MAX_COMMENT_LEN + 3, 0);
+        assert!(matches!(
+            read_archive(&archive),
             Err(ArchiveError::AmbiguousEnd)
         ));
     }
