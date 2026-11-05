@@ -15,7 +15,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Prérequis système : compilateur C + `pkg-config` + `libudev-dev` (hidapi compilé statiquement par `elgato-streamdeck`, `libhidapi` système inutile), `pactl`/`wpctl` (PipeWire), Docker (utilisateur dans le groupe `docker`), règle udev `packaging/udev/70-bergadeck.rules`.
 
 ## Commandes (Makefile racine)
-- Tout vérifier : `make check` (lint + tests + contrat TS à jour)
+- Tout vérifier : `make check` (lint + tests instrumentés avec planchers de couverture + doctests + contrat TS à jour)
 - Lint/format : `make lint` (+ `lint-shell-exec` : aucun `sh -c`/`bash` hors tests, `.github/scripts/check-shell-exec.sh` ; `lint-rust` vérifie aussi `module-api` seul sans features) / `make fmt`
 - Tests : `make test` (Rust : `cargo test -p <crate> <nom>` ; UI : `pnpm -C ui test -- <fichier>`, composants dans `*.browser.spec.ts`) ; e2e : `make test-e2e` ; couverture : `make coverage` (plancher en cliquet : mesure − 2 points, Rust dans le `Makefile`, UI dans `ui/vite.config.ts`, jamais baissé) ; vrai Docker : `make test-docker` (feature `docker-it`)
 - Types TS du contrat : `make gen-types` (ne doit produire aucun diff en CI)
@@ -133,7 +133,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Fait aussi : module Claude Desktop (8c) ; Claude Desktop n'envoie pas de notification → attention via claude.ai dans Brave (décision d'Adrien) ; validé sur le vrai Stream Deck+ (lancement, barre système, notification de Brave).
 - Fait aussi : revue des spécialistes (9) : groupes UX, architecture, sécurité (`docs/security.md`), tests, CI (couverture, vrai Docker, composants en navigateur, zizmor, précompression) ; reste le groupe performances.
 - Reportés (étape 9) : déduplication des images du `liveState` (étape miroir) ; hotplug par moniteur udev au lieu du sondage ; registre des modules déplacé vers le gestionnaire (avant le chargement externe) ; CodeQL/Semgrep (quand le dépôt sera public) ; m10 de la revue d'architecture.
-- Ouverts : option `--bind` pour le conteneur ? Risques acceptés Docker : fichiers nommés par un compose de confiance (`include`, `extends`, `env_file`) non contrôlés, fin de stderr de compose dans les journaux.
+- Ouverts : option `--bind` pour le conteneur ? Prochains composants à tester en navigateur (puis relever les planchers) : `SettingInput`, `InstanceEditor`, `DialDetails`. Risques acceptés Docker : fichiers nommés par un compose de confiance (`include`, `extends`, `env_file`) non contrôlés, fin de stderr de compose dans les journaux.
 
 ## Licence
 GPL-3.0-or-later ; `crates/module-api` sous MPL-2.0. Toute dépendance doit être compatible (vérifié par `cargo-deny`).

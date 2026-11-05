@@ -46,7 +46,7 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 |---|---|
 | `make dev` | gestionnaire en mode `--demo` (appareil virtuel) + serveur de dev de l'UI avec rechargement à chaud ; Ctrl-C arrête les deux |
 | `make run` | gestionnaire sur le matériel réel |
-| `make check` | toutes les vérifications locales (lint, tests, contrat TS, versions, cargo-deny) |
+| `make check` | toutes les vérifications locales (lint, tests avec planchers de couverture, contrat TS, versions, cargo-deny) |
 | `make lint` / `make fmt` | lint en vérification / formatage |
 | `make test` / `make test-e2e` | tests Rust + Vitest (composants Svelte dans Chromium, mode navigateur) / tests Playwright : chaque test lance son propre `bergadeck --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
 | `make coverage` | tests Rust et Vitest instrumentés, en échec sous le plancher de couverture (mesure − 2 points, jamais baissé) |

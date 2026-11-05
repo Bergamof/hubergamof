@@ -118,20 +118,33 @@ fn precompressed(
         })
 }
 
-/// Whether the `Accept-Encoding` value `accepted` allows `encoding`: listed
-/// (or `*`) without a zero quality.
+/// Whether the `Accept-Encoding` value `accepted` allows `encoding` with a
+/// non-zero quality: named, else through `*` (a name overrides `*`, RFC 9110
+/// §12.5.3).
 fn accepts_encoding(accepted: &str, encoding: &str) -> bool {
-    accepted.split(',').any(|item| {
-        let mut parts = item.split(';').map(str::trim);
-        let name = parts.next().unwrap_or_default();
-        let refused = parts.any(|parameter| {
-            parameter
-                .strip_prefix("q=")
-                .and_then(|quality| quality.parse::<f32>().ok())
-                .is_some_and(|quality| quality <= 0.0)
-        });
-        (name.eq_ignore_ascii_case(encoding) || name == "*") && !refused
-    })
+    let codings: Vec<(&str, bool)> = accepted
+        .split(',')
+        .map(|item| {
+            let mut parts = item.split(';').map(str::trim);
+            let name = parts.next().unwrap_or_default();
+            let refused = parts.any(|parameter| {
+                parameter
+                    .strip_prefix("q=")
+                    .and_then(|quality| quality.parse::<f32>().ok())
+                    .is_some_and(|quality| quality <= 0.0)
+            });
+            (name, !refused)
+        })
+        .collect();
+    let allowed = |matches: &dyn Fn(&str) -> bool| {
+        codings
+            .iter()
+            .find(|(name, _)| matches(name))
+            .map(|&(_, allowed)| allowed)
+    };
+    allowed(&|name| name.eq_ignore_ascii_case(encoding))
+        .or_else(|| allowed(&|name| name == "*"))
+        .unwrap_or(false)
 }
 
 /// Relative path of the requested file, `None` when the path tries to leave
@@ -335,6 +348,9 @@ mod tests {
         assert!(accepts_encoding("*", "br"));
         assert!(!accepts_encoding("br;q=0, gzip", "br"));
         assert!(!accepts_encoding("br;q=0.0", "br"));
+        assert!(!accepts_encoding("br;q=0, *", "br"), "named beats *");
+        assert!(accepts_encoding("*;q=0, gzip", "gzip"));
+        assert!(!accepts_encoding("*;q=0", "gzip"));
         assert!(!accepts_encoding("brotli", "br"));
         assert!(!accepts_encoding("", "gzip"));
     }

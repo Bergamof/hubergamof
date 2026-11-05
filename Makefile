@@ -96,7 +96,7 @@ test-ui: ui-deps ## Vitest
 # jamais baissée sans accord. Côté UI, le plancher est dans ui/vite.config.ts.
 RUST_COVERAGE_FLOOR_LINES := 91
 RUST_COVERAGE_FLOOR_FUNCTIONS := 89
-RUST_COVERAGE_FLOOR_REGIONS := 90
+RUST_COVERAGE_FLOOR_REGIONS := 91
 
 coverage: coverage-rust coverage-ui ## Couverture des tests (Rust + UI), en échec sous le plancher
 
@@ -105,6 +105,8 @@ coverage-rust: ## Couverture Rust (cargo-llvm-cov, composant llvm-tools-preview)
 		--fail-under-lines $(RUST_COVERAGE_FLOOR_LINES) \
 		--fail-under-functions $(RUST_COVERAGE_FLOOR_FUNCTIONS) \
 		--fail-under-regions $(RUST_COVERAGE_FLOOR_REGIONS)
+	@# cargo llvm-cov ne lance pas les doctests sur stable (exemple de module de module-api).
+	$(CARGO) test --workspace --locked --doc
 
 coverage-ui: ui-deps ## Couverture UI (Vitest, v8)
 	cd "$(UI_DIR)" && $(PNPM) run test:coverage
@@ -146,7 +148,8 @@ check-versions: ## Vérifie que le Dockerfile suit rust-toolchain.toml et .nvmrc
 deny: ## Licences, avis de sécurité et sources des dépendances Rust (cargo-deny)
 	$(CARGO) deny --locked check
 
-check: lint test check-types check-versions deny ## Toutes les vérifications locales
+# `coverage` plutôt que `test` : mêmes tests, plus les planchers vérifiés en CI.
+check: lint coverage check-types check-versions deny ## Toutes les vérifications locales
 
 ## ---------------------------------------------------------------- Build
 

@@ -20,6 +20,9 @@ const IMAGE: &str =
     "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec";
 /// Longest wait for a state of Docker (pulling the image included).
 const PATIENCE: Duration = Duration::from_secs(120);
+/// Longest wait for a notified change before listing again: the event
+/// stream may connect after the change it should have told.
+const RELIST_AFTER: Duration = Duration::from_secs(1);
 
 /// Runs `docker` (test set-up), its standard output; panics on failure.
 fn docker(args: &[&str]) -> String {
@@ -52,7 +55,7 @@ impl Drop for CleanUp {
 }
 
 /// Waits until the containers satisfy `condition`, reading them again at
-/// each change Docker notifies.
+/// each change Docker notifies, or after [`RELIST_AFTER`] without one.
 async fn until(
     engine: &DockerEngine,
     changes: &mut Box<dyn DockerChanges>,
@@ -64,7 +67,9 @@ async fn until(
             if condition(&containers) {
                 return containers;
             }
-            assert!(changes.changed().await, "Docker stopped notifying");
+            if let Ok(notifying) = tokio::time::timeout(RELIST_AFTER, changes.changed()).await {
+                assert!(notifying, "Docker stopped notifying");
+            }
         }
     })
     .await

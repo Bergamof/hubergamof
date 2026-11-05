@@ -117,7 +117,7 @@ jobs:
           zizmor=$(grep -oE '^[0-9]+ findings?' zizmor.log 2>/dev/null | tail -1)
           echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · shell hors tests $(icon "$SHELL_EXEC") · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING") · zizmor $(icon "$WORKFLOWS") ${zizmor:-0 finding}" >> "$GITHUB_OUTPUT"
 
-  # Les tests tournent instrumentés : mêmes tests que `make test`, plus la
+  # Les tests tournent instrumentés (doctests à part) : mêmes tests que `make test`, plus la
   # couverture, en échec sous le plancher (cliquet, voir Makefile et vite.config.ts).
   test:
     name: Tests & couverture
@@ -456,8 +456,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          relevant='^(crates/modules/(src/docker/|src/(process|trust|paths)\.rs|tests/docker_engine\.rs|Cargo\.toml)|Cargo\.lock|rust-toolchain\.toml|Makefile|\.github/)'
-          if [[ "$EVENT" != pull_request ]] || git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qE "$relevant"; then
+          relevant='^(crates/modules/(src/docker/|src/(background|process|trust|paths)\.rs|tests/docker_engine\.rs|Cargo\.toml)|crates/module-api/|Cargo\.lock|rust-toolchain\.toml|Makefile|\.github/)'
+          # Trois points : depuis l'ancêtre commun, pas ce que main a reçu depuis.
+          if [[ "$EVENT" != pull_request ]] || git diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE "$relevant"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -490,6 +491,7 @@ jobs:
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
+      # Commente la PR avec le compte rendu.
       pull-requests: write
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
