@@ -3,12 +3,13 @@
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
 //! ("contain") and centred on a background colour, with the frame of an
-//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge or an
+//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge, a clock face or an
 //! image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
 //! content (bounded segmented LRU, module `cache`: images used once,
 //! like those of a countdown, do not push out those that come back) and
 //! encoded to a PNG data URL only on demand.
 
+mod clock;
 mod digest;
 mod source;
 mod text;
@@ -21,7 +22,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hubergamof_module_api::{Feedback, GaugeContent, GaugeLevel, KeyState};
+use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, GaugeLevel, KeyState};
 use hubergamof_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -31,7 +32,7 @@ use thiserror::Error;
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
-pub use text::{FONT_DATA, FONT_FAMILY, TextLine, TextRenderer};
+pub use text::{FONT_DATA, FONT_FAMILY, FontWeight, TextLine, TextRenderer};
 
 use crate::cache::SegmentedLru;
 use digest::{ContentDigest, DigestMemo};
@@ -286,6 +287,11 @@ enum CacheKey {
     },
     Gauge {
         gauge: GaugeContent,
+        size: (u32, u32),
+        background: [u8; 4],
+    },
+    Clock {
+        face: ClockFace,
         size: (u32, u32),
         background: [u8; 4],
     },
@@ -554,11 +560,14 @@ impl Renderer {
         let text_top =
             height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
         let line = TextLine {
-            text: self.text.fit(label, size, max_width)?,
+            text: self
+                .text
+                .fit(label, size, FontWeight::SemiBold, max_width)?,
             size,
             center_x: width / 2.0,
             baseline: text_top + TextRenderer::ascent(size),
             color: TEXT_COLOR,
+            weight: FontWeight::SemiBold,
         };
         self.text.draw(canvas, &[line])
     }
@@ -580,11 +589,12 @@ impl Renderer {
         let mut drawn = Vec::with_capacity(lines.len());
         for (line, size) in lines.iter().zip(sizes) {
             drawn.push(TextLine {
-                text: self.text.fit(line, size, max_width)?,
+                text: self.text.fit(line, size, FontWeight::SemiBold, max_width)?,
                 size,
                 center_x: width / 2.0,
                 baseline: top + TextRenderer::ascent(size),
                 color: TEXT_COLOR,
+                weight: FontWeight::SemiBold,
             });
             top += TextRenderer::line_height(size);
         }
@@ -615,18 +625,24 @@ impl Renderer {
             title_bottom + (bar_top - title_bottom - TextRenderer::line_height(value_size)) / 2.0;
         let lines = [
             TextLine {
-                text: self.text.fit(&gauge.title, title_size, max_width)?,
+                text: self
+                    .text
+                    .fit(&gauge.title, title_size, FontWeight::SemiBold, max_width)?,
                 size: title_size,
                 center_x: width / 2.0,
                 baseline: title_top + TextRenderer::ascent(title_size),
                 color,
+                weight: FontWeight::SemiBold,
             },
             TextLine {
-                text: self.text.fit(&gauge.value, value_size, max_width)?,
+                text: self
+                    .text
+                    .fit(&gauge.value, value_size, FontWeight::SemiBold, max_width)?,
                 size: value_size,
                 center_x: width / 2.0,
                 baseline: value_top + TextRenderer::ascent(value_size),
                 color,
+                weight: FontWeight::SemiBold,
             },
         ];
         self.text.draw(canvas, &lines)

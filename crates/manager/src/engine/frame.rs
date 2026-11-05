@@ -2,7 +2,7 @@
 //! to rewrite only what changed.
 
 use hubergamof_module_api::{
-    Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
+    ClockFace, Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
     ModuleInstanceId, PageId, ZoneContent,
 };
 
@@ -75,6 +75,7 @@ pub(crate) enum ZoneContentFace {
     Blank,
     Lines(Vec<String>),
     Gauge(GaugeContent),
+    Clock(ClockFace),
     Image(ImageSource),
 }
 
@@ -86,21 +87,47 @@ impl ZoneContentFace {
                 Self::Lines(lines)
             }
             Some(ZoneContent::Gauge(gauge)) => Self::Gauge(gauge),
+            Some(ZoneContent::Clock(face)) => Self::Clock(face),
             Some(ZoneContent::Image(image)) => Self::Image(image_source(image)),
             // No zone, or a content added later that this version cannot draw.
             _ => Self::Blank,
         }
     }
 
-    /// Text equivalent of the zone for the web UI: its lines, or the title
-    /// and value of a gauge; empty for an image or a blank zone.
+    /// Text equivalent of the zone for the web UI: its lines, the title and
+    /// value of a gauge, or the time and the date of a clock face; empty for
+    /// an image or a blank zone.
     pub(crate) fn text_lines(&self) -> Vec<String> {
         match self {
             Self::Lines(lines) => lines.clone(),
             Self::Gauge(gauge) => vec![gauge.title.clone(), gauge.value.clone()],
+            Self::Clock(face) => clock_text_lines(face),
             Self::Blank | Self::Image(_) => Vec::new(),
         }
     }
+}
+
+/// Time (with seconds when displayed), then date and week of a clock face
+/// as one line, like the zone it describes: `["14:05:09", "mer. 5 nov. · semaine 45"]`.
+fn clock_text_lines(face: &ClockFace) -> Vec<String> {
+    let time = match face.seconds {
+        Some(seconds) => format!("{}:{seconds:02}", face.time),
+        None => face.time.clone(),
+    };
+    let date = face.leaf.as_ref().map(|leaf| {
+        format!(
+            "{} {} {}",
+            leaf.weekday.to_lowercase(),
+            leaf.day,
+            leaf.month.to_lowercase()
+        )
+    });
+    let details: Vec<String> = date.into_iter().chain(face.caption.clone()).collect();
+    let mut lines = vec![time];
+    if !details.is_empty() {
+        lines.push(details.join(" · "));
+    }
+    lines
 }
 
 /// A touch strip zone: its content and the transient outcome mark over it.
@@ -145,7 +172,7 @@ fn image_source(image: ImageData) -> ImageSource {
 
 #[cfg(test)]
 mod tests {
-    use hubergamof_module_api::GaugeLevel;
+    use hubergamof_module_api::{CalendarLeaf, GaugeLevel};
 
     use super::*;
 
@@ -171,5 +198,21 @@ mod tests {
             ZoneContentFace::Gauge(gauge).text_lines(),
             ["Volume", "25 %"].map(String::from)
         );
+    }
+
+    #[test]
+    fn clock_faces_are_kept_and_described_as_text() {
+        let face = ClockFace::new("14:05")
+            .with_seconds(9)
+            .with_leaf(CalendarLeaf::new("MER.", 5, "NOV."))
+            .with_caption("semaine 45");
+        let content = ZoneContentFace::from_content(Some(ZoneContent::Clock(face.clone())));
+        assert_eq!(content, ZoneContentFace::Clock(face));
+        assert_eq!(
+            content.text_lines(),
+            ["14:05:09", "mer. 5 nov. · semaine 45"].map(String::from)
+        );
+        let bare = ZoneContentFace::Clock(ClockFace::new("07:30"));
+        assert_eq!(bare.text_lines(), ["07:30"].map(String::from));
     }
 }

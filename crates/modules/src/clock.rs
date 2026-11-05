@@ -1,14 +1,15 @@
-//! Clock module: local time and French date in the touch strip zone, redrawn
-//! on every minute (or second) boundary.
+//! Clock module: local time, French date and ISO week in the touch strip zone
+//! as a clock face (calendar leaf, time, seconds), redrawn on every minute (or
+//! second) boundary.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleFactory, NavigationView, RedrawHandle, SettingField, SettingKind, ZoneContent,
-    parse_settings,
+    CalendarLeaf, ClockFace, ImageData, Module, ModuleCapabilities, ModuleContext,
+    ModuleDescriptor, ModuleError, ModuleFactory, NavigationView, RedrawHandle, SettingField,
+    SettingKind, ZoneContent, parse_settings,
 };
 use jiff::civil::DateTime;
 use serde::Deserialize;
@@ -176,12 +177,7 @@ pub struct Clock {
 impl Module for Clock {
     fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
         let settings = *self.settings.borrow();
-        let now = self.clock.now();
-        let mut lines = vec![format_time(now, settings.tick())];
-        if settings.show_date {
-            lines.push(format_date(now));
-        }
-        Some(ZoneContent::Lines(lines))
+        Some(ZoneContent::Clock(clock_face(self.clock.now(), settings)))
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
@@ -227,27 +223,38 @@ fn delay_until_next_tick(now: DateTime, tick: Tick) -> Duration {
     Duration::from_nanos(period_nanos - elapsed_nanos.min(period_nanos - 1))
 }
 
-/// `14:05`, or `14:05:09` with seconds.
-fn format_time(now: DateTime, tick: Tick) -> String {
-    match tick {
-        Tick::Second => format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()),
-        Tick::Minute => format!("{:02}:{:02}", now.hour(), now.minute()),
+/// The face shown at `now`: the time, then per `settings` the seconds, the
+/// calendar leaf and the ISO week.
+fn clock_face(now: DateTime, settings: ClockSettings) -> ClockFace {
+    let mut face = ClockFace::new(format_time(now));
+    if settings.show_seconds {
+        face = face.with_seconds(u8::try_from(now.second()).unwrap_or(0));
     }
+    if settings.show_date {
+        face = face
+            .with_leaf(calendar_leaf(now))
+            .with_caption(format!("semaine {}", now.date().iso_week_date().week()));
+    }
+    face
 }
 
-/// Abbreviated French date, e.g. `mer. 28 oct.`.
-fn format_date(now: DateTime) -> String {
+/// `14:05`.
+fn format_time(now: DateTime) -> String {
+    format!("{:02}:{:02}", now.hour(), now.minute())
+}
+
+/// Leaf of `now`: abbreviated weekday and month in capitals (`MER.`, `NOV.`).
+fn calendar_leaf(now: DateTime) -> CalendarLeaf {
     let weekday = usize::try_from(now.weekday().to_monday_zero_offset())
         .ok()
         .and_then(|index| WEEKDAYS.get(index));
     let month = usize::try_from(now.month() - 1)
         .ok()
         .and_then(|index| MONTHS.get(index));
-    match (weekday, month) {
-        (Some(weekday), Some(month)) => format!("{weekday} {} {month}", now.day()),
-        // Unreachable with a valid civil date; keep a readable fallback.
-        _ => now.date().to_string(),
-    }
+    // Unreachable with a valid civil date; keep a readable fallback.
+    let weekday = weekday.copied().unwrap_or_default().to_uppercase();
+    let month = month.copied().unwrap_or_default().to_uppercase();
+    CalendarLeaf::new(weekday, u8::try_from(now.day()).unwrap_or(1), month)
 }
 
 #[cfg(test)]
@@ -299,28 +306,49 @@ mod tests {
         }
     }
 
-    fn lines(clock: &dyn Module) -> Vec<String> {
+    fn face(clock: &dyn Module) -> ClockFace {
         match clock.zone(&NavigationView::new("Accueil", 0, 1, 2)) {
-            Some(ZoneContent::Lines(lines)) => lines,
+            Some(ZoneContent::Clock(face)) => face,
             other => panic!("unexpected zone {other:?}"),
         }
     }
 
+    fn leaf_texts(face: &ClockFace) -> (String, u8, String) {
+        let leaf = face.leaf.as_ref().unwrap();
+        (leaf.weekday.clone(), leaf.day, leaf.month.clone())
+    }
+
     #[test]
-    fn dates_are_abbreviated_in_french() {
+    fn leaves_use_capital_french_abbreviations() {
+        let leaf = |at: DateTime| leaf_texts(&clock_face(at, ClockSettings::default()));
         assert_eq!(
-            format_date(date(2026, 10, 28).at(9, 0, 0, 0)),
-            "mer. 28 oct."
+            leaf(date(2026, 10, 28).at(9, 0, 0, 0)),
+            ("MER.".into(), 28, "OCT.".into())
         );
-        assert_eq!(format_date(date(2026, 2, 1).at(0, 0, 0, 0)), "dim. 1 févr.");
-        assert_eq!(format_date(date(2026, 8, 3).at(0, 0, 0, 0)), "lun. 3 août");
+        assert_eq!(
+            leaf(date(2026, 2, 1).at(0, 0, 0, 0)),
+            ("DIM.".into(), 1, "FÉVR.".into())
+        );
+        assert_eq!(
+            leaf(date(2026, 8, 3).at(0, 0, 0, 0)),
+            ("LUN.".into(), 3, "AOÛT".into())
+        );
     }
 
     #[test]
     fn time_is_zero_padded() {
-        let at = date(2026, 10, 28).at(7, 5, 9, 0);
-        assert_eq!(format_time(at, Tick::Minute), "07:05");
-        assert_eq!(format_time(at, Tick::Second), "07:05:09");
+        assert_eq!(format_time(date(2026, 10, 28).at(7, 5, 9, 0)), "07:05");
+    }
+
+    #[test]
+    fn week_numbers_follow_iso_8601() {
+        let caption = |at: DateTime| clock_face(at, ClockSettings::default()).caption.unwrap();
+        assert_eq!(caption(date(2026, 11, 5).at(9, 0, 0, 0)), "semaine 45");
+        // The first days of January can belong to the last week of the
+        // previous year, the last days of December to the first of the next.
+        assert_eq!(caption(date(2027, 1, 1).at(9, 0, 0, 0)), "semaine 53");
+        assert_eq!(caption(date(2026, 12, 28).at(9, 0, 0, 0)), "semaine 53");
+        assert_eq!(caption(date(2024, 12, 30).at(9, 0, 0, 0)), "semaine 1");
     }
 
     #[test]
@@ -353,17 +381,23 @@ mod tests {
     async fn zone_shows_time_and_date_per_settings() {
         let base = date(2026, 10, 28).at(14, 5, 9, 0);
         let mut fixture = start(base, &json!({}));
-        assert_eq!(lines(fixture.clock.as_ref()), ["14:05", "mer. 28 oct."]);
+        let shown = face(fixture.clock.as_ref());
+        assert_eq!(shown.time, "14:05");
+        assert_eq!(shown.seconds, None);
+        assert_eq!(leaf_texts(&shown), ("MER.".into(), 28, "OCT.".into()));
+        assert_eq!(shown.caption.as_deref(), Some("semaine 44"));
         fixture
             .clock
             .update_settings(&json!({ "showSeconds": true, "showDate": false }))
             .unwrap();
-        assert_eq!(lines(fixture.clock.as_ref()), ["14:05:09"]);
+        let shown = face(fixture.clock.as_ref());
+        assert_eq!((shown.time.as_str(), shown.seconds), ("14:05", Some(9)));
+        assert_eq!((shown.leaf, shown.caption), (None, None));
         assert!(matches!(
             fixture.clock.update_settings(&json!({ "showDate": "yes" })),
             Err(ModuleError::InvalidSettings(_))
         ));
-        assert_eq!(lines(fixture.clock.as_ref()), ["14:05:09"]);
+        assert_eq!(face(fixture.clock.as_ref()).seconds, Some(9));
     }
 
     #[tokio::test(start_paused = true)]
@@ -374,10 +408,10 @@ mod tests {
         assert_eq!(redraws(), 0);
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(redraws(), 1);
-        assert_eq!(lines(fixture.clock.as_ref())[0], "14:06");
+        assert_eq!(face(fixture.clock.as_ref()).time, "14:06");
         tokio::time::sleep(Duration::from_secs(60)).await;
         assert_eq!(redraws(), 2);
-        assert_eq!(lines(fixture.clock.as_ref())[0], "14:07");
+        assert_eq!(face(fixture.clock.as_ref()).time, "14:07");
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,6 +1,8 @@
 use std::io::Cursor;
 
-use hubergamof_module_api::{GaugeContent, GaugeLevel};
+use hubergamof_module_api::{CalendarLeaf, ClockFace, GaugeContent, GaugeLevel};
+
+use super::clock::{CLOCK_ACCENT_COLOR, CLOCK_DEEP_ACCENT_COLOR};
 
 use super::*;
 
@@ -548,4 +550,149 @@ fn checked_images_are_drawn_but_not_remembered() {
         renderer.check_image(b"plain text", size),
         Err(RenderError::UnsupportedFormat)
     ));
+}
+
+fn clock_face(seconds: Option<u8>, with_leaf: bool) -> ClockFace {
+    let mut face = ClockFace::new("14:05").with_caption("semaine 45");
+    if let Some(seconds) = seconds {
+        face = face.with_seconds(seconds);
+    }
+    if with_leaf {
+        face = face.with_leaf(CalendarLeaf::new("MER.", 5, "NOV."));
+    }
+    face
+}
+
+fn render_clock(face: &ClockFace) -> Arc<Rendered> {
+    renderer()
+        .render_clock(face, ZONE, DEFAULT_BACKGROUND)
+        .unwrap()
+}
+
+/// Row crossing the middle of the seconds track on a [`ZONE`].
+const CLOCK_TRACK_ROW: u32 = 85;
+
+/// Columns of [`CLOCK_TRACK_ROW`] painted with `color`.
+fn track_columns(image: &RgbaImage, color: Rgba<u8>) -> usize {
+    (0..image.width())
+        .filter(|x| *image.get_pixel(*x, CLOCK_TRACK_ROW) == color)
+        .count()
+}
+
+fn count_pixels(image: &RgbaImage, color: Rgba<u8>) -> usize {
+    image.pixels().filter(|pixel| **pixel == color).count()
+}
+
+#[test]
+fn clock_leaf_is_drawn_only_with_a_date() {
+    let with_leaf = render_clock(&clock_face(None, true));
+    let without_leaf = render_clock(&clock_face(None, false));
+    assert_eq!(with_leaf.image().dimensions(), (200, 100));
+    // The band of the leaf, on the left of the zone.
+    assert_eq!(
+        *with_leaf.image().get_pixel(16, 16),
+        CLOCK_DEEP_ACCENT_COLOR
+    );
+    assert_eq!(
+        count_pixels(without_leaf.image(), CLOCK_DEEP_ACCENT_COLOR),
+        0
+    );
+    // Without the leaf the time uses the whole width: its left edge moves.
+    let leftmost_lit = |image: &RgbaImage| {
+        (0..image.width())
+            .find(|x| (0..image.height()).any(|y| image.get_pixel(*x, y).0[0] > 128))
+            .unwrap()
+    };
+    assert!(leftmost_lit(without_leaf.image()) < 80 && leftmost_lit(with_leaf.image()) >= 10);
+    assert!(leftmost_lit(without_leaf.image()) > 20);
+}
+
+#[test]
+fn clock_seconds_track_fills_one_sixtieth_per_second() {
+    let track = |seconds| {
+        let rendered = render_clock(&clock_face(Some(seconds), true));
+        track_columns(rendered.image(), CLOCK_ACCENT_COLOR)
+    };
+    // A 108 px track; the quarter marks cut one column out of the fill.
+    assert!((1..=3).contains(&track(0)), "{}", track(0));
+    assert!((51..=55).contains(&track(29)), "{}", track(29));
+    assert!((100..=108).contains(&track(59)), "{}", track(59));
+}
+
+#[test]
+fn clock_without_seconds_has_no_track_and_no_superscript() {
+    let without = render_clock(&clock_face(None, true));
+    assert_eq!(track_columns(without.image(), CLOCK_ACCENT_COLOR), 0);
+    assert_eq!(track_columns(without.image(), GAUGE_TRACK_COLOR), 0);
+    assert_eq!(count_pixels(without.image(), CLOCK_ACCENT_COLOR), 0);
+    // The superscript, drawn in the accent colour, sits right of the time.
+    let with = render_clock(&clock_face(Some(9), true));
+    let superscript_pixels = (150..200)
+        .flat_map(|x| (15..45).map(move |y| (x, y)))
+        .filter(|(x, y)| {
+            let pixel = with.image().get_pixel(*x, *y);
+            pixel.0[1] > 150 && pixel.0[0] < 150
+        })
+        .count();
+    assert!(superscript_pixels > 20, "{superscript_pixels}");
+}
+
+#[test]
+fn clock_texts_stay_inside_the_zone() {
+    let rendered = render_clock(
+        &ClockFace::new("23:59")
+            .with_seconds(59)
+            .with_leaf(CalendarLeaf::new("MER.", 28, "SEPT."))
+            .with_caption("semaine 53 d'une année bien trop longue"),
+    );
+    let image = rendered.image();
+    for edge_column in [0, 199] {
+        assert!(
+            (0..100).all(|y| image.get_pixel(edge_column, y).0[..3] == [0, 0, 0]),
+            "column {edge_column}"
+        );
+    }
+}
+
+#[test]
+fn identical_clock_faces_hit_the_cache() {
+    let renderer = renderer();
+    let render = |seconds| {
+        renderer
+            .render_clock(&clock_face(Some(seconds), true), ZONE, DEFAULT_BACKGROUND)
+            .unwrap()
+    };
+    let first = render(7);
+    assert!(Arc::ptr_eq(&first, &render(7)));
+    assert!(!Arc::ptr_eq(&first, &render(8)));
+    assert_eq!(renderer.cached_len(), 2);
+    let empty = ImageSize {
+        width: 0,
+        height: 100,
+    };
+    assert!(matches!(
+        renderer.render_clock(&clock_face(None, true), empty, DEFAULT_BACKGROUND),
+        Err(RenderError::InvalidSize)
+    ));
+}
+
+#[test]
+#[ignore = "writes a preview of the clock faces to $CLOCK_PREVIEW_DIR"]
+fn write_clock_previews() {
+    let dir = std::env::var("CLOCK_PREVIEW_DIR").unwrap();
+    let renderer = renderer();
+    for (name, face) in [
+        ("plain", clock_face(None, false)),
+        ("leaf", clock_face(None, true)),
+        ("seconds", clock_face(Some(9), true)),
+        ("seconds-late", clock_face(Some(52), true)),
+        ("seconds-no-leaf", clock_face(Some(30), false)),
+    ] {
+        renderer
+            .render_clock(&face, ZONE, DEFAULT_BACKGROUND)
+            .unwrap()
+            .image()
+            .save(format!("{dir}/{name}.png"))
+            .unwrap();
+    }
 }
