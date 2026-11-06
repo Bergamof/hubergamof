@@ -108,10 +108,10 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Un seul gestionnaire peut tenir l'appareil : StreamController (installé chez Adrien, autostart désactivé) entre en conflit ; son plantage a déjà détaché le pilote HID (débrancher/rebrancher).
 - Les gestionnaires de module sont attendus un par un dans la boucle de l'appareil : toute E/S longue (Docker, IntelliJ, Claude, audio) passe par une tâche de fond (`TaskSpawner`) + `EventSender` (changement d'état, `on_event`) ou `RedrawHandle` ; une boucle de fond s'arrête quand `send` renvoie `false`.
 - `ts-rs` recopie la rustdoc des types du contrat dans le TS : toute retouche de ces commentaires impose `make gen-types`.
-- Les molettes agissent à l'appui (`DialDown`) ; les touches **au relâchement** (`KeyUp`, tenue < 400 ms ; maintien = libellé sur la bande, sans action) ; un tap de bande lit la notification affichée. Sous une notification, seul le clic de la molette `navigation` agit (l'enlève, non lue). Appuis simulés (UI/`--demo`) : immédiats.
+- Les molettes agissent à l'appui (`DialDown`) ; les touches **au relâchement** (`KeyUp`, tenue < 400 ms ; maintien = libellé sur la bande, sans action) ; un tap de bande lit la notification affichée. Sous une notification, seul le clic de la molette d'un module dont `ModuleFactory::dismisses_notifications()` est vrai (`navigation`) agit (l'enlève, non lue). Appuis simulés (UI/`--demo`) : immédiats.
 - Toute requête vers le gestionnaire doit porter un `Host`/`Origin` autorisé (curl : `-H 'Host: 127.0.0.1:<port>'`). `make dev` doit passer `--dev-origin http://localhost:5173 --dev-origin http://127.0.0.1:5173`.
 - UI embarquée : en debug `rust-embed` lit `ui/build/` à l'exécution ; en release elle est embarquée et `build.rs` recompile quand elle change (`make ui-build` avant `cargo build --release`).
-- `Renderer` et `ConfigStore` sont synchrones/CPU : les appeler via `spawn_blocking`.
+- `Renderer` et `ConfigStore` sont synchrones/CPU : les appeler via `spawn_blocking`. Le « défile-t-il ? » d'une notification est mesuré par le rendu (`NotificationImage::scrolls`, rapporté par `Painter::take_scrolls`), jamais par un appel direct depuis la tâche de l'appareil.
 - Les appareils n'acceptent que JPEG (BMP pour Original v1/Mini) : toute image passe par le pipeline de rendu.
 - Images du `ConfigStore` adressées par contenu : ne jamais réécrire un fichier en place (le mémo des condensats s'appuie sur `(chemin, mtime, taille)`).
 - Sources `ImageSource::Bytes` : réservées aux octets à longue durée de vie (icônes) — le mémo des condensats garde un `Weak` qui retient l'allocation ; contenu ponctuel (upload, import) → `Renderer::check_image`.
@@ -129,7 +129,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Fait aussi : étape 5a (couche appareils, rendu, config) validée sur le vrai Stream Deck+ (touches, molettes, appuis, tap/appui long/glissement, affichage).
 - Fait aussi : module Docker + corrections des revues architecture/sécurité/tests, validé sur le vrai Stream Deck+ avec le vrai Docker.
 - Fait aussi : étape 7a (UI de configuration sans miroir : touches, molettes, réglages, luminosité) + corrections des revues UX/tests/architecture/perf.
-- Fait aussi : notifications sur la bande (API `Notify`, module Notifications, Pomodoro configurable, libellé de touche maintenue) ; tests locaux verts, revues des spécialistes à faire.
+- Fait aussi : notifications sur la bande (API `Notify`, module Notifications, Pomodoro configurable, libellé de touche maintenue) ; revues architecture/tests/perf faites et corrigées ; à valider sur le vrai Stream Deck+ (latence d'appui pendant un défilement, à 15 images/s).
 - Fait aussi : étape 7b (images de touche, export/import zip).
 - Fait aussi : étape 8a (couche bureau `desktop/` + revues architecture/sécurité), validée en réel sur la session Plasma d'Adrien (fenêtres, activation, processus, monitor).
 - Fait aussi : module IntelliJ (8b), validé sur le vrai Stream Deck+ (catalogue Toolbox, projets récents, lancement, passage à la fenêtre, attention après les tests).

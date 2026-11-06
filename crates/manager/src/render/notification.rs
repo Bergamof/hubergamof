@@ -67,6 +67,16 @@ pub struct NotificationLook<'a> {
     pub message: &'a str,
 }
 
+/// A drawn notification, and whether its message is too wide to stand still
+/// (it then scrolls, and the host keeps drawing it).
+#[derive(Debug)]
+pub struct NotificationImage {
+    /// The whole strip.
+    pub image: Arc<RgbaImage>,
+    /// Whether the message scrolls.
+    pub scrolls: bool,
+}
+
 /// The message drawn on a transparent layer: twice when it scrolls, one
 /// loop apart, so that cropping at any offset wraps around.
 pub(super) struct TextLayer {
@@ -133,25 +143,6 @@ pub fn scroll_offset(elapsed: Duration, loop_length: f32, strip_height: f32) -> 
 }
 
 impl Renderer {
-    /// Whether `message` is too wide to stand still in a notification on a
-    /// strip of `size`. Measures one short line: cheap, but CPU-bound.
-    ///
-    /// # Errors
-    ///
-    /// [`RenderError::InvalidSize`] or [`RenderError::Svg`].
-    pub fn notification_scrolls(
-        &self,
-        message: &str,
-        size: ImageSize,
-    ) -> Result<bool, RenderError> {
-        check_size(size)?;
-        let metrics = Metrics::of(size);
-        let width = self
-            .text
-            .width(message, metrics.font, FontWeight::SemiBold)?;
-        Ok(width > f32_from(metrics.visible))
-    }
-
     /// Renders a notification `elapsed` after it appeared; `timeout` draws
     /// the bar of the time left. Not cached (it changes at every step):
     /// CPU-bound, call it from a blocking context.
@@ -164,7 +155,7 @@ impl Renderer {
         look: &NotificationLook<'_>,
         elapsed: Duration,
         timeout: Option<Duration>,
-    ) -> Result<Arc<RgbaImage>, RenderError> {
+    ) -> Result<NotificationImage, RenderError> {
         check_size(look.size)?;
         let metrics = Metrics::of(look.size);
         let [red, green, blue] = look.background;
@@ -183,11 +174,14 @@ impl Renderer {
                 i64::from(metrics.edge),
             );
         }
-        self.draw_message(&mut canvas, look, &metrics, elapsed)?;
+        let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
         if let Some(timeout) = timeout {
             draw_time_bar(&mut canvas, look.background, elapsed, timeout);
         }
-        Ok(Arc::new(keep_opaque(canvas, background)))
+        Ok(NotificationImage {
+            image: Arc::new(keep_opaque(canvas, background)),
+            scrolls,
+        })
     }
 
     /// Renders the label of a held key over the whole strip: white on
@@ -230,7 +224,7 @@ impl Renderer {
         look: &NotificationLook<'_>,
         metrics: &Metrics,
         elapsed: Duration,
-    ) -> Result<(), RenderError> {
+    ) -> Result<bool, RenderError> {
         let color = readable_text_color(look.background);
         let (layer, text_width) = self.text_layer(look, metrics, color)?;
         let scrolls = text_width > f32_from(metrics.visible);
@@ -256,7 +250,7 @@ impl Renderer {
             );
         }
         imageops::overlay(canvas, &window, i64::from(metrics.text_left), 0);
-        Ok(())
+        Ok(scrolls)
     }
 
     /// The text layer of `look` and the width of its message, drawn again
@@ -404,13 +398,15 @@ mod tests {
     #[test]
     fn only_long_messages_scroll() {
         let renderer = Renderer::new().unwrap();
-        assert!(
-            !renderer
-                .notification_scrolls("Pause terminée", STRIP)
+        let drawn = |message: &str| {
+            renderer
+                .render_notification(&look(message), Duration::ZERO, None)
                 .unwrap()
-        );
+                .scrolls
+        };
+        assert!(!drawn("Pause terminée"));
         let long = "Un message vraiment très long qui ne tient pas sur la bande tactile ".repeat(3);
-        assert!(renderer.notification_scrolls(&long, STRIP).unwrap());
+        assert!(drawn(&long));
     }
 
     #[test]
@@ -418,7 +414,8 @@ mod tests {
         let renderer = Renderer::new().unwrap();
         let image = renderer
             .render_notification(&look("Pause"), Duration::ZERO, None)
-            .unwrap();
+            .unwrap()
+            .image;
         assert_eq!(image.dimensions(), (800, 100));
         assert_eq!(*image.get_pixel(799, 0), Rgba([0xF0, 0x3E, 0x2F, 255]));
         assert!(image.pixels().any(|pixel| *pixel == TEXT_COLOR));
@@ -431,10 +428,12 @@ mod tests {
         let background = Rgba([0xF0, 0x3E, 0x2F, 255]);
         let full = renderer
             .render_notification(&look("x"), Duration::ZERO, Some(timeout))
-            .unwrap();
+            .unwrap()
+            .image;
         let half = renderer
             .render_notification(&look("x"), timeout / 2, Some(timeout))
-            .unwrap();
+            .unwrap()
+            .image;
         assert_ne!(*full.get_pixel(700, 99), background);
         assert_eq!(*half.get_pixel(700, 99), background);
         assert_ne!(*half.get_pixel(100, 99), background);
@@ -446,10 +445,12 @@ mod tests {
         let long = "Un message vraiment très long qui ne tient pas sur la bande tactile ".repeat(3);
         let still = renderer
             .render_notification(&look(&long), Duration::ZERO, None)
-            .unwrap();
+            .unwrap()
+            .image;
         let moved = renderer
             .render_notification(&look(&long), SCROLL_PAUSE + Duration::from_secs(1), None)
-            .unwrap();
+            .unwrap()
+            .image;
         assert_ne!(still.as_raw(), moved.as_raw());
     }
 

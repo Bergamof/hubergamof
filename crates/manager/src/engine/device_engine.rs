@@ -8,7 +8,6 @@ use hubergamof_module_api::{
     Command, Feedback, ModuleInstanceId, ModuleSurface, NavigationView, PageContent, PageId,
     RedrawHandle,
 };
-use hubergamof_modules::navigation::NAVIGATION_KIND;
 use hubergamof_protocol::{DeviceConfig, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
@@ -452,7 +451,9 @@ impl DeviceEngine {
         self.config
             .modules
             .iter()
-            .any(|instance| instance.id == module && instance.kind.0 == NAVIGATION_KIND)
+            .find(|instance| instance.id == module)
+            .and_then(|instance| self.services.registry.get(&instance.kind))
+            .is_some_and(|factory| factory.dismisses_notifications())
     }
 
     async fn handle_event(&mut self, routed: RoutedEvent) {
@@ -664,6 +665,9 @@ impl DeviceEngine {
             .painter
             .paint(self.deck.as_ref(), &self.services.renderer, &frame)
             .await?;
+        if let Some(scrolls) = self.painter.take_scrolls() {
+            self.notifications.set_scrolls(scrolls);
+        }
         if self.last_frame.as_ref() == Some(&frame) {
             return Ok(());
         }
@@ -694,7 +698,6 @@ impl DeviceEngine {
     /// placeholder, marked with an alert, and the frame built again; this
     /// ends because placeholders never panic.
     fn next_frame(&mut self) -> Frame {
-        self.measure_notification();
         for module in self.instances.take_task_panics() {
             let surfaces = self.failure_surfaces(&module);
             self.show_feedback(&surfaces, Feedback::Alert);
@@ -712,32 +715,6 @@ impl DeviceEngine {
                 self.show_feedback(&surfaces, Feedback::Alert);
             }
         }
-    }
-
-    /// Measures the message of a notification that just appeared, to know
-    /// whether it scrolls. A failure to measure leaves it still.
-    fn measure_notification(&mut self) {
-        let Some(shown) = self
-            .notifications
-            .shown()
-            .filter(|shown| !shown.is_measured())
-        else {
-            return;
-        };
-        let Some(size) =
-            StripLayout::for_device(self.deck.info()).map(|layout| layout.strip_size())
-        else {
-            return;
-        };
-        let scrolls = self
-            .services
-            .renderer
-            .notification_scrolls(&shown.notification.message, size)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot measure notification");
-                false
-            });
-        self.notifications.set_scrolls(scrolls);
     }
 
     /// What covers the touch strip: the label of a held key, else the

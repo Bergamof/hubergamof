@@ -26,7 +26,7 @@ Détail de chaque module et des briques communes ; `CLAUDE.md` n'en garde que le
 ## Notifications de bande (moteur `engine/notifications.rs`, rendu `render/notification.rs`)
 
 - `Command::Notify(Notification { message, background, timeout })` : la notification est non lue jusqu'à ce qu'on touche la bande pendant son affichage. Une seule est affichée à la fois, dans l'ordre d'arrivée (les autres attendent) ; 50 non lues au plus (les plus anciennes sont oubliées). Sans bande tactile, elles ne font que compter.
-- Fin d'affichage : délai écoulé ou clic de la molette du module `navigation` → reste non lue ; tap sur la bande → lue. Pendant l'affichage, rotation et clic des autres molettes sont ignorés.
+- Fin d'affichage : délai écoulé ou clic de la molette d'un module dont `ModuleFactory::dismisses_notifications()` est vrai (`navigation`) → reste non lue ; tap sur la bande → lue. Pendant l'affichage, rotation et clic des autres molettes sont ignorés.
 - Rendu pleine bande : fond du module, texte noir ou blanc selon la luminance, icône du module émetteur, filet du temps restant, message qui défile en boucle (pause de 1,5 s, bords en fondu) s'il dépasse ; animation à ~15 images/s, seulement tant que quelque chose bouge (couche de texte mise en cache). Le libellé d'une touche maintenue passe avant.
 - Touches : `KeyDown` mémorise la cible affichée, `KeyUp` lance l'action si la touche a été tenue moins de `HOLD_THRESHOLD` (400 ms) ; au-delà, le libellé s'affiche sur la bande et rien ne se lance. Un appui simulé de l'UI (`--demo`) reste immédiat.
 - **docker** :

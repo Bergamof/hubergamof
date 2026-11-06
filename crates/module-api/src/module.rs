@@ -56,6 +56,13 @@ pub trait ModuleFactory: Send + Sync {
         None
     }
 
+    /// Whether pressing the dial an instance is assigned to dismisses the
+    /// notification shown over the touch strip (it stays unread), the other
+    /// dials being inert meanwhile. Only the navigation module does.
+    fn dismisses_notifications(&self) -> bool {
+        false
+    }
+
     /// Settings of a new instance. Defaults to the default value of every
     /// setting of [`ModuleFactory::descriptor`].
     fn default_settings(&self) -> Value {

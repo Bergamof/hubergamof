@@ -57,11 +57,6 @@ impl Shown {
             now.saturating_duration_since(self.started).as_millis() / ANIMATION_STEP.as_millis();
         ANIMATION_STEP.saturating_mul(u32::try_from(steps).unwrap_or(u32::MAX))
     }
-
-    /// Whether the message was measured.
-    pub(crate) fn is_measured(&self) -> bool {
-        self.scrolls.is_some()
-    }
 }
 
 /// Unread and shown notifications of one device.

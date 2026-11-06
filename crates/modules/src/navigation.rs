@@ -40,6 +40,10 @@ impl ModuleFactory for NavigationFactory {
         Some(svg(ICON_SVG))
     }
 
+    fn dismisses_notifications(&self) -> bool {
+        true
+    }
+
     fn create(
         &self,
         _ctx: ModuleContext,
@@ -79,6 +83,12 @@ impl Module for Navigation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_navigation_dismisses_notifications() {
+        assert!(NavigationFactory.dismisses_notifications());
+        assert!(!crate::inbox::InboxFactory.dismisses_notifications());
+    }
 
     fn view(title: &str, depth: usize, row: u32, row_count: u32) -> NavigationView {
         let view = NavigationView::new(title, row, row_count, 2);
