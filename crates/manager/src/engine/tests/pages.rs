@@ -524,3 +524,22 @@ async fn stopping_the_engine_blanks_the_device() {
     // Stopping again returns at once.
     fixture.engine.stop().await;
 }
+
+#[tokio::test]
+async fn the_whole_strip_is_written_again_once_the_device_settled() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    // A device just connected may lose the first zone writes.
+    fixture.deck.inner.clear_all().await.unwrap();
+    let last_zone_pixel = || {
+        let screen = fixture.deck.inner.screen();
+        *screen.strip.unwrap().get_pixel(700, 50)
+    };
+    assert_eq!(last_zone_pixel().0[3], 0, "the strip was blanked");
+    tokio::time::timeout(WAIT, async {
+        while last_zone_pixel().0[3] == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("every zone is written again, not only the changing ones");
+}

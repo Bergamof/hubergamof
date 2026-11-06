@@ -38,7 +38,7 @@
 - Tray (SNI) : `ItemIsMenu=true` fait ouvrir le menu au clic gauche sur Plasma ≥ 6.4 mais appelle `Activate` ailleurs → on garde `false` (clic gauche = UI, clic droit = menu). Libellés dbusmenu : échapper `_`.
 
 ## Lancement d'applications
-- Hors du groupe de contrôle du service (sinon un arrêt/redémarrage de `hubergamof.service` tue l'appli) : `systemd-run --user --scope --collect --quiet --slice=app.slice -- <programme> <args>` (`desktop/launcher.rs`), sans shell, depuis `$HOME`, sorties ignorées, échec précoce détecté en 2 s.
+- Hors du groupe de contrôle du service (sinon un arrêt/redémarrage de `hubergamof.service` tue l'appli) : `systemd-run --user --scope --collect --quiet --slice=app.slice -- <programme> <args>` (`desktop/launcher.rs`), sans shell, depuis `$HOME`, sorties ignorées, échec précoce détecté en 2 s ; `process_group(0)` en plus du scope : un Ctrl-C visant le groupe du gestionnaire (lancé depuis un terminal) ne doit pas atteindre l'application.
 - Contraintes pour la 8b (revue sécurité 8a), à respecter quand `Launch` vient de fichiers d'IntelliJ :
   - programme et arguments jamais issus de `DeviceConfig` ni d'un réglage WebSocket : dérivés par le gestionnaire de `product-info.json`/`recentProjects.xml` (un réglage « dossier d'installation » passerait `is_setting_path` + les contrôles ci-dessous) ;
   - programme : chemin absolu, `launcherPath` relatif sans `..`, canonicalisé et contenu dans l'installation canonicalisée, fichier régulier exécutable à l'utilisateur ou root, non modifiable par groupe/autres (comme `compose.rs`) ;

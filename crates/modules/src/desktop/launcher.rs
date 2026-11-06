@@ -5,8 +5,13 @@
 //! manager would close with it. Applications are therefore started in a
 //! scope of their own (`systemd-run --user --scope`), as the desktop's
 //! launchers do; `systemd-run` then becomes the application (`exec`).
+//!
+//! The scope protects from the service's control group only: the
+//! application also gets a process group of its own, so that a signal sent to
+//! the manager's group (Ctrl-C in the terminal running it) does not reach it.
 
 use std::ffi::OsString;
+use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -42,7 +47,8 @@ pub fn scoped_command(launch: &Launch) -> std::process::Command {
     command
         .args(wrapper_args)
         .arg(&launch.program)
-        .args(&launch.args);
+        .args(&launch.args)
+        .process_group(0);
     if let Some(home) = crate::paths::user_home() {
         command.current_dir(home);
     }
@@ -118,7 +124,7 @@ impl Launcher {
             }
             None => Command::new(&launch.program),
         };
-        command.args(&launch.args);
+        command.args(&launch.args).process_group(0);
         command
     }
 }
@@ -144,6 +150,23 @@ mod tests {
         assert_eq!(args[SCOPE_PREFIX.len() - 2], "--");
         assert_eq!(args[SCOPE_PREFIX.len() - 1], "/opt/idea/bin/idea");
         assert_eq!(args[SCOPE_PREFIX.len()], "/a b; rm -rf");
+    }
+
+    #[tokio::test]
+    async fn a_launched_program_leaves_the_process_group_of_the_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("pgid");
+        let script = format!("ps -o pgid= -p $$ > {}", out.display());
+        Launcher::direct()
+            .launch(&launch("sh", &["-c", &script]))
+            .await
+            .unwrap();
+        let pgid: i32 = std::fs::read_to_string(&out)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_ne!(pgid, rustix::process::getpgrp().as_raw_nonzero().get());
     }
 
     #[tokio::test]

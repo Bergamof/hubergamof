@@ -46,6 +46,12 @@ const MAX_BATCHED_WAKES: usize = 32;
 /// its action running when it is released.
 pub(crate) const HOLD_THRESHOLD: Duration = Duration::from_millis(400);
 
+/// How long after the first drawing the whole touch strip is written once
+/// more: a device just connected may lose the zone images written while it
+/// starts, and zones whose content never changes (everything but the clock)
+/// would otherwise stay blank until the next change.
+const STRIP_SETTLE_DELAY: Duration = Duration::from_millis(400);
+
 /// A key being held down, and what releasing it does.
 struct HeldKey {
     key: u8,
@@ -107,6 +113,8 @@ enum Wake {
     NotificationStep,
     /// A key has been held long enough to show its label.
     HoldElapsed,
+    /// The device had time to settle: the strip is written again.
+    StripSettled,
     RequestsClosed,
     Disconnected,
 }
@@ -130,6 +138,9 @@ pub struct DeviceEngine {
     /// again with the next configuration.
     applied_brightness: Option<u8>,
     last_frame: Option<Frame>,
+    /// When the strip is written again after the first drawing, `None`
+    /// once done (or without a strip).
+    strip_settle: Option<Instant>,
     inputs: broadcast::Receiver<InputEvent>,
     requests: Option<mpsc::Receiver<Request>>,
     events: mpsc::Receiver<RoutedEvent>,
@@ -201,6 +212,7 @@ impl DeviceEngine {
             held: None,
             applied_brightness,
             last_frame: None,
+            strip_settle: None,
             inputs,
             requests: Some(requests),
             events,
@@ -209,6 +221,9 @@ impl DeviceEngine {
             config_tx,
         };
         engine.refresh().await?;
+        if zone_count > 0 {
+            engine.strip_settle = Some(Instant::now() + STRIP_SETTLE_DELAY);
+        }
         Ok((engine, handle))
     }
 
@@ -259,6 +274,11 @@ impl DeviceEngine {
                     self.marks.expire(Instant::now());
                     self.refresh_or_log().await;
                 }
+                Wake::StripSettled => {
+                    self.strip_settle = None;
+                    self.painter.forget_zones();
+                    self.refresh_or_log().await;
+                }
                 Wake::RequestsClosed => self.requests = None,
                 Wake::Disconnected => break,
             }
@@ -289,6 +309,7 @@ impl DeviceEngine {
                 () = sleep_until(self.held.as_ref().and_then(HeldKey::label_due)) => {
                     Some(Wake::HoldElapsed)
                 }
+                () = sleep_until(self.strip_settle) => Some(Wake::StripSettled),
             };
             if let Some(wake) = wake {
                 return wake;
