@@ -9,6 +9,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Build sur une machine neuve avec un Node 24 antérieur à 24.12 : le Corepack livré ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`). `engines.node` passe à `>=24.12.0`, `make` vérifie la version de Node avant d'installer l'UI (`make check-node`) avec un message de remède, et le README décrit le dépannage (cache Corepack à effacer, réseau).
+
 - Tests d'intégration instables à chaque changement de minute : l'heure murale du module Horloge est désormais injectée (`BuiltinServices::wall_clock`), figée dans `BuiltinServices::simulated()` ; `--demo` garde l'heure réelle.
 
 ### Modifié
@@ -21,6 +23,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Nom de branche parlant obligatoire (`make check-branch`, inclus dans `make check`, étape de la CI) : `[claude/]<type>(/|-)<mots-en-kebab>` ; le nom aléatoire généré par l'outil est refusé. Scripts de contrôle testés (`make test-scripts`).
 - API des modules : `ZoneContent::Clock` (`ClockFace`, `CalendarLeaf`) ; rendu : police Noto Sans Light (OFL) et choix de graisse du texte.
 - Initialisation du projet : workspace Cargo, interface SvelteKit, outillage qualité, CI, empaquetage.
 - Gestionnaire : couche appareils (Stream Deck matériel et virtuel `--demo`), rendu d'images, configuration par appareil.

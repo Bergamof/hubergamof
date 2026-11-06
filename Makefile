@@ -32,8 +32,8 @@ MODULE_API_PACKAGE := hubergamof-module-api
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 
 .PHONY: help dev run lint lint-rust lint-ui lint-shell-exec lint-workflows fmt test test-rust test-ui test-e2e \
-	coverage coverage-rust coverage-ui test-docker \
-	gen-types check-types check-versions check deny ui-deps ui-build build \
+	test-scripts coverage coverage-rust coverage-ui test-docker \
+	gen-types check-types check-versions check-node check-branch check deny ui-deps ui-build build \
 	lighthouse docker install uninstall clean
 
 help: ## Affiche cette aide
@@ -145,15 +145,26 @@ check-versions: ## Vérifie que le Dockerfile suit rust-toolchain.toml et .nvmrc
 	[ "$$status" -eq 0 ] && echo "Versions cohérentes (Rust $$rust_version, Node $$node_version)."; \
 	exit "$$status"
 
+# pnpm 12 ne démarre pas avec le Corepack des Node < 24.12 : message clair avant.
+check-node: ## Vérifie que Node respecte le minimum de ui/package.json (engines)
+	"$(CURDIR)/.github/scripts/check-node-version.sh"
+
+# Obligatoire : la branche générée par l'outil (claude/<adjectif>-<nom>-<hasard>) doit être renommée.
+check-branch: ## Vérifie le nom de la branche courante (git branch -m pour renommer)
+	"$(CURDIR)/.github/scripts/check-branch-name.sh"
+
+test-scripts: ## Tests des scripts de contrôle (.github/scripts)
+	"$(CURDIR)/.github/scripts/test-control-scripts.sh"
+
 deny: ## Licences, avis de sécurité et sources des dépendances Rust (cargo-deny)
 	$(CARGO) deny --locked check
 
 # `coverage` plutôt que `test` : mêmes tests, plus les planchers vérifiés en CI.
-check: lint coverage check-types check-versions deny ## Toutes les vérifications locales
+check: check-branch lint test-scripts coverage check-types check-versions deny ## Toutes les vérifications locales
 
 ## ---------------------------------------------------------------- Build
 
-ui-deps: ## Installe les dépendances UI si le lockfile a changé
+ui-deps: check-node ## Installe les dépendances UI si le lockfile a changé
 	@if [ ! -f "$(UI_DIR)/node_modules/.modules.yaml" ] \
 		|| [ "$(UI_DIR)/pnpm-lock.yaml" -nt "$(UI_DIR)/node_modules/.modules.yaml" ]; then \
 		cd "$(UI_DIR)" && $(PNPM) install --frozen-lockfile; \
