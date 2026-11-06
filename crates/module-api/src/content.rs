@@ -119,6 +119,8 @@ pub enum ZoneContent {
     /// A title, a large value and a horizontal level bar (volume, timer
     /// progress…).
     Gauge(GaugeContent),
+    /// A clock face: calendar leaf, time, optional seconds and week.
+    Clock(ClockFace),
 }
 
 /// Fill level of a [`GaugeContent`], in thousandths of the full bar.
@@ -211,6 +213,116 @@ impl GaugeContent {
     #[must_use]
     pub fn with_dimmed(self, dimmed: bool) -> Self {
         Self { dimmed, ..self }
+    }
+}
+
+/// Seconds of a minute shown by a [`ClockFace`], always within
+/// `0..=`[`ClockSeconds::MAX`]: the constructor clamps out-of-range values, so
+/// modules can pass raw seconds and the host can trust the value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClockSeconds(u8);
+
+impl ClockSeconds {
+    /// Seconds in a minute, the length of the progress track.
+    pub const PER_MINUTE: u8 = 60;
+    /// The last second of a minute.
+    pub const MAX: u8 = Self::PER_MINUTE - 1;
+
+    /// `seconds`, clamped to [`Self::MAX`].
+    #[must_use]
+    pub fn new(seconds: u8) -> Self {
+        Self(seconds.min(Self::MAX))
+    }
+
+    /// The value, within `0..=`[`Self::MAX`].
+    #[must_use]
+    pub fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// A clock face drawn in a touch strip zone: an optional calendar leaf on the
+/// left, the time on the right, the seconds as a superscript with a
+/// progress track under the time, and a caption (the week).
+///
+/// The module supplies the texts, in their natural case; the host does the
+/// layout and the typography (capitals on the leaf).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct ClockFace {
+    /// Hours and minutes (« 14:05 »).
+    pub time: String,
+    /// Seconds of the minute, when displayed.
+    pub seconds: Option<ClockSeconds>,
+    /// Calendar leaf, when the date is displayed.
+    pub leaf: Option<CalendarLeaf>,
+    /// Short text under the time (« semaine 45 »).
+    pub caption: Option<String>,
+}
+
+impl ClockFace {
+    /// A face showing `time` only.
+    #[must_use]
+    pub fn new(time: impl Into<String>) -> Self {
+        Self {
+            time: time.into(),
+            seconds: None,
+            leaf: None,
+            caption: None,
+        }
+    }
+
+    /// The same face showing `seconds`, clamped to [`ClockSeconds::MAX`].
+    #[must_use]
+    pub fn with_seconds(self, seconds: u8) -> Self {
+        Self {
+            seconds: Some(ClockSeconds::new(seconds)),
+            ..self
+        }
+    }
+
+    /// The same face with a calendar leaf.
+    #[must_use]
+    pub fn with_leaf(self, leaf: CalendarLeaf) -> Self {
+        Self {
+            leaf: Some(leaf),
+            ..self
+        }
+    }
+
+    /// The same face with a caption under the time.
+    #[must_use]
+    pub fn with_caption(self, caption: impl Into<String>) -> Self {
+        Self {
+            caption: Some(caption.into()),
+            ..self
+        }
+    }
+}
+
+/// The calendar leaf of a [`ClockFace`]: weekday band, day of the month,
+/// month. The host decides how the texts are displayed (the built-in renderer
+/// puts the weekday and the month in capitals).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct CalendarLeaf {
+    /// Abbreviated weekday in the band (« mer. »).
+    pub weekday: String,
+    /// Day of the month, from 1.
+    pub day: u8,
+    /// Abbreviated month under the day (« nov. »).
+    pub month: String,
+}
+
+impl CalendarLeaf {
+    /// A leaf for `day` of `month`, under the `weekday` band.
+    #[must_use]
+    pub fn new(weekday: impl Into<String>, day: u8, month: impl Into<String>) -> Self {
+        Self {
+            weekday: weekday.into(),
+            day,
+            month: month.into(),
+        }
     }
 }
 
@@ -316,6 +428,32 @@ mod tests {
         assert_eq!(GaugeLevel::from_fraction(5, 0), GaugeLevel::EMPTY);
         assert_eq!(GaugeLevel::from_fraction(u64::MAX, 2), GaugeLevel::FULL);
         assert!((GaugeLevel::from_permille(500).ratio() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn clock_seconds_are_clamped_to_the_minute() {
+        assert_eq!(ClockSeconds::new(42).get(), 42);
+        assert_eq!(ClockSeconds::new(ClockSeconds::MAX).get(), 59);
+        assert_eq!(ClockSeconds::new(60).get(), 59);
+        assert_eq!(ClockSeconds::new(u8::MAX).get(), 59);
+        assert_eq!(ClockFace::new("14:05").seconds, None);
+        assert_eq!(
+            ClockFace::new("14:05").with_seconds(42).seconds,
+            Some(ClockSeconds::new(42))
+        );
+        assert_eq!(
+            ClockFace::new("14:05").with_seconds(200).seconds,
+            Some(ClockSeconds::new(59))
+        );
+    }
+
+    #[test]
+    fn clock_faces_carry_their_leaf_and_caption() {
+        let face = ClockFace::new("14:05")
+            .with_leaf(CalendarLeaf::new("mer.", 5, "nov."))
+            .with_caption("semaine 45");
+        assert_eq!(face.leaf.as_ref().map(|leaf| leaf.day), Some(5));
+        assert_eq!(face.caption.as_deref(), Some("semaine 45"));
     }
 
     #[test]

@@ -3,12 +3,13 @@
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
 //! ("contain") and centred on a background colour, with the frame of an
-//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge or an
+//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge, a clock face or an
 //! image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
 //! content (bounded segmented LRU, module `cache`: images used once,
 //! like those of a countdown, do not push out those that come back) and
 //! encoded to a PNG data URL only on demand.
 
+mod clock;
 mod digest;
 mod source;
 mod text;
@@ -21,7 +22,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hubergamof_module_api::{Feedback, GaugeContent, GaugeLevel, KeyState};
+use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, GaugeLevel, KeyState};
 use hubergamof_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -31,7 +32,7 @@ use thiserror::Error;
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
-pub use text::{FONT_DATA, FONT_FAMILY, TextLine, TextRenderer};
+pub use text::{FONT_DATA, FONT_FAMILY, FontWeight, LineStyle, TextLine, TextRenderer};
 
 use crate::cache::SegmentedLru;
 use digest::{ContentDigest, DigestMemo};
@@ -289,6 +290,11 @@ enum CacheKey {
         size: (u32, u32),
         background: [u8; 4],
     },
+    Clock {
+        face: ClockFace,
+        size: (u32, u32),
+        background: [u8; 4],
+    },
 }
 
 /// Renders key and strip zone images; shareable between threads.
@@ -447,7 +453,8 @@ impl Renderer {
             // Alert, and outcomes added later: a warning is the safe reading.
             _ => ALERT_MARK_SVG,
         };
-        let tree = usvg::Tree::from_str(svg, self.text.svg_options()).map_err(RenderError::Svg)?;
+        let tree =
+            usvg::Tree::from_str(svg, self.text.source_svg_options()).map_err(RenderError::Svg)?;
         let mark = Arc::new(source::rasterize_svg(&tree, side, side)?);
         marks.insert((feedback, side), Arc::clone(&mark));
         Ok(mark)
@@ -532,7 +539,7 @@ impl Renderer {
         let Some(bytes) = bytes else {
             return Ok(canvas);
         };
-        let foreground = match source::decode(bytes, self.text.svg_options())? {
+        let foreground = match source::decode(bytes, self.text.source_svg_options())? {
             Decoded::Raster(image) => contain(&image, icon_area),
             Decoded::Vector(tree) => {
                 source::rasterize_svg(&tree, icon_area.width, icon_area.height)?
@@ -553,13 +560,13 @@ impl Renderer {
         let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
         let text_top =
             height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
-        let line = TextLine {
-            text: self.text.fit(label, size, max_width)?,
-            size,
-            center_x: width / 2.0,
-            baseline: text_top + TextRenderer::ascent(size),
-            color: TEXT_COLOR,
-        };
+        let line = self.text.fitted_line(
+            label,
+            semibold(size, TEXT_COLOR),
+            width / 2.0,
+            text_top + TextRenderer::ascent(size),
+            max_width,
+        )?;
         self.text.draw(canvas, &[line])
     }
 
@@ -579,13 +586,13 @@ impl Renderer {
         let mut top = (height - total) / 2.0;
         let mut drawn = Vec::with_capacity(lines.len());
         for (line, size) in lines.iter().zip(sizes) {
-            drawn.push(TextLine {
-                text: self.text.fit(line, size, max_width)?,
-                size,
-                center_x: width / 2.0,
-                baseline: top + TextRenderer::ascent(size),
-                color: TEXT_COLOR,
-            });
+            drawn.push(self.text.fitted_line(
+                line,
+                semibold(size, TEXT_COLOR),
+                width / 2.0,
+                top + TextRenderer::ascent(size),
+                max_width,
+            )?);
             top += TextRenderer::line_height(size);
         }
         self.text.draw(canvas, &drawn)
@@ -614,20 +621,20 @@ impl Renderer {
         let value_top =
             title_bottom + (bar_top - title_bottom - TextRenderer::line_height(value_size)) / 2.0;
         let lines = [
-            TextLine {
-                text: self.text.fit(&gauge.title, title_size, max_width)?,
-                size: title_size,
-                center_x: width / 2.0,
-                baseline: title_top + TextRenderer::ascent(title_size),
-                color,
-            },
-            TextLine {
-                text: self.text.fit(&gauge.value, value_size, max_width)?,
-                size: value_size,
-                center_x: width / 2.0,
-                baseline: value_top + TextRenderer::ascent(value_size),
-                color,
-            },
+            self.text.fitted_line(
+                &gauge.title,
+                semibold(title_size, color),
+                width / 2.0,
+                title_top + TextRenderer::ascent(title_size),
+                max_width,
+            )?,
+            self.text.fitted_line(
+                &gauge.value,
+                semibold(value_size, color),
+                width / 2.0,
+                value_top + TextRenderer::ascent(value_size),
+                max_width,
+            )?,
         ];
         self.text.draw(canvas, &lines)
     }
@@ -635,6 +642,15 @@ impl Renderer {
     fn lock_cache(&self) -> std::sync::MutexGuard<'_, SegmentedLru<CacheKey, Arc<Rendered>>> {
         // Cache entries are immutable: a poisoned lock is still consistent.
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The look of most texts: `SemiBold` of `size` pixels.
+fn semibold(size: f32, color: Rgba<u8>) -> LineStyle {
+    LineStyle {
+        size,
+        weight: FontWeight::SemiBold,
+        color,
     }
 }
 

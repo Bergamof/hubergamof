@@ -5,7 +5,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use image::{ImageFormat, ImageReader, Limits, RgbaImage};
+use image::{ImageFormat, ImageReader, Limits, Rgba, RgbaImage};
 use resvg::{tiny_skia, usvg};
 
 use super::RenderError;
@@ -169,9 +169,9 @@ fn decode_raster(bytes: &[u8]) -> Result<RgbaImage, RenderError> {
 }
 
 /// Options for untrusted SVG: no external file, no embedded raster image, no
-/// system font; text uses the embedded font only.
+/// system font; text uses the embedded `fonts` only, all of `font_family`.
 #[must_use]
-pub fn svg_options(font: &'static [u8], font_family: &str) -> usvg::Options<'static> {
+pub fn svg_options(fonts: &[&'static [u8]], font_family: &str) -> usvg::Options<'static> {
     let mut options = usvg::Options {
         resources_dir: None,
         font_family: font_family.to_owned(),
@@ -181,10 +181,19 @@ pub fn svg_options(font: &'static [u8], font_family: &str) -> usvg::Options<'sta
         },
         ..usvg::Options::default()
     };
-    let fonts = options.fontdb_mut();
-    fonts.load_font_data(font.to_vec());
-    fonts.set_sans_serif_family(font_family);
+    let database = options.fontdb_mut();
+    for font in fonts {
+        // Shared, not copied: the bytes live as long as the program.
+        database.load_font_source(usvg::fontdb::Source::Binary(Arc::new(*font)));
+    }
+    database.set_sans_serif_family(font_family);
     options
+}
+
+/// `#rrggbb` of the colour of a SVG paint (opacity apart).
+#[must_use]
+pub fn svg_color(Rgba([red, green, blue, _]): Rgba<u8>) -> String {
+    format!("#{red:02x}{green:02x}{blue:02x}")
 }
 
 /// Renders `tree` scaled to fit ("contain") and centred in a transparent

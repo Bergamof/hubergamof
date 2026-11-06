@@ -271,6 +271,7 @@ fn render_zone(
         ZoneContentFace::Blank => blank(),
         ZoneContentFace::Lines(lines) => renderer.render_zone(lines, size, DEFAULT_BACKGROUND),
         ZoneContentFace::Gauge(gauge) => renderer.render_gauge(gauge, size, DEFAULT_BACKGROUND),
+        ZoneContentFace::Clock(face) => renderer.render_clock(face, size, DEFAULT_BACKGROUND),
         ZoneContentFace::Image(source) => renderer.render_image(size, source).or_else(|error| {
             tracing::warn!(%error, "cannot draw zone image, leaving it blank");
             blank()
