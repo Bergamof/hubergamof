@@ -155,8 +155,8 @@ pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingFie
 pub use command::{Command, Feedback, ModuleSurface};
 pub use content::{
     CalendarLeaf, ClockFace, ClockSeconds, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps,
-    ImageData, KeyContent, KeyState, MAX_ZONE_LINES, NavigationView, PageContent, PageItem,
-    PageZone, RowPosition, ZoneAccent, ZoneContent,
+    ImageData, KeyContent, KeyState, MAX_MENU_ENTRIES, MAX_ZONE_LINES, MenuZone, NavigationView,
+    PageContent, PageItem, PageZone, RowPosition, ZoneAccent, ZoneContent,
 };
 pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
 pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};

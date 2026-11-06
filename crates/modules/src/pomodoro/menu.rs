@@ -1,5 +1,5 @@
-//! Dial menu of the pomodoro: opened by a rotation, closed by a press or
-//! after [`MENU_TIMEOUT`] without input.
+//! Dial menu of the pomodoro: opened by a press or a rotation, closed by a
+//! press on an entry or after [`MENU_TIMEOUT`] without input.
 
 use std::time::Duration;
 
@@ -11,6 +11,8 @@ pub const MENU_TIMEOUT: Duration = Duration::from_secs(5);
 /// An entry of the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuEntry {
+    /// Pauses the time, or starts or resumes it when it is stopped.
+    Toggle,
     /// Ends the current step and prepares the next one.
     Skip,
     /// Back to the first pomodoro, stopped.
@@ -18,7 +20,7 @@ pub enum MenuEntry {
 }
 
 /// Entries, in display order.
-pub const MENU_ENTRIES: [MenuEntry; 2] = [MenuEntry::Skip, MenuEntry::Reset];
+pub const MENU_ENTRIES: [MenuEntry; 3] = [MenuEntry::Toggle, MenuEntry::Skip, MenuEntry::Reset];
 
 /// An open menu: selected entry and time of the last input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +43,12 @@ impl Menu {
     #[must_use]
     pub fn selected(&self) -> MenuEntry {
         MENU_ENTRIES[self.selected]
+    }
+
+    /// Index of the selected entry within [`MENU_ENTRIES`].
+    #[must_use]
+    pub fn selected_index(&self) -> usize {
+        self.selected
     }
 
     /// Moves the selection by `ticks` entries (positive: down), stopping at
@@ -71,15 +79,16 @@ mod tests {
     fn rotation_moves_the_selection_within_the_entries() {
         let now = ClockInstant::from_origin(Duration::ZERO);
         let mut menu = Menu::open(now);
-        assert_eq!(menu.selected(), MenuEntry::Skip);
+        assert_eq!(menu.selected(), MenuEntry::Toggle);
         menu.rotate(1, now);
-        assert_eq!(menu.selected(), MenuEntry::Reset);
+        assert_eq!(menu.selected(), MenuEntry::Skip);
         menu.rotate(5, now);
         assert_eq!(menu.selected(), MenuEntry::Reset);
+        assert_eq!(menu.selected_index(), 2);
         menu.rotate(-1, now);
         assert_eq!(menu.selected(), MenuEntry::Skip);
         menu.rotate(i32::MIN, now);
-        assert_eq!(menu.selected(), MenuEntry::Skip);
+        assert_eq!(menu.selected(), MenuEntry::Toggle);
         menu.rotate(i32::MAX, now);
         assert_eq!(menu.selected(), MenuEntry::Reset);
     }

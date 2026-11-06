@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     ClockFace, Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
-    ModuleInstanceId, PageId, PageZone, Rgb, UnreadNotification, ZoneContent,
+    MenuZone, ModuleInstanceId, PageId, PageZone, Rgb, UnreadNotification, ZoneContent,
 };
 
 use super::live::PageSummary;
@@ -70,6 +70,9 @@ pub(crate) struct FrameKey {
     pub(crate) target: Option<KeyTarget>,
 }
 
+/// In front of the selected entry of a menu, in its text equivalent.
+const SELECTED_ENTRY_MARKER: char = '›';
+
 /// What a touch strip zone shows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) enum ZoneContentFace {
@@ -79,6 +82,7 @@ pub(crate) enum ZoneContentFace {
     Gauge(GaugeContent),
     Clock(ClockFace),
     Page(PageZone),
+    Menu(MenuZone),
     Image(ImageSource),
 }
 
@@ -92,6 +96,7 @@ impl ZoneContentFace {
             Some(ZoneContent::Gauge(gauge)) => Self::Gauge(gauge),
             Some(ZoneContent::Clock(face)) => Self::Clock(face),
             Some(ZoneContent::Page(page)) => Self::Page(page),
+            Some(ZoneContent::Menu(menu)) => Self::Menu(menu),
             Some(ZoneContent::Image(image)) => Self::Image(image_source(image)),
             // No zone, or a content added later that this version cannot draw.
             _ => Self::Blank,
@@ -107,6 +112,7 @@ impl ZoneContentFace {
             Self::Gauge(gauge) => gauge_text_lines(gauge),
             Self::Clock(face) => clock_text_lines(face),
             Self::Page(page) => page_text_lines(page),
+            Self::Menu(menu) => menu_text_lines(menu),
             Self::Blank | Self::Image(_) => Vec::new(),
         }
     }
@@ -139,6 +145,20 @@ fn gauge_text_lines(gauge: &GaugeContent) -> Vec<String> {
         None => gauge.title.clone(),
     };
     vec![title, gauge.value.clone()]
+}
+
+/// Title of the menu, then its entries, the selected one behind a `›`.
+fn menu_text_lines(menu: &MenuZone) -> Vec<String> {
+    let entries = menu.entries().iter().enumerate().map(|(index, entry)| {
+        if index == menu.selected() {
+            format!("{SELECTED_ENTRY_MARKER} {entry}")
+        } else {
+            entry.clone()
+        }
+    });
+    std::iter::once(menu.title().to_owned())
+        .chain(entries)
+        .collect()
 }
 
 /// Title of the page, then the row on display (`ligne 2/3`), when the page
@@ -282,6 +302,20 @@ mod tests {
         );
         let home = ZoneContentFace::Page(PageZone::new("Accueil"));
         assert_eq!(home.text_lines(), ["Accueil"].map(String::from));
+    }
+
+    #[test]
+    fn menus_are_kept_and_described_as_text() {
+        let entries = ["Mettre en pause", "Remise à zéro"]
+            .map(String::from)
+            .to_vec();
+        let menu = MenuZone::new("Travail · 18:42", entries, 1);
+        let content = ZoneContentFace::from_content(Some(ZoneContent::Menu(menu.clone())));
+        assert_eq!(content, ZoneContentFace::Menu(menu));
+        assert_eq!(
+            content.text_lines(),
+            ["Travail · 18:42", "Mettre en pause", "› Remise à zéro"].map(String::from)
+        );
     }
 
     #[test]

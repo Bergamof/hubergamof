@@ -324,6 +324,7 @@ fn render_zone(
         ZoneContentFace::Gauge(gauge) => renderer.render_gauge(gauge, size, DEFAULT_BACKGROUND),
         ZoneContentFace::Clock(face) => renderer.render_clock(face, size, DEFAULT_BACKGROUND),
         ZoneContentFace::Page(page) => renderer.render_page_zone(page, size, DEFAULT_BACKGROUND),
+        ZoneContentFace::Menu(menu) => renderer.render_menu_zone(menu, size, DEFAULT_BACKGROUND),
         ZoneContentFace::Image(source) => renderer.render_image(size, source).or_else(|error| {
             tracing::warn!(%error, "cannot draw zone image, leaving it blank");
             blank()

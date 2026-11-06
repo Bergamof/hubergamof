@@ -12,6 +12,7 @@
 mod clock;
 mod digest;
 mod gauge;
+mod menu;
 mod notification;
 mod page;
 mod source;
@@ -26,7 +27,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, KeyState, PageZone, Rgb};
+use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, KeyState, MenuZone, PageZone, Rgb};
 #[cfg(test)]
 use hubergamof_module_api::{GaugeLevel, ImageData};
 use hubergamof_protocol::ImageSize;
@@ -290,6 +291,11 @@ enum CacheKey {
     },
     Page {
         page: PageZone,
+        size: (u32, u32),
+        background: [u8; 4],
+    },
+    Menu {
+        menu: MenuZone,
         size: (u32, u32),
         background: [u8; 4],
     },
