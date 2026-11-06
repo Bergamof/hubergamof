@@ -4,9 +4,9 @@ Détail de chaque module et des briques communes ; `CLAUDE.md` n'en garde que le
 
 ## Registre et services
 - `builtin_registry_with(BuiltinServices)` enregistre les fabriques et fournit la disposition par défaut (`DefaultLayout`).
-- Services injectés : `audio`, `docker`, `notifier` (notifications de bureau du pomodoro), `pomodoro_clock` (temps monotone `CLOCK_BOOTTIME`, veille comprise), `desktop`, `intellij`. L'heure murale du module clock n'est pas injectée (toujours celle du système).
+- Services injectés : `wall_clock`, `audio`, `docker`, `notifier` (notifications de bureau du pomodoro), `pomodoro_clock` (temps monotone `CLOCK_BOOTTIME`, veille comprise), `desktop`, `intellij`. `wall_clock` (heure murale du module clock : `SystemClock`, ou `FixedClock` figée au 28/10/2026 14:05:30 dans `simulated()` pour que les tests ne dépendent pas de la minute en cours ; `--demo` garde l'heure réelle).
 - `BuiltinServices::system()` : vrai `pactl`, Docker, bus de session `session_bus::SessionBus` partagé, bureau ; tout se connecte au premier usage.
-- `BuiltinServices::simulated()` : `--demo` et **tous** les tests (jamais de vrai `pactl`/Docker/D-Bus/KWin).
+- `BuiltinServices::simulated()` : **tous** les tests (`--demo` = ce service avec l'heure réelle) (jamais de vrai `pactl`/Docker/D-Bus/KWin).
 - Chaque nouveau module ajoute son service à `BuiltinServices`.
 
 ## Briques communes

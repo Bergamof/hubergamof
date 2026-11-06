@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Corrigé
+
+- Tests d'intégration instables à chaque changement de minute : l'heure murale du module Horloge est désormais injectée (`BuiltinServices::wall_clock`), figée dans `BuiltinServices::simulated()` ; `--demo` garde l'heure réelle.
+
 ### Modifié
 
 - Module Horloge : cadran « Éphéméride » sur la bande tactile (feuille de calendrier, heure en graisse fine, numéro de semaine ISO) ; avec les secondes, exposant teal et filet de progression de 60 s à repères de 15 s. Sans réglage supplémentaire.

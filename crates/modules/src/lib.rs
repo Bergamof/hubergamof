@@ -121,10 +121,11 @@ impl std::fmt::Debug for ModuleRegistry {
     }
 }
 
-/// The services the built-in modules act on. The wall clock of the clock
-/// module is not one of them: always the system's.
+/// The services the built-in modules act on.
 #[derive(Debug, Clone)]
 pub struct BuiltinServices {
+    /// Wall clock (local date and time) of the clock module.
+    pub wall_clock: Arc<dyn clock::WallClock>,
     /// Audio server of the audio module.
     pub audio: Arc<dyn audio::AudioBackend>,
     /// Docker host of the Docker module.
@@ -148,6 +149,7 @@ impl BuiltinServices {
     pub fn system() -> Self {
         let session_bus = session_bus::SessionBus::new();
         Self {
+            wall_clock: Arc::new(clock::SystemClock),
             audio: Arc::new(audio::PactlBackend::new()),
             docker: Arc::new(docker::DockerEngine::new()),
             notifier: Arc::new(notifications::DesktopNotifier::new(session_bus.clone())),
@@ -159,10 +161,13 @@ impl BuiltinServices {
 
     /// Simulations leaving the machine untouched (`--demo`, tests), hermetic
     /// and reproducible: the demo audio server and Docker host, and
-    /// notifications that are only logged. Time is real.
+    /// notifications that are only logged. The wall clock is stopped
+    /// ([`clock::FixedClock`]): a test must not depend on the minute it runs
+    /// in. The pomodoro's monotonic time is real.
     #[must_use]
     pub fn simulated() -> Self {
         Self {
+            wall_clock: Arc::new(clock::FixedClock::default()),
             audio: Arc::new(audio::SimulatedAudio::demo()),
             docker: Arc::new(docker::SimulatedDocker::demo()),
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
@@ -180,7 +185,9 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
     registry.set_default_layout(DefaultLayout::builtin());
     registry.register(Arc::new(audio::AudioFactory::new(services.audio)));
-    registry.register(Arc::new(clock::ClockFactory::system()));
+    registry.register(Arc::new(clock::ClockFactory::with_clock(
+        services.wall_clock,
+    )));
     registry.register(Arc::new(docker::DockerFactory::new(services.docker)));
     // One desktop hub for every module following an application: the
     // backend follows the windows for one hub only.
@@ -376,6 +383,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn the_simulated_clock_ignores_the_system_time() {
+        let registry = simulated_registry();
+        let (clock, _events, _tasks) = instance(&registry, clock::CLOCK_KIND, &json!({}));
+        let nav = NavigationView::new("Accueil", 0, 1, 2);
+        let before = clock.zone(&nav);
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert_eq!(clock.zone(&nav), before);
+        // The stopped instant, not the time of the machine running the test.
+        let Some(ZoneContent::Clock(face)) = before else {
+            panic!("expected a clock face, got {before:?}");
+        };
+        assert_eq!(face.time, "14:05");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn the_simulated_audio_is_the_demo_server() {
         let registry = builtin_registry_with(BuiltinServices::simulated());
         let (mut volume, mut events, _tasks) = instance(&registry, audio::AUDIO_KIND, &json!({}));
@@ -392,6 +414,7 @@ mod tests {
         let server = Arc::new(audio::SimulatedAudio::demo());
         let notifier = Arc::new(notifications::SimulatedNotifier::default());
         let registry = builtin_registry_with(BuiltinServices {
+            wall_clock: Arc::new(clock::FixedClock::default()),
             audio: Arc::clone(&server) as _,
             docker: Arc::new(docker::SimulatedDocker::empty()),
             notifier: Arc::clone(&notifier) as _,
