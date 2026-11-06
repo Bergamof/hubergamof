@@ -3,7 +3,6 @@
 //!
 //! Ratios of the zone, designed on a 200 × 100 px zone (Stream Deck+).
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use hubergamof_module_api::{PageZone, RowPosition};
@@ -11,6 +10,7 @@ use hubergamof_protocol::ImageSize;
 use image::{Rgba, RgbaImage};
 
 use super::source::{f32_from, svg_color};
+use super::svg::{push_svg, shape_gradient};
 use super::text::TextLine;
 use super::{
     CacheKey, RenderError, Rendered, Renderer, TEXT_COLOR, ZoneGeometry, check_size, keep_opaque,
@@ -152,11 +152,7 @@ fn scrollable_rows(page: &PageZone) -> Option<RowPosition> {
 
 /// The hint of the way back and the rows, which carry no text.
 fn page_shapes(page: &PageZone, zone: ZoneGeometry) -> String {
-    let mut svg = format!(
-        r#"<defs><linearGradient id="{GRADIENT_ID}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{light}"/><stop offset="1" stop-color="{deep}"/></linearGradient></defs>"#,
-        light = svg_color(rgba(page.accent.from)),
-        deep = svg_color(rgba(page.accent.to)),
-    );
+    let mut svg = shape_gradient(GRADIENT_ID, (rgba(page.accent.from), rgba(page.accent.to)));
     push_hint(&mut svg, zone, page);
     if let Some(rows) = scrollable_rows(page) {
         push_rows(&mut svg, zone, rows);
@@ -175,15 +171,14 @@ fn push_hint(svg: &mut String, zone: ZoneGeometry, page: &PageZone) {
     let radius = side * HINT_RADIUS_RATIO;
     let (center_x, center_y) = (left + side / 2.0, top + side / 2.0);
     let scale = side * ARROW_SHARE / ARROW_UNITS;
-    // Writing to a `String` cannot fail.
     if enabled {
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<rect x="{left}" y="{top}" width="{side}" height="{side}" rx="{radius}" fill="url(#{GRADIENT_ID})" fill-opacity="{HINT_FILL_OPACITY}" stroke="url(#{GRADIENT_ID})" stroke-width="{outline}"/>"#,
         );
     } else {
         let dash = side * HINT_DASH_RATIO;
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<g opacity="{DISABLED_HINT_OPACITY}"><rect x="{left}" y="{top}" width="{side}" height="{side}" rx="{radius}" fill="none" stroke="{color}" stroke-width="{outline}" stroke-dasharray="{dash} {dash}"/></g>"#,
             color = svg_color(rgba(page.accent.from)),
@@ -191,7 +186,7 @@ fn push_hint(svg: &mut String, zone: ZoneGeometry, page: &PageZone) {
     }
     let arrow_color = rgba(page.accent.from);
     let opacity = if enabled { 1.0 } else { DISABLED_HINT_OPACITY };
-    let _ = write!(
+    push_svg!(
         svg,
         r#"<path transform="translate({center_x} {center_y}) scale({scale})" d="{ARROW_PATH}" fill="none" stroke="{color}" stroke-width="{ARROW_STROKE_UNITS}" stroke-linecap="round" stroke-linejoin="round" opacity="{opacity}"/>"#,
         color = svg_color(arrow_color),
@@ -208,10 +203,9 @@ fn push_rows(svg: &mut String, zone: ZoneGeometry, rows: RowPosition) {
     let radius = thickness / 2.0;
     let current = rows.row();
     let segments = rows.count().min(MAX_ROW_SEGMENTS);
-    // Writing to a `String` cannot fail.
     if rows.count() > MAX_ROW_SEGMENTS {
         let marker = length / f32_from(rows.count());
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<rect x="{left}" y="{top}" width="{length}" height="{thickness}" rx="{radius}" fill="{track}"/><rect x="{x}" y="{top}" width="{marker}" height="{thickness}" rx="{radius}" fill="url(#{GRADIENT_ID})"/>"#,
             track = svg_color(OTHER_ROW_COLOR),
@@ -227,7 +221,7 @@ fn push_rows(svg: &mut String, zone: ZoneGeometry, rows: RowPosition) {
         } else {
             svg_color(OTHER_ROW_COLOR)
         };
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<rect x="{x}" y="{top}" width="{segment}" height="{thickness}" rx="{radius}" fill="{fill}"/>"#,
             x = left + (segment + gap) * f32_from(index),

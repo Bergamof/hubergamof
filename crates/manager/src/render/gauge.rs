@@ -6,7 +6,6 @@
 
 use std::cmp::Ordering;
 use std::f32::consts::{PI, TAU};
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use hubergamof_module_api::{GaugeContent, GaugeLevel, GaugeShape, GaugeSteps, ImageData};
@@ -14,6 +13,7 @@ use hubergamof_protocol::ImageSize;
 use image::{Rgba, RgbaImage, imageops};
 
 use super::source::{self, Decoded, f32_from, svg_color};
+use super::svg::{canvas_gradient, push_svg};
 use super::text::{FontWeight, TextLine, TextRenderer};
 use super::{
     CacheKey, DIMMED_TEXT_COLOR, GAUGE_DIMMED_FILL_COLOR, GAUGE_TRACK_COLOR, RenderError, Rendered,
@@ -207,7 +207,7 @@ impl Renderer {
         );
         if ratio > 0.0 && !gauge.dimmed {
             let angle = PI * ratio;
-            let _ = write!(
+            push_svg!(
                 shapes,
                 r#"<circle cx="{x}" cy="{y}" r="{knob}" fill="{color}"/>"#,
                 x = center_x - radius * angle.cos(),
@@ -421,20 +421,12 @@ fn rounded_offset(position: f32) -> i64 {
 /// The gradient of the filled part, running from `start` to `end` in zone
 /// coordinates, greyed out when the gauge is dimmed.
 fn accent_gradient(gauge: &GaugeContent, start: (f32, f32), end: (f32, f32)) -> String {
-    let (from, to) = if gauge.dimmed {
+    let colours = if gauge.dimmed {
         (GAUGE_DIMMED_FILL_COLOR, GAUGE_DIMMED_FILL_COLOR)
     } else {
         (rgba(gauge.accent.from), rgba(gauge.accent.to))
     };
-    format!(
-        r#"<defs><linearGradient id="{ACCENT_GRADIENT_ID}" gradientUnits="userSpaceOnUse" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"><stop offset="0" stop-color="{from}"/><stop offset="1" stop-color="{to}"/></linearGradient></defs>"#,
-        x1 = start.0,
-        y1 = start.1,
-        x2 = end.0,
-        y2 = end.1,
-        from = svg_color(from),
-        to = svg_color(to),
-    )
+    canvas_gradient(ACCENT_GRADIENT_ID, colours, start, end)
 }
 
 /// Where and how thick an arc or a ring is.
@@ -449,8 +441,7 @@ fn push_arc_shapes(svg: &mut String, arc: &ArcGeometry, ratio: f32) {
     let (center_x, center_y) = arc.center;
     let (radius, thickness) = (arc.radius, arc.thickness);
     let start_x = center_x - radius;
-    // Writing to a `String` cannot fail.
-    let _ = write!(
+    push_svg!(
         svg,
         r#"<path d="M{start_x} {center_y}A{radius} {radius} 0 0 1 {end_x} {center_y}" fill="none" stroke="{track}" stroke-width="{thickness}" stroke-linecap="round"/>"#,
         end_x = center_x + radius,
@@ -458,7 +449,7 @@ fn push_arc_shapes(svg: &mut String, arc: &ArcGeometry, ratio: f32) {
     );
     if ratio > 0.0 {
         let angle = PI * ratio;
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<path d="M{start_x} {center_y}A{radius} {radius} 0 0 1 {x} {y}" fill="none" stroke="url(#{ACCENT_GRADIENT_ID})" stroke-width="{thickness}" stroke-linecap="round"/>"#,
             x = center_x - radius * angle.cos(),
@@ -471,21 +462,20 @@ fn push_arc_shapes(svg: &mut String, arc: &ArcGeometry, ratio: f32) {
 fn push_ring_shapes(svg: &mut String, ring: &ArcGeometry, level: GaugeLevel) {
     let (center_x, center_y) = ring.center;
     let (radius, thickness) = (ring.radius, ring.thickness);
-    // Writing to a `String` cannot fail.
-    let _ = write!(
+    push_svg!(
         svg,
         r#"<circle cx="{center_x}" cy="{center_y}" r="{radius}" fill="none" stroke="{track}" stroke-width="{thickness}"/>"#,
         track = svg_color(GAUGE_TRACK_COLOR),
     );
     let ratio = level.ratio();
     if level >= GaugeLevel::FULL {
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<circle cx="{center_x}" cy="{center_y}" r="{radius}" fill="none" stroke="url(#{ACCENT_GRADIENT_ID})" stroke-width="{thickness}"/>"#,
         );
     } else if ratio > 0.0 {
         let angle = TAU * ratio;
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<path d="M{center_x} {top}A{radius} {radius} 0 {large} 1 {x} {y}" fill="none" stroke="url(#{ACCENT_GRADIENT_ID})" stroke-width="{thickness}" stroke-linecap="round"/>"#,
             top = center_y - radius,
@@ -518,26 +508,25 @@ fn push_step_dots(
     };
     for step in 1..=steps.total() {
         let x = first + pitch * f32::from(step - 1);
-        // Writing to a `String` cannot fail.
-        let _ = match step.cmp(&steps.current()) {
-            Ordering::Less => write!(
+        match step.cmp(&steps.current()) {
+            Ordering::Less => push_svg!(
                 svg,
                 r#"<circle cx="{x}" cy="{y}" r="{radius}" fill="{color}"/>"#,
                 color = svg_color(accent),
             ),
-            Ordering::Equal => write!(
+            Ordering::Equal => push_svg!(
                 svg,
                 r#"<circle cx="{x}" cy="{y}" r="{radius}" fill="none" stroke="{color}" stroke-width="{outline}"/><circle cx="{x}" cy="{y}" r="{core}" fill="{color}"/>"#,
                 color = svg_color(accent),
                 outline = zone.y(RING_DOT_OUTLINE_RATIO),
                 core = zone.y(RING_DOT_CORE_RATIO),
             ),
-            Ordering::Greater => write!(
+            Ordering::Greater => push_svg!(
                 svg,
                 r#"<circle cx="{x}" cy="{y}" r="{radius}" fill="{color}"/>"#,
                 color = svg_color(GAUGE_TRACK_COLOR),
             ),
-        };
+        }
     }
 }
 

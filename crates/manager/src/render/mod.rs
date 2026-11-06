@@ -15,6 +15,7 @@ mod gauge;
 mod notification;
 mod page;
 mod source;
+mod svg;
 mod text;
 
 use std::collections::HashMap;

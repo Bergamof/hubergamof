@@ -5,18 +5,18 @@
 //! The layout is expressed in ratios of the zone, like the gauge, and was
 //! designed on a 200 × 100 px zone (Stream Deck+).
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use hubergamof_module_api::{CalendarLeaf, ClockFace, ClockSeconds};
 use hubergamof_protocol::ImageSize;
 use image::{Rgba, RgbaImage};
 
-use super::source::{f32_from, svg_color};
+use super::source::svg_color;
+use super::svg::push_svg;
 use super::text::{FontWeight, LineStyle, TextLine, TextRenderer};
 use super::{
-    CacheKey, GAUGE_TRACK_COLOR, RenderError, Rendered, Renderer, TEXT_COLOR, check_size,
-    keep_opaque,
+    CacheKey, GAUGE_TRACK_COLOR, RenderError, Rendered, Renderer, TEXT_COLOR, ZoneGeometry,
+    check_size, keep_opaque,
 };
 
 /// Seconds, minutes and hours accent: the teal of the clock icon.
@@ -102,8 +102,7 @@ const TRACK_MARK_STEP_SECONDS: u8 = ClockSeconds::PER_MINUTE / 4;
 
 /// Geometry of a clock face on a zone of a given size.
 struct Layout {
-    width: f32,
-    height: f32,
+    zone: ZoneGeometry,
     /// Left and width of the area holding the time.
     area_left: f32,
     area_width: f32,
@@ -111,8 +110,8 @@ struct Layout {
 
 impl Layout {
     fn new(size: ImageSize, has_leaf: bool) -> Self {
-        let width = f32_from(size.width);
-        let height = f32_from(size.height);
+        let zone = ZoneGeometry::of_size(size);
+        let width = zone.width;
         let (area_left, area_width) = if has_leaf {
             (
                 width * AREA_LEFT_WITH_LEAF_RATIO,
@@ -125,8 +124,7 @@ impl Layout {
             )
         };
         Self {
-            width,
-            height,
+            zone,
             area_left,
             area_width,
         }
@@ -138,15 +136,15 @@ impl Layout {
 
     /// Vertical position at `ratio` of the zone height.
     fn y(&self, ratio: f32) -> f32 {
-        self.height * ratio
+        self.zone.y(ratio)
     }
 
     fn leaf_left(&self) -> f32 {
-        self.width * LEAF_LEFT_RATIO
+        self.zone.width * LEAF_LEFT_RATIO
     }
 
     fn leaf_width(&self) -> f32 {
-        self.width * LEAF_WIDTH_RATIO
+        self.zone.width * LEAF_WIDTH_RATIO
     }
 
     fn leaf_center(&self) -> f32 {
@@ -339,8 +337,7 @@ fn push_leaf_shapes(svg: &mut String, layout: &Layout) {
     let band = layout.y(LEAF_BAND_RATIO);
     let radius = layout.y(LEAF_RADIUS_RATIO);
     let right = left + width;
-    // Writing to a `String` cannot fail.
-    let _ = write!(
+    push_svg!(
         svg,
         r#"<rect x="{left}" y="{top}" width="{width}" height="{height}" rx="{radius}" fill="{body}"/><path d="M{left} {band_bottom}V{arc_start}a{radius} {radius} 0 0 1 {radius} -{radius}H{band_end}a{radius} {radius} 0 0 1 {radius} {radius}V{band_bottom}Z" fill="{band_color}"/>"#,
         band_bottom = top + band,
@@ -367,27 +364,26 @@ fn push_track_shapes(
     let minute = f32::from(ClockSeconds::PER_MINUTE);
     let filled = length * f32::from(seconds.get()) / minute;
     let radius = thickness / 2.0;
-    // Writing to a `String` cannot fail.
-    let _ = write!(
+    push_svg!(
         svg,
         r#"<rect x="{left}" y="{top}" width="{length}" height="{thickness}" rx="{radius}" fill="{track}"/>"#,
         track = svg_color(GAUGE_TRACK_COLOR),
     );
     if seconds.get() > 0 {
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<rect x="{left}" y="{top}" width="{filled}" height="{thickness}" rx="{radius}" fill="{fill}"/>"#,
             fill = svg_color(CLOCK_ACCENT_COLOR),
         );
     }
-    let mark_width = layout.width * TRACK_MARK_WIDTH_RATIO;
+    let mark_width = layout.zone.width * TRACK_MARK_WIDTH_RATIO;
     let mark_height = layout.y(TRACK_MARK_HEIGHT_RATIO);
     let mark_top = top + (thickness - mark_height) / 2.0;
     for mark in (TRACK_MARK_STEP_SECONDS..ClockSeconds::PER_MINUTE)
         .step_by(usize::from(TRACK_MARK_STEP_SECONDS))
     {
         let x = left + length * f32::from(mark) / minute - mark_width / 2.0;
-        let _ = write!(
+        push_svg!(
             svg,
             r#"<rect x="{x}" y="{mark_top}" width="{mark_width}" height="{mark_height}" fill="{color}"/>"#,
             color = svg_color(background),
