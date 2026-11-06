@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, GaugeContent, GaugeLevel, ImageData, ItemId, KeyContent, KeyState, Module,
+    Command, GaugeContent, GaugeLevel, GaugeShape, ImageData, ItemId, KeyContent, KeyState, Module,
     ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    ModuleSurface, NavigationView, PageContent, PageId, PageItem, SettingField, SettingKind,
-    ZoneContent,
+    ModuleSurface, NavigationView, PageContent, PageId, PageItem, Rgb, SettingField, SettingKind,
+    ZoneAccent, ZoneContent,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -514,8 +514,12 @@ impl Module for Audio {
     }
 }
 
-/// Gauge of the default output. The bar spans the reach of the dial (0 to
-/// the ceiling), so that a full bar means « the dial goes no further ».
+/// Cyan of the speaker icon, from its light to its deep end.
+const VOLUME_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0x67, 0xE8, 0xF9), Rgb(0x0E, 0xA5, 0xE9));
+
+/// Gauge of the default output, as an arc. The arc spans the reach of the
+/// dial (0 to the ceiling), so that a full arc means « the dial goes no
+/// further ».
 fn gauge(sink: &AudioDevice, settings: AudioSettings) -> GaugeContent {
     let average = sink.volume.average();
     let value = if sink.muted {
@@ -523,7 +527,15 @@ fn gauge(sink: &AudioDevice, settings: AudioSettings) -> GaugeContent {
     } else {
         format!("{} %", percent_of(average))
     };
+    let glyph = if sink.muted {
+        &icons::GLYPH_MUTED
+    } else {
+        &icons::GLYPH
+    };
     GaugeContent::new(&sink.description, value, level(average, settings.ceiling()))
+        .with_shape(GaugeShape::Arc)
+        .with_accent(VOLUME_ACCENT)
+        .with_glyph(ImageData::clone(glyph))
         .with_dimmed(sink.muted)
 }
 

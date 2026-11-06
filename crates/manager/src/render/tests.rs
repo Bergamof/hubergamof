@@ -408,6 +408,9 @@ fn zone_images_fit_the_zone() {
     assert_eq!(*rendered.image().get_pixel(10, 50), DEFAULT_BACKGROUND);
 }
 
+/// Filled part of a bar gauge that asks for no colour of its own.
+const GAUGE_FILL_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
+
 fn gauge(level: f32) -> GaugeContent {
     GaugeContent::new("Volume", "25 %", GaugeLevel::from_ratio(level))
 }
@@ -796,4 +799,16 @@ fn clock_zones_of_no_size_are_refused() {
             Err(RenderError::InvalidSize)
         ));
     }
+}
+
+#[test]
+fn gauge_bars_take_the_accent_of_the_content() {
+    let green = hubergamof_module_api::ZoneAccent::solid(hubergamof_module_api::Rgb(0, 0xc0, 0));
+    let rendered = renderer()
+        .render_gauge(&gauge(0.5).with_accent(green), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert_eq!(
+        *rendered.image().get_pixel(8, GAUGE_BAR_ROW),
+        Rgba([0, 0xc0, 0, u8::MAX])
+    );
 }

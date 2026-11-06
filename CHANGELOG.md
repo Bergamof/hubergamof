@@ -17,6 +17,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Molettes Audio, Pomodoro et Accueil : nouveaux visuels de bande dans le ton des icônes. Audio : jauge en arc cyan avec le glyphe haut-parleur ; Pomodoro : anneau de progression avec le pictogramme de l'étape (tomate, tasse, pause) et une pastille par pomodoro du cycle ; Accueil : titre centré, parent en indigo, pastille de retour (le clic de la molette ne change pas) et ligne affichée en petits segments discrets en bas. API des modules : `GaugeContent` gagne `shape` (`Bar`, `Arc`, `Ring { steps }`), `accent` et `glyph` ; nouveau `ZoneContent::Page` ; `NavigationView::parent_title`.
 - Touches : l'action se lance au **relâchement** (et non plus à l'appui) ; maintenue plus de 400 ms, la touche affiche son libellé en blanc sur noir sur la bande tactile et ne lance rien. Les molettes agissent toujours à l'appui.
 - Pomodoro : réglages `notificationEnabled` (notification sur la bande, activée par défaut) et `notificationSeconds` (durée en secondes, 10 par défaut ; 0 = jusqu'à ce qu'on la ferme).
 - Module Horloge : cadran « Éphéméride » sur la bande tactile (feuille de calendrier, heure en graisse fine, numéro de semaine ISO) ; avec les secondes, exposant teal et filet de progression de 60 s à repères de 15 s. Sans réglage supplémentaire.

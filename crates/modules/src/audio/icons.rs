@@ -23,3 +23,8 @@ pub(super) static MICROPHONE_SELECTED: LazyLock<ImageData> =
 /// Struck microphone: muted input.
 pub(super) static MICROPHONE_MUTED: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("audio-microphone-muted")));
+/// Speaker without background: in front of the title of the zone gauge.
+pub(super) static GLYPH: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("audio-glyph")));
+/// Crossed speaker without background: muted output, in the zone gauge.
+pub(super) static GLYPH_MUTED: LazyLock<ImageData> =
+    LazyLock::new(|| svg(asset!("audio-glyph-muted")));

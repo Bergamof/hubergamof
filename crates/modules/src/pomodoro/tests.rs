@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
-use hubergamof_module_api::TaskScope;
 use hubergamof_module_api::testing::TestContext;
+use hubergamof_module_api::{GaugeShape, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -125,6 +125,12 @@ impl Harness {
         }
     }
 
+    /// Current step and number of steps drawn by the zone gauge.
+    fn steps(&self) -> (u8, u8) {
+        let steps = self.gauge().steps().expect("the ring shows the cycle");
+        (steps.current(), steps.total())
+    }
+
     fn menu_lines(&self) -> Vec<String> {
         match self.zone() {
             ZoneContent::Lines(lines) => lines,
@@ -185,10 +191,7 @@ async fn a_new_pomodoro_shows_a_full_stopped_work_session() {
     let key = pomodoro.key();
     assert_eq!(label(&key), "25:00 Travail");
     assert_eq!(key.state, KeyState::Normal);
-    assert_eq!(
-        pomodoro.gauge(),
-        GaugeContent::new("Travail · 1/4", "25:00", GaugeLevel::EMPTY).with_dimmed(true)
-    );
+    assert_stopped_ring(&pomodoro.gauge(), "Travail", "25:00", (1, 4));
 }
 
 #[tokio::test(start_paused = true)]
@@ -246,10 +249,7 @@ async fn a_finished_step_waits_for_a_press_and_notifies_once() {
     let key = pomodoro.key();
     assert_eq!(key.state, KeyState::Attention);
     assert_eq!(label(&key), "05:00 Pause");
-    assert_eq!(
-        pomodoro.gauge(),
-        GaugeContent::new("Pause", "05:00", GaugeLevel::EMPTY).with_dimmed(true)
-    );
+    assert_stopped_ring(&pomodoro.gauge(), "Pause", "05:00", (1, 4));
     assert_eq!(pomodoro.run_for(MINUTE).await, 0, "the ticker stopped");
     assert_eq!(
         pomodoro.notifier.sent(),
@@ -263,7 +263,7 @@ async fn a_finished_step_waits_for_a_press_and_notifies_once() {
     assert_eq!(pomodoro.key().state, KeyState::Active);
     pomodoro.run_for(5 * MINUTE).await;
     assert_eq!(label(&pomodoro.key()), "01:00 Travail");
-    assert_eq!(pomodoro.gauge().title, "Travail · 2/4");
+    assert_eq!(pomodoro.steps(), (2, 4));
     assert_eq!(pomodoro.notifier.sent().len(), 2);
 }
 
@@ -293,7 +293,7 @@ async fn a_failed_notification_does_not_stop_the_pomodoro() {
     pomodoro.module.on_key_press().await;
     pomodoro.run_for(MINUTE + 5 * MINUTE).await;
     assert_eq!(pomodoro.notifier.sent().len(), 2);
-    assert_eq!(pomodoro.gauge().title, "Travail · 2/4");
+    assert_eq!(pomodoro.steps(), (2, 4));
     assert_eq!(pomodoro.scope.reap_panics(), 0);
 }
 
@@ -338,17 +338,14 @@ async fn reset_from_the_menu_returns_to_the_first_pomodoro() {
         pomodoro.module.on_dial_rotate(1).await;
         pomodoro.module.on_dial_press().await;
     }
-    assert_eq!(pomodoro.gauge().title, "Travail · 2/4");
+    assert_eq!(pomodoro.steps(), (2, 4));
     pomodoro.module.on_dial_rotate(1).await;
     pomodoro.module.on_dial_rotate(1).await;
     assert_eq!(
         pomodoro.module.on_dial_press().await,
         [Command::Feedback(Feedback::Ok)]
     );
-    assert_eq!(
-        pomodoro.gauge(),
-        GaugeContent::new("Travail · 1/4", "25:00", GaugeLevel::EMPTY).with_dimmed(true)
-    );
+    assert_stopped_ring(&pomodoro.gauge(), "Travail", "25:00", (1, 4));
     assert_eq!(pomodoro.key().state, KeyState::Normal);
     assert_eq!(pomodoro.run_for(MINUTE).await, 0, "the ticker stopped");
 }
@@ -391,7 +388,7 @@ async fn new_settings_keep_the_current_step() {
         .update_settings(&json!({ "workMinutes": 30, "longBreakEvery": 2 }))
         .unwrap();
     assert_eq!(label(&pomodoro.key()), "20:00 Travail");
-    assert_eq!(pomodoro.gauge().title, "Travail · 1/2");
+    assert_eq!(pomodoro.steps(), (1, 2));
     assert_eq!(pomodoro.key().state, KeyState::Active);
     assert!(pomodoro.run_for(TICK_PERIOD).await > 0, "still ticking");
 
@@ -401,7 +398,7 @@ async fn new_settings_keep_the_current_step() {
             .update_settings(&json!({ "workMinutes": 0 }))
             .is_err()
     );
-    assert_eq!(pomodoro.gauge().title, "Travail · 1/2");
+    assert_eq!(pomodoro.steps(), (1, 2));
 }
 
 #[tokio::test(start_paused = true)]
@@ -625,4 +622,40 @@ async fn new_settings_change_the_next_strip_notification() {
         strip_notifications(&pomodoro)[0].timeout,
         Some(Duration::from_secs(3))
     );
+}
+
+/// A stopped timer: an empty ring with the pause glyph, greyed out.
+fn assert_stopped_ring(gauge: &GaugeContent, title: &str, value: &str, steps: (u8, u8)) {
+    assert_eq!((gauge.title.as_str(), gauge.value.as_str()), (title, value));
+    assert_eq!(gauge.level, GaugeLevel::EMPTY);
+    assert!(matches!(gauge.shape, GaugeShape::Ring { .. }));
+    assert!(gauge.dimmed);
+    assert_eq!(gauge.glyph.as_ref(), Some(&*icons::PAUSED));
+    assert_eq!(
+        gauge.steps().map(|steps| (steps.current(), steps.total())),
+        Some(steps)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_ring_takes_the_colours_and_the_glyph_of_the_step() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    let working = pomodoro.gauge();
+    assert_eq!(working.accent, WORK_ACCENT);
+    assert_eq!(working.glyph.as_ref(), Some(&*icons::WORK));
+    assert!(!working.dimmed);
+
+    pomodoro.module.on_key_press().await;
+    assert_eq!(
+        pomodoro.gauge().glyph.as_ref(),
+        Some(&*icons::PAUSED),
+        "a paused timer shows the pause glyph"
+    );
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(25 * MINUTE).await;
+    pomodoro.module.on_key_press().await;
+    let resting = pomodoro.gauge();
+    assert_eq!(resting.accent, BREAK_ACCENT);
+    assert_eq!(resting.glyph.as_ref(), Some(&*icons::BREAK));
 }

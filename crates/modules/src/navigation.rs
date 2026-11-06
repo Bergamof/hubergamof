@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleFactory, NavigationView, ZoneContent,
+    ModuleFactory, NavigationView, PageZone, Rgb, ZoneAccent, ZoneContent,
 };
 use serde_json::Value;
 
@@ -12,6 +12,10 @@ use crate::icons::{asset, svg};
 
 /// Kind of the navigation module.
 pub const NAVIGATION_KIND: &str = "navigation";
+
+/// Indigo of the module icon, from its light to its deep end: the back hint,
+/// the parent page and the current row of the zone.
+const ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0xA5, 0xB4, 0xFC), Rgb(0x63, 0x66, 0xF1));
 
 /// Icon of the module: scrolling arrows.
 const ICON_SVG: &str = asset!("navigation");
@@ -68,11 +72,14 @@ impl Module for Navigation {
     }
 
     fn zone(&self, nav: &NavigationView) -> Option<ZoneContent> {
-        let mut lines = vec![nav.page_title.clone()];
-        if !nav.is_home() || nav.is_scrollable() {
-            lines.push(format!("ligne {}/{}", nav.row + 1, nav.row_count.max(1)));
+        let mut page = PageZone::new(nav.page_title.clone()).with_accent(ACCENT);
+        if let Some(parent) = &nav.parent_title {
+            page = page.with_parent(parent.clone());
         }
-        Some(ZoneContent::Lines(lines))
+        if nav.is_scrollable() {
+            page = page.with_rows(nav.row, nav.row_count);
+        }
+        Some(ZoneContent::Page(page))
     }
 
     fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
@@ -96,6 +103,7 @@ mod tests {
             view
         } else {
             view.on_page("docker".into(), "page".into(), depth)
+                .with_parent_title("Accueil")
         }
     }
 
@@ -116,28 +124,33 @@ mod tests {
     #[test]
     fn zone_shows_home_or_page_and_row() {
         let nav = create();
+        let zone = |view| nav.zone(&view);
+        let page = |title: &str| PageZone::new(title).with_accent(ACCENT);
         assert_eq!(
-            nav.zone(&view("Accueil", 0, 0, 1)),
-            Some(ZoneContent::Lines(vec!["Accueil".into()]))
+            zone(view("Accueil", 0, 0, 1)),
+            Some(ZoneContent::Page(page("Accueil")))
         );
         assert_eq!(
-            nav.zone(&view("Accueil", 0, 0, 2)),
-            Some(ZoneContent::Lines(vec!["Accueil".into()]))
+            zone(view("Accueil", 0, 0, 2)),
+            Some(ZoneContent::Page(page("Accueil")))
         );
         assert_eq!(
-            nav.zone(&view("Accueil", 0, 1, 3)),
-            Some(ZoneContent::Lines(vec![
-                "Accueil".into(),
-                "ligne 2/3".into()
-            ]))
+            zone(view("Accueil", 0, 1, 3)),
+            Some(ZoneContent::Page(page("Accueil").with_rows(1, 3)))
         );
-        assert_eq!(
-            nav.zone(&view("Conteneurs", 1, 0, 1)),
-            Some(ZoneContent::Lines(vec![
-                "Conteneurs".into(),
-                "ligne 1/1".into()
-            ]))
-        );
+    }
+
+    #[test]
+    fn zone_of_a_module_page_leads_back_to_its_parent() {
+        let nav = create();
+        let Some(ZoneContent::Page(page)) = nav.zone(&view("Conteneurs", 1, 0, 1)) else {
+            panic!("a page zone is expected");
+        };
+        assert_eq!(page.title, "Conteneurs");
+        assert_eq!(page.parent.as_deref(), Some("Accueil"));
+        assert!(page.can_go_back());
+        assert_eq!(page.rows, None, "a single row has nothing to scroll");
+        assert_eq!(page.accent, ACCENT);
     }
 
     #[test]

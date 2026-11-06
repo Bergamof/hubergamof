@@ -634,6 +634,7 @@ impl DeviceEngine {
             };
             match self.instances.page(&current.module, &current.page) {
                 Some(content) => {
+                    self.nav.set_current_title(&content.title);
                     return PageModel::Module {
                         module: current.module,
                         page: current.page,
@@ -791,11 +792,13 @@ impl DeviceEngine {
             u32::from(self.deck.info().capabilities.key_rows),
         );
         if let Some(current) = self.nav.current() {
-            view = view.on_page(
-                current.module.clone(),
-                current.page.clone(),
-                self.nav.depth(),
-            );
+            view = view
+                .on_page(
+                    current.module.clone(),
+                    current.page.clone(),
+                    self.nav.depth(),
+                )
+                .with_parent_title(self.parent_title());
         }
         Frame {
             dials: self.dial_faces(&view),
@@ -855,6 +858,17 @@ impl DeviceEngine {
             });
         }
         keys
+    }
+
+    /// Title of the page the navigation leads back to: the home page, or the
+    /// module page that opened the displayed one, as it was when shown.
+    fn parent_title(&self) -> String {
+        self.nav
+            .parent()
+            .map(|parent| parent.title.as_str())
+            .filter(|title| !title.is_empty())
+            .unwrap_or(HOME_PAGE_TITLE)
+            .to_owned()
     }
 
     fn dial_faces(&mut self, view: &NavigationView) -> Vec<DialFace> {

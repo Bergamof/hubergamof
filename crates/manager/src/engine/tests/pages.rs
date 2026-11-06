@@ -303,6 +303,40 @@ async fn only_changed_keys_are_rewritten() {
 }
 
 #[tokio::test]
+async fn zones_know_the_page_the_navigation_leads_back_to() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![list(4), fragile("none")],
+            &["list"],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let parent_title = || {
+        fixture
+            .probe
+            .last_view
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|view| view.parent_title.clone())
+    };
+    assert_eq!(parent_title(), None, "nothing to go back to at home");
+
+    fixture.engine.press_key(0).await.unwrap();
+    let list_title = fixture.page().title;
+    fixture
+        .wait_for(|_| parent_title().as_deref() == Some(HOME_PAGE_TITLE))
+        .await;
+
+    fixture.engine.press_key(3).await.unwrap();
+    assert_eq!(fixture.page().id, "list/nested");
+    fixture
+        .wait_for(|_| parent_title().as_deref() == Some(list_title.as_str()))
+        .await;
+}
+
+#[tokio::test]
 async fn only_changed_gauges_are_rewritten() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture

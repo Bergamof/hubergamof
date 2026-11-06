@@ -165,8 +165,11 @@ async fn the_zone_shows_the_default_output_as_a_gauge() {
     assert_eq!(gauge.value, "40 %");
     assert_eq!(gauge.level.permille(), 400);
     assert!(!gauge.dimmed);
+    assert_eq!(gauge.shape, GaugeShape::Arc);
+    assert_eq!(gauge.accent, VOLUME_ACCENT);
+    assert_eq!(gauge.glyph.as_ref(), Some(&*icons::GLYPH));
 
-    // With a higher ceiling, the bar spans up to it.
+    // With a higher ceiling, the arc spans up to it.
     let harness = Harness::start(&json!({ "maxVolume": 150 })).await;
     assert_eq!(harness.gauge().value, "40 %");
     assert_eq!(harness.gauge().level.permille(), 267);
@@ -316,6 +319,7 @@ async fn pressing_the_dial_mutes_and_unmutes_the_output() {
     let gauge = harness.gauge();
     assert_eq!(gauge.value, "Muet");
     assert!(gauge.dimmed);
+    assert_eq!(gauge.glyph.as_ref(), Some(&*icons::GLYPH_MUTED));
     assert_eq!(gauge.level.permille(), 400);
     harness.settle().await;
     assert!(harness.speakers().muted);

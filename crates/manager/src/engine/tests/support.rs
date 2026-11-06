@@ -56,6 +56,8 @@ pub(super) struct Probe {
     pub(super) zone_gauge: Arc<Mutex<Option<GaugeContent>>>,
     /// Replaces the zone of fragile instances, over `zone_gauge`.
     pub(super) zone_clock: Arc<Mutex<Option<ClockFace>>>,
+    /// Navigation view given to the last zone of a fragile instance.
+    pub(super) last_view: Arc<Mutex<Option<NavigationView>>>,
     /// Page the list instances no longer have (removed by an event).
     pub(super) gone_page: Arc<Mutex<Option<String>>>,
     /// Added to the index in the ids of page items.
@@ -332,8 +334,9 @@ impl Module for Fragile {
         }
     }
 
-    fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
+    fn zone(&self, nav: &NavigationView) -> Option<ZoneContent> {
         assert_ne!(self.failure, Failure::Zone, "fragile zone");
+        *self.probe.last_view.lock().unwrap() = Some(nav.clone());
         if let Some(face) = self.probe.zone_clock.lock().unwrap().clone() {
             return Some(ZoneContent::Clock(face));
         }
