@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ItemId, ModuleInstanceId, PageId};
+use crate::{ItemId, ModuleInstanceId, PageId, Rgb};
 
 /// Maximum number of text lines of a [`ZoneContent::Lines`] zone; extra lines
 /// are not displayed.
@@ -121,6 +121,8 @@ pub enum ZoneContent {
     Gauge(GaugeContent),
     /// A clock face: calendar leaf, time, optional seconds and week.
     Clock(ClockFace),
+    /// Where the user is: page title, parent page, row and way back.
+    Page(PageZone),
 }
 
 /// Fill level of a [`GaugeContent`], in thousandths of the full bar.
@@ -181,24 +183,113 @@ impl GaugeLevel {
     }
 }
 
-/// A gauge drawn in a touch strip zone: [`Self::title`] on top,
-/// [`Self::value`] in large text, a bar filled to [`Self::level`] at the
-/// bottom.
+/// How a [`GaugeContent`] draws its level.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum GaugeShape {
+    /// Title on top, value in the middle, horizontal bar at the bottom.
+    #[default]
+    Bar,
+    /// Value inside a half circle filled from left to right, title at the
+    /// bottom (volume).
+    Arc,
+    /// Glyph inside a ring filled clockwise from the top, title and value
+    /// beside it (timer).
+    Ring,
+}
+
+/// Colours of the filled part of a gauge: a diagonal gradient from
+/// [`Self::from`] (top left) to [`Self::to`] (bottom right).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GaugeAccent {
+    /// Colour at the start of the gradient.
+    pub from: Rgb,
+    /// Colour at the end of the gradient.
+    pub to: Rgb,
+}
+
+impl GaugeAccent {
+    /// The gradient from `from` to `to`.
+    #[must_use]
+    pub const fn new(from: Rgb, to: Rgb) -> Self {
+        Self { from, to }
+    }
+
+    /// A single colour.
+    #[must_use]
+    pub const fn solid(colour: Rgb) -> Self {
+        Self::new(colour, colour)
+    }
+}
+
+impl Default for GaugeAccent {
+    /// The blue of the bar gauges.
+    fn default() -> Self {
+        Self::solid(Rgb(0x3B, 0xA1, 0xFF))
+    }
+}
+
+/// Position in a series of steps (the pomodoros of a cycle), drawn as one dot
+/// per step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GaugeSteps {
+    current: u8,
+    total: u8,
+}
+
+impl GaugeSteps {
+    /// Most steps drawn.
+    pub const MAX_TOTAL: u8 = 12;
+
+    /// Step `current` (from 1) of `total`, both clamped: `total` within
+    /// `1..=`[`Self::MAX_TOTAL`], `current` within `1..=total`.
+    #[must_use]
+    pub fn new(current: u32, total: u32) -> Self {
+        let total = u8::try_from(total.clamp(1, u32::from(Self::MAX_TOTAL))).unwrap_or(1);
+        let current = u8::try_from(current.clamp(1, u32::from(total))).unwrap_or(1);
+        Self { current, total }
+    }
+
+    /// Current step, within `1..=`[`Self::total`].
+    #[must_use]
+    pub fn current(self) -> u8 {
+        self.current
+    }
+
+    /// Number of steps, within `1..=`[`Self::MAX_TOTAL`].
+    #[must_use]
+    pub fn total(self) -> u8 {
+        self.total
+    }
+}
+
+/// A gauge drawn in a touch strip zone: [`Self::title`], [`Self::value`] and
+/// a level, laid out according to [`Self::shape`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct GaugeContent {
-    /// Top line (« Volume », « Travail · 2/4 »).
+    /// Short line (« Haut-parleurs », « Travail »).
     pub title: String,
-    /// Large central text (« 25 % », « 18:42 », « Muet »).
+    /// Large text (« 25 % », « 18:42 », « Muet »).
     pub value: String,
-    /// Fill level of the bar.
+    /// Fill level.
     pub level: GaugeLevel,
-    /// Drawn greyed out (muted output, paused timer).
+    /// Drawn greyed out (muted output, paused timer): the fill, the title and
+    /// the value; the glyph keeps the colours of its own image.
     pub dimmed: bool,
+    /// How the level is drawn.
+    pub shape: GaugeShape,
+    /// Colours of the filled part (arc and ring shapes).
+    pub accent: GaugeAccent,
+    /// Pictogram drawn by the host, in the colours of its own SVG or image.
+    pub glyph: Option<ImageData>,
+    /// Position in a series, drawn as dots (ring shape).
+    pub steps: Option<GaugeSteps>,
 }
 
 impl GaugeContent {
-    /// A gauge titled `title` showing `value`, filled to `level`, not dimmed.
+    /// A bar gauge titled `title` showing `value`, filled to `level`, not
+    /// dimmed.
     #[must_use]
     pub fn new(title: impl Into<String>, value: impl Into<String>, level: GaugeLevel) -> Self {
         Self {
@@ -206,6 +297,10 @@ impl GaugeContent {
             value: value.into(),
             level,
             dimmed: false,
+            shape: GaugeShape::default(),
+            accent: GaugeAccent::default(),
+            glyph: None,
+            steps: None,
         }
     }
 
@@ -213,6 +308,36 @@ impl GaugeContent {
     #[must_use]
     pub fn with_dimmed(self, dimmed: bool) -> Self {
         Self { dimmed, ..self }
+    }
+
+    /// The same gauge drawn as `shape`.
+    #[must_use]
+    pub fn with_shape(self, shape: GaugeShape) -> Self {
+        Self { shape, ..self }
+    }
+
+    /// The same gauge filled with `accent`.
+    #[must_use]
+    pub fn with_accent(self, accent: GaugeAccent) -> Self {
+        Self { accent, ..self }
+    }
+
+    /// The same gauge with `glyph` (an SVG or a bitmap, scaled to fit).
+    #[must_use]
+    pub fn with_glyph(self, glyph: ImageData) -> Self {
+        Self {
+            glyph: Some(glyph),
+            ..self
+        }
+    }
+
+    /// The same gauge showing its position in a series of steps.
+    #[must_use]
+    pub fn with_steps(self, steps: GaugeSteps) -> Self {
+        Self {
+            steps: Some(steps),
+            ..self
+        }
     }
 }
 
@@ -326,6 +451,65 @@ impl CalendarLeaf {
     }
 }
 
+/// Position of the visible rows among the rows of a page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RowPosition {
+    /// Index of the first visible row, from 0.
+    pub row: u32,
+    /// Number of rows of the page, at least 1.
+    pub count: u32,
+}
+
+/// The touch strip zone of the navigation dial: the page shown, the page it
+/// leads back to and the row on display.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct PageZone {
+    /// Title of the page shown on the keys.
+    pub title: String,
+    /// Title of the page the dial leads back to, `None` on the home page.
+    pub parent: Option<String>,
+    /// Rows of the page, `None` when there is nothing to scroll.
+    pub rows: Option<RowPosition>,
+    /// Whether pressing the dial goes back to another page.
+    pub can_go_back: bool,
+}
+
+impl PageZone {
+    /// A zone titled `title`, without parent page nor rows.
+    #[must_use]
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            parent: None,
+            rows: None,
+            can_go_back: false,
+        }
+    }
+
+    /// The same zone leading back to the page titled `parent`.
+    #[must_use]
+    pub fn with_parent(self, parent: impl Into<String>) -> Self {
+        Self {
+            parent: Some(parent.into()),
+            can_go_back: true,
+            ..self
+        }
+    }
+
+    /// The same zone showing row `row` (from 0) of `count` rows.
+    #[must_use]
+    pub fn with_rows(self, row: u32, count: u32) -> Self {
+        Self {
+            rows: Some(RowPosition {
+                row,
+                count: count.max(1),
+            }),
+            ..self
+        }
+    }
+}
+
 /// Navigation state of the device, given to [`crate::Module::zone`].
 ///
 /// Most modules ignore it; it lets a module show where the user is (the
@@ -349,6 +533,9 @@ pub struct NavigationView {
     pub visible_rows: u32,
     /// Number of pages above the home page (0 on the home page).
     pub depth: usize,
+    /// Title of the page below the one shown (the home page, or the page that
+    /// opened it), `None` on the home page.
+    pub parent_title: Option<String>,
 }
 
 impl NavigationView {
@@ -364,6 +551,16 @@ impl NavigationView {
             row_count,
             visible_rows,
             depth: 0,
+            parent_title: None,
+        }
+    }
+
+    /// The same view leading back to the page titled `parent_title`.
+    #[must_use]
+    pub fn with_parent_title(self, parent_title: impl Into<String>) -> Self {
+        Self {
+            parent_title: Some(parent_title.into()),
+            ..self
         }
     }
 
@@ -454,6 +651,43 @@ mod tests {
             .with_caption("semaine 45");
         assert_eq!(face.leaf.as_ref().map(|leaf| leaf.day), Some(5));
         assert_eq!(face.caption.as_deref(), Some("semaine 45"));
+    }
+
+    #[test]
+    fn gauge_steps_are_clamped_to_the_series() {
+        let steps = GaugeSteps::new(2, 4);
+        assert_eq!((steps.current(), steps.total()), (2, 4));
+        let steps = GaugeSteps::new(9, 4);
+        assert_eq!((steps.current(), steps.total()), (4, 4));
+        let steps = GaugeSteps::new(0, 0);
+        assert_eq!((steps.current(), steps.total()), (1, 1));
+        let steps = GaugeSteps::new(5, 500);
+        assert_eq!(steps.total(), GaugeSteps::MAX_TOTAL);
+    }
+
+    #[test]
+    fn gauges_start_as_blue_bars() {
+        let gauge = GaugeContent::new("Volume", "25 %", GaugeLevel::EMPTY);
+        assert_eq!(gauge.shape, GaugeShape::Bar);
+        assert_eq!(gauge.accent, GaugeAccent::solid(Rgb(0x3B, 0xA1, 0xFF)));
+        assert!(gauge.glyph.is_none() && gauge.steps.is_none());
+        let ring = gauge
+            .with_shape(GaugeShape::Ring)
+            .with_steps(GaugeSteps::new(1, 4));
+        assert_eq!(ring.shape, GaugeShape::Ring);
+        assert!(ring.steps.is_some());
+    }
+
+    #[test]
+    fn page_zones_know_their_parent_and_rows() {
+        let home = PageZone::new("Accueil");
+        assert!(!home.can_go_back && home.parent.is_none() && home.rows.is_none());
+        let page = PageZone::new("Conteneurs")
+            .with_parent("Accueil")
+            .with_rows(1, 0);
+        assert!(page.can_go_back);
+        assert_eq!(page.parent.as_deref(), Some("Accueil"));
+        assert_eq!(page.rows, Some(RowPosition { row: 1, count: 1 }));
     }
 
     #[test]
