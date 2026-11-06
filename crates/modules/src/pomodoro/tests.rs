@@ -247,29 +247,23 @@ async fn ticks_fall_on_whole_seconds_of_the_time_left() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_dial_press_opens_the_menu_on_its_first_entry() {
+async fn the_dial_press_starts_and_pauses_the_time() {
     let mut pomodoro = Harness::new(&json!({}));
     assert_eq!(pomodoro.module.on_dial_press().await, []);
-    assert_eq!(
-        pomodoro.menu_lines(),
-        [
-            "Travail · 25:00",
-            "› Démarrer",
-            "Passer à la pause",
-            "Remise à zéro"
-        ]
+    assert_eq!(pomodoro.key().state, KeyState::Active);
+    assert!(
+        matches!(pomodoro.zone(), ZoneContent::Gauge(_)),
+        "no menu opened"
     );
-    assert_eq!(
-        pomodoro.key().state,
-        KeyState::Normal,
-        "nothing started yet"
-    );
+    pomodoro.module.on_dial_press().await;
+    assert_eq!(pomodoro.key().state, KeyState::Normal);
 }
 
 #[tokio::test(start_paused = true)]
-async fn two_dial_presses_start_then_pause_the_time() {
+async fn the_first_menu_entry_follows_the_state_of_the_time() {
     let mut pomodoro = Harness::new(&json!({}));
-    pomodoro.module.on_dial_press().await;
+    pomodoro.module.on_dial_rotate(1).await;
+    assert_eq!(pomodoro.menu_lines()[1], "› Démarrer");
     assert_eq!(pomodoro.module.on_dial_press().await, []);
     assert_eq!(pomodoro.key().state, KeyState::Active);
     assert!(
@@ -278,12 +272,12 @@ async fn two_dial_presses_start_then_pause_the_time() {
     );
 
     pomodoro.run_for(MINUTE).await;
-    pomodoro.module.on_dial_press().await;
+    pomodoro.module.on_dial_rotate(1).await;
     assert_eq!(pomodoro.menu_lines()[1], "› Mettre en pause");
     pomodoro.module.on_dial_press().await;
     assert_eq!(pomodoro.key().state, KeyState::Normal);
 
-    pomodoro.module.on_dial_press().await;
+    pomodoro.module.on_dial_rotate(1).await;
     assert_eq!(
         pomodoro.menu_lines()[1],
         "› Reprendre",
@@ -296,12 +290,12 @@ async fn the_menu_shows_the_time_left_in_the_colours_of_the_step() {
     let mut pomodoro = Harness::new(&json!({}));
     pomodoro.module.on_key_press().await;
     pomodoro.run_for(MINUTE).await;
-    pomodoro.module.on_dial_press().await;
+    pomodoro.module.on_dial_rotate(1).await;
     assert_eq!(pomodoro.menu().title(), "Travail · 24:00");
     assert_eq!(pomodoro.menu().accent(), WORK_ACCENT);
     pomodoro.module.on_dial_rotate(1).await;
     pomodoro.module.on_dial_press().await;
-    pomodoro.module.on_dial_press().await;
+    pomodoro.module.on_dial_rotate(1).await;
     assert_eq!(pomodoro.menu().title(), "Pause · 05:00");
     assert_eq!(pomodoro.menu().accent(), BREAK_ACCENT);
 }
@@ -431,10 +425,9 @@ async fn the_menu_closes_after_five_seconds_without_input() {
     assert!(matches!(pomodoro.zone(), ZoneContent::Gauge(_)));
     assert_eq!(pomodoro.run_for(MINUTE).await, 0, "the ticker stopped");
 
-    // Closed: a press opens it again.
+    // Closed: a press toggles the time again.
     assert_eq!(pomodoro.module.on_dial_press().await, []);
-    assert!(matches!(pomodoro.zone(), ZoneContent::Menu(_)));
-    assert_eq!(pomodoro.key().state, KeyState::Normal);
+    assert_eq!(pomodoro.key().state, KeyState::Active);
 }
 
 #[tokio::test(start_paused = true)]

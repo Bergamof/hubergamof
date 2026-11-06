@@ -1,9 +1,10 @@
 //! Pomodoro module: work sessions and breaks on a key, a dial and its touch
 //! strip zone.
 //!
-//! - Key press: starts or pauses the time.
-//! - Dial press or rotation: opens a menu (pause or resume, skip to the next
-//!   step, reset), browsed by rotating, confirmed by a press, closed after
+//! - Key or dial press: starts or pauses the time (dial: when the menu is
+//!   closed).
+//! - Dial rotation: opens a menu (pause or resume, skip to the next step,
+//!   reset), browsed by rotating, confirmed by a press, closed after
 //!   [`MENU_TIMEOUT`] without input.
 //! - When a step ends, the next one is prepared stopped (unless `autoStart`)
 //!   and the key asks for attention; a silent desktop notification and a
@@ -83,8 +84,9 @@ fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: POMODORO_KIND.into(),
         name: "Pomodoro".into(),
-        description: "Sessions de travail et pauses. Touche : lance ou met en pause. \
-                      Molette : appuyer ou tourner ouvre le menu (pause, passer, remise à zéro)."
+        description: "Sessions de travail et pauses. Touche et clic de la molette : \
+                      lancent ou mettent en pause. Tourner la molette ouvre le menu \
+                      (pause, passer, remise à zéro)."
             .into(),
         capabilities: ModuleCapabilities {
             key: true,
@@ -299,8 +301,7 @@ impl Module for Pomodoro {
             self.run_menu_entry(menu.selected());
             Vec::new()
         } else {
-            self.menu = Some(Menu::open(self.now()));
-            self.sync_ticker();
+            self.toggle();
             Vec::new()
         }
     }
