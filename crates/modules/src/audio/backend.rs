@@ -240,10 +240,11 @@ impl AudioError {
     }
 }
 
-/// `pactl` before 16 refuses `--format=json` (its messages are untranslated:
-/// the backend forces `LC_ALL=C`).
+/// `pactl` before 16 refuses `--format=json`: glibc's `getopt` says
+/// "unrecognized option '--format=json'", musl's "unrecognized option:
+/// format". The messages are untranslated: the backend forces `LC_ALL=C`.
 fn rejects_json_format(stderr: &str) -> bool {
-    stderr.contains("--format") && stderr.contains("option")
+    stderr.contains("unrecognized option") && stderr.contains("format")
 }
 
 /// Notifications of changes made on the audio server, by anyone.
@@ -275,6 +276,67 @@ pub trait AudioBackend: Send + Sync + fmt::Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spawn_error(kind: std::io::ErrorKind) -> AudioError {
+        AudioError::Spawn {
+            program: "pactl".into(),
+            source: kind.into(),
+        }
+    }
+
+    fn failed(stderr: &str) -> AudioError {
+        AudioError::Failed {
+            command: "--format=json info".into(),
+            status: "exit status: 1".into(),
+            stderr: stderr.into(),
+        }
+    }
+
+    #[test]
+    fn only_what_the_user_can_fix_is_told_apart() {
+        use std::io::ErrorKind;
+        assert_eq!(
+            spawn_error(ErrorKind::NotFound).fault(),
+            AudioFault::ToolMissing
+        );
+        for old in [
+            "pactl: unrecognized option '--format=json'",
+            "pactl: unrecognized option: format",
+        ] {
+            assert_eq!(failed(old).fault(), AudioFault::ToolTooOld, "{old}");
+        }
+        let others = [
+            spawn_error(ErrorKind::PermissionDenied),
+            failed("Connection failure: Connection refused"),
+            failed("pactl: invalid option -- 'x'"),
+            failed("Failure: unrecognized option in the configuration"),
+            AudioError::Timeout {
+                command: "info".into(),
+                timeout: Duration::from_secs(5),
+            },
+            AudioError::InvalidOutput {
+                command: "info".into(),
+                reason: "not json".into(),
+            },
+            AudioError::Panicked,
+            AudioError::Unavailable,
+        ];
+        for error in others {
+            assert_eq!(error.fault(), AudioFault::Unreachable, "{error}");
+        }
+    }
+
+    #[test]
+    fn only_a_fixable_fault_has_a_remedy() {
+        assert!(
+            AudioFault::ToolMissing
+                .remedy()
+                .unwrap()
+                .contains("pulseaudio-utils")
+        );
+        assert!(AudioFault::ToolTooOld.remedy().unwrap().contains("16"));
+        assert_eq!(AudioFault::Unreachable.remedy(), None);
+    }
 
     fn volume(sink: &str, level: u32) -> AudioChange {
         AudioChange::SinkVolume {

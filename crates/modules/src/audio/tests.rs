@@ -619,15 +619,27 @@ async fn the_tasks_stop_with_the_instance() {
     assert_eq!(audio.snapshot_reads(), reads);
 }
 
-#[test]
-fn the_zone_names_what_the_user_can_fix() {
-    assert_eq!(unavailable_text(AudioFault::ToolMissing), "pactl absent");
-    assert_eq!(
-        unavailable_text(AudioFault::ToolTooOld),
-        "pactl trop ancien"
-    );
-    assert_eq!(
-        unavailable_text(AudioFault::Unreachable),
-        "Audio indisponible"
-    );
+#[tokio::test(start_paused = true)]
+async fn the_zone_tells_a_missing_or_old_pactl_and_recovers() {
+    let missing: fn() -> AudioError = || AudioError::Spawn {
+        program: "pactl".into(),
+        source: std::io::ErrorKind::NotFound.into(),
+    };
+    let too_old: fn() -> AudioError = || AudioError::Failed {
+        command: "--format=json info".into(),
+        status: "exit status: 1".into(),
+        stderr: "pactl: unrecognized option '--format=json'".into(),
+    };
+    for (make, text) in [(missing, "pactl absent"), (too_old, "pactl trop ancien")] {
+        let audio = SimulatedAudio::demo();
+        audio.fail_with(make);
+        let mut harness = Harness::on(audio, &json!({})).await;
+        assert_eq!(harness.zone(), ZoneContent::Lines(vec![text.into()]));
+
+        // Installed (or upgraded) since: the next attempt shows the gauge.
+        harness.audio.set_available(true);
+        harness.module.on_dial_rotate(1).await;
+        harness.settle().await;
+        assert_eq!(harness.gauge().value, "40 %");
+    }
 }

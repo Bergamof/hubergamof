@@ -82,10 +82,11 @@ check_pactl() {
 		warn "pactl introuvable : le module Audio sera indisponible. Ubuntu/Debian : sudo apt install pulseaudio-utils ; Arch : sudo pacman -S libpulse."
 		return
 	fi
-	version="$(LC_ALL=C pactl --version 2>/dev/null | head -n 1)"
+	# `|| version=` : un pactl cassé ne doit pas arrêter l'installation (set -e, pipefail).
+	version="$(LC_ALL=C pactl --version 2>/dev/null | head -n 1)" || version=""
 	major="${version##* }"
 	major="${major%%.*}"
-	if [[ ! "$major" =~ ^[0-9]+$ ]] || ((major < PACTL_MIN_MAJOR)); then
+	if [[ ! "$major" =~ ^[0-9]+$ ]] || ((10#$major < PACTL_MIN_MAJOR)); then
 		warn "pactl ${PACTL_MIN_MAJOR} ou plus est requis par le module Audio (trouvé : « ${version:-version illisible} »)."
 	fi
 }
