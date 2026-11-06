@@ -29,7 +29,10 @@ const EMPTY_ITEM: &str = "none";
 /// Prefix of the id of an item standing for a notification.
 const ITEM_PREFIX: &str = "n";
 
-/// Label of the page and of its placeholder item.
+/// Name of the module: label of its key and title of its page.
+const NAME: &str = "Notifications";
+
+/// Label of the placeholder item of an empty list.
 const EMPTY_LABEL: &str = "Aucune notification";
 
 /// Most unread notifications the badge counts exactly.
@@ -56,7 +59,7 @@ impl ModuleFactory for InboxFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor {
             kind: INBOX_KIND.into(),
-            name: "Notifications".into(),
+            name: NAME.into(),
             description: "Cloche avec le nombre de notifications non lues ; appuyer les liste, \
                           en choisir une l'affiche de nouveau sur la bande tactile."
                 .into(),
@@ -93,10 +96,7 @@ pub struct Inbox {
 #[async_trait]
 impl Module for Inbox {
     fn key(&self) -> KeyContent {
-        KeyContent {
-            image: Some(bell_with_badge(self.unread.count())),
-            ..KeyContent::default()
-        }
+        KeyContent::with_icon(&bell_with_badge(self.unread.count()), NAME)
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
@@ -120,7 +120,7 @@ impl Module for Inbox {
                 });
             }
             PageContent {
-                title: "Notifications".into(),
+                title: NAME.into(),
                 items,
             }
         })
@@ -213,7 +213,7 @@ mod tests {
     fn the_bell_alone_when_everything_is_read() {
         let key = inbox_with(&[]).key();
         assert_eq!(icon_source(&key), ICON_SVG);
-        assert_eq!(key.label, None);
+        assert_eq!(key.label.as_deref(), Some(NAME));
     }
 
     #[test]
