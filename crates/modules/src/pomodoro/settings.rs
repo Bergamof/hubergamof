@@ -11,6 +11,8 @@ const SHORT_BREAK_MINUTES_KEY: &str = "shortBreakMinutes";
 const LONG_BREAK_MINUTES_KEY: &str = "longBreakMinutes";
 const LONG_BREAK_EVERY_KEY: &str = "longBreakEvery";
 const AUTO_START_KEY: &str = "autoStart";
+const NOTIFICATION_ENABLED_KEY: &str = "notificationEnabled";
+const NOTIFICATION_SECONDS_KEY: &str = "notificationSeconds";
 
 /// Allowed length of a work session, in minutes.
 pub const WORK_MINUTES: RangeInclusive<u32> = 1..=120;
@@ -20,8 +22,12 @@ pub const SHORT_BREAK_MINUTES: RangeInclusive<u32> = 1..=60;
 pub const LONG_BREAK_MINUTES: RangeInclusive<u32> = 1..=120;
 /// Allowed number of pomodoros between two long breaks.
 pub const LONG_BREAK_EVERY: RangeInclusive<u32> = 1..=12;
+/// Allowed time a step-end notification stays on the strip, in seconds;
+/// 0 keeps it until it is dismissed.
+pub const NOTIFICATION_SECONDS: RangeInclusive<u32> = 0..=3600;
 
 const MINUTE_UNIT: &str = "min";
+const SECOND_UNIT: &str = "s";
 
 /// Settings of a pomodoro instance, as stored in the configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -38,6 +44,11 @@ pub struct PomodoroSettings {
     /// Starts the next step as soon as one ends, instead of waiting for a
     /// press.
     pub auto_start: bool,
+    /// Shows a notification on the touch strip when a step ends.
+    pub notification_enabled: bool,
+    /// Seconds the notification stays on the strip; 0 keeps it until it is
+    /// dismissed.
+    pub notification_seconds: u32,
 }
 
 impl Default for PomodoroSettings {
@@ -48,6 +59,8 @@ impl Default for PomodoroSettings {
             long_break_minutes: 15,
             long_break_every: 4,
             auto_start: false,
+            notification_enabled: true,
+            notification_seconds: 10,
         }
     }
 }
@@ -61,6 +74,27 @@ impl PomodoroSettings {
             short_break: minutes(self.short_break_minutes),
             long_break: minutes(self.long_break_minutes),
             long_break_every: self.long_break_every.max(1),
+        }
+    }
+}
+
+/// How the end of a step is announced on the touch strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StripNotice {
+    /// Whether it is announced at all.
+    pub enabled: bool,
+    /// How long it stays, `None` until dismissed.
+    pub timeout: Option<Duration>,
+}
+
+impl PomodoroSettings {
+    /// How the end of a step is announced on the touch strip.
+    #[must_use]
+    pub fn strip_notice(&self) -> StripNotice {
+        StripNotice {
+            enabled: self.notification_enabled,
+            timeout: (self.notification_seconds > 0)
+                .then(|| Duration::from_secs(u64::from(self.notification_seconds))),
         }
     }
 }
@@ -127,6 +161,28 @@ pub fn fields() -> Vec<SettingField> {
                 default: defaults.auto_start,
             },
         },
+        SettingField {
+            key: NOTIFICATION_ENABLED_KEY.into(),
+            label: "Notification sur la bande tactile".into(),
+            help: Some("Affiche un message sur la bande tactile à la fin de chaque étape.".into()),
+            kind: SettingKind::Boolean {
+                default: defaults.notification_enabled,
+            },
+        },
+        SettingField {
+            key: NOTIFICATION_SECONDS_KEY.into(),
+            label: "Durée de la notification".into(),
+            help: Some(
+                "0 : la notification reste affichée jusqu'à ce qu'on la ferme (toucher la bande, \
+                 ou appuyer sur la molette de navigation)."
+                    .into(),
+            ),
+            kind: integer(
+                defaults.notification_seconds,
+                &NOTIFICATION_SECONDS,
+                Some(SECOND_UNIT),
+            ),
+        },
     ]
 }
 
@@ -169,6 +225,26 @@ mod tests {
     }
 
     #[test]
+    fn the_notice_follows_the_settings_and_zero_means_permanent() {
+        let notice = |settings| PomodoroSettings::parse(&settings).unwrap().strip_notice();
+        assert_eq!(
+            notice(json!({})),
+            StripNotice {
+                enabled: true,
+                timeout: Some(Duration::from_secs(10))
+            }
+        );
+        assert_eq!(
+            notice(json!({ "notificationSeconds": 0 })),
+            StripNotice {
+                enabled: true,
+                timeout: None
+            }
+        );
+        assert!(!notice(json!({ "notificationEnabled": false })).enabled);
+    }
+
+    #[test]
     fn out_of_bounds_values_are_rejected() {
         for settings in [
             json!({ "workMinutes": 0 }),
@@ -176,6 +252,9 @@ mod tests {
             json!({ "longBreakMinutes": 121 }),
             json!({ "longBreakEvery": 0 }),
             json!({ "autoStart": "yes" }),
+            json!({ "notificationSeconds": 3601 }),
+            json!({ "notificationSeconds": -1 }),
+            json!({ "notificationEnabled": 1 }),
             json!({ "workMinutes": -5 }),
         ] {
             assert!(
@@ -199,7 +278,9 @@ mod tests {
                 SHORT_BREAK_MINUTES_KEY,
                 LONG_BREAK_MINUTES_KEY,
                 LONG_BREAK_EVERY_KEY,
-                AUTO_START_KEY
+                AUTO_START_KEY,
+                NOTIFICATION_ENABLED_KEY,
+                NOTIFICATION_SECONDS_KEY
             ]
         );
         assert_eq!(

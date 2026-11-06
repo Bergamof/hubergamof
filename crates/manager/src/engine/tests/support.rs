@@ -9,7 +9,7 @@ use hubergamof_module_api::{
     ChoiceOption, ClockFace, Command, EventSender, Feedback, GaugeContent, ItemId, KeyContent,
     KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle,
-    SettingField, SettingKind, ZoneContent, parse_settings,
+    SettingField, SettingKind, UnreadNotifications, ZoneContent, parse_settings,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{
@@ -48,6 +48,8 @@ pub(super) const SLOW_HANDLER: Duration = Duration::from_secs(10);
 pub(super) struct Probe {
     pub(super) redraw: Arc<Mutex<Option<RedrawHandle>>>,
     pub(super) events: Arc<Mutex<Option<EventSender>>>,
+    /// Unread notifications, as given to the last list instance.
+    pub(super) unread: Arc<Mutex<Option<UnreadNotifications>>>,
     /// Overrides the key label of every instance.
     pub(super) key_label: Arc<Mutex<Option<String>>>,
     /// Replaces the zone of fragile instances.
@@ -202,6 +204,7 @@ impl ModuleFactory for ListFactory {
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
         *self.0.redraw.lock().unwrap() = Some(ctx.redraw().clone());
         *self.0.events.lock().unwrap() = Some(ctx.events().clone());
+        *self.0.unread.lock().unwrap() = Some(ctx.unread_notifications().clone());
         Ok(Box::new(List {
             settings: parse_settings(settings)?,
             presses: 0,

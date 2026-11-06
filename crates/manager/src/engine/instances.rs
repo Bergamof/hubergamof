@@ -16,7 +16,7 @@ use futures_util::FutureExt as _;
 use hubergamof_module_api::{
     Command, EventSender, HANDLER_BUDGET, ItemId, KeyContent, Module, ModuleContext, ModuleError,
     ModuleEvent, ModuleInstanceId, ModuleKind, NavigationView, PageContent, PageId, RedrawHandle,
-    TaskScope, ZoneContent,
+    TaskScope, UnreadNotifications, ZoneContent,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -116,6 +116,7 @@ pub(crate) struct Instances {
     registry: Arc<ModuleRegistry>,
     redraw: RedrawHandle,
     events: mpsc::Sender<RoutedEvent>,
+    unread: UnreadNotifications,
     /// Whether the event queue was found full and not sent to since: the
     /// overflow is logged once, when it starts.
     queue_full: Arc<AtomicBool>,
@@ -130,11 +131,13 @@ impl Instances {
         registry: Arc<ModuleRegistry>,
         redraw: RedrawHandle,
         events: mpsc::Sender<RoutedEvent>,
+        unread: UnreadNotifications,
     ) -> Self {
         Self {
             registry,
             redraw,
             events,
+            unread,
             queue_full: Arc::default(),
             live: BTreeMap::new(),
             failures: Vec::new(),
@@ -169,6 +172,12 @@ impl Instances {
     /// Key of the home page of instance `id`.
     pub(crate) fn key(&mut self, id: &ModuleInstanceId) -> Option<KeyContent> {
         self.inspect(id, "key", |module| Some(module.key()))
+    }
+
+    /// Icon of the module kind of instance `id`, if it has one.
+    pub(crate) fn icon(&self, id: &ModuleInstanceId) -> Option<hubergamof_module_api::ImageData> {
+        let instance = self.live.get(id)?;
+        self.registry.get(&instance.kind)?.icon()
     }
 
     /// Page `page` of instance `id`, if it exists.
@@ -327,7 +336,8 @@ impl Instances {
             self.redraw.clone(),
             self.event_sender(&config.id, alive),
             tasks.spawner(),
-        );
+        )
+        .with_unread(self.unread.clone());
         match catch_unwind(AssertUnwindSafe(|| factory.create(ctx, &config.settings))) {
             Ok(Ok(module)) => Some(module),
             Ok(Err(error)) => {
@@ -482,7 +492,12 @@ mod tests {
         registry.register(Arc::new(CounterFactory(probe.clone())));
         let (events, received) = mpsc::channel(8);
         (
-            Instances::new(Arc::new(registry), RedrawHandle::noop(), events),
+            Instances::new(
+                Arc::new(registry),
+                RedrawHandle::noop(),
+                events,
+                UnreadNotifications::none(),
+            ),
             received,
         )
     }

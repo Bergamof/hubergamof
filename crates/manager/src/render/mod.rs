@@ -11,6 +11,7 @@
 
 mod clock;
 mod digest;
+mod notification;
 mod source;
 mod text;
 
@@ -29,6 +30,7 @@ use image::{ImageFormat, Rgba, RgbaImage};
 use resvg::usvg;
 use thiserror::Error;
 
+pub use notification::{NotificationImage, NotificationLook};
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
@@ -304,6 +306,8 @@ pub struct Renderer {
     digests: DigestMemo,
     /// Rasterised feedback marks by outcome and side.
     marks: Mutex<HashMap<(Feedback, u32), Arc<RgbaImage>>>,
+    /// Text of the notification last drawn (see `notification`).
+    notification_text: Mutex<Option<notification::TextLayer>>,
 }
 
 impl Renderer {
@@ -332,6 +336,7 @@ impl Renderer {
             cache: Mutex::new(SegmentedLru::new(reused, probation)),
             digests: DigestMemo::new(reused.saturating_add(probation.get())),
             marks: Mutex::new(HashMap::new()),
+            notification_text: Mutex::new(None),
         })
     }
 

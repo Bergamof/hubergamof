@@ -146,6 +146,7 @@ mod content;
 mod context;
 mod ids;
 mod module;
+mod notification;
 mod paths;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -159,4 +160,8 @@ pub use content::{
 pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
 pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};
 pub use module::{HANDLER_BUDGET, Module, ModuleError, ModuleFactory, parse_settings};
+pub use notification::{
+    MAX_NOTIFICATION_CHARS, Notification, NotificationId, Rgb, UnreadNotification,
+    UnreadNotifications,
+};
 pub use paths::{expand_home, is_setting_path};

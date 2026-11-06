@@ -44,6 +44,8 @@ struct Harness {
     notifier: Arc<FakeNotifier>,
     clock: Arc<SimulatedClock>,
     scope: TaskScope,
+    /// Commands returned by the events handled so far.
+    commands: Vec<Command>,
 }
 
 fn factory(notifier: Arc<FakeNotifier>, clock: Arc<SimulatedClock>) -> PomodoroFactory {
@@ -70,6 +72,7 @@ impl Harness {
             notifier,
             clock,
             scope,
+            commands: Vec::new(),
         }
     }
 
@@ -81,7 +84,8 @@ impl Harness {
         }
         let mut count = 0;
         while let Ok(event) = self.events.try_recv() {
-            assert_eq!(self.module.on_event(event).await, []);
+            let commands = self.module.on_event(event).await;
+            self.commands.extend(commands);
             count += 1;
         }
         for _ in 0..3 {
@@ -143,7 +147,9 @@ fn default_settings_are_the_classic_cycle() {
             "shortBreakMinutes": 5,
             "longBreakMinutes": 15,
             "longBreakEvery": 4,
-            "autoStart": false
+            "autoStart": false,
+            "notificationEnabled": true,
+            "notificationSeconds": 10
         })
     );
     let capabilities = factory.descriptor().capabilities;
@@ -545,5 +551,78 @@ fn notifications_name_the_step_to_start() {
             summary: "Pause longue !".into(),
             body: "Pomodoro 4/4 terminé. La pause longue de 15 min commence.".into(),
         }
+    );
+}
+
+fn strip_notifications(pomodoro: &Harness) -> Vec<StripNotification> {
+    pomodoro
+        .commands
+        .iter()
+        .map(|command| match command {
+            Command::Notify(notification) => notification.clone(),
+            other => panic!("unexpected command {other:?}"),
+        })
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_end_of_a_step_notifies_the_strip_for_the_configured_time() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "notificationSeconds": 7 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+
+    let notifications = strip_notifications(&pomodoro);
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(
+        notifications[0].message,
+        "Pause ! Pomodoro 1/4 terminé. Appuyez pour lancer la pause de 5 min."
+    );
+    assert_eq!(notifications[0].background, BREAK_BACKGROUND);
+    assert_eq!(notifications[0].timeout, Some(Duration::from_secs(7)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn zero_seconds_makes_the_strip_notification_permanent() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "notificationSeconds": 0 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(strip_notifications(&pomodoro)[0].timeout, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_strip_notification_can_be_disabled_but_not_the_desktop_one() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "notificationEnabled": false }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(pomodoro.commands, []);
+    assert_eq!(pomodoro.notifier.sent().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn work_starting_is_announced_in_red_and_a_break_in_green() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "shortBreakMinutes": 1 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    let backgrounds: Vec<_> = strip_notifications(&pomodoro)
+        .iter()
+        .map(|notification| notification.background)
+        .collect();
+    assert_eq!(backgrounds, [BREAK_BACKGROUND, WORK_BACKGROUND]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_settings_change_the_next_strip_notification() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1 }));
+    pomodoro
+        .module
+        .update_settings(&json!({ "workMinutes": 1, "notificationSeconds": 3 }))
+        .unwrap();
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(
+        strip_notifications(&pomodoro)[0].timeout,
+        Some(Duration::from_secs(3))
     );
 }

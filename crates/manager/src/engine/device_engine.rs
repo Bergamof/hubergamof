@@ -15,12 +15,16 @@ use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 
 use super::feedback::{Marks, Surface};
-use super::frame::{DialFace, Frame, FrameKey, KeyFace, KeyTarget, ZoneContentFace, ZoneFace};
+use super::frame::{
+    DialFace, Frame, FrameKey, KeyFace, KeyTarget, NotificationFace, StripOverlay, ZoneContentFace,
+    ZoneFace,
+};
 use super::handle::{REQUEST_CAPACITY, Request};
 use super::instances::{Call, Instances, Outcome, RoutedEvent};
 use super::layout::KeyGrid;
 use super::live::{LiveSnapshot, PageSummary};
 use super::navigation::Navigation;
+use super::notifications::NotificationCenter;
 use super::painter::Painter;
 use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
@@ -37,6 +41,43 @@ pub(crate) const MODULE_EVENT_CAPACITY: usize = 256;
 /// Most inputs and module events already queued that are handled together,
 /// before a single redraw.
 const MAX_BATCHED_WAKES: usize = 32;
+
+/// How long a key must be held for its label to show on the strip instead of
+/// its action running when it is released.
+pub(crate) const HOLD_THRESHOLD: Duration = Duration::from_millis(400);
+
+/// A key being held down, and what releasing it does.
+struct HeldKey {
+    key: u8,
+    /// What the key showed when it was pressed.
+    target: KeyTarget,
+    label: Option<String>,
+    since: Instant,
+    /// Whether it was held long enough for its label to show: releasing it
+    /// then runs no action. Never set for a key without a label, which has
+    /// nothing to show and keeps acting on release however long it is held.
+    long: bool,
+}
+
+impl HeldKey {
+    fn long_at(&self) -> Instant {
+        self.since + HOLD_THRESHOLD
+    }
+
+    /// When the label is due, `None` once it is or for a key without one.
+    fn label_due(&self) -> Option<Instant> {
+        (!self.long && self.label.is_some()).then(|| self.long_at())
+    }
+
+    /// Whether releasing the key at `now` is the end of a hold, not a press.
+    fn is_hold(&self, now: Instant) -> bool {
+        self.label.is_some() && (self.long || now >= self.long_at())
+    }
+
+    fn shown_label(&self) -> Option<&str> {
+        self.label.as_deref().filter(|_| self.long)
+    }
+}
 
 /// Page shown on the keys, resolved against the live instances.
 enum PageModel {
@@ -62,6 +103,10 @@ enum Wake {
     ModuleEvent(RoutedEvent),
     Redraw,
     FeedbackExpired,
+    /// The notification on the strip moves a step or may have expired.
+    NotificationStep,
+    /// A key has been held long enough to show its label.
+    HoldElapsed,
     RequestsClosed,
     Disconnected,
 }
@@ -79,6 +124,8 @@ pub struct DeviceEngine {
     zone_count: usize,
     painter: Painter,
     marks: Marks,
+    notifications: NotificationCenter,
+    held: Option<HeldKey>,
     /// Brightness the device last accepted, `None` after a failure: applied
     /// again with the next configuration.
     applied_brightness: Option<u8>,
@@ -125,10 +172,14 @@ impl DeviceEngine {
         let redraw = Arc::new(Notify::new());
         let notify = Arc::clone(&redraw);
         let (events_tx, events) = mpsc::channel(MODULE_EVENT_CAPACITY);
+        let zone_count = StripLayout::for_device(deck.info())
+            .map_or(0, |layout| usize::from(layout.zone_count()));
+        let notifications = NotificationCenter::new(zone_count > 0);
         let mut instances = Instances::new(
             Arc::clone(&services.registry),
             RedrawHandle::new(move || notify.notify_one()),
             events_tx,
+            notifications.handle(),
         );
         instances.sync(&loaded.config.modules);
 
@@ -138,8 +189,7 @@ impl DeviceEngine {
         let handle = EngineHandle::new(deck.info().clone(), requests_tx, live_rx, config_rx);
         let mut engine = Self {
             grid: KeyGrid::new(&deck.info().capabilities),
-            zone_count: StripLayout::for_device(deck.info())
-                .map_or(0, |layout| usize::from(layout.zone_count())),
+            zone_count,
             painter: Painter::new(deck.as_ref()),
             deck,
             services,
@@ -147,6 +197,8 @@ impl DeviceEngine {
             instances,
             nav: Navigation::default(),
             marks: Marks::default(),
+            notifications,
+            held: None,
             applied_brightness,
             last_frame: None,
             inputs,
@@ -170,7 +222,7 @@ impl DeviceEngine {
                     break;
                 }
                 Wake::Request(Request::Input(event, reply)) => {
-                    self.handle_input(event).await;
+                    self.handle_simulated_input(event).await;
                     let _ = reply.send(self.refresh().await);
                 }
                 Wake::Request(Request::ApplyConfig(config, reply)) => {
@@ -193,6 +245,16 @@ impl DeviceEngine {
                     self.refresh_or_log().await;
                 }
                 Wake::Redraw => self.refresh_or_log().await,
+                Wake::NotificationStep => {
+                    self.notifications.step(Instant::now());
+                    self.refresh_or_log().await;
+                }
+                Wake::HoldElapsed => {
+                    if let Some(held) = &mut self.held {
+                        held.long = true;
+                    }
+                    self.refresh_or_log().await;
+                }
                 Wake::FeedbackExpired => {
                     self.marks.expire(Instant::now());
                     self.refresh_or_log().await;
@@ -223,6 +285,10 @@ impl DeviceEngine {
                 Some(routed) = self.events.recv() => Some(Wake::ModuleEvent(routed)),
                 () = self.redraw.notified() => Some(Wake::Redraw),
                 () = sleep_until(self.marks.next_expiry()) => Some(Wake::FeedbackExpired),
+                () = sleep_until(self.notifications.next_step()) => Some(Wake::NotificationStep),
+                () = sleep_until(self.held.as_ref().and_then(HeldKey::label_due)) => {
+                    Some(Wake::HoldElapsed)
+                }
             };
             if let Some(wake) = wake {
                 return wake;
@@ -263,18 +329,63 @@ impl DeviceEngine {
 
     async fn handle_input(&mut self, event: InputEvent) {
         match event {
-            InputEvent::KeyDown(index) => self.press_key(index).await,
+            InputEvent::KeyDown(index) => self.hold_key(index),
+            InputEvent::KeyUp(index) => self.release_key(index).await,
             InputEvent::DialRotate { index, ticks } => {
                 self.dial_input(index, Call::DialRotate(ticks)).await;
             }
             InputEvent::DialDown(index) => self.dial_input(index, Call::DialPress).await,
-            // Releases act on nothing; touch strip gestures are not used yet.
-            InputEvent::KeyUp(_)
-            | InputEvent::DialUp(_)
-            | InputEvent::TouchTap { .. }
-            | InputEvent::TouchSwipe { .. }
-            | InputEvent::Disconnected => {}
+            InputEvent::TouchTap { .. } => self.tap_strip(),
+            // Releases of dials act on nothing; swipes are not used yet.
+            InputEvent::DialUp(_) | InputEvent::TouchSwipe { .. } | InputEvent::Disconnected => {}
         }
+    }
+
+    /// A simulated input of the web UI: a key press is complete (pressed
+    /// and released at once), as nothing holds a key there.
+    async fn handle_simulated_input(&mut self, event: InputEvent) {
+        if let InputEvent::KeyDown(index) = event {
+            self.press_key(index).await;
+        } else {
+            self.handle_input(event).await;
+        }
+    }
+
+    /// Starts holding `key`: its action waits for the release, and is
+    /// dropped if the key is held until its label shows.
+    fn hold_key(&mut self, key: u8) {
+        let Some(frame) = &self.last_frame else {
+            return;
+        };
+        let Some(target) = frame.target(key).cloned() else {
+            return;
+        };
+        let label = frame
+            .keys
+            .get(usize::from(key))
+            .and_then(|key| key.face.label.as_deref())
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned);
+        self.held = Some(HeldKey {
+            key,
+            target,
+            label,
+            since: Instant::now(),
+            long: false,
+        });
+    }
+
+    /// Releases `key`: runs its action unless it was held long enough for
+    /// the label to show.
+    async fn release_key(&mut self, key: u8) {
+        let Some(held) = self.held.take_if(|held| held.key == key) else {
+            return;
+        };
+        if held.is_hold(Instant::now()) {
+            return;
+        }
+        self.press_target(held.target).await;
     }
 
     /// Hands the press to what the key shows on the last drawn frame, even
@@ -288,6 +399,10 @@ impl DeviceEngine {
         else {
             return;
         };
+        self.press_target(target).await;
+    }
+
+    async fn press_target(&mut self, target: KeyTarget) {
         let call = match &target {
             KeyTarget::Home(_) => Call::KeyPress,
             KeyTarget::Item { page, item, .. } => Call::ItemPress(page.clone(), item.clone()),
@@ -298,6 +413,14 @@ impl DeviceEngine {
     }
 
     async fn dial_input(&mut self, dial: u8, call: Call) {
+        if self.notifications.shown().is_some() {
+            // Under a notification only the navigation dial acts: its press
+            // removes the notification, leaving it unread.
+            if matches!(call, Call::DialPress) && self.is_navigation_dial(dial) {
+                self.notifications.dismiss(Instant::now());
+            }
+            return;
+        }
         let Some(module) = self.config.dials.get(usize::from(dial)).cloned().flatten() else {
             return;
         };
@@ -307,6 +430,30 @@ impl DeviceEngine {
             Vec::new()
         };
         self.run_handler(&module, call, surfaces).await;
+    }
+
+    /// A tap on the strip reads the notification on it, unless the label of a
+    /// held key covers it: it is not what the user sees.
+    fn tap_strip(&mut self) {
+        let covered = self
+            .held
+            .as_ref()
+            .is_some_and(|held| held.shown_label().is_some());
+        if !covered {
+            self.notifications.read(Instant::now());
+        }
+    }
+
+    fn is_navigation_dial(&self, dial: u8) -> bool {
+        let Some(module) = self.config.dials.get(usize::from(dial)).cloned().flatten() else {
+            return false;
+        };
+        self.config
+            .modules
+            .iter()
+            .find(|instance| instance.id == module)
+            .and_then(|instance| self.services.registry.get(&instance.kind))
+            .is_some_and(|factory| factory.dismisses_notifications())
     }
 
     async fn handle_event(&mut self, routed: RoutedEvent) {
@@ -445,6 +592,14 @@ impl DeviceEngine {
                     let named = self.named_surfaces(source, surface);
                     self.show_feedback(&named, feedback);
                 }
+                Command::Notify(notification) => {
+                    let icon = self.instances.icon(source);
+                    self.notifications
+                        .notify(source.clone(), icon, &notification, Instant::now());
+                }
+                Command::ShowNotification(id) => {
+                    self.notifications.show_again(id, Instant::now());
+                }
                 // Commands added to the API after this version of the host.
                 unknown => {
                     tracing::warn!(module = %source, command = ?unknown, "unsupported command");
@@ -510,6 +665,9 @@ impl DeviceEngine {
             .painter
             .paint(self.deck.as_ref(), &self.services.renderer, &frame)
             .await?;
+        if let Some(scrolls) = self.painter.take_scrolls() {
+            self.notifications.set_scrolls(scrolls);
+        }
         if self.last_frame.as_ref() == Some(&frame) {
             return Ok(());
         }
@@ -557,6 +715,20 @@ impl DeviceEngine {
                 self.show_feedback(&surfaces, Feedback::Alert);
             }
         }
+    }
+
+    /// What covers the touch strip: the label of a held key, else the
+    /// notification.
+    fn strip_overlay(&self) -> Option<StripOverlay> {
+        if let Some(label) = self.held.as_ref().and_then(HeldKey::shown_label) {
+            return Some(StripOverlay::HeldLabel(label.to_owned()));
+        }
+        let shown = self.notifications.shown()?;
+        Some(StripOverlay::Notification(NotificationFace::new(
+            &shown.notification,
+            shown.timeout,
+            shown.elapsed(Instant::now()),
+        )))
     }
 
     /// Keeps the visible row within the page, which may have shrunk since
@@ -634,6 +806,7 @@ impl DeviceEngine {
                 row_count,
             },
             keys,
+            overlay: self.strip_overlay(),
         }
     }
 
