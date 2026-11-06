@@ -67,6 +67,8 @@ pub struct SimulatedAudio {
     state: Mutex<AudioSnapshot>,
     notices: broadcast::Sender<Notice>,
     available: AtomicBool,
+    /// Error given while unavailable (default: [`AudioError::Unavailable`]).
+    failure: Mutex<Option<fn() -> AudioError>>,
     applied: History<AudioChange>,
     reads: History<ReadScope>,
     subscriptions: AtomicUsize,
@@ -81,6 +83,7 @@ impl SimulatedAudio {
             state: Mutex::new(snapshot),
             notices: broadcast::channel(CHANGES_CAPACITY).0,
             available: AtomicBool::new(true),
+            failure: Mutex::new(None),
             applied: History::new(),
             reads: History::new(),
             subscriptions: AtomicUsize::new(0),
@@ -127,7 +130,7 @@ impl SimulatedAudio {
         if self.available.load(Ordering::SeqCst) {
             Ok(())
         } else {
-            Err(AudioError::Unavailable)
+            Err(lock(&self.failure).map_or(AudioError::Unavailable, |make| make()))
         }
     }
 
@@ -211,9 +214,19 @@ impl SimulatedAudio {
     /// ends the subscriptions.
     pub(crate) fn set_available(&self, available: bool) {
         self.available.store(available, Ordering::SeqCst);
-        if !available {
+        if available {
+            *lock(&self.failure) = None;
+        } else {
             self.notify(Notice::Disconnected);
         }
+    }
+
+    /// Like `set_available(false)`, but every call fails with the error
+    /// `make` builds (what a missing or old `pactl` would give).
+    #[cfg(test)]
+    pub(crate) fn fail_with(&self, make: fn() -> AudioError) {
+        *lock(&self.failure) = Some(make);
+        self.set_available(false);
     }
 }
 

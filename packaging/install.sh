@@ -92,6 +92,7 @@ main() {
 	parse_common_options "$@"
 	refuse_root
 	require_user_systemd
+	check_pactl
 	install_binary
 	install_unit
 	install_udev_rule

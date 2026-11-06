@@ -9,6 +9,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Module Audio sur Ubuntu : `pactl` n'y est pas installé par défaut (paquet `pulseaudio-utils`), contrairement à ce que disait le README. La bande affiche désormais « pactl absent » ou « pactl trop ancien » (version < 16) au lieu de « Audio indisponible », le journal indique le paquet à installer, `make install` avertit si `pactl` manque ou est trop ancien, et le README et le CLAUDE.md corrigent le prérequis (`wpctl`, inutilisé, retiré).
+
 - Build sur une machine neuve avec un Node 24 antérieur à 24.12 : le Corepack livré ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`). `engines.node` passe à `>=24.12.0`, `make` vérifie la version de Node avant d'installer l'UI (`make check-node`) avec un message de remède, et le README décrit le dépannage (cache Corepack à effacer, réseau).
 
 - Tests d'intégration instables à chaque changement de minute : l'heure murale du module Horloge est désormais injectée (`BuiltinServices::wall_clock`), figée dans `BuiltinServices::simulated()` ; `--demo` garde l'heure réelle.

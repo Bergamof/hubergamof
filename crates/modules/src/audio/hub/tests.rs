@@ -364,7 +364,10 @@ async fn listening_is_retried_with_a_bounded_backoff() {
     attempts_at(91, 8).await;
     // Every failed attempt read the state again.
     assert_eq!(audio.snapshot_reads(), 8);
-    assert_eq!(probe.state().server, ServerView::Unavailable);
+    assert_eq!(
+        probe.state().server,
+        ServerView::Unavailable(AudioFault::Unreachable)
+    );
 
     audio.set_available(true);
     attempts_at(121, 9).await;
@@ -517,6 +520,19 @@ async fn eventually(mut condition: impl FnMut() -> bool) {
     })
     .await
     .expect("condition not reached");
+}
+
+#[tokio::test]
+async fn a_missing_pactl_is_published_as_such() {
+    let hub = AudioHub::new(Arc::new(PactlBackend::with_program(
+        "/nonexistent/hubergamof/pactl",
+    )));
+    let probe = Probe::new(&hub);
+    eventually(|| probe.state().server != ServerView::Loading).await;
+    assert_eq!(
+        probe.state().server,
+        ServerView::Unavailable(AudioFault::ToolMissing)
+    );
 }
 
 #[tokio::test]

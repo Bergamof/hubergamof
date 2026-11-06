@@ -13,7 +13,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Activation (manuelle et auto) : voir la section dédiée du `README.md`.
 - Toute montée de version d'outil se fait dans ces fichiers ET dans le `Dockerfile` (et le README si la démarche change), dans le même commit.
 - Node ≥ 24.12 (`engines`) : le Corepack des Node plus anciens (< 0.34.5) ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`, cache `~/.cache/node/corepack/v1/pnpm/<version>` incomplet à effacer) ; `make check-node` (prérequis de `ui-deps`) le détecte. Minimum lu depuis `engines` par `.github/scripts/check-node-version.sh`.
-- Prérequis système : compilateur C + `pkg-config` + `libudev-dev` (hidapi compilé statiquement par `elgato-streamdeck`, `libhidapi` système inutile), `pactl`/`wpctl` (PipeWire), Docker (utilisateur dans le groupe `docker`), règle udev `packaging/udev/70-hubergamof.rules`.
+- Prérequis système : compilateur C + `pkg-config` + `libudev-dev` (hidapi compilé statiquement par `elgato-streamdeck`, `libhidapi` système inutile), `pactl` ≥ 16 (module Audio ; Ubuntu : paquet `pulseaudio-utils`, absent par défaut ; `wpctl` inutilisé), Docker (utilisateur dans le groupe `docker`), règle udev `packaging/udev/70-hubergamof.rules`.
 
 ## Commandes (Makefile racine)
 - Tout vérifier : `make check` (lint + tests instrumentés avec planchers de couverture + doctests + contrat TS à jour)

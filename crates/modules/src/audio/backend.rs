@@ -201,6 +201,52 @@ pub enum AudioError {
     Unavailable,
 }
 
+/// Why the audio server cannot be read, as far as the user can act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFault {
+    /// `pactl` is not installed.
+    ToolMissing,
+    /// `pactl` is older than 16 (no `--format=json`).
+    ToolTooOld,
+    /// Anything else: server down, timeout, unexpected output…
+    Unreachable,
+}
+
+impl AudioFault {
+    /// What to do about it, for the logs; `None` when nothing is known.
+    #[must_use]
+    pub fn remedy(self) -> Option<&'static str> {
+        match self {
+            Self::ToolMissing => {
+                Some("install `pactl` (Debian/Ubuntu: pulseaudio-utils, Arch: libpulse)")
+            }
+            Self::ToolTooOld => Some("`pactl` 16 or later is required (Ubuntu 24.04 or later)"),
+            Self::Unreachable => None,
+        }
+    }
+}
+
+impl AudioError {
+    /// The part of the failure the user can act on.
+    #[must_use]
+    pub fn fault(&self) -> AudioFault {
+        match self {
+            Self::Spawn { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+                AudioFault::ToolMissing
+            }
+            Self::Failed { stderr, .. } if rejects_json_format(stderr) => AudioFault::ToolTooOld,
+            _ => AudioFault::Unreachable,
+        }
+    }
+}
+
+/// `pactl` before 16 refuses `--format=json`: glibc's `getopt` says
+/// "unrecognized option '--format=json'", musl's "unrecognized option:
+/// format". The messages are untranslated: the backend forces `LC_ALL=C`.
+fn rejects_json_format(stderr: &str) -> bool {
+    stderr.contains("unrecognized option") && stderr.contains("format")
+}
+
 /// Notifications of changes made on the audio server, by anyone.
 #[async_trait]
 pub trait AudioChanges: Send {
@@ -230,6 +276,67 @@ pub trait AudioBackend: Send + Sync + fmt::Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spawn_error(kind: std::io::ErrorKind) -> AudioError {
+        AudioError::Spawn {
+            program: "pactl".into(),
+            source: kind.into(),
+        }
+    }
+
+    fn failed(stderr: &str) -> AudioError {
+        AudioError::Failed {
+            command: "--format=json info".into(),
+            status: "exit status: 1".into(),
+            stderr: stderr.into(),
+        }
+    }
+
+    #[test]
+    fn only_what_the_user_can_fix_is_told_apart() {
+        use std::io::ErrorKind;
+        assert_eq!(
+            spawn_error(ErrorKind::NotFound).fault(),
+            AudioFault::ToolMissing
+        );
+        for old in [
+            "pactl: unrecognized option '--format=json'",
+            "pactl: unrecognized option: format",
+        ] {
+            assert_eq!(failed(old).fault(), AudioFault::ToolTooOld, "{old}");
+        }
+        let others = [
+            spawn_error(ErrorKind::PermissionDenied),
+            failed("Connection failure: Connection refused"),
+            failed("pactl: invalid option -- 'x'"),
+            failed("Failure: unrecognized option in the configuration"),
+            AudioError::Timeout {
+                command: "info".into(),
+                timeout: Duration::from_secs(5),
+            },
+            AudioError::InvalidOutput {
+                command: "info".into(),
+                reason: "not json".into(),
+            },
+            AudioError::Panicked,
+            AudioError::Unavailable,
+        ];
+        for error in others {
+            assert_eq!(error.fault(), AudioFault::Unreachable, "{error}");
+        }
+    }
+
+    #[test]
+    fn only_a_fixable_fault_has_a_remedy() {
+        assert!(
+            AudioFault::ToolMissing
+                .remedy()
+                .unwrap()
+                .contains("pulseaudio-utils")
+        );
+        assert!(AudioFault::ToolTooOld.remedy().unwrap().contains("16"));
+        assert_eq!(AudioFault::Unreachable.remedy(), None);
+    }
 
     fn volume(sink: &str, level: u32) -> AudioChange {
         AudioChange::SinkVolume {

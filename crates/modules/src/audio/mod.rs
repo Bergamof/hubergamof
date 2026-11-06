@@ -29,7 +29,7 @@ use hubergamof_module_api::{
 use serde::Deserialize;
 use serde_json::Value;
 
-pub use backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
+pub use backend::{AudioBackend, AudioChange, AudioChanges, AudioError, AudioFault, ReadScope};
 use hub::{AudioEvent, AudioHub, HubState, Sequence, ServerView, Subscription};
 pub use pactl::PactlBackend;
 pub use simulated::SimulatedAudio;
@@ -77,6 +77,8 @@ const OUTPUTS_LABEL: &str = "Sortie";
 const INPUTS_LABEL: &str = "Entrée";
 const MUTED_VALUE: &str = "Muet";
 const UNAVAILABLE_TEXT: &str = "Audio indisponible";
+const TOOL_MISSING_TEXT: &str = "pactl absent";
+const TOOL_TOO_OLD_TEXT: &str = "pactl trop ancien";
 const NO_OUTPUT_TEXT: &str = "Aucune sortie";
 
 /// Creates [`Audio`] instances, all driving the same audio server through
@@ -219,7 +221,7 @@ enum View {
     /// Last state read, with the changes queued since applied.
     Ready(AudioSnapshot),
     /// The server could not be read.
-    Unavailable,
+    Unavailable(AudioFault),
 }
 
 /// One instance: the state shown and its access to the hub.
@@ -235,14 +237,14 @@ impl Audio {
     fn snapshot(&self) -> Option<&AudioSnapshot> {
         match &self.view {
             View::Ready(snapshot) => Some(snapshot),
-            View::Loading | View::Unavailable => None,
+            View::Loading | View::Unavailable(_) => None,
         }
     }
 
     fn snapshot_mut(&mut self) -> Option<&mut AudioSnapshot> {
         match &mut self.view {
             View::Ready(snapshot) => Some(snapshot),
-            View::Loading | View::Unavailable => None,
+            View::Loading | View::Unavailable(_) => None,
         }
     }
 
@@ -254,7 +256,7 @@ impl Audio {
             self.last_sent = seq;
             Vec::new()
         } else {
-            self.view = View::Unavailable;
+            self.view = View::Unavailable(AudioFault::Unreachable);
             Command::alert()
         }
     }
@@ -380,7 +382,7 @@ impl Audio {
                     self.view = match server {
                         ServerView::Loading => View::Loading,
                         ServerView::Ready(snapshot) => View::Ready((*snapshot).clone()),
-                        ServerView::Unavailable => View::Unavailable,
+                        ServerView::Unavailable(fault) => View::Unavailable(fault),
                     };
                 }
                 Vec::new()
@@ -389,6 +391,14 @@ impl Audio {
                 vec![Command::FeedbackOn(surface, feedback)]
             }
         }
+    }
+}
+
+fn unavailable_text(fault: AudioFault) -> &'static str {
+    match fault {
+        AudioFault::ToolMissing => TOOL_MISSING_TEXT,
+        AudioFault::ToolTooOld => TOOL_TOO_OLD_TEXT,
+        AudioFault::Unreachable => UNAVAILABLE_TEXT,
     }
 }
 
@@ -489,7 +499,7 @@ impl Module for Audio {
     fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
         let content = match &self.view {
             View::Loading => ZoneContent::Lines(vec![MODULE_LABEL.into()]),
-            View::Unavailable => ZoneContent::Lines(vec![UNAVAILABLE_TEXT.into()]),
+            View::Unavailable(fault) => ZoneContent::Lines(vec![unavailable_text(*fault).into()]),
             View::Ready(snapshot) => match snapshot.default_device(Direction::Output) {
                 Some(sink) => ZoneContent::Gauge(gauge(sink, self.settings)),
                 None => ZoneContent::Lines(vec![NO_OUTPUT_TEXT.into()]),

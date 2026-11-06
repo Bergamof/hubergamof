@@ -18,7 +18,7 @@ Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme
 | [nvm](https://github.com/nvm-sh/nvm) | Node 24 LTS, **24.12 minimum** (`.nvmrc`, `engines` de `ui/package.json`) | voir le lien |
 | Corepack (fourni avec Node ≥ 24.12) | pnpm à la version épinglée dans `ui/package.json` | `corepack enable pnpm` |
 | Bibliothèques système | accès USB/HID | Arch : `sudo pacman -S base-devel systemd-libs pkgconf` ; Ubuntu : `sudo apt install build-essential pkg-config libudev-dev` |
-| PipeWire (`pactl`, `wpctl`) | module Audio | présent par défaut sur Arch/KDE et Ubuntu 24.04 |
+| `pactl` ≥ 16 (serveur PipeWire ou PulseAudio) | module Audio | Arch : `libpulse` (présent avec Plasma) ; Ubuntu 24.04 ou plus : `sudo apt install pulseaudio-utils` (non installé par défaut ; Ubuntu 22.04 fournit `pactl` 15, trop ancien) |
 | Docker (utilisateur dans le groupe `docker`) | module Docker, `make docker` | [docs.docker.com](https://docs.docker.com/engine/install/) |
 | [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) 0.20 | `make deny` / `make check` | `cargo install --locked cargo-deny` |
 | [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) 0.9 | `make coverage` (composant `llvm-tools-preview` installé par rustup) | `cargo install --locked cargo-llvm-cov` |
