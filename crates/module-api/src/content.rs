@@ -194,8 +194,12 @@ pub enum GaugeShape {
     /// bottom (volume).
     Arc,
     /// Glyph inside a ring filled clockwise from the top, title and value
-    /// beside it (timer).
-    Ring,
+    /// beside it (timer), and optionally the position in a series of steps as
+    /// one dot each under them.
+    Ring {
+        /// The steps, `None` for no dots.
+        steps: Option<GaugeSteps>,
+    },
 }
 
 /// The colours a zone is drawn in: a diagonal gradient from [`Self::from`]
@@ -286,9 +290,6 @@ pub struct GaugeContent {
     /// Pictogram drawn by the host, in the colours of its own SVG or image:
     /// before the title of an arc, inside a ring. Not drawn by a bar.
     pub glyph: Option<ImageData>,
-    /// Position in a series, drawn as dots beside a ring. Not drawn by a bar
-    /// nor an arc.
-    pub steps: Option<GaugeSteps>,
 }
 
 impl GaugeContent {
@@ -304,7 +305,6 @@ impl GaugeContent {
             shape: GaugeShape::default(),
             accent: ZoneAccent::default(),
             glyph: None,
-            steps: None,
         }
     }
 
@@ -335,12 +335,19 @@ impl GaugeContent {
         }
     }
 
-    /// The same gauge showing its position in a series of steps.
+    /// The same gauge drawn as a ring showing its position in a series of
+    /// steps.
     #[must_use]
     pub fn with_steps(self, steps: GaugeSteps) -> Self {
-        Self {
-            steps: Some(steps),
-            ..self
+        self.with_shape(GaugeShape::Ring { steps: Some(steps) })
+    }
+
+    /// The steps drawn beside the ring, `None` for any other shape.
+    #[must_use]
+    pub fn steps(&self) -> Option<GaugeSteps> {
+        match self.shape {
+            GaugeShape::Ring { steps } => steps,
+            _ => None,
         }
     }
 }
@@ -718,12 +725,12 @@ mod tests {
         let gauge = GaugeContent::new("Volume", "25 %", GaugeLevel::EMPTY);
         assert_eq!(gauge.shape, GaugeShape::Bar);
         assert_eq!(gauge.accent, ZoneAccent::solid(Rgb(0x3B, 0xA1, 0xFF)));
-        assert!(gauge.glyph.is_none() && gauge.steps.is_none());
-        let ring = gauge
-            .with_shape(GaugeShape::Ring)
-            .with_steps(GaugeSteps::new(1, 4));
-        assert_eq!(ring.shape, GaugeShape::Ring);
-        assert!(ring.steps.is_some());
+        assert!(gauge.glyph.is_none() && gauge.steps().is_none());
+        let ring = gauge.with_steps(GaugeSteps::new(1, 4));
+        assert!(matches!(ring.shape, GaugeShape::Ring { steps: Some(_) }));
+        assert_eq!(ring.steps().map(GaugeSteps::total), Some(4));
+        let bar = GaugeContent::new("Volume", "25 %", GaugeLevel::EMPTY);
+        assert_eq!(bar.with_shape(GaugeShape::Arc).steps(), None);
     }
 
     #[test]

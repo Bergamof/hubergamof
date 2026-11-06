@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
-use hubergamof_module_api::TaskScope;
 use hubergamof_module_api::testing::TestContext;
+use hubergamof_module_api::{GaugeShape, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -127,7 +127,7 @@ impl Harness {
 
     /// Current step and number of steps drawn by the zone gauge.
     fn steps(&self) -> (u8, u8) {
-        let steps = self.gauge().steps.expect("the ring shows the cycle");
+        let steps = self.gauge().steps().expect("the ring shows the cycle");
         (steps.current(), steps.total())
     }
 
@@ -628,11 +628,11 @@ async fn new_settings_change_the_next_strip_notification() {
 fn assert_stopped_ring(gauge: &GaugeContent, title: &str, value: &str, steps: (u8, u8)) {
     assert_eq!((gauge.title.as_str(), gauge.value.as_str()), (title, value));
     assert_eq!(gauge.level, GaugeLevel::EMPTY);
-    assert_eq!(gauge.shape, GaugeShape::Ring);
+    assert!(matches!(gauge.shape, GaugeShape::Ring { .. }));
     assert!(gauge.dimmed);
     assert_eq!(gauge.glyph.as_ref(), Some(&*icons::PAUSED));
     assert_eq!(
-        gauge.steps.map(|steps| (steps.current(), steps.total())),
+        gauge.steps().map(|steps| (steps.current(), steps.total())),
         Some(steps)
     );
 }

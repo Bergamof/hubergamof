@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps, ImageData,
-    KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    Command, EventSender, Feedback, GaugeContent, GaugeLevel, GaugeSteps, ImageData, KeyContent,
+    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneAccent,
     ZoneContent,
 };
@@ -438,7 +438,6 @@ fn zone_gauge(timer: &Timer, remaining: Duration) -> GaugeContent {
         format_remaining(remaining),
         displayed_level(timer.step_duration(), remaining),
     )
-    .with_shape(GaugeShape::Ring)
     .with_accent(accent)
     .with_glyph(ImageData::clone(glyph))
     .with_steps(GaugeSteps::new(timer.pomodoro(), timer.cycle_length()))

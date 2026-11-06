@@ -125,7 +125,7 @@ impl Renderer {
             let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
             match gauge.shape {
                 GaugeShape::Arc => self.draw_arc_gauge(&mut canvas, gauge)?,
-                GaugeShape::Ring => self.draw_ring_gauge(&mut canvas, gauge)?,
+                GaugeShape::Ring { .. } => self.draw_ring_gauge(&mut canvas, gauge)?,
                 // The bar, and a shape added later that this version cannot
                 // draw.
                 _ => self.draw_bar_gauge(&mut canvas, gauge)?,
@@ -297,7 +297,7 @@ impl Renderer {
             },
             gauge.level,
         );
-        if let Some(steps) = gauge.steps {
+        if let Some(steps) = gauge.steps() {
             push_step_dots(&mut shapes, gauge, steps, (text_center, text_width), zone);
         }
         self.text.overlay_svg(canvas, &shapes)?;

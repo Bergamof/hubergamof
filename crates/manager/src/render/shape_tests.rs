@@ -48,7 +48,7 @@ fn arc(level: f32) -> GaugeContent {
 
 fn ring(level: f32) -> GaugeContent {
     GaugeContent::new("Travail", "18:42", GaugeLevel::from_ratio(level))
-        .with_shape(GaugeShape::Ring)
+        .with_shape(GaugeShape::Ring { steps: None })
         .with_accent(ZoneAccent::solid(ORANGE))
 }
 
@@ -398,7 +398,7 @@ fn every_shape_copes_with_unusual_zone_sizes() {
             .with_glyph(glyph.clone()),
         ring(0.5).with_glyph(glyph.clone()).with_steps(steps),
         GaugeContent::new(long, long, GaugeLevel::from_ratio(0.999))
-            .with_shape(GaugeShape::Ring)
+            .with_shape(GaugeShape::Ring { steps: None })
             .with_steps(steps),
     ];
     let pages = [

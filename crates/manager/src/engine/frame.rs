@@ -134,7 +134,7 @@ fn clock_text_lines(face: &ClockFace) -> Vec<String> {
 /// Title (followed by the position in its steps, `Travail · 2/4`, when it has
 /// some) and value of a gauge.
 fn gauge_text_lines(gauge: &GaugeContent) -> Vec<String> {
-    let title = match gauge.steps {
+    let title = match gauge.steps() {
         Some(steps) => format!("{} · {}/{}", gauge.title, steps.current(), steps.total()),
         None => gauge.title.clone(),
     };
