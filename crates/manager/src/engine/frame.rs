@@ -111,17 +111,13 @@ impl ZoneContentFace {
 /// as one line, like the zone it describes: `["14:05:09", "mer. 5 nov. · semaine 45"]`.
 fn clock_text_lines(face: &ClockFace) -> Vec<String> {
     let time = match face.seconds {
-        Some(seconds) => format!("{}:{seconds:02}", face.time),
+        Some(seconds) => format!("{}:{:02}", face.time, seconds.get()),
         None => face.time.clone(),
     };
-    let date = face.leaf.as_ref().map(|leaf| {
-        format!(
-            "{} {} {}",
-            leaf.weekday.to_lowercase(),
-            leaf.day,
-            leaf.month.to_lowercase()
-        )
-    });
+    let date = face
+        .leaf
+        .as_ref()
+        .map(|leaf| format!("{} {} {}", leaf.weekday, leaf.day, leaf.month));
     let details: Vec<String> = date.into_iter().chain(face.caption.clone()).collect();
     let mut lines = vec![time];
     if !details.is_empty() {
@@ -204,7 +200,7 @@ mod tests {
     fn clock_faces_are_kept_and_described_as_text() {
         let face = ClockFace::new("14:05")
             .with_seconds(9)
-            .with_leaf(CalendarLeaf::new("MER.", 5, "NOV."))
+            .with_leaf(CalendarLeaf::new("mer.", 5, "nov."))
             .with_caption("semaine 45");
         let content = ZoneContentFace::from_content(Some(ZoneContent::Clock(face.clone())));
         assert_eq!(content, ZoneContentFace::Clock(face));

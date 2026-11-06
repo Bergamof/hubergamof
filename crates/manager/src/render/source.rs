@@ -5,7 +5,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use image::{ImageFormat, ImageReader, Limits, RgbaImage};
+use image::{ImageFormat, ImageReader, Limits, Rgba, RgbaImage};
 use resvg::{tiny_skia, usvg};
 
 use super::RenderError;
@@ -183,10 +183,17 @@ pub fn svg_options(fonts: &[&'static [u8]], font_family: &str) -> usvg::Options<
     };
     let database = options.fontdb_mut();
     for font in fonts {
-        database.load_font_data(font.to_vec());
+        // Shared, not copied: the bytes live as long as the program.
+        database.load_font_source(usvg::fontdb::Source::Binary(Arc::new(*font)));
     }
     database.set_sans_serif_family(font_family);
     options
+}
+
+/// `#rrggbb` of the colour of a SVG paint (opacity apart).
+#[must_use]
+pub fn svg_color(Rgba([red, green, blue, _]): Rgba<u8>) -> String {
+    format!("#{red:02x}{green:02x}{blue:02x}")
 }
 
 /// Renders `tree` scaled to fit ("contain") and centred in a transparent

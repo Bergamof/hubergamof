@@ -32,7 +32,7 @@ use thiserror::Error;
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
-pub use text::{FONT_DATA, FONT_FAMILY, FontWeight, TextLine, TextRenderer};
+pub use text::{FONT_DATA, FONT_FAMILY, FontWeight, LineStyle, TextLine, TextRenderer};
 
 use crate::cache::SegmentedLru;
 use digest::{ContentDigest, DigestMemo};
@@ -453,7 +453,8 @@ impl Renderer {
             // Alert, and outcomes added later: a warning is the safe reading.
             _ => ALERT_MARK_SVG,
         };
-        let tree = usvg::Tree::from_str(svg, self.text.svg_options()).map_err(RenderError::Svg)?;
+        let tree =
+            usvg::Tree::from_str(svg, self.text.source_svg_options()).map_err(RenderError::Svg)?;
         let mark = Arc::new(source::rasterize_svg(&tree, side, side)?);
         marks.insert((feedback, side), Arc::clone(&mark));
         Ok(mark)
@@ -538,7 +539,7 @@ impl Renderer {
         let Some(bytes) = bytes else {
             return Ok(canvas);
         };
-        let foreground = match source::decode(bytes, self.text.svg_options())? {
+        let foreground = match source::decode(bytes, self.text.source_svg_options())? {
             Decoded::Raster(image) => contain(&image, icon_area),
             Decoded::Vector(tree) => {
                 source::rasterize_svg(&tree, icon_area.width, icon_area.height)?
@@ -559,16 +560,13 @@ impl Renderer {
         let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
         let text_top =
             height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
-        let line = TextLine {
-            text: self
-                .text
-                .fit(label, size, FontWeight::SemiBold, max_width)?,
-            size,
-            center_x: width / 2.0,
-            baseline: text_top + TextRenderer::ascent(size),
-            color: TEXT_COLOR,
-            weight: FontWeight::SemiBold,
-        };
+        let line = self.text.fitted_line(
+            label,
+            semibold(size, TEXT_COLOR),
+            width / 2.0,
+            text_top + TextRenderer::ascent(size),
+            max_width,
+        )?;
         self.text.draw(canvas, &[line])
     }
 
@@ -588,14 +586,13 @@ impl Renderer {
         let mut top = (height - total) / 2.0;
         let mut drawn = Vec::with_capacity(lines.len());
         for (line, size) in lines.iter().zip(sizes) {
-            drawn.push(TextLine {
-                text: self.text.fit(line, size, FontWeight::SemiBold, max_width)?,
-                size,
-                center_x: width / 2.0,
-                baseline: top + TextRenderer::ascent(size),
-                color: TEXT_COLOR,
-                weight: FontWeight::SemiBold,
-            });
+            drawn.push(self.text.fitted_line(
+                line,
+                semibold(size, TEXT_COLOR),
+                width / 2.0,
+                top + TextRenderer::ascent(size),
+                max_width,
+            )?);
             top += TextRenderer::line_height(size);
         }
         self.text.draw(canvas, &drawn)
@@ -624,26 +621,20 @@ impl Renderer {
         let value_top =
             title_bottom + (bar_top - title_bottom - TextRenderer::line_height(value_size)) / 2.0;
         let lines = [
-            TextLine {
-                text: self
-                    .text
-                    .fit(&gauge.title, title_size, FontWeight::SemiBold, max_width)?,
-                size: title_size,
-                center_x: width / 2.0,
-                baseline: title_top + TextRenderer::ascent(title_size),
-                color,
-                weight: FontWeight::SemiBold,
-            },
-            TextLine {
-                text: self
-                    .text
-                    .fit(&gauge.value, value_size, FontWeight::SemiBold, max_width)?,
-                size: value_size,
-                center_x: width / 2.0,
-                baseline: value_top + TextRenderer::ascent(value_size),
-                color,
-                weight: FontWeight::SemiBold,
-            },
+            self.text.fitted_line(
+                &gauge.title,
+                semibold(title_size, color),
+                width / 2.0,
+                title_top + TextRenderer::ascent(title_size),
+                max_width,
+            )?,
+            self.text.fitted_line(
+                &gauge.value,
+                semibold(value_size, color),
+                width / 2.0,
+                value_top + TextRenderer::ascent(value_size),
+                max_width,
+            )?,
         ];
         self.text.draw(canvas, &lines)
     }
@@ -651,6 +642,15 @@ impl Renderer {
     fn lock_cache(&self) -> std::sync::MutexGuard<'_, SegmentedLru<CacheKey, Arc<Rendered>>> {
         // Cache entries are immutable: a poisoned lock is still consistent.
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The look of most texts: `SemiBold` of `size` pixels.
+fn semibold(size: f32, color: Rgba<u8>) -> LineStyle {
+    LineStyle {
+        size,
+        weight: FontWeight::SemiBold,
+        color,
     }
 }
 

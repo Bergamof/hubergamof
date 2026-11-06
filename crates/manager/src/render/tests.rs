@@ -415,11 +415,16 @@ fn gauge(level: f32) -> GaugeContent {
 /// Row crossing the middle of the gauge bar on a [`ZONE`].
 const GAUGE_BAR_ROW: u32 = 84;
 
+/// Columns of `row` painted with `color`.
+fn columns_with(image: &RgbaImage, row: u32, color: Rgba<u8>) -> usize {
+    (0..image.width())
+        .filter(|x| *image.get_pixel(*x, row) == color)
+        .count()
+}
+
 /// Columns of [`GAUGE_BAR_ROW`] painted with `color`.
 fn bar_columns(image: &RgbaImage, color: Rgba<u8>) -> usize {
-    (0..image.width())
-        .filter(|x| *image.get_pixel(*x, GAUGE_BAR_ROW) == color)
-        .count()
+    columns_with(image, GAUGE_BAR_ROW, color)
 }
 
 #[test]
@@ -558,74 +563,122 @@ fn clock_face(seconds: Option<u8>, with_leaf: bool) -> ClockFace {
         face = face.with_seconds(seconds);
     }
     if with_leaf {
-        face = face.with_leaf(CalendarLeaf::new("MER.", 5, "NOV."));
+        face = face.with_leaf(CalendarLeaf::new("mer.", 5, "nov."));
     }
     face
 }
 
 fn render_clock(face: &ClockFace) -> Arc<Rendered> {
+    render_clock_on(face, ZONE)
+}
+
+fn render_clock_on(face: &ClockFace, size: ImageSize) -> Arc<Rendered> {
     renderer()
-        .render_clock(face, ZONE, DEFAULT_BACKGROUND)
+        .render_clock(face, size, DEFAULT_BACKGROUND)
         .unwrap()
 }
 
-/// Row crossing the middle of the seconds track on a [`ZONE`].
-const CLOCK_TRACK_ROW: u32 = 85;
-
-/// Columns of [`CLOCK_TRACK_ROW`] painted with `color`.
-fn track_columns(image: &RgbaImage, color: Rgba<u8>) -> usize {
-    (0..image.width())
-        .filter(|x| *image.get_pixel(*x, CLOCK_TRACK_ROW) == color)
-        .count()
+/// Row crossing the middle of the seconds track on a zone of `size`.
+fn clock_track_row(size: ImageSize) -> u32 {
+    size.height * 85 / 100
 }
 
 fn count_pixels(image: &RgbaImage, color: Rgba<u8>) -> usize {
     image.pixels().filter(|pixel| **pixel == color).count()
 }
 
+/// Zones of the strips of the supported devices, and a tiny one.
+const CLOCK_ZONES: [ImageSize; 3] = [
+    ZONE,
+    ImageSize {
+        width: 120,
+        height: 60,
+    },
+    ImageSize {
+        width: 248,
+        height: 58,
+    },
+];
+
 #[test]
 fn clock_leaf_is_drawn_only_with_a_date() {
     let with_leaf = render_clock(&clock_face(None, true));
     let without_leaf = render_clock(&clock_face(None, false));
     assert_eq!(with_leaf.image().dimensions(), (200, 100));
-    // The band of the leaf, on the left of the zone.
+    // The middle of the band of the leaf, left of its weekday.
     assert_eq!(
-        *with_leaf.image().get_pixel(16, 16),
+        *with_leaf.image().get_pixel(16, 21),
         CLOCK_DEEP_ACCENT_COLOR
     );
     assert_eq!(
         count_pixels(without_leaf.image(), CLOCK_DEEP_ACCENT_COLOR),
         0
     );
-    // Without the leaf the time uses the whole width: its left edge moves.
-    let leftmost_lit = |image: &RgbaImage| {
-        (0..image.width())
-            .find(|x| (0..image.height()).any(|y| image.get_pixel(*x, y).0[0] > 128))
-            .unwrap()
+    // The time is centred in the room the leaf leaves, or in the whole zone.
+    let time_centre = |image: &RgbaImage| {
+        let lit: Vec<u32> = (80..image.width())
+            .filter(|x| (35..65).any(|y| image.get_pixel(*x, y).0[0] > 128))
+            .collect();
+        lit.iter().sum::<u32>() / u32::try_from(lit.len()).unwrap()
     };
-    assert!(leftmost_lit(without_leaf.image()) < 80 && leftmost_lit(with_leaf.image()) >= 10);
-    assert!(leftmost_lit(without_leaf.image()) > 20);
+    assert!(time_centre(with_leaf.image()) > 127);
+    assert!(time_centre(without_leaf.image()) < 127);
+}
+
+#[test]
+fn clock_leaf_texts_are_capitalised_by_the_renderer() {
+    let lines = |weekday: &str, month: &str| {
+        let face = ClockFace::new("14:05").with_leaf(CalendarLeaf::new(weekday, 5, month));
+        let rendered = render_clock(&face);
+        rendered.image().clone()
+    };
+    assert_eq!(lines("mer.", "nov."), lines("MER.", "NOV."));
 }
 
 #[test]
 fn clock_seconds_track_fills_one_sixtieth_per_second() {
-    let track = |seconds| {
+    let row = clock_track_row(ZONE);
+    let filled = |seconds| {
         let rendered = render_clock(&clock_face(Some(seconds), true));
-        track_columns(rendered.image(), CLOCK_ACCENT_COLOR)
+        columns_with(rendered.image(), row, CLOCK_ACCENT_COLOR)
     };
-    // A 108 px track; the quarter marks cut one column out of the fill.
-    assert!((1..=3).contains(&track(0)), "{}", track(0));
-    assert!((51..=55).contains(&track(29)), "{}", track(29));
-    assert!((100..=108).contains(&track(59)), "{}", track(59));
+    // A 108 px track. The quarter marks cut a column out of the fill and the
+    // rounded end is anti-aliased: a few pixels of tolerance.
+    let mut previous = None;
+    for seconds in [0_u8, 15, 29, 45, 59] {
+        let count = filled(seconds);
+        let expected = 108 * usize::from(seconds) / 60;
+        // Each of the marks passed costs a column on both of its sides.
+        let tolerance = 4 + 2 * usize::from(seconds / 15);
+        assert!(
+            count.abs_diff(expected) <= tolerance,
+            "{seconds} s: {count} columns, expected about {expected}"
+        );
+        assert!(previous.is_none_or(|previous| count > previous));
+        previous = Some(count);
+    }
+    assert_eq!(filled(0), 0);
+}
+
+#[test]
+fn clock_seconds_beyond_the_minute_are_drawn_as_the_last_second() {
+    let renderer = renderer();
+    let render = |seconds| {
+        renderer
+            .render_clock(&clock_face(Some(seconds), true), ZONE, DEFAULT_BACKGROUND)
+            .unwrap()
+    };
+    assert!(Arc::ptr_eq(&render(255), &render(59)));
 }
 
 #[test]
 fn clock_without_seconds_has_no_track_and_no_superscript() {
+    let row = clock_track_row(ZONE);
     let without = render_clock(&clock_face(None, true));
-    assert_eq!(track_columns(without.image(), CLOCK_ACCENT_COLOR), 0);
-    assert_eq!(track_columns(without.image(), GAUGE_TRACK_COLOR), 0);
+    assert_eq!(columns_with(without.image(), row, CLOCK_ACCENT_COLOR), 0);
+    assert_eq!(columns_with(without.image(), row, GAUGE_TRACK_COLOR), 0);
     assert_eq!(count_pixels(without.image(), CLOCK_ACCENT_COLOR), 0);
-    // The superscript, drawn in the accent colour, sits right of the time.
+    // With seconds, the superscript is drawn in the accent colour.
     let with = render_clock(&clock_face(Some(9), true));
     let superscript_pixels = (150..200)
         .flat_map(|x| (15..45).map(move |y| (x, y)))
@@ -637,21 +690,83 @@ fn clock_without_seconds_has_no_track_and_no_superscript() {
     assert!(superscript_pixels > 20, "{superscript_pixels}");
 }
 
+/// Whether the two outermost columns on each side of `image` are black.
+fn edges_are_black(image: &RgbaImage) -> bool {
+    let last = image.width() - 1;
+    [0, 1, last - 1, last]
+        .into_iter()
+        .all(|x| (0..image.height()).all(|y| image.get_pixel(x, y).0[..3] == [0, 0, 0]))
+}
+
 #[test]
-fn clock_texts_stay_inside_the_zone() {
-    let rendered = render_clock(
-        &ClockFace::new("23:59")
-            .with_seconds(59)
-            .with_leaf(CalendarLeaf::new("MER.", 28, "SEPT."))
-            .with_caption("semaine 53 d'une année bien trop longue"),
-    );
-    let image = rendered.image();
-    for edge_column in [0, 199] {
-        assert!(
-            (0..100).all(|y| image.get_pixel(edge_column, y).0[..3] == [0, 0, 0]),
-            "column {edge_column}"
-        );
+fn clock_widest_times_stay_inside_every_zone() {
+    for size in CLOCK_ZONES {
+        for time in ["00:00", "12:08", "20:08"] {
+            for seconds in [0, 59] {
+                let face = ClockFace::new(time)
+                    .with_seconds(seconds)
+                    .with_leaf(CalendarLeaf::new("mer.", 28, "sept."))
+                    .with_caption("semaine 53");
+                let rendered = render_clock_on(&face, size);
+                assert!(
+                    edges_are_black(rendered.image()),
+                    "{time}:{seconds} on {size:?}"
+                );
+            }
+        }
     }
+}
+
+#[test]
+fn clock_texts_are_shortened_to_their_room() {
+    let renderer = renderer();
+    let face = ClockFace::new("23:59:59:59")
+        .with_seconds(59)
+        .with_leaf(CalendarLeaf::new("mercredi", 28, "septembre"))
+        .with_caption("semaine 53 d'une année bien trop longue");
+    let lines = renderer.clock_lines(&face, ZONE).unwrap();
+    assert!(lines.iter().any(|line| line.text.ends_with('…')));
+    for line in &lines {
+        let width = renderer
+            .text
+            .width(&line.text, line.size, line.weight)
+            .unwrap();
+        // The widest room is the time area, 54 % of the zone.
+        assert!(width <= 108.0, "{:?} is {width} px wide", line.text);
+    }
+}
+
+#[test]
+fn clock_faces_without_leaf_or_caption_are_drawn() {
+    for size in CLOCK_ZONES {
+        for (with_leaf, with_caption) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let mut face = ClockFace::new("14:05").with_seconds(30);
+            if with_leaf {
+                face = face.with_leaf(CalendarLeaf::new("mer.", 5, "nov."));
+            }
+            if with_caption {
+                face = face.with_caption("semaine 45");
+            }
+            let rendered = render_clock_on(&face, size);
+            assert_eq!(
+                (rendered.image().width(), rendered.image().height()),
+                (size.width, size.height)
+            );
+            assert!(edges_are_black(rendered.image()), "{face:?} on {size:?}");
+        }
+    }
+}
+
+#[test]
+fn tiny_zones_are_drawn_without_panicking() {
+    let tiny = ImageSize {
+        width: 8,
+        height: 4,
+    };
+    let rendered = render_clock_on(&clock_face(Some(59), true), tiny);
+    assert_eq!(rendered.image().dimensions(), (8, 4));
 }
 
 #[test]
@@ -666,33 +781,19 @@ fn identical_clock_faces_hit_the_cache() {
     assert!(Arc::ptr_eq(&first, &render(7)));
     assert!(!Arc::ptr_eq(&first, &render(8)));
     assert_eq!(renderer.cached_len(), 2);
-    let empty = ImageSize {
-        width: 0,
-        height: 100,
-    };
-    assert!(matches!(
-        renderer.render_clock(&clock_face(None, true), empty, DEFAULT_BACKGROUND),
-        Err(RenderError::InvalidSize)
-    ));
 }
 
 #[test]
-#[ignore = "writes a preview of the clock faces to $CLOCK_PREVIEW_DIR"]
-fn write_clock_previews() {
-    let dir = std::env::var("CLOCK_PREVIEW_DIR").unwrap();
+fn clock_zones_of_no_size_are_refused() {
     let renderer = renderer();
-    for (name, face) in [
-        ("plain", clock_face(None, false)),
-        ("leaf", clock_face(None, true)),
-        ("seconds", clock_face(Some(9), true)),
-        ("seconds-late", clock_face(Some(52), true)),
-        ("seconds-no-leaf", clock_face(Some(30), false)),
-    ] {
-        renderer
-            .render_clock(&face, ZONE, DEFAULT_BACKGROUND)
-            .unwrap()
-            .image()
-            .save(format!("{dir}/{name}.png"))
-            .unwrap();
+    for (width, height) in [(0, 100), (200, 0)] {
+        assert!(matches!(
+            renderer.render_clock(
+                &clock_face(None, true),
+                ImageSize { width, height },
+                DEFAULT_BACKGROUND
+            ),
+            Err(RenderError::InvalidSize)
+        ));
     }
 }

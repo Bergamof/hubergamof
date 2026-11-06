@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    ChoiceOption, Command, EventSender, Feedback, GaugeContent, ItemId, KeyContent, KeyState,
-    Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
-    ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle, SettingField,
-    SettingKind, ZoneContent, parse_settings,
+    ChoiceOption, ClockFace, Command, EventSender, Feedback, GaugeContent, ItemId, KeyContent,
+    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    ModuleEvent, ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle,
+    SettingField, SettingKind, ZoneContent, parse_settings,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{
@@ -52,6 +52,8 @@ pub(super) struct Probe {
     pub(super) key_label: Arc<Mutex<Option<String>>>,
     /// Replaces the zone of fragile instances.
     pub(super) zone_gauge: Arc<Mutex<Option<GaugeContent>>>,
+    /// Replaces the zone of fragile instances, over `zone_gauge`.
+    pub(super) zone_clock: Arc<Mutex<Option<ClockFace>>>,
     /// Page the list instances no longer have (removed by an event).
     pub(super) gone_page: Arc<Mutex<Option<String>>>,
     /// Added to the index in the ids of page items.
@@ -329,6 +331,9 @@ impl Module for Fragile {
 
     fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
         assert_ne!(self.failure, Failure::Zone, "fragile zone");
+        if let Some(face) = self.probe.zone_clock.lock().unwrap().clone() {
+            return Some(ZoneContent::Clock(face));
+        }
         if let Some(gauge) = self.probe.zone_gauge.lock().unwrap().clone() {
             return Some(ZoneContent::Gauge(gauge));
         }

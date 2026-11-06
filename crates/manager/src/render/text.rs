@@ -2,11 +2,7 @@
 //! OFL 1.1, see `assets/fonts/OFL.txt`), shaped and rasterised by
 //! `usvg`/`resvg`.
 //!
-//! `Light` comes from the `@expo-google-fonts/noto-sans` 0.4.2 npm package
-//! (`300Light/NotoSans_300Light.ttf`, SHA-256
-//! `ad161dc21b079cabda74ba05032d63f729fb54ed899e995401bde1e49e19872e`), the
-//! same Noto Project release as `SemiBold` (same copyright notice and
-//! metrics).
+//! Provenance and checksums of the font files: `assets/fonts/README.md`.
 
 use std::fmt::Write as _;
 
@@ -29,10 +25,9 @@ pub const FONT_DATA: [&[u8]; 2] = [SEMIBOLD_FONT_DATA, LIGHT_FONT_DATA];
 pub const FONT_FAMILY: &str = "Noto Sans";
 
 /// Weight of the text, among the embedded fonts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontWeight {
     /// `SemiBold` (CSS weight 600), used almost everywhere.
-    #[default]
     SemiBold,
     /// `Light` (CSS weight 300), for large figures.
     Light,
@@ -55,6 +50,17 @@ const FONT_LINE_HEIGHT_EM: f32 = 1.362;
 
 /// Appended to text cut to fit.
 const ELLIPSIS: char = '…';
+
+/// How a line of text looks.
+#[derive(Debug, Clone, Copy)]
+pub struct LineStyle {
+    /// Font size in pixels.
+    pub size: f32,
+    /// Font weight.
+    pub weight: FontWeight,
+    /// Text colour.
+    pub color: Rgba<u8>,
+}
 
 /// One line of text to draw, horizontally centred.
 #[derive(Debug, Clone)]
@@ -102,10 +108,41 @@ impl TextRenderer {
         })
     }
 
-    /// Options for parsing untrusted SVG with the embedded font.
+    /// Options for parsing untrusted SVG sources: the `SemiBold` font only.
     #[must_use]
-    pub fn svg_options(&self) -> &usvg::Options<'static> {
+    pub fn source_svg_options(&self) -> &usvg::Options<'static> {
         &self.source_options
+    }
+
+    /// A line of `text` as it is, in `style`, centred on `center_x`.
+    #[must_use]
+    pub fn line(text: &str, style: LineStyle, center_x: f32, baseline: f32) -> TextLine {
+        TextLine {
+            text: text.to_owned(),
+            size: style.size,
+            center_x,
+            baseline,
+            color: style.color,
+            weight: style.weight,
+        }
+    }
+
+    /// A line of `text` in `style`, shortened with an ellipsis if it is wider
+    /// than `max_width`. The text is measured in the weight it is drawn in.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Svg`] if the text cannot be laid out.
+    pub fn fitted_line(
+        &self,
+        text: &str,
+        style: LineStyle,
+        center_x: f32,
+        baseline: f32,
+        max_width: f32,
+    ) -> Result<TextLine, RenderError> {
+        let fitted = self.fit(text, style.size, style.weight, max_width)?;
+        Ok(Self::line(&fitted, style, center_x, baseline))
     }
 
     /// Height of a line at `size` pixels.
@@ -172,13 +209,10 @@ impl TextRenderer {
     ///
     /// [`RenderError::Svg`] or [`RenderError::InvalidSize`].
     pub fn draw(&self, canvas: &mut RgbaImage, lines: &[TextLine]) -> Result<(), RenderError> {
-        let (width, height) = canvas.dimensions();
-        let mut svg = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">"#
-        );
+        let mut body = String::new();
         for line in lines {
             push_text(
-                &mut svg,
+                &mut body,
                 &line.text,
                 line.size,
                 line.weight,
@@ -187,7 +221,20 @@ impl TextRenderer {
                 Some(line.color),
             );
         }
-        svg.push_str("</svg>");
+        self.overlay_svg(canvas, &body)
+    }
+
+    /// Draws the SVG elements `body`, in the pixel coordinates of `canvas`,
+    /// over it. Text in `body` may use every embedded weight.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Svg`] or [`RenderError::InvalidSize`].
+    pub fn overlay_svg(&self, canvas: &mut RgbaImage, body: &str) -> Result<(), RenderError> {
+        let (width, height) = canvas.dimensions();
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{body}</svg>"#
+        );
         let tree = usvg::Tree::from_str(&svg, &self.text_options).map_err(RenderError::Svg)?;
         let layer = source::rasterize_svg(&tree, width, height)?;
         imageops::overlay(canvas, &layer, 0, 0);
@@ -219,11 +266,12 @@ fn push_text(
         r#"<text x="{x}" y="{baseline}" font-family="{FONT_FAMILY}" font-size="{size}" font-weight="{}""#,
         weight.css()
     );
-    if let Some(Rgba([red, green, blue, alpha])) = color {
-        let opacity = f32::from(alpha) / f32::from(u8::MAX);
+    if let Some(color) = color {
+        let opacity = f32::from(color.0[3]) / f32::from(u8::MAX);
         let _ = write!(
             svg,
-            r##" text-anchor="middle" fill="#{red:02x}{green:02x}{blue:02x}" fill-opacity="{opacity}""##
+            r#" text-anchor="middle" fill="{}" fill-opacity="{opacity}""#,
+            source::svg_color(color)
         );
     }
     svg.push('>');
@@ -286,6 +334,30 @@ mod tests {
         let light = text.width("00:00", SIZE, FontWeight::Light).unwrap();
         let semibold = text.width("00:00", SIZE, FontWeight::SemiBold).unwrap();
         assert!(light > 0.0 && light < semibold, "{light} vs {semibold}");
+    }
+
+    /// Width of `text` drawn by a SVG source, which is parsed with the
+    /// options of untrusted SVG.
+    fn source_text_width(text: &TextRenderer, attributes: &str) -> f32 {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><text y="{SIZE}" font-size="{SIZE}" {attributes}>00:00</text></svg>"#
+        );
+        let tree = usvg::Tree::from_str(&svg, text.source_svg_options()).unwrap();
+        tree.root().abs_bounding_box().width()
+    }
+
+    #[test]
+    fn svg_sources_only_see_the_semibold_font() {
+        let text = text();
+        assert_eq!(text.source_svg_options().fontdb.len(), 1);
+        let semibold = text.width("00:00", SIZE, FontWeight::SemiBold).unwrap();
+        let light = text.width("00:00", SIZE, FontWeight::Light).unwrap();
+        assert!((semibold - light).abs() > 0.5, "{semibold} vs {light}");
+        // Without a weight (400) or asking for `Light` (300): SemiBold anyway.
+        for attributes in ["", r#"font-weight="300""#, r#"font-weight="100""#] {
+            let width = source_text_width(&text, attributes);
+            assert!((width - semibold).abs() < 0.01, "{attributes}: {width}");
+        }
     }
 
     #[test]

@@ -84,4 +84,4 @@ Recommandé : protéger `main` en rendant obligatoires les jobs `lint`, `test`, 
 
 [GPL-3.0-or-later](LICENSE). La crate `crates/module-api` (contrat des modules) est sous [MPL-2.0](crates/module-api/LICENSE) afin que les auteurs de modules restent libres de leur licence.
 
-Le binaire embarque la police Noto Sans, sous [SIL Open Font License 1.1](crates/manager/assets/fonts/OFL.txt).
+Le binaire embarque la police Noto Sans (graisses SemiBold et Light), sous [SIL Open Font License 1.1](crates/manager/assets/fonts/OFL.txt) ; provenance et empreintes dans [`crates/manager/assets/fonts/README.md`](crates/manager/assets/fonts/README.md).

@@ -1,6 +1,6 @@
 //! Pages, navigation, configuration and drawing.
 
-use hubergamof_module_api::{GaugeContent, GaugeLevel, KeyState};
+use hubergamof_module_api::{CalendarLeaf, ClockFace, GaugeContent, GaugeLevel, KeyState};
 use hubergamof_protocol::ErrorCode;
 use image::RgbaImage;
 use serde_json::json;
@@ -343,6 +343,54 @@ async fn only_changed_gauges_are_rewritten() {
     // Only the level changed: the zone is rewritten.
     show(0.5);
     redrawn(["Volume", "25 %"]).await;
+    assert_eq!(fixture.deck.writes(), (0, 1));
+}
+
+#[tokio::test]
+async fn only_changed_clock_faces_are_rewritten() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![list(0), fragile("none")],
+            &["list"],
+            &[Some(FRAGILE_KIND), None, None, None],
+        )
+        .await;
+    let redraw = fixture.probe.redraw.lock().unwrap().clone().unwrap();
+    let show = |seconds: u8| {
+        let face = ClockFace::new("14:05")
+            .with_seconds(seconds)
+            .with_leaf(CalendarLeaf::new("mer.", 5, "nov."))
+            .with_caption("semaine 45");
+        *fixture.probe.zone_clock.lock().unwrap() = Some(face);
+        redraw.request_redraw();
+    };
+    let mut live = fixture.engine.live();
+    let mut redrawn = async |expected_lines: [&str; 2]| {
+        live.mark_unchanged();
+        tokio::time::timeout(WAIT, live.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fixture.zone_lines(0), expected_lines);
+    };
+    let _ = fixture.deck.writes();
+
+    show(9);
+    redrawn(["14:05:09", "mer. 5 nov. · semaine 45"]).await;
+    assert_eq!(fixture.deck.writes(), (0, 1));
+    // The face is drawn on the strip, not left blank.
+    let strip = fixture.deck.inner.screen().strip.unwrap();
+    assert!((0..200).any(|x| (0..strip.height()).any(|y| strip.get_pixel(x, y).0[1] > 150)));
+
+    // The same face: nothing written.
+    show(9);
+    fixture.engine.press_key(7).await.unwrap();
+    assert_eq!(fixture.deck.writes(), (0, 0));
+
+    // One second later: the zone is rewritten.
+    show(10);
+    redrawn(["14:05:10", "mer. 5 nov. · semaine 45"]).await;
     assert_eq!(fixture.deck.writes(), (0, 1));
 }
 

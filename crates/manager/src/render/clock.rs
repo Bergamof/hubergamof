@@ -8,12 +8,12 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use hubergamof_module_api::{CalendarLeaf, ClockFace, MAX_CLOCK_SECONDS};
+use hubergamof_module_api::{CalendarLeaf, ClockFace, ClockSeconds};
 use hubergamof_protocol::ImageSize;
-use image::{Rgba, RgbaImage, imageops};
+use image::{Rgba, RgbaImage};
 
-use super::source::{self, f32_from};
-use super::text::{FontWeight, TextLine};
+use super::source::{f32_from, svg_color};
+use super::text::{FontWeight, LineStyle, TextLine, TextRenderer};
 use super::{
     CacheKey, GAUGE_TRACK_COLOR, RenderError, Rendered, Renderer, TEXT_COLOR, check_size,
     keep_opaque,
@@ -45,7 +45,7 @@ const LEAF_RADIUS_RATIO: f32 = 0.08;
 /// Baseline of the weekday, relative to the zone height.
 const LEAF_WEEKDAY_BASELINE_RATIO: f32 = 0.26;
 /// Font size of the weekday, relative to the zone height.
-const LEAF_WEEKDAY_FONT_RATIO: f32 = 0.11;
+const LEAF_WEEKDAY_FONT_RATIO: f32 = 0.12;
 /// Baseline of the day, relative to the zone height.
 const LEAF_DAY_BASELINE_RATIO: f32 = 0.64;
 /// Font size of the day, relative to the zone height.
@@ -53,7 +53,7 @@ const LEAF_DAY_FONT_RATIO: f32 = 0.30;
 /// Baseline of the month, relative to the zone height.
 const LEAF_MONTH_BASELINE_RATIO: f32 = 0.80;
 /// Font size of the month, relative to the zone height.
-const LEAF_MONTH_FONT_RATIO: f32 = 0.10;
+const LEAF_MONTH_FONT_RATIO: f32 = 0.13;
 
 /// Left of the time area when the leaf is displayed, relative to the width.
 const AREA_LEFT_WITH_LEAF_RATIO: f32 = 0.41;
@@ -79,14 +79,15 @@ const SECONDS_RAISE_RATIO: f32 = 0.18;
 /// Gap between the time and the seconds, relative to the zone height.
 const SECONDS_GAP_RATIO: f32 = 0.03;
 
-/// Font size of the caption without seconds, relative to the zone height.
+/// Font size of the caption, relative to the zone height.
 const CAPTION_FONT_RATIO: f32 = 0.13;
 /// Baseline of the caption without seconds, relative to the zone height.
 const CAPTION_BASELINE_RATIO: f32 = 0.80;
-/// Font size of the caption with seconds, relative to the zone height.
-const CAPTION_WITH_SECONDS_FONT_RATIO: f32 = 0.12;
 /// Baseline of the caption with seconds, relative to the zone height.
 const CAPTION_WITH_SECONDS_BASELINE_RATIO: f32 = 0.72;
+/// Text measured for the room kept for the seconds: digits have the same
+/// width, so the time does not move from one second to the next.
+const SECONDS_WIDTH_SAMPLE: &str = "00";
 
 /// Top of the seconds track, relative to the zone height.
 const TRACK_TOP_RATIO: f32 = 0.83;
@@ -94,8 +95,10 @@ const TRACK_TOP_RATIO: f32 = 0.83;
 const TRACK_THICKNESS_RATIO: f32 = 0.04;
 /// Height of the quarter marks, relative to the zone height.
 const TRACK_MARK_HEIGHT_RATIO: f32 = 0.08;
+/// Width of the quarter marks, relative to the zone width (1 px on 200).
+const TRACK_MARK_WIDTH_RATIO: f32 = 0.005;
 /// Seconds between two quarter marks of the track.
-const TRACK_MARK_STEP_SECONDS: u8 = 15;
+const TRACK_MARK_STEP_SECONDS: u8 = ClockSeconds::PER_MINUTE / 4;
 
 /// Geometry of a clock face on a zone of a given size.
 struct Layout {
@@ -173,71 +176,45 @@ impl Renderer {
         self.cached(key, || {
             let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
             let layout = Layout::new(size, face.leaf.is_some());
-            self.draw_clock_shapes(&mut canvas, face, &layout)?;
+            let shapes = clock_shapes(face, &layout, background);
+            self.text.overlay_svg(&mut canvas, &shapes)?;
             self.text
-                .draw(&mut canvas, &self.clock_lines(face, &layout)?)?;
+                .draw(&mut canvas, &self.clock_lines(face, size)?)?;
             Ok(keep_opaque(canvas, background))
         })
     }
 
-    /// Draws the leaf and the seconds track, which carry no text.
-    fn draw_clock_shapes(
+    /// The texts of the face: leaf, time with its seconds, caption.
+    pub(super) fn clock_lines(
         &self,
-        canvas: &mut RgbaImage,
         face: &ClockFace,
-        layout: &Layout,
-    ) -> Result<(), RenderError> {
-        let mut shapes = String::new();
-        if face.leaf.is_some() {
-            push_leaf_shapes(&mut shapes, layout);
-        }
-        if let Some(seconds) = face.seconds {
-            push_track_shapes(&mut shapes, layout, seconds);
-        }
-        if shapes.is_empty() {
-            return Ok(());
-        }
-        let (width, height) = canvas.dimensions();
-        let svg = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{shapes}</svg>"#
-        );
-        let tree =
-            resvg::usvg::Tree::from_str(&svg, self.text.svg_options()).map_err(RenderError::Svg)?;
-        let layer = source::rasterize_svg(&tree, width, height)?;
-        imageops::overlay(canvas, &layer, 0, 0);
-        Ok(())
-    }
-
-    fn clock_lines(&self, face: &ClockFace, layout: &Layout) -> Result<Vec<TextLine>, RenderError> {
+        size: ImageSize,
+    ) -> Result<Vec<TextLine>, RenderError> {
+        let layout = &Layout::new(size, face.leaf.is_some());
         let mut lines = Vec::new();
         if let Some(leaf) = &face.leaf {
             self.push_leaf_lines(&mut lines, leaf, layout)?;
         }
         self.push_time_lines(&mut lines, face, layout)?;
         if let Some(caption) = &face.caption {
-            let (size, baseline) = if face.seconds.is_some() {
-                (
-                    CAPTION_WITH_SECONDS_FONT_RATIO,
-                    CAPTION_WITH_SECONDS_BASELINE_RATIO,
-                )
+            let baseline = if face.seconds.is_some() {
+                CAPTION_WITH_SECONDS_BASELINE_RATIO
             } else {
-                (CAPTION_FONT_RATIO, CAPTION_BASELINE_RATIO)
+                CAPTION_BASELINE_RATIO
             };
-            let size = layout.y(size);
-            lines.push(TextLine {
-                text: self
-                    .text
-                    .fit(caption, size, FontWeight::SemiBold, layout.area_width)?,
-                size,
-                center_x: layout.area_center(),
-                baseline: layout.y(baseline),
-                color: DETAIL_COLOR,
-                weight: FontWeight::SemiBold,
-            });
+            lines.push(self.text.fitted_line(
+                caption,
+                semibold(layout.y(CAPTION_FONT_RATIO), DETAIL_COLOR),
+                layout.area_center(),
+                layout.y(baseline),
+                layout.area_width,
+            )?);
         }
         Ok(lines)
     }
 
+    /// Weekday, day and month of the leaf; the weekday and the month in
+    /// capitals, whatever the case the module gives.
     fn push_leaf_lines(
         &self,
         lines: &mut Vec<TextLine>,
@@ -246,36 +223,32 @@ impl Renderer {
     ) -> Result<(), RenderError> {
         let parts = [
             (
-                &leaf.weekday,
+                leaf.weekday.to_uppercase(),
                 LEAF_WEEKDAY_FONT_RATIO,
                 LEAF_WEEKDAY_BASELINE_RATIO,
                 LEAF_BAND_TEXT_COLOR,
             ),
             (
-                &leaf.day.to_string(),
+                leaf.day.to_string(),
                 LEAF_DAY_FONT_RATIO,
                 LEAF_DAY_BASELINE_RATIO,
                 TEXT_COLOR,
             ),
             (
-                &leaf.month,
+                leaf.month.to_uppercase(),
                 LEAF_MONTH_FONT_RATIO,
                 LEAF_MONTH_BASELINE_RATIO,
                 DETAIL_COLOR,
             ),
         ];
         for (text, font_ratio, baseline_ratio, color) in parts {
-            let size = layout.y(font_ratio);
-            lines.push(TextLine {
-                text: self
-                    .text
-                    .fit(text, size, FontWeight::SemiBold, layout.leaf_width())?,
-                size,
-                center_x: layout.leaf_center(),
-                baseline: layout.y(baseline_ratio),
-                color,
-                weight: FontWeight::SemiBold,
-            });
+            lines.push(self.text.fitted_line(
+                &text,
+                semibold(layout.y(font_ratio), color),
+                layout.leaf_center(),
+                layout.y(baseline_ratio),
+                layout.leaf_width(),
+            )?);
         }
         Ok(())
     }
@@ -289,48 +262,72 @@ impl Renderer {
         layout: &Layout,
     ) -> Result<(), RenderError> {
         let Some(seconds) = face.seconds else {
-            let size = layout.y(TIME_FONT_RATIO);
-            lines.push(TextLine {
-                text: face.time.clone(),
-                size,
-                center_x: layout.area_center(),
-                baseline: layout.y(TIME_BASELINE_RATIO),
-                color: TEXT_COLOR,
-                weight: FontWeight::Light,
-            });
+            lines.push(self.text.fitted_line(
+                &face.time,
+                light(layout.y(TIME_FONT_RATIO), TEXT_COLOR),
+                layout.area_center(),
+                layout.y(TIME_BASELINE_RATIO),
+                layout.area_width,
+            )?);
             return Ok(());
         };
-        let time_size = layout.y(TIME_WITH_SECONDS_FONT_RATIO);
-        let seconds_size = layout.y(SECONDS_FONT_RATIO);
-        let seconds_text = format!("{seconds:02}");
+        let seconds_style = semibold(layout.y(SECONDS_FONT_RATIO), CLOCK_ACCENT_COLOR);
         let gap = layout.y(SECONDS_GAP_RATIO);
-        let time_width = self.text.width(&face.time, time_size, FontWeight::Light)?;
-        let seconds_width = self.text.width("00", seconds_size, FontWeight::SemiBold)?;
-        let start = layout.area_center() - (time_width + gap + seconds_width) / 2.0;
+        let seconds_width = self.text.width(
+            SECONDS_WIDTH_SAMPLE,
+            seconds_style.size,
+            seconds_style.weight,
+        )?;
         let time_baseline = layout.y(TIME_WITH_SECONDS_BASELINE_RATIO);
+        let time = self.text.fitted_line(
+            &face.time,
+            light(layout.y(TIME_WITH_SECONDS_FONT_RATIO), TEXT_COLOR),
+            0.0,
+            time_baseline,
+            layout.area_width - gap - seconds_width,
+        )?;
+        let time_width = self.text.width(&time.text, time.size, time.weight)?;
+        let start = layout.area_center() - (time_width + gap + seconds_width) / 2.0;
         lines.push(TextLine {
-            text: face.time.clone(),
-            size: time_size,
             center_x: start + time_width / 2.0,
-            baseline: time_baseline,
-            color: TEXT_COLOR,
-            weight: FontWeight::Light,
+            ..time
         });
-        lines.push(TextLine {
-            text: seconds_text,
-            size: seconds_size,
-            center_x: start + time_width + gap + seconds_width / 2.0,
-            baseline: time_baseline - layout.y(SECONDS_RAISE_RATIO),
-            color: CLOCK_ACCENT_COLOR,
-            weight: FontWeight::SemiBold,
-        });
+        lines.push(TextRenderer::line(
+            &format!("{:02}", seconds.get()),
+            seconds_style,
+            start + time_width + gap + seconds_width / 2.0,
+            time_baseline - layout.y(SECONDS_RAISE_RATIO),
+        ));
         Ok(())
     }
 }
 
-/// `#rrggbb` of an opaque colour.
-fn hex(Rgba([red, green, blue, _]): Rgba<u8>) -> String {
-    format!("#{red:02x}{green:02x}{blue:02x}")
+fn semibold(size: f32, color: Rgba<u8>) -> LineStyle {
+    LineStyle {
+        size,
+        weight: FontWeight::SemiBold,
+        color,
+    }
+}
+
+fn light(size: f32, color: Rgba<u8>) -> LineStyle {
+    LineStyle {
+        size,
+        weight: FontWeight::Light,
+        color,
+    }
+}
+
+/// The leaf and the seconds track, which carry no text, as SVG elements.
+fn clock_shapes(face: &ClockFace, layout: &Layout, background: Rgba<u8>) -> String {
+    let mut shapes = String::new();
+    if face.leaf.is_some() {
+        push_leaf_shapes(&mut shapes, layout);
+    }
+    if let Some(seconds) = face.seconds {
+        push_track_shapes(&mut shapes, layout, seconds, background);
+    }
+    shapes
 }
 
 /// Body of the leaf, with its band at the top.
@@ -349,37 +346,51 @@ fn push_leaf_shapes(svg: &mut String, layout: &Layout) {
         band_bottom = top + band,
         arc_start = top + radius,
         band_end = right - radius,
-        body = hex(LEAF_COLOR),
-        band_color = hex(CLOCK_DEEP_ACCENT_COLOR),
+        body = svg_color(LEAF_COLOR),
+        band_color = svg_color(CLOCK_DEEP_ACCENT_COLOR),
     );
 }
 
-/// Track filled to `seconds + 1` sixtieths, with a mark every quarter of a
-/// minute (cut out of the track so they stay visible on the fill).
-fn push_track_shapes(svg: &mut String, layout: &Layout, seconds: u8) {
+/// Track filled to `seconds` sixtieths (empty when a minute starts), with a
+/// mark every quarter of a minute cut out of it in the colour of the
+/// `background`, so that it stays visible on the fill.
+fn push_track_shapes(
+    svg: &mut String,
+    layout: &Layout,
+    seconds: ClockSeconds,
+    background: Rgba<u8>,
+) {
     let thickness = layout.y(TRACK_THICKNESS_RATIO);
     let top = layout.y(TRACK_TOP_RATIO);
     let left = layout.area_left;
     let length = layout.area_width;
-    let minute = f32::from(MAX_CLOCK_SECONDS) + 1.0;
-    let filled = length * (f32::from(seconds) + 1.0) / minute;
+    let minute = f32::from(ClockSeconds::PER_MINUTE);
+    let filled = length * f32::from(seconds.get()) / minute;
     let radius = thickness / 2.0;
     // Writing to a `String` cannot fail.
     let _ = write!(
         svg,
-        r#"<rect x="{left}" y="{top}" width="{length}" height="{thickness}" rx="{radius}" fill="{track}"/><rect x="{left}" y="{top}" width="{filled}" height="{thickness}" rx="{radius}" fill="{fill}"/>"#,
-        track = hex(GAUGE_TRACK_COLOR),
-        fill = hex(CLOCK_ACCENT_COLOR),
+        r#"<rect x="{left}" y="{top}" width="{length}" height="{thickness}" rx="{radius}" fill="{track}"/>"#,
+        track = svg_color(GAUGE_TRACK_COLOR),
     );
-    let mark_height = layout.y(TRACK_MARK_HEIGHT_RATIO);
-    let mark_top = top + (thickness - mark_height) / 2.0;
-    for mark in
-        (TRACK_MARK_STEP_SECONDS..=MAX_CLOCK_SECONDS).step_by(usize::from(TRACK_MARK_STEP_SECONDS))
-    {
-        let x = left + length * f32::from(mark) / minute;
+    if seconds.get() > 0 {
         let _ = write!(
             svg,
-            r##"<rect x="{x}" y="{mark_top}" width="1" height="{mark_height}" fill="#000000"/>"##
+            r#"<rect x="{left}" y="{top}" width="{filled}" height="{thickness}" rx="{radius}" fill="{fill}"/>"#,
+            fill = svg_color(CLOCK_ACCENT_COLOR),
+        );
+    }
+    let mark_width = layout.width * TRACK_MARK_WIDTH_RATIO;
+    let mark_height = layout.y(TRACK_MARK_HEIGHT_RATIO);
+    let mark_top = top + (thickness - mark_height) / 2.0;
+    for mark in (TRACK_MARK_STEP_SECONDS..ClockSeconds::PER_MINUTE)
+        .step_by(usize::from(TRACK_MARK_STEP_SECONDS))
+    {
+        let x = left + length * f32::from(mark) / minute - mark_width / 2.0;
+        let _ = write!(
+            svg,
+            r#"<rect x="{x}" y="{mark_top}" width="{mark_width}" height="{mark_height}" fill="{color}"/>"#,
+            color = svg_color(background),
         );
     }
 }
