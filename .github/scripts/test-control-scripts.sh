@@ -46,7 +46,11 @@ expect_pactl() { # expect_pactl <ok|warn> <corps du faux pactl, ou "absent"> <li
 	dir="$(mktemp -d)"
 	ln -s "$(command -v dirname)" "$dir/dirname"
 	ln -s "$(command -v head)" "$dir/head"
-	printf 'set -euo pipefail\nsource "$1"\ncheck_pactl\n' >"$dir/runner.sh"
+	cat >"$dir/runner.sh" <<'RUNNER'
+set -euo pipefail
+source "$1"
+check_pactl
+RUNNER
 	if [[ "$body" != absent ]]; then
 		printf '#!/bin/sh\n%s\n' "$body" >"$dir/pactl"
 		chmod +x "$dir/pactl"
