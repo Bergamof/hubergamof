@@ -15,8 +15,8 @@ Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme
 | Outil | Rôle | Installation |
 |---|---|---|
 | [rustup](https://rustup.rs/) | installe automatiquement Rust 1.99.1 (épinglé dans `rust-toolchain.toml`) | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` ou paquet `rustup` |
-| [nvm](https://github.com/nvm-sh/nvm) | Node 24 LTS (épinglé dans `.nvmrc`) | voir le lien |
-| Corepack (fourni avec Node 24) | pnpm à la version épinglée dans `ui/package.json` | `corepack enable pnpm` |
+| [nvm](https://github.com/nvm-sh/nvm) | Node 24 LTS, **24.12 minimum** (`.nvmrc`, `engines` de `ui/package.json`) | voir le lien |
+| Corepack (fourni avec Node ≥ 24.12) | pnpm à la version épinglée dans `ui/package.json` | `corepack enable pnpm` |
 | Bibliothèques système | accès USB/HID | Arch : `sudo pacman -S base-devel systemd-libs pkgconf` ; Ubuntu : `sudo apt install build-essential pkg-config libudev-dev` |
 | PipeWire (`pactl`, `wpctl`) | module Audio | présent par défaut sur Arch/KDE et Ubuntu 24.04 |
 | Docker (utilisateur dans le groupe `docker`) | module Docker, `make docker` | [docs.docker.com](https://docs.docker.com/engine/install/) |
@@ -36,7 +36,11 @@ Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme
 1. Installation de la version épinglée : `nvm install` (lit `.nvmrc`).
 2. Activation ponctuelle : `nvm use`.
 3. Basculement automatique : ajouter dans `~/.bashrc` (ou `~/.zshrc`), après le chargement de nvm, le hook « deeper shell integration » de la [documentation nvm](https://github.com/nvm-sh/nvm#deeper-shell-integration) (fonction `cdnvm` pour bash, `load-nvmrc` + `add-zsh-hook chpwd` pour zsh).
-4. Vérification : `node -v` → `v24.x` ; `corepack pnpm -v` (depuis `ui/`) → `12.x`.
+4. Vérification : `node -v` → `v24.12` ou plus ; `corepack pnpm -v` (depuis `ui/`) → `12.x`.
+
+### Dépannage pnpm
+- `Cannot find module …/corepack/v1/pnpm/12.…/bin/pnpm.cjs` : Node trop ancien (< 24.12, Corepack < 0.34.5, qui ne sait pas lancer pnpm 12). `make` le détecte (`make check-node`). Remède : `nvm install && nvm use`, puis `rm -rf ~/.cache/node/corepack/v1/pnpm` (le téléchargement raté laisse un cache incomplet que même un Corepack récent réutilise) et `corepack enable pnpm` (le raccourci est propre à chaque version de Node).
+- `getaddrinfo ENOTFOUND registry.npmjs.org` : pas de réseau (DNS, VPN, proxy) ; Corepack télécharge pnpm une fois depuis le registre npm. Derrière un proxy : `HTTPS_PROXY` ; registre interne : `COREPACK_NPM_REGISTRY`.
 
 ## Commandes
 
@@ -46,8 +50,9 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 |---|---|
 | `make dev` | gestionnaire en mode `--demo` (appareil virtuel) + serveur de dev de l'UI avec rechargement à chaud ; Ctrl-C arrête les deux |
 | `make run` | gestionnaire sur le matériel réel |
-| `make check` | toutes les vérifications locales (lint, tests avec planchers de couverture, contrat TS, versions, cargo-deny) |
+| `make check` | toutes les vérifications locales (nom de branche, lint, tests avec planchers de couverture, contrat TS, versions, cargo-deny) |
 | `make lint` / `make fmt` | lint en vérification / formatage |
+| `make check-branch` | nom de branche parlant, obligatoire (`[claude/]<type>/<mots-en-kebab>`, ex. `fix/node-minimum-version`) : renommer avec `git branch -m` |
 | `make test` / `make test-e2e` | tests Rust + Vitest (composants Svelte dans Chromium, mode navigateur) / tests Playwright : chaque test lance son propre `hubergamof --demo` (binaire debug compilé au démarrage, port libre, config neuve) ; le reste tourne sur `vite preview` (`corepack pnpm -C ui exec playwright install chromium` au préalable ; aucun gestionnaire ne doit tourner sur le port 7878) |
 | `make coverage` | tests Rust et Vitest instrumentés, en échec sous le plancher de couverture (mesure − 2 points, jamais baissé) |
 | `make test-docker` | module Docker contre le vrai Docker de la machine (conteneurs `hubergamof-it-*` créés puis supprimés) |

@@ -75,6 +75,13 @@ jobs:
         id: versions
         if: ${{ !cancelled() }}
         run: make check-versions
+      # Nom parlant obligatoire (voir check-branch-name.sh) ; `main` et Dependabot admis.
+      - name: Nom de la branche
+        id: branch
+        if: ${{ !cancelled() }}
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: .github/scripts/check-branch-name.sh "$BRANCH"
       - name: Install actionlint
         if: ${{ !cancelled() }}
         run: >-
@@ -88,6 +95,7 @@ jobs:
         run: |
           actionlint
           shellcheck --external-sources --source-path=SCRIPTDIR/.. packaging/*.sh .github/scripts/*.sh
+          make test-scripts
       - name: Install zizmor
         if: ${{ !cancelled() }}
         uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
@@ -106,6 +114,7 @@ jobs:
           UI: ${{ steps.ui.outcome }}
           SHELL_EXEC: ${{ steps.shell-exec.outcome }}
           VERSIONS: ${{ steps.versions.outcome }}
+          BRANCH: ${{ steps.branch.outcome }}
           TOOLING: ${{ steps.tooling.outcome }}
           WORKFLOWS: ${{ steps.workflows.outcome }}
         run: |
@@ -115,7 +124,7 @@ jobs:
           # svelte-check sans terminal : « COMPLETED n FILES e ERRORS w WARNINGS … ».
           svelte_check=$(sed -nE 's/.*COMPLETED [0-9]+ FILES ([0-9]+) ERRORS ([0-9]+) WARNINGS.*/\1 erreur(s), \2 avertissement(s)/p' lint-ui.log 2>/dev/null | tail -1)
           zizmor=$(grep -oE '^[0-9]+ findings?' zizmor.log 2>/dev/null | tail -1 || true)
-          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · shell hors tests $(icon "$SHELL_EXEC") · versions $(icon "$VERSIONS") · pipeline $(icon "$TOOLING") · zizmor $(icon "$WORKFLOWS") ${zizmor:-0 finding}" >> "$GITHUB_OUTPUT"
+          echo "summary=Rust $(icon "$RUST") ${rust_issues:-0} diagnostic(s) · ESLint $(icon "$UI") ${ui_problems:-0} problème(s), svelte-check ${svelte_check:-—} · shell hors tests $(icon "$SHELL_EXEC") · versions $(icon "$VERSIONS") · branche $(icon "$BRANCH") · pipeline $(icon "$TOOLING") · zizmor $(icon "$WORKFLOWS") ${zizmor:-0 finding}" >> "$GITHUB_OUTPUT"
 
   # Les tests tournent instrumentés (doctests à part) : mêmes tests que `make test`, plus la
   # couverture, en échec sous le plancher (cliquet, voir Makefile et vite.config.ts).
