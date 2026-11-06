@@ -19,6 +19,8 @@ paths:
 - Valider avec `actionlint`, `shellcheck` et `zizmor` (`make lint-workflows`, config `.github/zizmor.yml`) ; `make` doit fonctionner depuis une machine propre avec les prérequis du README.
 
 ## Pièges
+- Le Makefile appelle `check-node` avant `pnpm install` : pnpm 12 ne démarre pas sous Corepack < 0.34.5 (Node < 24.12), donc `engines` ne peut pas s'en charger. Relever le minimum = changer `engines.node` seulement (le script le lit).
+- Les scripts de `.github/scripts/` sont couverts par shellcheck en CI et par `test-control-scripts.sh` : tout nouveau script de contrôle y ajoute ses cas.
 - Outil téléchargé hors action (`install-release-binary.sh`) : somme SHA-256 épinglée dans le workflow, jamais vérifiée contre le fichier de sommes de la même release.
 - zizmor `self-repository` (`uses: $/…`) désactivé : actionlint 1.7.12 refuse cette syntaxe ; à réactiver avec un actionlint qui la connaît.
 - Job `test` : `cargo llvm-cov` remplace `cargo test` (mêmes tests) ; le TOTAL donne régions, fonctions puis lignes (dernier pourcentage).

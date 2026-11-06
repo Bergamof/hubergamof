@@ -12,6 +12,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Versions épinglées dans : `rust-toolchain.toml`, `.nvmrc`, `ui/package.json` (`packageManager`, `engines`) — source de vérité, lue aussi par la CI.
 - Activation (manuelle et auto) : voir la section dédiée du `README.md`.
 - Toute montée de version d'outil se fait dans ces fichiers ET dans le `Dockerfile` (et le README si la démarche change), dans le même commit.
+- Node ≥ 24.12 (`engines`) : le Corepack des Node plus anciens (< 0.34.5) ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`, cache `~/.cache/node/corepack/v1/pnpm/<version>` incomplet à effacer) ; `make check-node` (prérequis de `ui-deps`) le détecte. Minimum lu depuis `engines` par `.github/scripts/check-node-version.sh`.
 - Prérequis système : compilateur C + `pkg-config` + `libudev-dev` (hidapi compilé statiquement par `elgato-streamdeck`, `libhidapi` système inutile), `pactl`/`wpctl` (PipeWire), Docker (utilisateur dans le groupe `docker`), règle udev `packaging/udev/70-hubergamof.rules`.
 
 ## Commandes (Makefile racine)
@@ -21,7 +22,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Types TS du contrat : `make gen-types` (ne doit produire aucun diff en CI)
 - Build : `make build` (UI puis binaire release qui l'embarque)
 - Lancement local : `make dev` (gestionnaire en `--demo` + `pnpm dev` avec proxy) ; matériel réel : `make run`
-- Aussi : `make check-versions` (Dockerfile ↔ `rust-toolchain.toml`/`.nvmrc`), `make deny`, `make lighthouse`, `make lint-workflows` (zizmor), sous-cibles `lint-rust|lint-ui|test-rust|test-ui|coverage-rust|coverage-ui|ui-build` (appelées telles quelles par la CI).
+- Aussi : `make check-node` / `make check-branch` / `make test-scripts` (scripts de `.github/scripts/` + leur auto-test), `make check-versions` (Dockerfile ↔ `rust-toolchain.toml`/`.nvmrc`), `make deny`, `make lighthouse`, `make lint-workflows` (zizmor), sous-cibles `lint-rust|lint-ui|test-rust|test-ui|coverage-rust|coverage-ui|ui-build` (appelées telles quelles par la CI).
 - pnpm : `PNPM ?= corepack pnpm` lancé depuis `ui/` (Corepack lit `packageManager` du dossier courant) ; `make PNPM=pnpm …` en CI.
 
 ## CI
@@ -150,9 +151,10 @@ GPL-3.0-or-later ; `crates/module-api` sous MPL-2.0. Toute dépendance doit êtr
 
 ## Git
 - Conventional Commits (anglais, impératif) ; branches `feat/…`, `fix/…`, `chore/…` depuis `main`.
-- Noms de branche parlants en kebab-case anglais ; jamais `fix/bug`, `feat/update`, `wip`, `test` ou identifiant aléatoire. Préfixe imposé par l'outil (ex. `claude/`) conservé, suite parlante.
+- Noms de branche parlants en kebab-case anglais : `[claude/]<type>(/|-)<au moins deux mots>` (ex. `claude/fix-node-minimum-version`) ; jamais `fix/bug`, `feat/update`, `wip`, `test` ni identifiant aléatoire. Préfixe imposé par l'outil (ex. `claude/`) conservé, suite parlante.
+- **Renommage obligatoire** : la branche générée par l'outil (`claude/<adjectif>-<nom>-<hasard>`) est renommée (`git branch -m`) **avant le premier commit** de la tâche, puis poussée sous son nouveau nom (c'est une autorisation explicite d'Adrien, qui prime sur « pousser sur la branche désignée »). Appliqué par `make check-branch` (dans `make check`) et par une étape du job `lint` de la CI (`.github/scripts/check-branch-name.sh`).
 - SemVer ; `CHANGELOG.md` (Keep a Changelog) à jour pour tout changement notable.
-- Avant chaque commit : lint + tests au vert.
+- Avant chaque commit : nom de branche conforme (`make check-branch`), lint + tests au vert.
 
 ## Maintenance de ce fichier (obligatoire)
 - Lire ce fichier avant d'explorer le code ; s'y fier plutôt que tout re-parcourir.
