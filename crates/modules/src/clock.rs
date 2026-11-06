@@ -40,7 +40,7 @@ const NANOS_PER_SECOND: u64 = 1_000_000_000;
 const SECONDS_PER_MINUTE: u64 = 60;
 
 /// Source of the current local time; replaced in tests.
-pub trait WallClock: Send + Sync {
+pub trait WallClock: std::fmt::Debug + Send + Sync {
     /// Current date and time in the local time zone.
     fn now(&self) -> DateTime;
 }
@@ -52,6 +52,32 @@ pub struct SystemClock;
 impl WallClock for SystemClock {
     fn now(&self) -> DateTime {
         jiff::Zoned::now().datetime()
+    }
+}
+
+/// Wall clock stopped at one instant: reproducible, whatever the system time.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedClock(DateTime);
+
+impl FixedClock {
+    /// Clock always reading `at`.
+    #[must_use]
+    pub const fn at(at: DateTime) -> Self {
+        Self(at)
+    }
+}
+
+impl Default for FixedClock {
+    /// A Wednesday at 14:05, mid-minute, so a test straddling real time
+    /// never meets a boundary.
+    fn default() -> Self {
+        Self(jiff::civil::date(2026, 10, 28).at(14, 5, 30, 0))
+    }
+}
+
+impl WallClock for FixedClock {
+    fn now(&self) -> DateTime {
+        self.0
     }
 }
 
@@ -269,6 +295,7 @@ mod tests {
     use super::*;
 
     /// Wall clock starting at `base` and following Tokio's (paused) time.
+    #[derive(Debug)]
     struct TokioClock {
         base: DateTime,
         start: Instant,
@@ -455,6 +482,18 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(60)).await;
         assert_eq!(redraws(), 2);
         assert_eq!(face(fixture.clock.as_ref()).time, "14:07");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fixed_clock_shows_the_same_face_as_time_passes() {
+        let factory = ClockFactory::with_clock(Arc::new(FixedClock::default()));
+        let scope = TaskScope::new();
+        let ctx = ModuleContext::for_tests("clock").with_tasks(scope.spawner());
+        let clock = factory.create(ctx, &json!({})).unwrap();
+        let before = face(clock.as_ref());
+        tokio::time::sleep(Duration::from_secs(3_600)).await;
+        assert_eq!(face(clock.as_ref()), before);
+        assert_eq!(before.time, "14:05");
     }
 
     #[tokio::test(start_paused = true)]

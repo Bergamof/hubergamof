@@ -21,6 +21,7 @@ use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, module_catalog,
 };
 use hubergamof_manager::tray::{TrayIcon, quit_on};
+use hubergamof_modules::clock::SystemClock;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::CatalogModule;
 use tokio::signal::unix::{SignalKind, signal};
@@ -202,7 +203,11 @@ fn simulated_input(demo: bool) -> SimulatedInput {
 
 fn builtin_services(demo: bool) -> BuiltinServices {
     if demo {
-        BuiltinServices::simulated()
+        // A demo shows a living clock: only the tests freeze the time.
+        BuiltinServices {
+            wall_clock: Arc::new(SystemClock),
+            ..BuiltinServices::simulated()
+        }
     } else {
         BuiltinServices::system()
     }
