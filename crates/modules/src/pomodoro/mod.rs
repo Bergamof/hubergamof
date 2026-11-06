@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, GaugeContent, GaugeLevel, GaugeSteps, ImageData, KeyContent,
-    KeyState, MenuZone, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    Command, EventSender, GaugeContent, GaugeLevel, GaugeSteps, ImageData, KeyContent, KeyState,
+    MenuZone, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneAccent,
     ZoneContent,
 };
@@ -295,8 +295,9 @@ impl Module for Pomodoro {
 
     async fn on_dial_press(&mut self) -> Vec<Command> {
         if let Some(menu) = self.menu {
+            // No ✓: the zone changing is the result.
             self.run_menu_entry(menu.selected());
-            vec![Command::Feedback(Feedback::Ok)]
+            Vec::new()
         } else {
             self.menu = Some(Menu::open(self.now()));
             self.sync_ticker();
