@@ -25,9 +25,9 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, KeyState, PageZone};
+use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, KeyState, PageZone, Rgb};
 #[cfg(test)]
-use hubergamof_module_api::{GaugeLevel, ImageData, Rgb};
+use hubergamof_module_api::{GaugeLevel, ImageData};
 use hubergamof_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -56,9 +56,6 @@ pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
 
 /// Text of a dimmed gauge (muted, paused).
 pub const DIMMED_TEXT_COLOR: Rgba<u8> = Rgba([0x8a, 0x8a, 0x8a, u8::MAX]);
-
-/// Filled part of a gauge bar.
-pub const GAUGE_FILL_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
 
 /// Filled part of a dimmed gauge bar.
 pub const GAUGE_DIMMED_FILL_COLOR: Rgba<u8> = Rgba([0x5c, 0x5c, 0x5c, u8::MAX]);
@@ -608,7 +605,7 @@ fn scaled_dimension(dimension: u32, scale: f32, max: u32) -> u32 {
     // Clamped to 1..=max (a device size) before the cast.
     (f32_from(dimension) * scale)
         .round()
-        .clamp(1.0, f32_from(max)) as u32
+        .clamp(1.0, f32_from(max).max(1.0)) as u32
 }
 
 /// Blends black over `canvas` with opacity `alpha`, in place.
@@ -621,6 +618,39 @@ fn darken(canvas: &mut RgbaImage, alpha: u8) {
                 u8::try_from(u16::from(*channel) * keep / u16::from(u8::MAX)).unwrap_or(u8::MAX);
         }
     }
+}
+
+/// Size of a zone in pixels, for the layouts expressed as ratios of it.
+#[derive(Debug, Clone, Copy)]
+struct ZoneGeometry {
+    width: f32,
+    height: f32,
+}
+
+impl ZoneGeometry {
+    fn of_size(size: ImageSize) -> Self {
+        Self {
+            width: f32_from(size.width),
+            height: f32_from(size.height),
+        }
+    }
+
+    fn of_canvas(canvas: &RgbaImage) -> Self {
+        Self {
+            width: f32_from(canvas.width()),
+            height: f32_from(canvas.height()),
+        }
+    }
+
+    /// Vertical position at `ratio` of the zone height.
+    fn y(self, ratio: f32) -> f32 {
+        self.height * ratio
+    }
+}
+
+/// The opaque pixel of a colour a module gave.
+fn rgba(Rgb(red, green, blue): Rgb) -> Rgba<u8> {
+    Rgba([red, green, blue, u8::MAX])
 }
 
 /// Restores full opacity lost to rounding in alpha blending when the

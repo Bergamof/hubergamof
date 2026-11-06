@@ -116,8 +116,8 @@ pub enum ZoneContent {
     Lines(Vec<String>),
     /// An image scaled to fit the zone.
     Image(ImageData),
-    /// A title, a large value and a horizontal level bar (volume, timer
-    /// progress…).
+    /// A title, a large value and a level drawn as a bar, an arc or a ring
+    /// (volume, timer progress…).
     Gauge(GaugeContent),
     /// A clock face: calendar leaf, time, optional seconds and week.
     Clock(ClockFace),
@@ -198,17 +198,19 @@ pub enum GaugeShape {
     Ring,
 }
 
-/// Colours of the filled part of a gauge: a diagonal gradient from
-/// [`Self::from`] (top left) to [`Self::to`] (bottom right).
+/// The colours a zone is drawn in: a diagonal gradient from [`Self::from`]
+/// (light, top left) to [`Self::to`] (deep, bottom right). The module picks
+/// them, usually from the tints of its icon; the host derives the neutrals
+/// (tracks, captions) itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GaugeAccent {
+pub struct ZoneAccent {
     /// Colour at the start of the gradient.
     pub from: Rgb,
     /// Colour at the end of the gradient.
     pub to: Rgb,
 }
 
-impl GaugeAccent {
+impl ZoneAccent {
     /// The gradient from `from` to `to`.
     #[must_use]
     pub const fn new(from: Rgb, to: Rgb) -> Self {
@@ -222,8 +224,8 @@ impl GaugeAccent {
     }
 }
 
-impl Default for GaugeAccent {
-    /// The blue of the bar gauges.
+impl Default for ZoneAccent {
+    /// A blue.
     fn default() -> Self {
         Self::solid(Rgb(0x3B, 0xA1, 0xFF))
     }
@@ -274,16 +276,18 @@ pub struct GaugeContent {
     pub value: String,
     /// Fill level.
     pub level: GaugeLevel,
-    /// Drawn greyed out (muted output, paused timer): the fill, the title and
-    /// the value; the glyph keeps the colours of its own image.
+    /// Drawn greyed out (muted output, paused timer): the fill, the value and
+    /// the dots; the glyph keeps the colours of its own image.
     pub dimmed: bool,
     /// How the level is drawn.
     pub shape: GaugeShape,
-    /// Colours of the filled part (arc and ring shapes).
-    pub accent: GaugeAccent,
-    /// Pictogram drawn by the host, in the colours of its own SVG or image.
+    /// Colours of the filled part (every shape: the bar uses the light end).
+    pub accent: ZoneAccent,
+    /// Pictogram drawn by the host, in the colours of its own SVG or image:
+    /// before the title of an arc, inside a ring. Not drawn by a bar.
     pub glyph: Option<ImageData>,
-    /// Position in a series, drawn as dots (ring shape).
+    /// Position in a series, drawn as dots beside a ring. Not drawn by a bar
+    /// nor an arc.
     pub steps: Option<GaugeSteps>,
 }
 
@@ -298,7 +302,7 @@ impl GaugeContent {
             level,
             dimmed: false,
             shape: GaugeShape::default(),
-            accent: GaugeAccent::default(),
+            accent: ZoneAccent::default(),
             glyph: None,
             steps: None,
         }
@@ -318,7 +322,7 @@ impl GaugeContent {
 
     /// The same gauge filled with `accent`.
     #[must_use]
-    pub fn with_accent(self, accent: GaugeAccent) -> Self {
+    pub fn with_accent(self, accent: ZoneAccent) -> Self {
         Self { accent, ..self }
     }
 
@@ -454,10 +458,45 @@ impl CalendarLeaf {
 /// Position of the visible rows among the rows of a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RowPosition {
-    /// Index of the first visible row, from 0.
-    pub row: u32,
+    row: u32,
+    count: u32,
+}
+
+impl RowPosition {
+    /// First visible row `row` (from 0) of `count` rows: `count` is clamped to
+    /// at least 1 and `row` to the last row.
+    #[must_use]
+    pub fn new(row: u32, count: u32) -> Self {
+        let count = count.max(1);
+        Self {
+            row: row.min(count - 1),
+            count,
+        }
+    }
+
+    /// Index of the first visible row, from 0, less than [`Self::count`].
+    #[must_use]
+    pub fn row(self) -> u32 {
+        self.row
+    }
+
     /// Number of rows of the page, at least 1.
-    pub count: u32,
+    #[must_use]
+    pub fn count(self) -> u32 {
+        self.count
+    }
+
+    /// Whether there is more than one row to move between.
+    #[must_use]
+    pub fn is_scrollable(self) -> bool {
+        self.count > 1
+    }
+
+    /// The caption of the position: `ligne 2/3`.
+    #[must_use]
+    pub fn caption(self) -> String {
+        format!("ligne {}/{}", self.row + 1, self.count)
+    }
 }
 
 /// The touch strip zone of the navigation dial: the page shown, the page it
@@ -471,8 +510,8 @@ pub struct PageZone {
     pub parent: Option<String>,
     /// Rows of the page, `None` when there is nothing to scroll.
     pub rows: Option<RowPosition>,
-    /// Whether pressing the dial goes back to another page.
-    pub can_go_back: bool,
+    /// Colours of the back hint, the parent page and the current row.
+    pub accent: ZoneAccent,
 }
 
 impl PageZone {
@@ -483,7 +522,7 @@ impl PageZone {
             title: title.into(),
             parent: None,
             rows: None,
-            can_go_back: false,
+            accent: ZoneAccent::default(),
         }
     }
 
@@ -492,7 +531,6 @@ impl PageZone {
     pub fn with_parent(self, parent: impl Into<String>) -> Self {
         Self {
             parent: Some(parent.into()),
-            can_go_back: true,
             ..self
         }
     }
@@ -501,12 +539,22 @@ impl PageZone {
     #[must_use]
     pub fn with_rows(self, row: u32, count: u32) -> Self {
         Self {
-            rows: Some(RowPosition {
-                row,
-                count: count.max(1),
-            }),
+            rows: Some(RowPosition::new(row, count)),
             ..self
         }
+    }
+
+    /// The same zone drawn with `accent`.
+    #[must_use]
+    pub fn with_accent(self, accent: ZoneAccent) -> Self {
+        Self { accent, ..self }
+    }
+
+    /// Whether pressing the dial goes back to another page: there is a
+    /// parent page.
+    #[must_use]
+    pub fn can_go_back(&self) -> bool {
+        self.parent.is_some()
     }
 }
 
@@ -669,7 +717,7 @@ mod tests {
     fn gauges_start_as_blue_bars() {
         let gauge = GaugeContent::new("Volume", "25 %", GaugeLevel::EMPTY);
         assert_eq!(gauge.shape, GaugeShape::Bar);
-        assert_eq!(gauge.accent, GaugeAccent::solid(Rgb(0x3B, 0xA1, 0xFF)));
+        assert_eq!(gauge.accent, ZoneAccent::solid(Rgb(0x3B, 0xA1, 0xFF)));
         assert!(gauge.glyph.is_none() && gauge.steps.is_none());
         let ring = gauge
             .with_shape(GaugeShape::Ring)
@@ -681,13 +729,18 @@ mod tests {
     #[test]
     fn page_zones_know_their_parent_and_rows() {
         let home = PageZone::new("Accueil");
-        assert!(!home.can_go_back && home.parent.is_none() && home.rows.is_none());
+        assert!(!home.can_go_back() && home.parent.is_none() && home.rows.is_none());
         let page = PageZone::new("Conteneurs")
             .with_parent("Accueil")
             .with_rows(1, 0);
-        assert!(page.can_go_back);
+        assert!(page.can_go_back());
         assert_eq!(page.parent.as_deref(), Some("Accueil"));
-        assert_eq!(page.rows, Some(RowPosition { row: 1, count: 1 }));
+        assert_eq!(page.rows, Some(RowPosition::new(0, 1)));
+        let beyond = PageZone::new("Accueil").with_rows(7, 3);
+        let rows = beyond.rows.unwrap();
+        assert_eq!((rows.row(), rows.count()), (2, 3));
+        assert_eq!(rows.caption(), "ligne 3/3");
+        assert!(rows.is_scrollable() && !RowPosition::new(0, 1).is_scrollable());
     }
 
     #[test]

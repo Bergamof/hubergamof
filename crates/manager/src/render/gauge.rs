@@ -9,7 +9,7 @@ use std::f32::consts::{PI, TAU};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use hubergamof_module_api::{GaugeContent, GaugeLevel, GaugeShape, GaugeSteps, ImageData, Rgb};
+use hubergamof_module_api::{GaugeContent, GaugeLevel, GaugeShape, GaugeSteps, ImageData};
 use hubergamof_protocol::ImageSize;
 use image::{Rgba, RgbaImage, imageops};
 
@@ -17,8 +17,8 @@ use super::source::{self, Decoded, f32_from, svg_color};
 use super::text::{FontWeight, TextLine, TextRenderer};
 use super::{
     CacheKey, DIMMED_TEXT_COLOR, GAUGE_DIMMED_FILL_COLOR, GAUGE_TRACK_COLOR, RenderError, Rendered,
-    Renderer, TEXT_COLOR, ZONE_PADDING_RATIO, check_size, contain, keep_opaque, scaled_dimension,
-    semibold,
+    Renderer, TEXT_COLOR, ZONE_PADDING_RATIO, ZoneGeometry, check_size, contain, keep_opaque, rgba,
+    scaled_dimension, semibold,
 };
 
 /// Identifier of the gradient of the filled part, in the SVG of a gauge.
@@ -98,25 +98,6 @@ const RING_DOT_CORE_RATIO: f32 = 0.018;
 /// The dot at the end of the filled part of an arc.
 const KNOB_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
 
-/// Geometry shared by the shapes of a gauge on a zone of a given size.
-struct Zone {
-    width: f32,
-    height: f32,
-}
-
-impl Zone {
-    fn of(canvas: &RgbaImage) -> Self {
-        Self {
-            width: f32_from(canvas.width()),
-            height: f32_from(canvas.height()),
-        }
-    }
-
-    fn y(&self, ratio: f32) -> f32 {
-        self.height * ratio
-    }
-}
-
 impl Renderer {
     /// Renders a strip zone gauge in the shape the content asks for. A bar
     /// gauge has its title on top, its value in the middle and a bar at the
@@ -145,6 +126,8 @@ impl Renderer {
             match gauge.shape {
                 GaugeShape::Arc => self.draw_arc_gauge(&mut canvas, gauge)?,
                 GaugeShape::Ring => self.draw_ring_gauge(&mut canvas, gauge)?,
+                // The bar, and a shape added later that this version cannot
+                // draw.
                 _ => self.draw_bar_gauge(&mut canvas, gauge)?,
             }
             Ok(keep_opaque(canvas, background))
@@ -168,7 +151,7 @@ impl Renderer {
         gauge: &GaugeContent,
         bar_top: f32,
     ) -> Result<(), RenderError> {
-        let zone = Zone::of(canvas);
+        let zone = ZoneGeometry::of_canvas(canvas);
         let max_width = zone.width * (1.0 - 2.0 * ZONE_PADDING_RATIO);
         let color = text_color(gauge);
         let title_size = zone.y(BAR_TITLE_FONT_RATIO);
@@ -203,7 +186,7 @@ impl Renderer {
         canvas: &mut RgbaImage,
         gauge: &GaugeContent,
     ) -> Result<(), RenderError> {
-        let zone = Zone::of(canvas);
+        let zone = ZoneGeometry::of_canvas(canvas);
         let thickness = zone.y(ARC_THICKNESS_RATIO);
         let radius = zone.y(ARC_RADIUS_RATIO).min(zone.width / 2.0 - thickness);
         let (center_x, center_y) = (zone.width / 2.0, zone.y(ARC_CENTER_Y_RATIO));
@@ -244,7 +227,7 @@ impl Renderer {
             inside,
         )?;
         let mut lines = vec![value];
-        self.push_arc_title(canvas, &mut lines, gauge, &zone)?;
+        self.push_arc_title(canvas, &mut lines, gauge, zone)?;
         self.text.draw(canvas, &lines)
     }
 
@@ -255,7 +238,7 @@ impl Renderer {
         canvas: &mut RgbaImage,
         lines: &mut Vec<TextLine>,
         gauge: &GaugeContent,
-        zone: &Zone,
+        zone: ZoneGeometry,
     ) -> Result<(), RenderError> {
         let size = zone.y(ARC_TITLE_FONT_RATIO);
         let baseline = zone.y(ARC_TITLE_BASELINE_RATIO);
@@ -276,7 +259,7 @@ impl Renderer {
         let start = (zone.width - (glyph_room + title_width)) / 2.0;
         if let Some(glyph) = &gauge.glyph {
             let top = baseline - size * TEXT_MIDDLE_RATIO - glyph_side / 2.0;
-            self.draw_glyph(canvas, glyph, (start, top), glyph_side)?;
+            self.draw_glyph(canvas, glyph, (start, top), glyph_side);
         }
         lines.push(TextLine {
             center_x: start + glyph_room + title_width / 2.0,
@@ -292,7 +275,7 @@ impl Renderer {
         canvas: &mut RgbaImage,
         gauge: &GaugeContent,
     ) -> Result<(), RenderError> {
-        let zone = Zone::of(canvas);
+        let zone = ZoneGeometry::of_canvas(canvas);
         let center = (
             zone.width * RING_CENTER_X_RATIO,
             zone.y(RING_CENTER_Y_RATIO),
@@ -315,13 +298,13 @@ impl Renderer {
             gauge.level,
         );
         if let Some(steps) = gauge.steps {
-            push_step_dots(&mut shapes, gauge, steps, (text_center, text_width), &zone);
+            push_step_dots(&mut shapes, gauge, steps, (text_center, text_width), zone);
         }
         self.text.overlay_svg(canvas, &shapes)?;
         if let Some(glyph) = &gauge.glyph {
             let side = zone.y(RING_GLYPH_RATIO);
             let top_left = (center.0 - side / 2.0, center.1 - side / 2.0);
-            self.draw_glyph(canvas, glyph, top_left, side)?;
+            self.draw_glyph(canvas, glyph, top_left, side);
         }
         let label_color = if gauge.dimmed {
             DIMMED_TEXT_COLOR
@@ -380,23 +363,35 @@ impl Renderer {
         glyph: &ImageData,
         top_left: (f32, f32),
         side: f32,
-    ) -> Result<(), RenderError> {
+    ) {
         let pixels = rounded_pixels(side);
         let square = ImageSize {
             width: pixels,
             height: pixels,
         };
-        let layer = match source::decode(&glyph.bytes, self.text.source_svg_options())? {
-            Decoded::Raster(image) => contain(&image, square),
-            Decoded::Vector(tree) => source::rasterize_svg(&tree, pixels, pixels)?,
+        let decoded =
+            source::decode(&glyph.bytes, self.text.source_svg_options()).and_then(|decoded| {
+                match decoded {
+                    Decoded::Raster(image) => Ok(contain(&image, square)),
+                    Decoded::Vector(tree) => source::rasterize_svg(&tree, pixels, pixels),
+                }
+            });
+        let layer = match decoded {
+            Ok(layer) => layer,
+            Err(error) => {
+                // The glyph is a decoration: the gauge is still worth drawing.
+                tracing::warn!(%error, "cannot draw gauge glyph, leaving it out");
+                return;
+            }
         };
+        // A bitmap keeps its aspect ratio: centre it in the square.
+        let inset = |length: u32| i64::from(pixels.saturating_sub(length) / 2);
         imageops::overlay(
             canvas,
             &layer,
-            rounded_offset(top_left.0),
-            rounded_offset(top_left.1),
+            rounded_offset(top_left.0) + inset(layer.width()),
+            rounded_offset(top_left.1) + inset(layer.height()),
         );
-        Ok(())
     }
 }
 
@@ -407,10 +402,6 @@ fn text_color(gauge: &GaugeContent) -> Rgba<u8> {
     } else {
         TEXT_COLOR
     }
-}
-
-fn rgba(Rgb(red, green, blue): Rgb) -> Rgba<u8> {
-    Rgba([red, green, blue, u8::MAX])
 }
 
 /// Pixels of a length, rounded, at least 1.
@@ -512,7 +503,7 @@ fn push_step_dots(
     gauge: &GaugeContent,
     steps: GaugeSteps,
     area: (f32, f32),
-    zone: &Zone,
+    zone: ZoneGeometry,
 ) {
     let (center_x, width) = area;
     let total = f32::from(steps.total());
@@ -563,7 +554,7 @@ fn draw_bar(canvas: &mut RgbaImage, gauge: &GaugeContent) -> f32 {
     let fill = if gauge.dimmed {
         GAUGE_DIMMED_FILL_COLOR
     } else {
-        super::GAUGE_FILL_COLOR
+        rgba(gauge.accent.from)
     };
     for y in top..bottom {
         for x in margin..track_end {

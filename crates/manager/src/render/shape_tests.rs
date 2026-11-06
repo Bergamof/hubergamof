@@ -1,7 +1,10 @@
 //! Arc and ring gauges, and the page zone: what is drawn where, on a
 //! 200 × 100 px zone.
 
-use hubergamof_module_api::{GaugeAccent, GaugeShape, GaugeSteps, PageZone};
+use std::io::Cursor;
+
+use hubergamof_module_api::{GaugeShape, GaugeSteps, PageZone, ZoneAccent};
+use image::ImageFormat;
 
 use super::*;
 
@@ -14,6 +17,10 @@ const ZONE: ImageSize = ImageSize {
 const RED_GLYPH: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#ff0000"/></svg>"##;
 
 const TRACK: Rgba<u8> = GAUGE_TRACK_COLOR;
+/// Rows other than the current one, in the page zone.
+const OTHER_ROW: Rgba<u8> = Rgba([0x23, 0x2a, 0x40, u8::MAX]);
+/// The indigo of the navigation module, which the page zones are drawn in.
+const INDIGO: ZoneAccent = ZoneAccent::new(Rgb(0xa5, 0xb4, 0xfc), Rgb(0x63, 0x66, 0xf1));
 const ORANGE: Rgb = Rgb(0xff, 0x80, 0x00);
 const ORANGE_PIXEL: Rgba<u8> = Rgba([0xff, 0x80, 0x00, u8::MAX]);
 
@@ -29,20 +36,20 @@ fn render_gauge(gauge: &GaugeContent) -> Arc<Rendered> {
 
 fn render_page(page: &PageZone) -> Arc<Rendered> {
     renderer()
-        .render_page_zone(page, ZONE, DEFAULT_BACKGROUND)
+        .render_page_zone(&page.clone().with_accent(INDIGO), ZONE, DEFAULT_BACKGROUND)
         .unwrap()
 }
 
 fn arc(level: f32) -> GaugeContent {
     GaugeContent::new("Haut-parleurs", "25 %", GaugeLevel::from_ratio(level))
         .with_shape(GaugeShape::Arc)
-        .with_accent(GaugeAccent::solid(ORANGE))
+        .with_accent(ZoneAccent::solid(ORANGE))
 }
 
 fn ring(level: f32) -> GaugeContent {
     GaugeContent::new("Travail", "18:42", GaugeLevel::from_ratio(level))
         .with_shape(GaugeShape::Ring)
-        .with_accent(GaugeAccent::solid(ORANGE))
+        .with_accent(ZoneAccent::solid(ORANGE))
 }
 
 /// Whether `pixel` is `expected`, give or take the rounding of blending.
@@ -258,8 +265,8 @@ fn the_title_and_the_parent_page_are_drawn_centred() {
 fn rows_are_one_segment_each_with_the_current_one_lit() {
     // Three segments over columns 16 to 184 on row 82: 16-69, 73-127, 131-184.
     let rendered = render_page(&PageZone::new("Accueil").with_rows(1, 3));
-    assert!(is(pixel(&rendered, 40, 82), Rgba([0x23, 0x2a, 0x40, 255])));
-    assert!(is(pixel(&rendered, 160, 82), Rgba([0x23, 0x2a, 0x40, 255])));
+    assert!(is(pixel(&rendered, 40, 82), OTHER_ROW));
+    assert!(is(pixel(&rendered, 160, 82), OTHER_ROW));
     let current = pixel(&rendered, 100, 82);
     assert!(current.0[2] > 0xe0 && current.0[0] > 0x60, "{current:?}");
     let caption = |pixel: Rgba<u8>| pixel.0[0] > 0x40;
@@ -282,9 +289,9 @@ fn a_single_row_shows_no_segments() {
 fn many_rows_share_one_track_with_a_marker() {
     // Twelve rows, the seventh shown: the marker is 14 px wide from column 100.
     let rendered = render_page(&PageZone::new("Accueil").with_rows(6, 12));
-    assert!(is(pixel(&rendered, 40, 82), Rgba([0x23, 0x2a, 0x40, 255])));
+    assert!(is(pixel(&rendered, 40, 82), OTHER_ROW));
     assert!(pixel(&rendered, 107, 82).0[2] > 0xe0);
-    assert!(is(pixel(&rendered, 130, 82), Rgba([0x23, 0x2a, 0x40, 255])));
+    assert!(is(pixel(&rendered, 130, 82), OTHER_ROW));
 }
 
 #[test]
@@ -298,4 +305,199 @@ fn identical_page_zones_hit_the_cache() {
         .render_page_zone(&page.clone(), ZONE, DEFAULT_BACKGROUND)
         .unwrap();
     assert!(Arc::ptr_eq(&first, &second));
+}
+
+#[test]
+fn rows_beyond_the_last_one_show_the_last_one() {
+    let page = PageZone::new("Accueil").with_rows(5, 3);
+    let rendered = render_page(&page);
+    // Third of three segments lit, and the caption agrees.
+    assert!(pixel(&rendered, 160, 82).0[2] > 0xe0);
+    assert!(is(pixel(&rendered, 40, 82), OTHER_ROW));
+    assert_eq!(
+        rendered.image().as_ref(),
+        render_page(&PageZone::new("Accueil").with_rows(2, 3))
+            .image()
+            .as_ref()
+    );
+}
+
+/// Columns of row 82 (the middle of the row segments) that are not background.
+fn segment_columns(rendered: &Rendered) -> Vec<u32> {
+    (0..200)
+        .filter(|&x| pixel(rendered, x, 82) != DEFAULT_BACKGROUND)
+        .collect()
+}
+
+/// Number of runs of columns, a run ending at a gap wider than `max_gap`.
+fn runs_with_gap(columns: &[u32], max_gap: u32) -> usize {
+    columns
+        .iter()
+        .enumerate()
+        .filter(|&(index, &column)| index == 0 || columns[index - 1] + max_gap < column)
+        .count()
+}
+
+/// Number of runs of consecutive columns.
+fn runs(columns: &[u32]) -> usize {
+    runs_with_gap(columns, 1)
+}
+
+#[test]
+fn up_to_seven_rows_have_a_segment_each_and_more_share_a_track() {
+    let rows = |row, count| {
+        segment_columns(&render_page(
+            &PageZone::new("Accueil").with_rows(row, count),
+        ))
+    };
+    assert_eq!(runs(&rows(0, 2)), 2);
+    assert_eq!(runs(&rows(3, 7)), 7);
+    assert_eq!(runs(&rows(3, 8)), 1, "a continuous track");
+    assert_eq!(runs(&rows(0, 1)), 0);
+}
+
+#[test]
+fn a_glyph_that_cannot_be_drawn_is_left_out() {
+    let broken = ImageData::new(&b"not an image"[..]);
+    let with = render_gauge(&ring(0.5).with_glyph(broken.clone()));
+    assert_eq!(
+        with.image().as_ref(),
+        render_gauge(&ring(0.5)).image().as_ref()
+    );
+    let arc = render_gauge(&arc(0.5).with_glyph(broken));
+    assert!(
+        count(&arc, 70..130, 38..70, is_white) > 20,
+        "the value is drawn"
+    );
+}
+
+#[test]
+fn a_bitmap_glyph_is_scaled_into_place() {
+    let mut png = Cursor::new(Vec::new());
+    RgbaImage::from_pixel(20, 10, Rgba([255, 0, 0, 255]))
+        .write_to(&mut png, ImageFormat::Png)
+        .unwrap();
+    let rendered = render_gauge(&ring(0.5).with_glyph(ImageData::new(png.into_inner())));
+    assert!(is_red(pixel(&rendered, 46, 50)));
+    // Contained: twice as wide as high, centred.
+    assert!(is_red(pixel(&rendered, 40, 50)) && is_red(pixel(&rendered, 52, 50)));
+    assert!(!is_red(pixel(&rendered, 46, 40)));
+}
+
+#[test]
+fn every_shape_copes_with_unusual_zone_sizes() {
+    let renderer = renderer();
+    let glyph = ImageData::new(RED_GLYPH.as_bytes());
+    let steps = GaugeSteps::new(3, 12);
+    let long = "Une sortie audio au nom très très long, vraiment trop long";
+    let gauges = [
+        GaugeContent::new(long, long, GaugeLevel::from_ratio(0.5)),
+        arc(0.5).with_glyph(glyph.clone()),
+        GaugeContent::new(long, long, GaugeLevel::FULL)
+            .with_shape(GaugeShape::Arc)
+            .with_glyph(glyph.clone()),
+        ring(0.5).with_glyph(glyph.clone()).with_steps(steps),
+        GaugeContent::new(long, long, GaugeLevel::from_ratio(0.999))
+            .with_shape(GaugeShape::Ring)
+            .with_steps(steps),
+    ];
+    let pages = [
+        PageZone::new(long).with_parent(long).with_rows(3, 12),
+        PageZone::new("").with_rows(0, 2),
+        PageZone::new("Accueil"),
+    ];
+    for (width, height) in [(1, 1), (30, 20), (100, 200), (400, 200), (800, 100)] {
+        let size = ImageSize { width, height };
+        let mut images = Vec::new();
+        for gauge in &gauges {
+            images.push(
+                renderer
+                    .render_gauge(gauge, size, DEFAULT_BACKGROUND)
+                    .unwrap(),
+            );
+        }
+        for page in &pages {
+            images.push(
+                renderer
+                    .render_page_zone(page, size, DEFAULT_BACKGROUND)
+                    .unwrap(),
+            );
+        }
+        for image in images {
+            assert_eq!(image.image().dimensions(), (width, height));
+            assert!(image.image().pixels().all(|pixel| pixel.0[3] == u8::MAX));
+        }
+    }
+}
+
+#[test]
+fn rings_switch_from_an_arc_to_a_full_circle_at_the_end() {
+    // Just under full, over half: the long way round; full: a whole circle.
+    let almost = render_gauge(&ring(0.999));
+    let full = render_gauge(&ring(1.0));
+    for rendered in [&almost, &full] {
+        assert!(is(pixel(rendered, 16, 50), ORANGE_PIXEL));
+        assert!(is(pixel(rendered, 46, 80), ORANGE_PIXEL));
+    }
+    let over_half = render_gauge(&ring(0.51));
+    assert!(is(pixel(&over_half, 46, 80), ORANGE_PIXEL));
+    let half = render_gauge(&ring(0.5));
+    assert!(is(pixel(&half, 46, 80), ORANGE_PIXEL));
+    assert!(is(pixel(&half, 16, 50), TRACK));
+}
+
+#[test]
+fn a_single_step_and_the_dot_pitch_boundary_are_drawn() {
+    // 6 dots fit at the 16 px pitch in the 100 px area, 7 are squeezed.
+    for total in [1_u32, 6, 7] {
+        let rendered = render_gauge(&ring(0.5).with_steps(GaugeSteps::new(1, total)));
+        let dots = segment_dots(&rendered);
+        assert_eq!(dots, total, "{total} dots");
+    }
+}
+
+/// Dots on row 80 to the right of the ring: runs of non-background pixels.
+fn segment_dots(rendered: &Rendered) -> u32 {
+    let columns: Vec<u32> = (84..200)
+        .filter(|&x| pixel(rendered, x, 80) != DEFAULT_BACKGROUND)
+        .collect();
+    // The outline and the core of the current dot are one dot.
+    u32::try_from(runs_with_gap(&columns, 3)).unwrap()
+}
+
+#[test]
+fn changing_any_field_of_a_gauge_changes_its_image() {
+    let renderer = renderer();
+    let base = ring(0.5)
+        .with_glyph(ImageData::new(RED_GLYPH.as_bytes()))
+        .with_steps(GaugeSteps::new(2, 4));
+    let render = |gauge: &GaugeContent, size: ImageSize, background| {
+        renderer.render_gauge(gauge, size, background).unwrap()
+    };
+    let reference = render(&base, ZONE, DEFAULT_BACKGROUND);
+    let variants = [
+        base.clone().with_dimmed(true),
+        base.clone().with_steps(GaugeSteps::new(3, 4)),
+        base.clone().with_accent(ZoneAccent::solid(Rgb(0, 0xff, 0))),
+        base.clone().with_glyph(ImageData::new(
+            RED_GLYPH.replace("ff0000", "00ff00").into_bytes(),
+        )),
+        base.clone().with_shape(GaugeShape::Arc),
+    ];
+    for variant in &variants {
+        let other = render(variant, ZONE, DEFAULT_BACKGROUND);
+        assert!(!Arc::ptr_eq(&reference, &other), "{variant:?}");
+    }
+    let bigger = ImageSize {
+        width: 400,
+        height: 200,
+    };
+    assert!(!Arc::ptr_eq(
+        &reference,
+        &render(&base, bigger, DEFAULT_BACKGROUND)
+    ));
+    assert!(!Arc::ptr_eq(
+        &reference,
+        &render(&base, ZONE, Rgba([9, 9, 9, 255]))
+    ));
 }

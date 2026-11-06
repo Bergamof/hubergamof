@@ -145,8 +145,8 @@ fn gauge_text_lines(gauge: &GaugeContent) -> Vec<String> {
 /// has rows to scroll.
 fn page_text_lines(page: &PageZone) -> Vec<String> {
     let mut lines = vec![page.title.clone()];
-    if let Some(rows) = page.rows {
-        lines.push(format!("ligne {}/{}", rows.row + 1, rows.count));
+    if let Some(rows) = page.rows.filter(|rows| rows.is_scrollable()) {
+        lines.push(rows.caption());
     }
     lines
 }

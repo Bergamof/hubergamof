@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ImageData, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleFactory, NavigationView, PageZone, ZoneContent,
+    ModuleFactory, NavigationView, PageZone, Rgb, ZoneAccent, ZoneContent,
 };
 use serde_json::Value;
 
@@ -12,6 +12,10 @@ use crate::icons::{asset, svg};
 
 /// Kind of the navigation module.
 pub const NAVIGATION_KIND: &str = "navigation";
+
+/// Indigo of the module icon, from its light to its deep end: the back hint,
+/// the parent page and the current row of the zone.
+const ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0xA5, 0xB4, 0xFC), Rgb(0x63, 0x66, 0xF1));
 
 /// Icon of the module: scrolling arrows.
 const ICON_SVG: &str = asset!("navigation");
@@ -68,11 +72,11 @@ impl Module for Navigation {
     }
 
     fn zone(&self, nav: &NavigationView) -> Option<ZoneContent> {
-        let mut page = PageZone::new(nav.page_title.clone());
+        let mut page = PageZone::new(nav.page_title.clone()).with_accent(ACCENT);
         if let Some(parent) = &nav.parent_title {
             page = page.with_parent(parent.clone());
         }
-        if !nav.is_home() || nav.is_scrollable() {
+        if nav.is_scrollable() {
             page = page.with_rows(nav.row, nav.row_count);
         }
         Some(ZoneContent::Page(page))
@@ -121,17 +125,18 @@ mod tests {
     fn zone_shows_home_or_page_and_row() {
         let nav = create();
         let zone = |view| nav.zone(&view);
+        let page = |title: &str| PageZone::new(title).with_accent(ACCENT);
         assert_eq!(
             zone(view("Accueil", 0, 0, 1)),
-            Some(ZoneContent::Page(PageZone::new("Accueil")))
+            Some(ZoneContent::Page(page("Accueil")))
         );
         assert_eq!(
             zone(view("Accueil", 0, 0, 2)),
-            Some(ZoneContent::Page(PageZone::new("Accueil")))
+            Some(ZoneContent::Page(page("Accueil")))
         );
         assert_eq!(
             zone(view("Accueil", 0, 1, 3)),
-            Some(ZoneContent::Page(PageZone::new("Accueil").with_rows(1, 3)))
+            Some(ZoneContent::Page(page("Accueil").with_rows(1, 3)))
         );
     }
 
@@ -143,8 +148,9 @@ mod tests {
         };
         assert_eq!(page.title, "Conteneurs");
         assert_eq!(page.parent.as_deref(), Some("Accueil"));
-        assert!(page.can_go_back);
-        assert_eq!(page.rows.map(|rows| (rows.row, rows.count)), Some((0, 1)));
+        assert!(page.can_go_back());
+        assert_eq!(page.rows, None, "a single row has nothing to scroll");
+        assert_eq!(page.accent, ACCENT);
     }
 
     #[test]

@@ -13,15 +13,10 @@ use image::{Rgba, RgbaImage};
 use super::source::{f32_from, svg_color};
 use super::text::TextLine;
 use super::{
-    CacheKey, RenderError, Rendered, Renderer, TEXT_COLOR, check_size, keep_opaque, semibold,
+    CacheKey, RenderError, Rendered, Renderer, TEXT_COLOR, ZoneGeometry, check_size, keep_opaque,
+    rgba, semibold,
 };
 
-/// Light end of the indigo of the navigation icon: parent page, back arrow.
-const ACCENT_COLOR: Rgba<u8> = Rgba([0xa5, 0xb4, 0xfc, u8::MAX]);
-/// Deep end of the indigo: current row.
-const DEEP_ACCENT_COLOR: Rgba<u8> = Rgba([0x63, 0x66, 0xf1, u8::MAX]);
-/// Back arrow on the hint.
-const ARROW_COLOR: Rgba<u8> = Rgba([0xc7, 0xd2, 0xfe, u8::MAX]);
 /// Rows other than the current one.
 const OTHER_ROW_COLOR: Rgba<u8> = Rgba([0x23, 0x2a, 0x40, u8::MAX]);
 /// Row caption.
@@ -105,23 +100,26 @@ impl Renderer {
         };
         self.cached(key, || {
             let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
-            let zone = Zone::new(size);
+            let zone = ZoneGeometry::of_size(size);
             self.text
-                .overlay_svg(&mut canvas, &page_shapes(page, &zone))?;
-            self.text
-                .draw(&mut canvas, &self.page_lines(page, &zone)?)?;
+                .overlay_svg(&mut canvas, &page_shapes(page, zone))?;
+            self.text.draw(&mut canvas, &self.page_lines(page, zone)?)?;
             Ok(keep_opaque(canvas, background))
         })
     }
 
     /// Parent page, title and row caption.
-    fn page_lines(&self, page: &PageZone, zone: &Zone) -> Result<Vec<TextLine>, RenderError> {
+    fn page_lines(
+        &self,
+        page: &PageZone,
+        zone: ZoneGeometry,
+    ) -> Result<Vec<TextLine>, RenderError> {
         let center = zone.width / 2.0;
         let mut lines = Vec::new();
         if let Some(parent) = &page.parent {
             lines.push(self.text.fitted_line(
                 &format!("{parent}{PARENT_SEPARATOR}"),
-                semibold(zone.y(PARENT_FONT_RATIO), ACCENT_COLOR),
+                semibold(zone.y(PARENT_FONT_RATIO), rgba(page.accent.from)),
                 center,
                 zone.y(PARENT_BASELINE_RATIO),
                 zone.width * TITLE_WIDTH_RATIO,
@@ -136,7 +134,7 @@ impl Renderer {
         )?);
         if let Some(rows) = scrollable_rows(page) {
             lines.push(self.text.fitted_line(
-                &format!("ligne {} sur {}", rows.row + 1, rows.count),
+                &rows.caption(),
                 semibold(zone.y(CAPTION_FONT_RATIO), CAPTION_COLOR),
                 center,
                 zone.y(CAPTION_BASELINE_RATIO),
@@ -147,38 +145,19 @@ impl Renderer {
     }
 }
 
-/// Geometry of the zone.
-struct Zone {
-    width: f32,
-    height: f32,
-}
-
-impl Zone {
-    fn new(size: ImageSize) -> Self {
-        Self {
-            width: f32_from(size.width),
-            height: f32_from(size.height),
-        }
-    }
-
-    fn y(&self, ratio: f32) -> f32 {
-        self.height * ratio
-    }
-}
-
 /// The rows when there is more than one to move between.
 fn scrollable_rows(page: &PageZone) -> Option<RowPosition> {
-    page.rows.filter(|rows| rows.count > 1)
+    page.rows.filter(|rows| rows.is_scrollable())
 }
 
 /// The hint of the way back and the rows, which carry no text.
-fn page_shapes(page: &PageZone, zone: &Zone) -> String {
+fn page_shapes(page: &PageZone, zone: ZoneGeometry) -> String {
     let mut svg = format!(
         r#"<defs><linearGradient id="{GRADIENT_ID}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{light}"/><stop offset="1" stop-color="{deep}"/></linearGradient></defs>"#,
-        light = svg_color(ACCENT_COLOR),
-        deep = svg_color(DEEP_ACCENT_COLOR),
+        light = svg_color(rgba(page.accent.from)),
+        deep = svg_color(rgba(page.accent.to)),
     );
-    push_hint(&mut svg, zone, page.can_go_back);
+    push_hint(&mut svg, zone, page);
     if let Some(rows) = scrollable_rows(page) {
         push_rows(&mut svg, zone, rows);
     }
@@ -187,7 +166,8 @@ fn page_shapes(page: &PageZone, zone: &Zone) -> String {
 
 /// Rounded square with the back arrow: lit when the dial goes back, dashed
 /// and faint on the home page.
-fn push_hint(svg: &mut String, zone: &Zone, enabled: bool) {
+fn push_hint(svg: &mut String, zone: ZoneGeometry, page: &PageZone) {
+    let enabled = page.can_go_back();
     let side = zone.y(HINT_SIDE_RATIO);
     let left = zone.width * (1.0 - HINT_RIGHT_RATIO) - side;
     let top = zone.y(HINT_TOP_RATIO);
@@ -206,10 +186,10 @@ fn push_hint(svg: &mut String, zone: &Zone, enabled: bool) {
         let _ = write!(
             svg,
             r#"<g opacity="{DISABLED_HINT_OPACITY}"><rect x="{left}" y="{top}" width="{side}" height="{side}" rx="{radius}" fill="none" stroke="{color}" stroke-width="{outline}" stroke-dasharray="{dash} {dash}"/></g>"#,
-            color = svg_color(ACCENT_COLOR),
+            color = svg_color(rgba(page.accent.from)),
         );
     }
-    let arrow_color = if enabled { ARROW_COLOR } else { ACCENT_COLOR };
+    let arrow_color = rgba(page.accent.from);
     let opacity = if enabled { 1.0 } else { DISABLED_HINT_OPACITY };
     let _ = write!(
         svg,
@@ -220,17 +200,17 @@ fn push_hint(svg: &mut String, zone: &Zone, enabled: bool) {
 
 /// One segment per row (the current one lit), or a track with a marker when
 /// there are too many rows for segments.
-fn push_rows(svg: &mut String, zone: &Zone, rows: RowPosition) {
+fn push_rows(svg: &mut String, zone: ZoneGeometry, rows: RowPosition) {
     let left = zone.width * ROWS_MARGIN_RATIO;
     let length = zone.width * (1.0 - 2.0 * ROWS_MARGIN_RATIO);
     let top = zone.y(ROWS_TOP_RATIO);
     let thickness = zone.y(ROWS_THICKNESS_RATIO);
     let radius = thickness / 2.0;
-    let current = rows.row.min(rows.count - 1);
-    let segments = rows.count.min(MAX_ROW_SEGMENTS);
+    let current = rows.row();
+    let segments = rows.count().min(MAX_ROW_SEGMENTS);
     // Writing to a `String` cannot fail.
-    if rows.count > MAX_ROW_SEGMENTS {
-        let marker = length / f32_from(rows.count);
+    if rows.count() > MAX_ROW_SEGMENTS {
+        let marker = length / f32_from(rows.count());
         let _ = write!(
             svg,
             r#"<rect x="{left}" y="{top}" width="{length}" height="{thickness}" rx="{radius}" fill="{track}"/><rect x="{x}" y="{top}" width="{marker}" height="{thickness}" rx="{radius}" fill="url(#{GRADIENT_ID})"/>"#,

@@ -25,10 +25,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, GaugeAccent, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps,
-    ImageData, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
-    ModuleError, ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification,
-    Rgb, ZoneContent,
+    Command, EventSender, Feedback, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps, ImageData,
+    KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneAccent,
+    ZoneContent,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -414,26 +414,24 @@ fn phase_name(phase: Phase) -> &'static str {
 }
 
 /// Red of the tomato icon, from its light to its deep end: work.
-const WORK_ACCENT: GaugeAccent = GaugeAccent::new(Rgb(0xFF, 0x8A, 0x6B), Rgb(0xF0, 0x3E, 0x2F));
+const WORK_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0xFF, 0x8A, 0x6B), Rgb(0xF0, 0x3E, 0x2F));
 /// Green of the break notification, from its light to its deep end: breaks.
-const BREAK_ACCENT: GaugeAccent = GaugeAccent::new(Rgb(0x6E, 0xE7, 0xB7), Rgb(0x16, 0xA0, 0x6E));
+const BREAK_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0x6E, 0xE7, 0xB7), Rgb(0x16, 0xA0, 0x6E));
 
 /// Ring gauge of the zone: the step as the title, the time left, the share of
 /// the step elapsed, the pomodoros of the cycle as dots, and a glyph telling
 /// work from break from a stopped timer.
 fn zone_gauge(timer: &Timer, remaining: Duration) -> GaugeContent {
     let phase = timer.phase();
-    let (accent, glyph) = match (timer.is_running(), phase.is_break()) {
-        (false, _) => (
-            if phase.is_break() {
-                BREAK_ACCENT
-            } else {
-                WORK_ACCENT
-            },
-            &icons::PAUSED,
-        ),
-        (true, true) => (BREAK_ACCENT, &icons::BREAK),
-        (true, false) => (WORK_ACCENT, &icons::WORK),
+    let accent = if phase.is_break() {
+        BREAK_ACCENT
+    } else {
+        WORK_ACCENT
+    };
+    let glyph = match (timer.is_running(), phase.is_break()) {
+        (false, _) => &icons::PAUSED,
+        (true, true) => &icons::BREAK,
+        (true, false) => &icons::WORK,
     };
     GaugeContent::new(
         phase_name(phase),

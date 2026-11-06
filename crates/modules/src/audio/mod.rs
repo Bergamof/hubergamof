@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, GaugeAccent, GaugeContent, GaugeLevel, GaugeShape, ImageData, ItemId, KeyContent,
-    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, ModuleSurface, NavigationView, PageContent, PageId, PageItem, Rgb,
-    SettingField, SettingKind, ZoneContent,
+    Command, GaugeContent, GaugeLevel, GaugeShape, ImageData, ItemId, KeyContent, KeyState, Module,
+    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
+    ModuleSurface, NavigationView, PageContent, PageId, PageItem, Rgb, SettingField, SettingKind,
+    ZoneAccent, ZoneContent,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -515,7 +515,7 @@ impl Module for Audio {
 }
 
 /// Cyan of the speaker icon, from its light to its deep end.
-const VOLUME_ACCENT: GaugeAccent = GaugeAccent::new(Rgb(0x67, 0xE8, 0xF9), Rgb(0x0E, 0xA5, 0xE9));
+const VOLUME_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0x67, 0xE8, 0xF9), Rgb(0x0E, 0xA5, 0xE9));
 
 /// Gauge of the default output, as an arc. The arc spans the reach of the
 /// dial (0 to the ceiling), so that a full arc means « the dial goes no

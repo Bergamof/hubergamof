@@ -634,6 +634,7 @@ impl DeviceEngine {
             };
             match self.instances.page(&current.module, &current.page) {
                 Some(content) => {
+                    self.nav.set_current_title(&content.title);
                     return PageModel::Module {
                         module: current.module,
                         page: current.page,
@@ -860,12 +861,14 @@ impl DeviceEngine {
     }
 
     /// Title of the page the navigation leads back to: the home page, or the
-    /// module page that opened the displayed one.
-    fn parent_title(&mut self) -> String {
-        let parent = self.nav.parent().cloned();
-        parent
-            .and_then(|parent| self.instances.page(&parent.module, &parent.page))
-            .map_or_else(|| HOME_PAGE_TITLE.to_owned(), |page| page.title)
+    /// module page that opened the displayed one, as it was when shown.
+    fn parent_title(&self) -> String {
+        self.nav
+            .parent()
+            .map(|parent| parent.title.as_str())
+            .filter(|title| !title.is_empty())
+            .unwrap_or(HOME_PAGE_TITLE)
+            .to_owned()
     }
 
     fn dial_faces(&mut self, view: &NavigationView) -> Vec<DialFace> {

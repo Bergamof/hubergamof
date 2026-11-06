@@ -8,6 +8,8 @@ use hubergamof_module_api::{ModuleInstanceId, PageId};
 pub(crate) struct PageRef {
     pub(crate) module: ModuleInstanceId,
     pub(crate) page: PageId,
+    /// Title the page had when last displayed, empty until then.
+    pub(crate) title: String,
 }
 
 /// Pages opened above the home page, and the visible row of the top one.
@@ -22,6 +24,16 @@ impl Navigation {
     /// Displayed module page, `None` on the home page.
     pub(crate) fn current(&self) -> Option<&PageRef> {
         self.stack.last()
+    }
+
+    /// Remembers the title of the displayed module page, for the zones that
+    /// name the page the navigation leads back to.
+    pub(crate) fn set_current_title(&mut self, title: &str) {
+        if let Some(current) = self.stack.last_mut()
+            && current.title != title
+        {
+            title.clone_into(&mut current.title);
+        }
     }
 
     /// Page below the displayed one, `None` when that is the home page.
@@ -47,7 +59,11 @@ impl Navigation {
     }
 
     pub(crate) fn open(&mut self, module: ModuleInstanceId, page: PageId) {
-        self.stack.push(PageRef { module, page });
+        self.stack.push(PageRef {
+            module,
+            page,
+            title: String::new(),
+        });
         self.row = 0;
     }
 
