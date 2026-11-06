@@ -29,7 +29,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
-use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError, ReadScope};
+use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError, AudioFault, ReadScope};
 use super::state::AudioSnapshot;
 use crate::background::{Backoff, Listener, ReadPacer, catch_panic, sleep_until};
 
@@ -69,7 +69,7 @@ pub(super) enum ServerView {
     /// Last state read.
     Ready(Arc<AudioSnapshot>),
     /// The server could not be read.
-    Unavailable,
+    Unavailable(AudioFault),
 }
 
 /// State published to the instances.
@@ -462,12 +462,13 @@ impl Worker {
                 ServerView::Ready(Arc::clone(snapshot))
             }
             Err(error) => {
+                let fault = error.fault();
                 if self.reachable {
-                    tracing::warn!(%error, "cannot read the audio state");
+                    tracing::warn!(%error, remedy = fault.remedy(), "cannot read the audio state");
                 }
                 self.reachable = false;
                 self.snapshot = None;
-                ServerView::Unavailable
+                ServerView::Unavailable(fault)
             }
         };
         self.hub.publish(

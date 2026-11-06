@@ -618,3 +618,16 @@ async fn the_tasks_stop_with_the_instance() {
     tokio::time::sleep(IDLE).await;
     assert_eq!(audio.snapshot_reads(), reads);
 }
+
+#[test]
+fn the_zone_names_what_the_user_can_fix() {
+    assert_eq!(unavailable_text(AudioFault::ToolMissing), "pactl absent");
+    assert_eq!(
+        unavailable_text(AudioFault::ToolTooOld),
+        "pactl trop ancien"
+    );
+    assert_eq!(
+        unavailable_text(AudioFault::Unreachable),
+        "Audio indisponible"
+    );
+}

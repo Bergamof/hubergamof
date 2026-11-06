@@ -71,6 +71,25 @@ confirm() {
 	[[ "$answer" =~ ^[oOyY]$ ]]
 }
 
+# Version majeure minimale de pactl (--format=json, utilisé par le module Audio).
+readonly PACTL_MIN_MAJOR=16
+
+# Avertit (sans bloquer) si le module Audio ne pourra pas fonctionner : pactl
+# absent (sur Ubuntu, il est dans pulseaudio-utils) ou trop ancien.
+check_pactl() {
+	local version major
+	if ! command -v pactl >/dev/null; then
+		warn "pactl introuvable : le module Audio sera indisponible. Ubuntu/Debian : sudo apt install pulseaudio-utils ; Arch : sudo pacman -S libpulse."
+		return
+	fi
+	version="$(LC_ALL=C pactl --version 2>/dev/null | head -n 1)"
+	major="${version##* }"
+	major="${major%%.*}"
+	if [[ ! "$major" =~ ^[0-9]+$ ]] || ((major < PACTL_MIN_MAJOR)); then
+		warn "pactl ${PACTL_MIN_MAJOR} ou plus est requis par le module Audio (trouvé : « ${version:-version illisible} »)."
+	fi
+}
+
 reload_udev_rules() {
 	sudo udevadm control --reload-rules
 	sudo udevadm trigger --subsystem-match=usb --subsystem-match=hidraw

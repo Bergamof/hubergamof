@@ -92,6 +92,15 @@ impl PactlBackend {
         }
     }
 
+    /// Backend running `program` itself, possibly absent (tests).
+    #[cfg(test)]
+    pub(super) fn with_program(program: impl Into<OsString>) -> Self {
+        Self {
+            program: program.into(),
+            leading_args: Vec::new(),
+        }
+    }
+
     fn command(&self, args: &[String]) -> Command {
         let mut command = Command::new(&self.program);
         command
@@ -457,6 +466,7 @@ impl RawDevice {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use super::super::backend::AudioFault;
     use serde_json::json;
 
     use super::super::state::AudioSnapshot;
@@ -829,6 +839,30 @@ esac"#;
             Err(AudioError::Spawn { .. })
         ));
         assert!(missing.subscribe().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn faults_tell_a_missing_or_old_pactl_from_an_unreachable_server() {
+        let missing = PactlBackend::with_program("/nonexistent/hubergamof/pactl");
+        let error = missing.read(ReadScope::ALL).await.unwrap_err();
+        assert_eq!(error.fault(), AudioFault::ToolMissing);
+
+        // pactl 15 (Ubuntu 22.04) does not know `--format`.
+        let dir = tempfile::tempdir().unwrap();
+        let old = PactlBackend::shell_script(fake_pactl(
+            dir.path(),
+            "echo \"pactl: unrecognized option '--format=json'\" >&2\nexit 1",
+        ));
+        let error = old.read(ReadScope::ALL).await.unwrap_err();
+        assert_eq!(error.fault(), AudioFault::ToolTooOld);
+
+        let other = tempfile::tempdir().unwrap();
+        let down = PactlBackend::shell_script(fake_pactl(
+            other.path(),
+            "echo 'Connection failure: Connection refused' >&2\nexit 1",
+        ));
+        let error = down.read(ReadScope::ALL).await.unwrap_err();
+        assert_eq!(error.fault(), AudioFault::Unreachable);
     }
 
     #[tokio::test]

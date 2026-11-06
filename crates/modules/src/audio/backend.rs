@@ -201,6 +201,51 @@ pub enum AudioError {
     Unavailable,
 }
 
+/// Why the audio server cannot be read, as far as the user can act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFault {
+    /// `pactl` is not installed.
+    ToolMissing,
+    /// `pactl` is older than 16 (no `--format=json`).
+    ToolTooOld,
+    /// Anything else: server down, timeout, unexpected output…
+    Unreachable,
+}
+
+impl AudioFault {
+    /// What to do about it, for the logs; `None` when nothing is known.
+    #[must_use]
+    pub fn remedy(self) -> Option<&'static str> {
+        match self {
+            Self::ToolMissing => {
+                Some("install `pactl` (Debian/Ubuntu: pulseaudio-utils, Arch: libpulse)")
+            }
+            Self::ToolTooOld => Some("`pactl` 16 or later is required (Ubuntu 24.04 or later)"),
+            Self::Unreachable => None,
+        }
+    }
+}
+
+impl AudioError {
+    /// The part of the failure the user can act on.
+    #[must_use]
+    pub fn fault(&self) -> AudioFault {
+        match self {
+            Self::Spawn { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+                AudioFault::ToolMissing
+            }
+            Self::Failed { stderr, .. } if rejects_json_format(stderr) => AudioFault::ToolTooOld,
+            _ => AudioFault::Unreachable,
+        }
+    }
+}
+
+/// `pactl` before 16 refuses `--format=json` (its messages are untranslated:
+/// the backend forces `LC_ALL=C`).
+fn rejects_json_format(stderr: &str) -> bool {
+    stderr.contains("--format") && stderr.contains("option")
+}
+
 /// Notifications of changes made on the audio server, by anyone.
 #[async_trait]
 pub trait AudioChanges: Send {
