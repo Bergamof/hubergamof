@@ -244,10 +244,10 @@ impl Renderer {
             imageops::crop_imm(layer.as_ref(), offset, 0, metrics.visible, metrics.height)
                 .to_image();
         if scrolls {
-            fade_ends(
-                &mut window,
-                pixels(f32_from(metrics.height) * FADE_RATIO, metrics.visible),
-            );
+            let fade = pixels(f32_from(metrics.height) * FADE_RATIO, metrics.visible);
+            // The start of the message is not faded while it still stands
+            // still: the fade on the left grows as the text moves away.
+            fade_ends(&mut window, fade.min(offset), fade);
         }
         imageops::overlay(canvas, &window, i64::from(metrics.text_left), 0);
         Ok(scrolls)
@@ -315,18 +315,24 @@ impl Renderer {
     }
 }
 
-/// Fades the first and last `width` columns of `window` to transparent.
-fn fade_ends(window: &mut RgbaImage, width: u32) {
+/// Fades the first `left` and the last `right` columns of `window` to
+/// transparent.
+fn fade_ends(window: &mut RgbaImage, left: u32, right: u32) {
     let columns = window.width();
-    if width == 0 || columns < 2 * width {
+    if columns < left + right {
         return;
     }
     for (x, _, pixel) in window.enumerate_pixels_mut() {
-        let distance = x.min(columns - 1 - x);
-        if distance < width {
-            let alpha = u32::from(pixel.0[3]) * distance / width;
-            pixel.0[3] = u8::try_from(alpha).unwrap_or(u8::MAX);
-        }
+        let from_right = columns - 1 - x;
+        let (distance, width) = if x < left {
+            (x, left)
+        } else if from_right < right {
+            (from_right, right)
+        } else {
+            continue;
+        };
+        let alpha = u32::from(pixel.0[3]) * distance / width;
+        pixel.0[3] = u8::try_from(alpha).unwrap_or(u8::MAX);
     }
 }
 
@@ -437,6 +443,19 @@ mod tests {
         assert_ne!(*full.get_pixel(700, 99), background);
         assert_eq!(*half.get_pixel(700, 99), background);
         assert_ne!(*half.get_pixel(100, 99), background);
+    }
+
+    #[test]
+    fn the_start_of_a_scrolling_message_is_not_faded_until_it_moves() {
+        let opaque = |width, height| RgbaImage::from_pixel(width, height, Rgba([9, 9, 9, 255]));
+        let mut still = opaque(100, 1);
+        fade_ends(&mut still, 0, 30);
+        assert_eq!(still.get_pixel(0, 0).0[3], 255);
+        assert!(still.get_pixel(99, 0).0[3] < 10);
+        let mut moving = opaque(100, 1);
+        fade_ends(&mut moving, 30, 30);
+        assert_eq!(moving.get_pixel(0, 0).0[3], 0);
+        assert_eq!(moving.get_pixel(50, 0).0[3], 255);
     }
 
     #[test]
