@@ -15,6 +15,7 @@
 //! step whose end passed while the machine slept is over on waking up. The
 //! state lives in memory only: a restart begins a new cycle.
 
+mod icons;
 mod menu;
 mod settings;
 mod timer;
@@ -24,9 +25,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, GaugeContent, GaugeLevel, ImageData, KeyContent, KeyState,
-    Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
-    ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneContent,
+    Command, EventSender, Feedback, GaugeAccent, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps,
+    ImageData, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
+    ModuleError, ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification,
+    Rgb, ZoneContent,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -310,12 +312,7 @@ impl Module for Pomodoro {
             return Some(self.menu_zone(menu));
         }
         let remaining = self.timer.remaining(self.now());
-        let gauge = GaugeContent::new(
-            step_title(&self.timer),
-            format_remaining(remaining),
-            displayed_level(self.timer.step_duration(), remaining),
-        )
-        .with_dimmed(!self.timer.is_running());
+        let gauge = zone_gauge(&self.timer, remaining);
         Some(ZoneContent::Gauge(gauge))
     }
 
@@ -416,7 +413,41 @@ fn phase_name(phase: Phase) -> &'static str {
     }
 }
 
-/// Title of the zone: the step, with the pomodoro number while working.
+/// Red of the tomato icon, from its light to its deep end: work.
+const WORK_ACCENT: GaugeAccent = GaugeAccent::new(Rgb(0xFF, 0x8A, 0x6B), Rgb(0xF0, 0x3E, 0x2F));
+/// Green of the break notification, from its light to its deep end: breaks.
+const BREAK_ACCENT: GaugeAccent = GaugeAccent::new(Rgb(0x6E, 0xE7, 0xB7), Rgb(0x16, 0xA0, 0x6E));
+
+/// Ring gauge of the zone: the step as the title, the time left, the share of
+/// the step elapsed, the pomodoros of the cycle as dots, and a glyph telling
+/// work from break from a stopped timer.
+fn zone_gauge(timer: &Timer, remaining: Duration) -> GaugeContent {
+    let phase = timer.phase();
+    let (accent, glyph) = match (timer.is_running(), phase.is_break()) {
+        (false, _) => (
+            if phase.is_break() {
+                BREAK_ACCENT
+            } else {
+                WORK_ACCENT
+            },
+            &icons::PAUSED,
+        ),
+        (true, true) => (BREAK_ACCENT, &icons::BREAK),
+        (true, false) => (WORK_ACCENT, &icons::WORK),
+    };
+    GaugeContent::new(
+        phase_name(phase),
+        format_remaining(remaining),
+        displayed_level(timer.step_duration(), remaining),
+    )
+    .with_shape(GaugeShape::Ring)
+    .with_accent(accent)
+    .with_glyph(ImageData::clone(glyph))
+    .with_steps(GaugeSteps::new(timer.pomodoro(), timer.cycle_length()))
+    .with_dimmed(!timer.is_running())
+}
+
+/// Title of the menu: the step, with the pomodoro number while working.
 fn step_title(timer: &Timer) -> String {
     match timer.phase() {
         Phase::Work => format!(

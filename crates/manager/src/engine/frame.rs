@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     ClockFace, Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
-    ModuleInstanceId, PageId, Rgb, UnreadNotification, ZoneContent,
+    ModuleInstanceId, PageId, PageZone, Rgb, UnreadNotification, ZoneContent,
 };
 
 use super::live::PageSummary;
@@ -78,6 +78,7 @@ pub(crate) enum ZoneContentFace {
     Lines(Vec<String>),
     Gauge(GaugeContent),
     Clock(ClockFace),
+    Page(PageZone),
     Image(ImageSource),
 }
 
@@ -90,6 +91,7 @@ impl ZoneContentFace {
             }
             Some(ZoneContent::Gauge(gauge)) => Self::Gauge(gauge),
             Some(ZoneContent::Clock(face)) => Self::Clock(face),
+            Some(ZoneContent::Page(page)) => Self::Page(page),
             Some(ZoneContent::Image(image)) => Self::Image(image_source(image)),
             // No zone, or a content added later that this version cannot draw.
             _ => Self::Blank,
@@ -97,13 +99,14 @@ impl ZoneContentFace {
     }
 
     /// Text equivalent of the zone for the web UI: its lines, the title and
-    /// value of a gauge, or the time and the date of a clock face; empty for
-    /// an image or a blank zone.
+    /// value of a gauge, the time and the date of a clock face, or the title
+    /// and row of a page; empty for an image or a blank zone.
     pub(crate) fn text_lines(&self) -> Vec<String> {
         match self {
             Self::Lines(lines) => lines.clone(),
-            Self::Gauge(gauge) => vec![gauge.title.clone(), gauge.value.clone()],
+            Self::Gauge(gauge) => gauge_text_lines(gauge),
             Self::Clock(face) => clock_text_lines(face),
+            Self::Page(page) => page_text_lines(page),
             Self::Blank | Self::Image(_) => Vec::new(),
         }
     }
@@ -124,6 +127,26 @@ fn clock_text_lines(face: &ClockFace) -> Vec<String> {
     let mut lines = vec![time];
     if !details.is_empty() {
         lines.push(details.join(" · "));
+    }
+    lines
+}
+
+/// Title (followed by the position in its steps, `Travail · 2/4`, when it has
+/// some) and value of a gauge.
+fn gauge_text_lines(gauge: &GaugeContent) -> Vec<String> {
+    let title = match gauge.steps {
+        Some(steps) => format!("{} · {}/{}", gauge.title, steps.current(), steps.total()),
+        None => gauge.title.clone(),
+    };
+    vec![title, gauge.value.clone()]
+}
+
+/// Title of the page, then the row on display (`ligne 2/3`), when the page
+/// has rows to scroll.
+fn page_text_lines(page: &PageZone) -> Vec<String> {
+    let mut lines = vec![page.title.clone()];
+    if let Some(rows) = page.rows {
+        lines.push(format!("ligne {}/{}", rows.row + 1, rows.count));
     }
     lines
 }
@@ -208,7 +231,7 @@ fn image_source(image: ImageData) -> ImageSource {
 
 #[cfg(test)]
 mod tests {
-    use hubergamof_module_api::{CalendarLeaf, GaugeLevel};
+    use hubergamof_module_api::{CalendarLeaf, GaugeLevel, GaugeSteps};
 
     use super::*;
 
@@ -234,6 +257,31 @@ mod tests {
             ZoneContentFace::Gauge(gauge).text_lines(),
             ["Volume", "25 %"].map(String::from)
         );
+    }
+
+    #[test]
+    fn gauges_with_steps_name_the_step_in_their_text() {
+        let gauge = GaugeContent::new("Travail", "18:42", GaugeLevel::EMPTY)
+            .with_steps(GaugeSteps::new(2, 4));
+        assert_eq!(
+            ZoneContentFace::Gauge(gauge).text_lines(),
+            ["Travail · 2/4", "18:42"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn page_zones_are_kept_and_described_as_text() {
+        let page = PageZone::new("Conteneurs")
+            .with_parent("Accueil")
+            .with_rows(1, 3);
+        let content = ZoneContentFace::from_content(Some(ZoneContent::Page(page.clone())));
+        assert_eq!(content, ZoneContentFace::Page(page));
+        assert_eq!(
+            content.text_lines(),
+            ["Conteneurs", "ligne 2/3"].map(String::from)
+        );
+        let home = ZoneContentFace::Page(PageZone::new("Accueil"));
+        assert_eq!(home.text_lines(), ["Accueil"].map(String::from));
     }
 
     #[test]

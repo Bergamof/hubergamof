@@ -24,6 +24,14 @@ impl Navigation {
         self.stack.last()
     }
 
+    /// Page below the displayed one, `None` when that is the home page.
+    pub(crate) fn parent(&self) -> Option<&PageRef> {
+        self.stack
+            .len()
+            .checked_sub(2)
+            .and_then(|index| self.stack.get(index))
+    }
+
     /// Number of pages above the home page.
     pub(crate) fn depth(&self) -> usize {
         self.stack.len()
@@ -61,6 +69,18 @@ impl Navigation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_parent_is_the_page_below_the_displayed_one() {
+        let mut nav = Navigation::default();
+        assert_eq!(nav.parent(), None);
+        nav.open("a".into(), "first".into());
+        assert_eq!(nav.parent(), None, "the home page is not on the stack");
+        nav.open("a".into(), "second".into());
+        assert_eq!(nav.parent().map(|page| page.page.0.as_str()), Some("first"));
+        nav.back();
+        assert_eq!(nav.parent(), None);
+    }
 
     #[test]
     fn back_and_home_unwind_the_stack_and_reset_the_row() {
