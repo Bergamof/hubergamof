@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 
-use hubergamof_module_api::{GaugeShape, GaugeSteps, PageZone, ZoneAccent};
+use hubergamof_module_api::{GaugeShape, GaugeSteps, MenuZone, PageZone, ZoneAccent};
 use image::ImageFormat;
 
 use super::*;
@@ -22,6 +22,7 @@ const OTHER_ROW: Rgba<u8> = Rgba([0x23, 0x2a, 0x40, u8::MAX]);
 /// The indigo of the navigation module, which the page zones are drawn in.
 const INDIGO: ZoneAccent = ZoneAccent::new(Rgb(0xa5, 0xb4, 0xfc), Rgb(0x63, 0x66, 0xf1));
 const ORANGE: Rgb = Rgb(0xff, 0x80, 0x00);
+const ORANGE_ACCENT: ZoneAccent = ZoneAccent::solid(ORANGE);
 const ORANGE_PIXEL: Rgba<u8> = Rgba([0xff, 0x80, 0x00, u8::MAX]);
 
 fn renderer() -> Renderer {
@@ -500,4 +501,121 @@ fn changing_any_field_of_a_gauge_changes_its_image() {
         &reference,
         &render(&base, ZONE, Rgba([9, 9, 9, 255]))
     ));
+}
+
+fn menu(selected: u32) -> MenuZone {
+    let entries = ["Mettre en pause", "Passer à la pause", "Remise à zéro"]
+        .map(String::from)
+        .to_vec();
+    MenuZone::new(
+        "Travail · 18:42",
+        entries,
+        usize::try_from(selected).unwrap(),
+    )
+    .with_accent(ORANGE_ACCENT)
+}
+
+fn render_menu(menu: &MenuZone) -> Arc<Rendered> {
+    renderer()
+        .render_menu_zone(menu, ZONE, DEFAULT_BACKGROUND)
+        .unwrap()
+}
+
+/// Row crossing the middle of the entry `index` of a menu on a [`ZONE`].
+const fn entry_row(index: u32) -> u32 {
+    36 + 24 * index
+}
+
+#[test]
+fn the_selected_entry_has_a_pill_and_the_others_none() {
+    for selected in 0..3 {
+        let rendered = render_menu(&menu(selected));
+        for index in 0..3 {
+            // Right of every text, inside the pill.
+            let pill = pixel(&rendered, 175, entry_row(index));
+            assert_eq!(
+                pill != DEFAULT_BACKGROUND,
+                index == selected,
+                "entry {index} with {selected} selected"
+            );
+        }
+        assert!(
+            pixel(&rendered, 175, entry_row(selected)).0[0] > 0x30,
+            "tinted"
+        );
+    }
+}
+
+#[test]
+fn the_menu_draws_its_title_in_the_accent_and_every_entry() {
+    let rendered = render_menu(&menu(0));
+    let accent = |pixel: Rgba<u8>| pixel.0[0] > 0xc0 && (0x60..0xa0).contains(&pixel.0[1]);
+    assert!(count(&rendered, 10..190, 6..22, accent) > 15, "title");
+    for index in 0..3 {
+        let row = entry_row(index);
+        let lit = |pixel: Rgba<u8>| pixel.0[0] > 0x70 && pixel.0[0] == pixel.0[2];
+        assert!(
+            count(&rendered, 20..170, row - 7..row + 7, lit) > 20,
+            "entry {index}"
+        );
+    }
+    // The selected entry is white, the others grey.
+    assert!(count(&rendered, 30..170, 30..44, is_white) > 20);
+    assert_eq!(count(&rendered, 20..170, 54..68, is_white), 0);
+}
+
+#[test]
+fn a_long_entry_is_cut_before_the_right_margin() {
+    let long = MenuZone::new(
+        "Pomodoro",
+        vec!["Une entrée vraiment beaucoup trop longue pour la zone".into()],
+        0,
+    );
+    let rendered = render_menu(&long);
+    assert_eq!(count(&rendered, 186..200, 28..48, is_white), 0);
+    assert!(count(&rendered, 30..185, 28..48, is_white) > 20);
+}
+
+#[test]
+fn a_menu_without_entries_shows_its_title_only() {
+    let rendered = render_menu(&MenuZone::new("Travail", Vec::new(), 0));
+    assert!(
+        count(&rendered, 0..200, 0..25, |pixel| pixel
+            != DEFAULT_BACKGROUND)
+            > 10
+    );
+    assert_eq!(
+        count(&rendered, 0..200, 26..100, |pixel| pixel
+            != DEFAULT_BACKGROUND),
+        0
+    );
+}
+
+#[test]
+fn identical_menus_hit_the_cache_and_the_selection_is_part_of_the_key() {
+    let renderer = renderer();
+    let first = renderer
+        .render_menu_zone(&menu(0), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let same = renderer
+        .render_menu_zone(&menu(0), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    let other = renderer
+        .render_menu_zone(&menu(1), ZONE, DEFAULT_BACKGROUND)
+        .unwrap();
+    assert!(Arc::ptr_eq(&first, &same));
+    assert!(!Arc::ptr_eq(&first, &other));
+}
+
+#[test]
+fn menus_cope_with_unusual_zone_sizes() {
+    let zone_renderer = renderer();
+    for (width, height) in [(1, 1), (30, 20), (100, 200), (400, 200), (800, 100)] {
+        let size = ImageSize { width, height };
+        let rendered = zone_renderer
+            .render_menu_zone(&menu(2), size, DEFAULT_BACKGROUND)
+            .unwrap();
+        assert_eq!(rendered.image().dimensions(), (width, height));
+        assert!(rendered.image().pixels().all(|pixel| pixel.0[3] == u8::MAX));
+    }
 }

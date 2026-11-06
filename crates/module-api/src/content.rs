@@ -123,6 +123,9 @@ pub enum ZoneContent {
     Clock(ClockFace),
     /// Where the user is: page title, parent page, row and way back.
     Page(PageZone),
+    /// A short menu browsed with the dial: a title and a few entries, one of
+    /// them selected.
+    Menu(MenuZone),
 }
 
 /// Fill level of a [`GaugeContent`], in thousandths of the full bar.
@@ -565,6 +568,66 @@ impl PageZone {
     }
 }
 
+/// Most entries a [`MenuZone`] shows: more would not fit the zone.
+pub const MAX_MENU_ENTRIES: usize = 3;
+
+/// The touch strip zone of a dial menu: a title (the state the menu acts on)
+/// and up to [`MAX_MENU_ENTRIES`] entries, the selected one highlighted.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct MenuZone {
+    title: String,
+    entries: Vec<String>,
+    selected: usize,
+    accent: ZoneAccent,
+}
+
+impl MenuZone {
+    /// A menu titled `title` with `entries` (the first [`MAX_MENU_ENTRIES`]),
+    /// the entry `selected` highlighted (clamped to the last entry).
+    #[must_use]
+    pub fn new(title: impl Into<String>, entries: Vec<String>, selected: usize) -> Self {
+        let mut entries = entries;
+        entries.truncate(MAX_MENU_ENTRIES);
+        Self {
+            title: title.into(),
+            selected: selected.min(entries.len().saturating_sub(1)),
+            entries,
+            accent: ZoneAccent::default(),
+        }
+    }
+
+    /// The same menu drawn with `accent`.
+    #[must_use]
+    pub fn with_accent(self, accent: ZoneAccent) -> Self {
+        Self { accent, ..self }
+    }
+
+    /// Title, above the entries.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Entries, in display order.
+    #[must_use]
+    pub fn entries(&self) -> &[String] {
+        &self.entries
+    }
+
+    /// Index of the highlighted entry, within [`Self::entries`].
+    #[must_use]
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Colours of the title and of the highlighted entry.
+    #[must_use]
+    pub fn accent(&self) -> ZoneAccent {
+        self.accent
+    }
+}
+
 /// Navigation state of the device, given to [`crate::Module::zone`].
 ///
 /// Most modules ignore it; it lets a module show where the user is (the
@@ -748,6 +811,18 @@ mod tests {
         assert_eq!((rows.row(), rows.count()), (2, 3));
         assert_eq!(rows.caption(), "ligne 3/3");
         assert!(rows.is_scrollable() && !RowPosition::new(0, 1).is_scrollable());
+    }
+
+    #[test]
+    fn menu_zones_keep_a_few_entries_and_a_valid_selection() {
+        let entries = |count: usize| (0..count).map(|index| index.to_string()).collect();
+        let menu = MenuZone::new("Travail", entries(5), 4);
+        assert_eq!(menu.entries().len(), MAX_MENU_ENTRIES);
+        assert_eq!(menu.selected(), MAX_MENU_ENTRIES - 1);
+        assert_eq!(menu.title(), "Travail");
+        assert_eq!(MenuZone::new("", entries(0), 3).selected(), 0);
+        let accent = ZoneAccent::solid(Rgb(1, 2, 3));
+        assert_eq!(menu.with_accent(accent).accent(), accent);
     }
 
     #[test]

@@ -21,6 +21,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Pomodoro : tourner la molette ouvre un menu à son propre visuel (titre avec le temps restant, entrée choisie sur une pastille) : « Mettre en pause » / « Reprendre » / « Démarrer », « Passer à la pause », « Remise à zéro » ; un clic exécute l'entrée choisie, sans ✓, et ferme le menu. Le clic de la molette, menu fermé, et la touche gardent leur appui unique pour la pause et la reprise. `ZoneContent::Menu` (`MenuZone`, trois entrées au plus) rejoint l'API des modules.
 - Molettes Audio, Pomodoro et Accueil : nouveaux visuels de bande dans le ton des icônes. Audio : jauge en arc cyan avec le glyphe haut-parleur ; Pomodoro : anneau de progression avec le pictogramme de l'étape (tomate, tasse, pause) et une pastille par pomodoro du cycle ; Accueil : titre centré, parent en indigo, pastille de retour (le clic de la molette ne change pas) et ligne affichée en petits segments discrets en bas. API des modules : `GaugeContent` gagne `shape` (`Bar`, `Arc`, `Ring { steps }`), `accent` et `glyph` ; nouveau `ZoneContent::Page` ; `NavigationView::parent_title`.
 - Touches : l'action se lance au **relâchement** (et non plus à l'appui) ; maintenue plus de 400 ms, la touche affiche son libellé en blanc sur noir sur la bande tactile et ne lance rien. Les molettes agissent toujours à l'appui.
 - Pomodoro : réglages `notificationEnabled` (notification sur la bande, activée par défaut) et `notificationSeconds` (durée en secondes, 10 par défaut ; 0 = jusqu'à ce qu'on la ferme).

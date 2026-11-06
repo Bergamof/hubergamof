@@ -3,9 +3,9 @@
 //!
 //! - Key or dial press: starts or pauses the time (dial: when the menu is
 //!   closed).
-//! - Dial rotation: opens a menu (skip to the next step, reset), browsed by
-//!   rotating, confirmed by a press, closed after [`MENU_TIMEOUT`] without
-//!   input.
+//! - Dial rotation: opens a menu (pause or resume, skip to the next step,
+//!   reset), browsed by rotating, confirmed by a press, closed after
+//!   [`MENU_TIMEOUT`] without input.
 //! - When a step ends, the next one is prepared stopped (unless `autoStart`)
 //!   and the key asks for attention; a silent desktop notification and a
 //!   notification over the touch strip (settings `notificationEnabled`,
@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, GaugeContent, GaugeLevel, GaugeSteps, ImageData, KeyContent,
-    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    Command, EventSender, GaugeContent, GaugeLevel, GaugeSteps, ImageData, KeyContent, KeyState,
+    MenuZone, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneAccent,
     ZoneContent,
 };
@@ -50,9 +50,6 @@ const ICON_SVG: &str = asset!("pomodoro");
 
 /// Period of the refresh ticks, while the time runs or the menu is open.
 pub(crate) const TICK_PERIOD: Duration = Duration::from_secs(1);
-
-/// Marker in front of the selected menu entry.
-const SELECTION_MARKER: &str = "›";
 
 const SECONDS_PER_MINUTE: u64 = 60;
 
@@ -87,8 +84,9 @@ fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: POMODORO_KIND.into(),
         name: "Pomodoro".into(),
-        description: "Sessions de travail et pauses : appuyer lance ou met en pause, \
-                      tourner la molette ouvre le menu."
+        description: "Sessions de travail et pauses. Touche et clic de la molette : \
+                      lancent ou mettent en pause. Tourner la molette ouvre le menu \
+                      (pause, passer, remise à zéro)."
             .into(),
         capabilities: ModuleCapabilities {
             key: true,
@@ -170,6 +168,7 @@ impl Pomodoro {
 
     fn run_menu_entry(&mut self, entry: MenuEntry) {
         match entry {
+            MenuEntry::Toggle => self.timer.toggle(self.now()),
             MenuEntry::Skip => self.timer.skip(self.now()),
             MenuEntry::Reset => self.timer.reset(),
         }
@@ -243,17 +242,23 @@ impl Pomodoro {
         }
     }
 
+    /// The menu: the step and the time left as its title, the entries
+    /// below, in the colours of the step.
     fn menu_zone(&self, menu: Menu) -> ZoneContent {
-        let mut lines = vec![step_title(&self.timer)];
-        lines.extend(MENU_ENTRIES.iter().map(|&entry| {
-            let label = entry_label(entry, self.timer.phase());
-            if entry == menu.selected() {
-                format!("{SELECTION_MARKER} {label}")
-            } else {
-                label.to_owned()
-            }
-        }));
-        ZoneContent::Lines(lines)
+        let timer = &self.timer;
+        let title = format!(
+            "{} · {}",
+            phase_name(timer.phase()),
+            format_remaining(timer.remaining(self.now()))
+        );
+        let untouched = timer.elapsed(self.now()).is_zero();
+        let entries = MENU_ENTRIES
+            .iter()
+            .map(|&entry| entry_label(entry, timer, untouched).to_owned())
+            .collect();
+        ZoneContent::Menu(
+            MenuZone::new(title, entries, menu.selected_index()).with_accent(step_accent(timer)),
+        )
     }
 }
 
@@ -292,8 +297,9 @@ impl Module for Pomodoro {
 
     async fn on_dial_press(&mut self) -> Vec<Command> {
         if let Some(menu) = self.menu {
+            // No ✓: the zone changing is the result.
             self.run_menu_entry(menu.selected());
-            vec![Command::Feedback(Feedback::Ok)]
+            Vec::new()
         } else {
             self.toggle();
             Vec::new()
@@ -418,16 +424,20 @@ const WORK_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0xFF, 0x8A, 0x6B), Rgb(0xF0,
 /// Green of the break notification, from its light to its deep end: breaks.
 const BREAK_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0x6E, 0xE7, 0xB7), Rgb(0x16, 0xA0, 0x6E));
 
+/// Colours of the current step: red for work, green for a break.
+fn step_accent(timer: &Timer) -> ZoneAccent {
+    if timer.phase().is_break() {
+        BREAK_ACCENT
+    } else {
+        WORK_ACCENT
+    }
+}
+
 /// Ring gauge of the zone: the step as the title, the time left, the share of
 /// the step elapsed, the pomodoros of the cycle as dots, and a glyph telling
 /// work from break from a stopped timer.
 fn zone_gauge(timer: &Timer, remaining: Duration) -> GaugeContent {
     let phase = timer.phase();
-    let accent = if phase.is_break() {
-        BREAK_ACCENT
-    } else {
-        WORK_ACCENT
-    };
     let glyph = match (timer.is_running(), phase.is_break()) {
         (false, _) => &icons::PAUSED,
         (true, true) => &icons::BREAK,
@@ -438,28 +448,19 @@ fn zone_gauge(timer: &Timer, remaining: Duration) -> GaugeContent {
         format_remaining(remaining),
         displayed_level(timer.step_duration(), remaining),
     )
-    .with_accent(accent)
+    .with_accent(step_accent(timer))
     .with_glyph(ImageData::clone(glyph))
     .with_steps(GaugeSteps::new(timer.pomodoro(), timer.cycle_length()))
     .with_dimmed(!timer.is_running())
 }
 
-/// Title of the menu: the step, with the pomodoro number while working.
-fn step_title(timer: &Timer) -> String {
-    match timer.phase() {
-        Phase::Work => format!(
-            "{} · {}/{}",
-            phase_name(Phase::Work),
-            timer.pomodoro(),
-            timer.cycle_length()
-        ),
-        phase => phase_name(phase).to_owned(),
-    }
-}
-
-fn entry_label(entry: MenuEntry, phase: Phase) -> &'static str {
+/// Label of `entry`; `untouched` tells that none of the step has elapsed.
+fn entry_label(entry: MenuEntry, timer: &Timer, untouched: bool) -> &'static str {
     match entry {
-        MenuEntry::Skip if phase.is_break() => "Passer au travail",
+        MenuEntry::Toggle if timer.is_running() => "Mettre en pause",
+        MenuEntry::Toggle if untouched => "Démarrer",
+        MenuEntry::Toggle => "Reprendre",
+        MenuEntry::Skip if timer.phase().is_break() => "Passer au travail",
         MenuEntry::Skip => "Passer à la pause",
         MenuEntry::Reset => "Remise à zéro",
     }
