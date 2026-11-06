@@ -24,6 +24,7 @@ mod instances;
 mod layout;
 mod live;
 mod navigation;
+mod notifications;
 mod painter;
 mod supervisor;
 mod validation;

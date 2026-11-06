@@ -1,6 +1,6 @@
 //! Requests a module returns to the host after handling an input or an event.
 
-use crate::{ItemId, PageId};
+use crate::{ItemId, Notification, NotificationId, PageId};
 
 /// What the host should do after a module handled an input or an event.
 ///
@@ -33,6 +33,12 @@ pub enum Command {
     /// surface shown afterwards (its page opened within the mark duration)
     /// carries no mark.
     FeedbackOn(ModuleSurface, Feedback),
+    /// Shows a notification over the touch strip (queued after the one
+    /// already shown), and counts it as unread until the user touches it.
+    Notify(Notification),
+    /// Shows an unread notification again, with no timeout (see
+    /// [`crate::UnreadNotification::id`]); ignored if it was read since.
+    ShowNotification(NotificationId),
 }
 
 impl Command {

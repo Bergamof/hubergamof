@@ -1,0 +1,271 @@
+//! Notifications over the touch strip, and the label of a held key.
+
+use std::time::Duration;
+
+use hubergamof_module_api::{Command, Notification, NotificationId, Rgb};
+use image::Rgba;
+
+use super::support::*;
+use crate::device::InputEvent;
+use crate::device::TouchPoint;
+use crate::device::virtual_deck::virtual_plus_info;
+
+const BACKGROUND: Rgb = Rgb(200, 30, 30);
+const BACKGROUND_PIXEL: Rgba<u8> = Rgba([200, 30, 30, 255]);
+const NAVIGATION: &str = "navigation";
+/// Longer than [`crate::engine::device_engine::HOLD_THRESHOLD`].
+const HOLD: Duration = Duration::from_millis(600);
+
+/// Fragile on dial 0, navigation on dial 1, a list on the home page.
+async fn plus_fixture() -> Fixture {
+    let fixture = start(virtual_plus_info("PLUS")).await;
+    fixture
+        .configure(
+            vec![
+                list(0),
+                fragile("none"),
+                instance(NAVIGATION, NAVIGATION, serde_json::json!({})),
+            ],
+            &["list"],
+            &[Some(FRAGILE_KIND), Some(NAVIGATION), None, None],
+        )
+        .await;
+    fixture
+}
+
+impl Fixture {
+    fn send_commands(&self, commands: Vec<Command>) {
+        let events = self.probe.fragile_events.lock().unwrap().clone().unwrap();
+        assert!(events.send(commands));
+    }
+
+    fn notify(&self, notification: Notification) {
+        self.send_commands(vec![Command::Notify(notification)]);
+    }
+
+    fn unread_messages(&self) -> Vec<String> {
+        let unread = self.probe.unread.lock().unwrap().clone().unwrap();
+        unread.list().into_iter().map(|item| item.message).collect()
+    }
+
+    fn unread_ids(&self) -> Vec<NotificationId> {
+        let unread = self.probe.unread.lock().unwrap().clone().unwrap();
+        unread.list().into_iter().map(|item| item.id).collect()
+    }
+
+    fn strip_pixel(&self, x: u32, y: u32) -> Rgba<u8> {
+        let screen = self.deck.inner.screen();
+        *screen.strip.unwrap().get_pixel(x, y)
+    }
+
+    /// Waits until the strip shows (or stops showing) the notification
+    /// background.
+    async fn wait_for_notification(&self, shown: bool) {
+        let mut live = self.engine.live();
+        tokio::time::timeout(WAIT, async {
+            while (self.strip_pixel(799, 0) == BACKGROUND_PIXEL) != shown {
+                // Redraws not changing the live state do not wake us: poll.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                live.mark_unchanged();
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    fn inject(&self, event: InputEvent) {
+        self.deck.inner.inject(event).unwrap();
+    }
+
+    fn tap_strip(&self) {
+        self.inject(InputEvent::TouchTap {
+            point: TouchPoint { x: 400, y: 50 },
+            long: false,
+        });
+    }
+}
+
+fn permanent(message: &str) -> Notification {
+    Notification::new(message, BACKGROUND)
+}
+
+#[tokio::test]
+async fn a_notification_covers_the_strip_until_it_is_touched() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+
+    fixture.tap_strip();
+    fixture.wait_for_notification(false).await;
+    // Touched: read.
+    assert_eq!(fixture.unread_messages(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_notification_vanishes_after_its_timeout_and_stays_unread() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !").with_timeout(Duration::from_millis(300)));
+    fixture.wait_for_notification(true).await;
+    fixture.wait_for_notification(false).await;
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+}
+
+#[tokio::test]
+async fn under_a_notification_only_the_navigation_dial_press_acts() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+
+    // The dial of a module does nothing...
+    fixture.inject(InputEvent::DialRotate { index: 0, ticks: 1 });
+    fixture.inject(InputEvent::DialDown(0));
+    // ...nor does turning the navigation dial.
+    fixture.inject(InputEvent::DialRotate { index: 1, ticks: 1 });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fixture.strip_pixel(799, 0), BACKGROUND_PIXEL);
+    assert_eq!(fixture.zone_mark(0), None);
+
+    // Its press removes the notification, which stays unread.
+    fixture.inject(InputEvent::DialDown(1));
+    fixture.wait_for_notification(false).await;
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+    // The module was never told about the dial.
+    assert_eq!(fixture.zone_lines(0), ["fragile 0"]);
+}
+
+#[tokio::test]
+async fn an_unread_notification_is_shown_again_without_timeout() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !").with_timeout(Duration::from_millis(200)));
+    fixture.wait_for_notification(true).await;
+    fixture.wait_for_notification(false).await;
+
+    let id = fixture.unread_ids()[0];
+    fixture.send_commands(vec![Command::ShowNotification(id)]);
+    fixture.wait_for_notification(true).await;
+    // Still there long after the original timeout.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(fixture.strip_pixel(799, 0), BACKGROUND_PIXEL);
+
+    fixture.tap_strip();
+    fixture.wait_for_notification(false).await;
+    assert_eq!(fixture.unread_messages(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn notifications_wait_for_their_turn() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("un"));
+    fixture.notify(Notification::new("deux", Rgb(10, 120, 40)));
+    fixture.wait_for_notification(true).await;
+    assert_eq!(fixture.unread_messages(), ["un", "deux"]);
+
+    fixture.tap_strip();
+    tokio::time::timeout(WAIT, async {
+        while fixture.strip_pixel(799, 0) != Rgba([10, 120, 40, 255]) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fixture.unread_messages(), ["deux"]);
+}
+
+#[tokio::test]
+async fn a_device_without_a_strip_only_counts_notifications() {
+    let fixture = start(dials_without_strip_info()).await;
+    fixture
+        .configure(
+            vec![list(0), fragile("none")],
+            &["list"],
+            &[Some(FRAGILE_KIND), None],
+        )
+        .await;
+    fixture.notify(permanent("Pause !"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+    // Nothing is shown, so nothing is blocked.
+    fixture.inject(InputEvent::KeyDown(0));
+    fixture.inject(InputEvent::KeyUp(0));
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+}
+
+#[tokio::test]
+async fn a_key_held_shows_its_label_and_runs_no_action() {
+    let fixture = plus_fixture().await;
+    assert_eq!(fixture.labels()[0].as_deref(), Some("list 0"));
+    fixture.inject(InputEvent::KeyDown(0));
+    tokio::time::sleep(HOLD).await;
+    // White text over black.
+    let screen = fixture.deck.inner.screen().strip.unwrap();
+    assert_eq!(*screen.get_pixel(0, 0), Rgba([0, 0, 0, 255]));
+    assert!(screen.pixels().any(|pixel| pixel.0[0] > 200));
+
+    fixture.inject(InputEvent::KeyUp(0));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The strip shows the zones again, the key did nothing.
+    assert_eq!(fixture.zone_lines(0), ["fragile 0"]);
+    assert_eq!(fixture.labels()[0].as_deref(), Some("list 0"));
+    assert_eq!(fixture.page().id, "home");
+}
+
+#[tokio::test]
+async fn a_key_released_quickly_runs_its_action_on_release() {
+    let fixture = plus_fixture().await;
+    fixture.inject(InputEvent::KeyDown(0));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Nothing yet: the action waits for the release.
+    assert_eq!(fixture.page().id, "home");
+    fixture.inject(InputEvent::KeyUp(0));
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+}
+
+#[tokio::test]
+async fn the_notifications_module_counts_lists_and_shows_again() {
+    let fixture = start(virtual_plus_info("PLUS")).await;
+    fixture
+        .configure(
+            vec![
+                list(0),
+                fragile("none"),
+                instance("notifications", "notifications", serde_json::json!({})),
+                instance(NAVIGATION, NAVIGATION, serde_json::json!({})),
+            ],
+            &["notifications"],
+            &[Some(FRAGILE_KIND), Some(NAVIGATION), None, None],
+        )
+        .await;
+    let bell = fixture.live().keys[0].image.clone().unwrap().png().unwrap();
+
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+    // The bell now carries a badge.
+    fixture
+        .wait_for(|fixture| {
+            fixture.live().keys[0]
+                .image
+                .as_ref()
+                .is_some_and(|image| image.png().unwrap() != bell)
+        })
+        .await;
+
+    // Dismissed with the navigation dial: unread, listed.
+    fixture.inject(InputEvent::DialDown(1));
+    fixture.wait_for_notification(false).await;
+    fixture.inject(InputEvent::KeyDown(0));
+    fixture.inject(InputEvent::KeyUp(0));
+    fixture
+        .wait_for(|fixture| fixture.page().id == "notifications/unread")
+        .await;
+    assert_eq!(fixture.labels()[0].as_deref(), Some("Pause !"));
+
+    // Choosing it shows it again.
+    fixture.inject(InputEvent::KeyDown(0));
+    fixture.inject(InputEvent::KeyUp(0));
+    fixture.wait_for_notification(true).await;
+}

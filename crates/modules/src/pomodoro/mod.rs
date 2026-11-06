@@ -7,7 +7,9 @@
 //!   rotating, confirmed by a press, closed after [`MENU_TIMEOUT`] without
 //!   input.
 //! - When a step ends, the next one is prepared stopped (unless `autoStart`)
-//!   and the key asks for attention; a silent desktop notification says so.
+//!   and the key asks for attention; a silent desktop notification and a
+//!   notification over the touch strip (settings `notificationEnabled`,
+//!   `notificationSeconds`, 0 = until dismissed) say so.
 //!
 //! The time follows real time, suspends included (see [`crate::time`]): a
 //! step whose end passed while the machine slept is over on waking up. The
@@ -24,13 +26,13 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, EventSender, Feedback, GaugeContent, GaugeLevel, ImageData, KeyContent, KeyState,
     Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
-    ModuleFactory, NavigationView, ZoneContent,
+    ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneContent,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
 
 pub use menu::MENU_TIMEOUT;
-pub use settings::PomodoroSettings;
+pub use settings::{PomodoroSettings, StripNotice};
 
 use crate::icons::{asset, svg};
 use crate::notifications::{Notification, Notifier};
@@ -125,6 +127,7 @@ impl ModuleFactory for PomodoroFactory {
             ticker: None,
             notifier: Arc::clone(&self.notifier),
             clock: Arc::clone(&self.clock),
+            strip_notice: settings.strip_notice(),
             ctx,
         }))
     }
@@ -149,6 +152,7 @@ pub struct Pomodoro {
     ticker: Option<Ticker>,
     notifier: Arc<dyn Notifier>,
     clock: Arc<dyn Clock>,
+    strip_notice: StripNotice,
     ctx: ModuleContext,
 }
 
@@ -171,15 +175,27 @@ impl Pomodoro {
         self.sync_ticker();
     }
 
-    fn on_tick(&mut self) {
+    /// Handles a tick; returns the notification for the touch strip when a
+    /// step just ended.
+    fn on_tick(&mut self) -> Vec<Command> {
         let now = self.now();
         if self.menu.is_some_and(|menu| menu.is_expired(now)) {
             self.menu = None;
         }
+        let mut commands = Vec::new();
         if let Some(end) = self.timer.tick(now) {
-            self.notify(notification_for(&end, self.timer.cycle_length()));
+            let notification = notification_for(&end, self.timer.cycle_length());
+            if self.strip_notice.enabled {
+                commands.push(Command::Notify(strip_notification(
+                    &notification,
+                    end.next,
+                    self.strip_notice.timeout,
+                )));
+            }
+            self.notify(notification);
         }
         self.sync_ticker();
+        commands
     }
 
     /// Runs the ticker only while the time runs or the menu is open, aligned
@@ -284,7 +300,7 @@ impl Module for Pomodoro {
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
         if event.is::<Tick>() {
-            self.on_tick();
+            return self.on_tick();
         }
         Vec::new()
     }
@@ -305,6 +321,7 @@ impl Module for Pomodoro {
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
         let settings = PomodoroSettings::parse(settings)?;
+        self.strip_notice = settings.strip_notice();
         self.timer
             .update(settings.durations(), settings.auto_start, self.now());
         self.sync_ticker();
@@ -417,6 +434,31 @@ fn entry_label(entry: MenuEntry, phase: Phase) -> &'static str {
         MenuEntry::Skip if phase.is_break() => "Passer au travail",
         MenuEntry::Skip => "Passer à la pause",
         MenuEntry::Reset => "Remise à zéro",
+    }
+}
+
+/// Background of the strip notification when work starts (red, like the icon).
+const WORK_BACKGROUND: Rgb = Rgb(0xF0, 0x3E, 0x2F);
+/// Background of the strip notification when a break starts.
+const BREAK_BACKGROUND: Rgb = Rgb(0x16, 0xA0, 0x6E);
+
+/// The touch strip notification for the desktop `notification`: its title
+/// and text on one line, red when work comes next and green for a break.
+fn strip_notification(
+    notification: &Notification,
+    next: Phase,
+    timeout: Option<Duration>,
+) -> StripNotification {
+    let background = if next.is_break() {
+        BREAK_BACKGROUND
+    } else {
+        WORK_BACKGROUND
+    };
+    let message = format!("{} {}", notification.summary, notification.body);
+    let notification = StripNotification::new(message, background);
+    match timeout {
+        Some(timeout) => notification.with_timeout(timeout),
+        None => notification,
     }
 }
 

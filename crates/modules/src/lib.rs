@@ -19,6 +19,7 @@ pub mod clock;
 pub mod desktop;
 pub mod docker;
 mod icons;
+pub mod inbox;
 pub mod intellij;
 pub mod navigation;
 pub mod notifications;
@@ -200,6 +201,7 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
         Arc::clone(&desktop),
         services.intellij,
     )));
+    registry.register(Arc::new(inbox::InboxFactory));
     registry.register(Arc::new(navigation::NavigationFactory));
     registry.register(Arc::new(pomodoro::PomodoroFactory::new(
         services.notifier,
@@ -249,6 +251,7 @@ mod tests {
                 docker::DOCKER_KIND,
                 intellij::INTELLIJ_KIND,
                 navigation::NAVIGATION_KIND,
+                inbox::INBOX_KIND,
                 pomodoro::POMODORO_KIND
             ]
         );

@@ -13,6 +13,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Touches : l'action se lance au **relâchement** (et non plus à l'appui) ; maintenue plus de 400 ms, la touche affiche son libellé en blanc sur noir sur la bande tactile et ne lance rien. Les molettes agissent toujours à l'appui.
+- Pomodoro : réglages `notificationEnabled` (notification sur la bande, activée par défaut) et `notificationSeconds` (durée en secondes, 10 par défaut ; 0 = jusqu'à ce qu'on la ferme).
 - Module Horloge : cadran « Éphéméride » sur la bande tactile (feuille de calendrier, heure en graisse fine, numéro de semaine ISO) ; avec les secondes, exposant teal et filet de progression de 60 s à repères de 15 s. Sans réglage supplémentaire.
 - Touches : plus aucun cadre (l'attention garde son fond orange) ; libellé plus petit, sur une seule ligne, sous l'icône qui reste entièrement visible.
 - Le cadre bleu des touches actives est supprimé (les icônes dédiées portent l'état) ; audio : l'entrée ou la sortie sélectionnée est marquée d'un badge tick vert.
@@ -21,6 +23,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Notifications sur la bande tactile : tout module peut en envoyer (`Command::Notify`, message, couleur de fond, délai optionnel) ; elle prend toute la bande (icône du module, message qui défile s'il est trop long, filet de temps restant) et s'enlève au délai, au toucher de la bande (lue) ou au clic de la molette Navigation (non lue) ; les autres molettes sont inactives pendant l'affichage. Module « Notifications » (cloche, badge du nombre de non lues, liste des non lues qui se réaffichent sans délai). Pomodoro en envoie une à chaque fin d'étape.
 - API des modules : `ZoneContent::Clock` (`ClockFace`, `CalendarLeaf`) ; rendu : police Noto Sans Light (OFL) et choix de graisse du texte.
 - Initialisation du projet : workspace Cargo, interface SvelteKit, outillage qualité, CI, empaquetage.
 - Gestionnaire : couche appareils (Stream Deck matériel et virtuel `--demo`), rendu d'images, configuration par appareil.

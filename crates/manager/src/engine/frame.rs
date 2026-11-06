@@ -1,9 +1,11 @@
 //! Description of everything a device should show, compared between redraws
 //! to rewrite only what changed.
 
+use std::time::Duration;
+
 use hubergamof_module_api::{
     ClockFace, Feedback, GaugeContent, ImageData, ItemId, KeyContent, KeyState, MAX_ZONE_LINES,
-    ModuleInstanceId, PageId, ZoneContent,
+    ModuleInstanceId, PageId, Rgb, UnreadNotification, ZoneContent,
 };
 
 use super::live::PageSummary;
@@ -146,12 +148,50 @@ pub(crate) struct DialFace {
     pub(crate) zone: Option<ZoneFace>,
 }
 
+/// A notification over the whole touch strip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NotificationFace {
+    pub(crate) message: String,
+    pub(crate) background: [u8; 3],
+    pub(crate) icon: Option<ImageSource>,
+    pub(crate) timeout: Option<Duration>,
+    /// Time since it appeared, in animation steps (zero when nothing moves).
+    pub(crate) elapsed: Duration,
+}
+
+impl NotificationFace {
+    pub(crate) fn new(
+        notification: &UnreadNotification,
+        timeout: Option<Duration>,
+        elapsed: Duration,
+    ) -> Self {
+        let Rgb(red, green, blue) = notification.background;
+        Self {
+            message: notification.message.clone(),
+            background: [red, green, blue],
+            icon: notification.icon.clone().map(image_source),
+            timeout,
+            elapsed,
+        }
+    }
+}
+
+/// What replaces the touch strip zones while it lasts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StripOverlay {
+    /// A notification.
+    Notification(NotificationFace),
+    /// The label of the key being held.
+    HeldLabel(String),
+}
+
 /// Everything the device shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Frame {
     pub(crate) page: PageSummary,
     pub(crate) keys: Vec<FrameKey>,
     pub(crate) dials: Vec<DialFace>,
+    pub(crate) overlay: Option<StripOverlay>,
 }
 
 impl Frame {

@@ -8,10 +8,12 @@ use hubergamof_protocol::ImageSize;
 use tokio::task::spawn_blocking;
 
 use super::EngineError;
-use super::frame::{Frame, KeyFace, ZoneContentFace, ZoneFace};
+use super::frame::{Frame, KeyFace, StripOverlay, ZoneContentFace, ZoneFace};
 use super::live::{LiveDial, LiveKey, LiveSnapshot, LiveZone};
 use crate::device::{DeckBackend, StripLayout};
-use crate::render::{DEFAULT_BACKGROUND, KeyRequest, RenderError, Rendered, Renderer};
+use crate::render::{
+    DEFAULT_BACKGROUND, KeyRequest, NotificationLook, RenderError, Rendered, Renderer,
+};
 
 /// What was written to a key or zone: its face, the image without the
 /// feedback mark (`base`) and the image written.
@@ -67,6 +69,9 @@ struct Images {
 pub(crate) struct Painter {
     key_size: ImageSize,
     zone_size: Option<ImageSize>,
+    strip_size: Option<ImageSize>,
+    /// What covers the strip, `None` when the zones show.
+    overlay: Option<StripOverlay>,
     keys: Vec<Option<Painted<KeyFace>>>,
     zones: Vec<Option<Painted<ZoneFace>>>,
 }
@@ -78,6 +83,8 @@ impl Painter {
         Self {
             key_size: capabilities.key_image_size,
             zone_size: strip.map(|layout| layout.zone_size()),
+            strip_size: strip.map(|layout| layout.strip_size()),
+            overlay: None,
             keys: std::iter::repeat_with(|| None)
                 .take(capabilities.key_count())
                 .collect(),
@@ -96,14 +103,21 @@ impl Painter {
         frame: &Frame,
     ) -> Result<usize, EngineError> {
         let keys = changes(frame.keys.iter().map(|key| &key.face), &self.keys);
-        let zones = changes(
-            frame.dials.iter().filter_map(|dial| dial.zone.as_ref()),
-            &self.zones,
-        );
-        if keys.is_empty() && zones.is_empty() {
+        // The zones are not drawn under an overlay, and are all drawn again
+        // once it goes away.
+        let zones = if frame.overlay.is_some() {
+            Vec::new()
+        } else {
+            changes(
+                frame.dials.iter().filter_map(|dial| dial.zone.as_ref()),
+                &self.zones,
+            )
+        };
+        let overlay_changed = self.strip_size.is_some() && frame.overlay != self.overlay;
+        if keys.is_empty() && zones.is_empty() && !overlay_changed {
             return Ok(0);
         }
-        let written = keys.len() + zones.len();
+        let written = keys.len() + zones.len() + usize::from(overlay_changed);
         let key_size = self.key_size;
         let keys = render(renderer, keys, move |renderer, face| {
             render_key(renderer, key_size, face)
@@ -125,8 +139,34 @@ impl Painter {
                 self.zones[usize::from(job.index)] = Some(painted(job.face, images));
             }
         }
+        if overlay_changed {
+            self.paint_overlay(deck, renderer, frame.overlay.as_ref())
+                .await?;
+        }
         deck.flush().await?;
         Ok(written)
+    }
+
+    /// Covers the strip with `overlay`; `None` only forgets the previous one
+    /// (the zones are drawn again by the next `changes`).
+    async fn paint_overlay(
+        &mut self,
+        deck: &dyn DeckBackend,
+        renderer: &Arc<Renderer>,
+        overlay: Option<&StripOverlay>,
+    ) -> Result<(), EngineError> {
+        let (Some(size), Some(overlay)) = (self.strip_size, overlay) else {
+            self.overlay = None;
+            return Ok(());
+        };
+        let renderer = Arc::clone(renderer);
+        let shown = overlay.clone();
+        let image = spawn_blocking(move || render_overlay(&renderer, size, &shown)).await??;
+        // Zones painted before are covered: draw them again afterwards.
+        self.zones.iter_mut().for_each(|zone| *zone = None);
+        deck.set_strip_region(0, image).await?;
+        self.overlay = Some(overlay.clone());
+        Ok(())
     }
 
     /// Live state of `frame`, once painted.
@@ -276,5 +316,32 @@ fn render_zone(
             tracing::warn!(%error, "cannot draw zone image, leaving it blank");
             blank()
         }),
+    }
+}
+
+/// Renders what covers the strip.
+fn render_overlay(
+    renderer: &Renderer,
+    size: ImageSize,
+    overlay: &StripOverlay,
+) -> Result<Arc<image::RgbaImage>, RenderError> {
+    match overlay {
+        StripOverlay::HeldLabel(label) => renderer.render_strip_label(label, size),
+        StripOverlay::Notification(face) => {
+            let look = NotificationLook {
+                size,
+                background: face.background,
+                icon: face.icon.as_ref(),
+                message: &face.message,
+            };
+            renderer
+                .render_notification(&look, face.elapsed, face.timeout)
+                .or_else(|error| {
+                    // An unreadable icon must not hide the message.
+                    tracing::warn!(%error, "cannot draw notification icon, showing the message only");
+                    let look = NotificationLook { icon: None, ..look };
+                    renderer.render_notification(&look, face.elapsed, face.timeout)
+                })
+        }
     }
 }

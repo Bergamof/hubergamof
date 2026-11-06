@@ -200,6 +200,7 @@ async fn hardware_inputs_are_handled_like_simulated_ones() {
     let mut live = fixture.engine.live();
     live.mark_unchanged();
     fixture.deck.inner.inject(InputEvent::KeyDown(0)).unwrap();
+    fixture.deck.inner.inject(InputEvent::KeyUp(0)).unwrap();
     tokio::time::timeout(WAIT, live.changed())
         .await
         .unwrap()
