@@ -96,14 +96,31 @@ impl UnreadNotification {
 #[derive(Clone)]
 pub struct UnreadNotifications {
     read: Arc<dyn Fn() -> Vec<UnreadNotification> + Send + Sync>,
+    count: Arc<dyn Fn() -> usize + Send + Sync>,
 }
 
 impl UnreadNotifications {
     /// Handle reading the list with `read`; used by the host.
     #[must_use]
     pub fn new(read: impl Fn() -> Vec<UnreadNotification> + Send + Sync + 'static) -> Self {
+        let read = Arc::new(read);
+        let counted = Arc::clone(&read);
+        Self {
+            read,
+            count: Arc::new(move || counted().len()),
+        }
+    }
+
+    /// Handle reading the list with `read` and counting it with `count`,
+    /// which spares copying the list to count it; used by the host.
+    #[must_use]
+    pub fn with_count(
+        read: impl Fn() -> Vec<UnreadNotification> + Send + Sync + 'static,
+        count: impl Fn() -> usize + Send + Sync + 'static,
+    ) -> Self {
         Self {
             read: Arc::new(read),
+            count: Arc::new(count),
         }
     }
 
@@ -122,7 +139,7 @@ impl UnreadNotifications {
     /// Number of unread notifications.
     #[must_use]
     pub fn count(&self) -> usize {
-        self.list().len()
+        (self.count)()
     }
 }
 

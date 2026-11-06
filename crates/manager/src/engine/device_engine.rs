@@ -54,8 +54,9 @@ struct HeldKey {
     target: KeyTarget,
     label: Option<String>,
     since: Instant,
-    /// Whether it was held long enough for the label to show: releasing it
-    /// then runs no action.
+    /// Whether it was held long enough for its label to show: releasing it
+    /// then runs no action. Never set for a key without a label, which has
+    /// nothing to show and keeps acting on release however long it is held.
     long: bool,
 }
 
@@ -64,9 +65,14 @@ impl HeldKey {
         self.since + HOLD_THRESHOLD
     }
 
-    /// When the label is due, `None` once it is.
+    /// When the label is due, `None` once it is or for a key without one.
     fn label_due(&self) -> Option<Instant> {
-        (!self.long).then(|| self.long_at())
+        (!self.long && self.label.is_some()).then(|| self.long_at())
+    }
+
+    /// Whether releasing the key at `now` is the end of a hold, not a press.
+    fn is_hold(&self, now: Instant) -> bool {
+        self.label.is_some() && (self.long || now >= self.long_at())
     }
 
     fn shown_label(&self) -> Option<&str> {
@@ -377,7 +383,7 @@ impl DeviceEngine {
         let Some(held) = self.held.take_if(|held| held.key == key) else {
             return;
         };
-        if held.long || Instant::now() >= held.long_at() {
+        if held.is_hold(Instant::now()) {
             return;
         }
         self.press_target(held.target).await;

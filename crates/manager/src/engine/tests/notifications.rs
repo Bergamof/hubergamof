@@ -269,3 +269,62 @@ async fn the_notifications_module_counts_lists_and_shows_again() {
     fixture.inject(InputEvent::KeyUp(0));
     fixture.wait_for_notification(true).await;
 }
+
+#[tokio::test]
+async fn a_key_without_a_label_acts_on_release_however_long_it_is_held() {
+    let fixture = plus_fixture().await;
+    fixture
+        .probe
+        .key_label
+        .lock()
+        .unwrap()
+        .replace(String::new());
+    fixture
+        .probe
+        .redraw
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap()
+        .request_redraw();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fixture.inject(InputEvent::KeyDown(0));
+    tokio::time::sleep(HOLD).await;
+    fixture.inject(InputEvent::KeyUp(0));
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+}
+
+#[tokio::test]
+async fn releasing_another_key_keeps_the_hold() {
+    let fixture = plus_fixture().await;
+    fixture.inject(InputEvent::KeyDown(0));
+    fixture.inject(InputEvent::KeyUp(1));
+    fixture.inject(InputEvent::KeyUp(0));
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+}
+
+#[tokio::test]
+async fn a_release_without_a_press_does_nothing() {
+    let fixture = plus_fixture().await;
+    fixture.inject(InputEvent::KeyUp(0));
+    // An empty key: nothing to hold.
+    fixture.inject(InputEvent::KeyDown(5));
+    fixture.inject(InputEvent::KeyUp(5));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fixture.page().id, "home");
+}
+
+#[tokio::test]
+async fn simulated_presses_are_immediate_even_under_a_notification() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+    fixture.engine.press_key(0).await.unwrap();
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+}

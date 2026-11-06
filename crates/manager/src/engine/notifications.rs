@@ -92,8 +92,9 @@ impl NotificationCenter {
 
     /// Read access for the modules.
     pub(crate) fn handle(&self) -> UnreadNotifications {
-        let unread = Arc::clone(&self.unread);
-        UnreadNotifications::new(move || lock(&unread).clone())
+        let listed = Arc::clone(&self.unread);
+        let counted = Arc::clone(&self.unread);
+        UnreadNotifications::with_count(move || lock(&listed).clone(), move || lock(&counted).len())
     }
 
     /// The notification on the strip.

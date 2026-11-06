@@ -72,6 +72,8 @@ pub struct NotificationLook<'a> {
 pub(super) struct TextLayer {
     key: (String, u32, u32, [u8; 4]),
     image: Arc<RgbaImage>,
+    /// Width of the message, measured when the layer was drawn.
+    text_width: f32,
 }
 
 /// Geometry of a notification on a strip of a given size.
@@ -230,11 +232,8 @@ impl Renderer {
         elapsed: Duration,
     ) -> Result<(), RenderError> {
         let color = readable_text_color(look.background);
-        let text_width = self
-            .text
-            .width(look.message, metrics.font, FontWeight::SemiBold)?;
+        let (layer, text_width) = self.text_layer(look, metrics, color)?;
         let scrolls = text_width > f32_from(metrics.visible);
-        let layer = self.text_layer(look, metrics, color, text_width, scrolls)?;
         let offset = if scrolls {
             pixels(
                 scroll_offset(
@@ -260,29 +259,31 @@ impl Renderer {
         Ok(())
     }
 
-    /// The text layer of `look`, drawn again only when the message, the
-    /// size or the colour changed.
+    /// The text layer of `look` and the width of its message, drawn again
+    /// (and measured) only when the message, the size or the colour changed.
     fn text_layer(
         &self,
         look: &NotificationLook<'_>,
         metrics: &Metrics,
         color: Rgba<u8>,
-        text_width: f32,
-        scrolls: bool,
-    ) -> Result<Arc<RgbaImage>, RenderError> {
-        let key = (
-            look.message.to_owned(),
-            look.size.width,
-            look.size.height,
-            color.0,
-        );
+    ) -> Result<(Arc<RgbaImage>, f32), RenderError> {
         let mut cached = self
             .notification_text
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if let Some(layer) = cached.as_ref().filter(|layer| layer.key == key) {
-            return Ok(Arc::clone(&layer.image));
+        let same = |layer: &&TextLayer| {
+            layer.key.0 == look.message
+                && layer.key.1 == look.size.width
+                && layer.key.2 == look.size.height
+                && layer.key.3 == color.0
+        };
+        if let Some(layer) = cached.as_ref().filter(same) {
+            return Ok((Arc::clone(&layer.image), layer.text_width));
         }
+        let text_width = self
+            .text
+            .width(look.message, metrics.font, FontWeight::SemiBold)?;
+        let scrolls = text_width > f32_from(metrics.visible);
         let loop_length = metrics.loop_length(text_width);
         let width = if scrolls {
             pixels(loop_length.ceil(), MAX_LAYER_WIDTH) + metrics.visible
@@ -307,10 +308,16 @@ impl Renderer {
         self.text.draw(&mut layer, &lines)?;
         let image = Arc::new(layer);
         *cached = Some(TextLayer {
-            key,
+            key: (
+                look.message.to_owned(),
+                look.size.width,
+                look.size.height,
+                color.0,
+            ),
             image: Arc::clone(&image),
+            text_width,
         });
-        Ok(image)
+        Ok((image, text_width))
     }
 }
 
