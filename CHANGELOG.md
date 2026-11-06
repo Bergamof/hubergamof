@@ -9,6 +9,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Bande tactile incomplète au premier démarrage ou après un rebranchement : seules les zones qui changeaient (l'horloge) s'affichaient, les écritures faites juste à la connexion étant perdues par l'appareil. Toute la bande est désormais réécrite une fois, 400 ms après le premier dessin.
+
+- Applications lancées par le gestionnaire (IntelliJ, Claude) : elles prennent aussi leur propre groupe de processus, pour ne plus se fermer avec le gestionnaire lorsqu'un signal (Ctrl-C dans le terminal) vise le groupe de celui-ci.
+
 - Module Audio sur Ubuntu : `pactl` n'y est pas installé par défaut (paquet `pulseaudio-utils`), contrairement à ce que disait le README. La bande affiche désormais « pactl absent » ou « pactl trop ancien » (version < 16) au lieu de « Audio indisponible », le journal indique le paquet à installer, `make install` avertit si `pactl` manque ou est trop ancien, et le README et le CLAUDE.md corrigent le prérequis (`wpctl`, inutilisé, retiré).
 
 - Build sur une machine neuve avec un Node 24 antérieur à 24.12 : le Corepack livré ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`). `engines.node` passe à `>=24.12.0`, `make` vérifie la version de Node avant d'installer l'UI (`make check-node`) avec un message de remède, et le README décrit le dépannage (cache Corepack à effacer, réseau).

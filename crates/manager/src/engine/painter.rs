@@ -150,6 +150,11 @@ impl Painter {
         Ok(written)
     }
 
+    /// Forgets what the zones show: the next `paint` writes them all again.
+    pub(crate) fn forget_zones(&mut self) {
+        self.zones.iter_mut().for_each(|zone| *zone = None);
+    }
+
     /// Whether the notification just drawn scrolls, once per drawing: the
     /// renderer measures the message while drawing it.
     pub(crate) fn take_scrolls(&mut self) -> Option<bool> {
