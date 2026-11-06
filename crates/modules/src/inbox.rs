@@ -35,8 +35,14 @@ const EMPTY_LABEL: &str = "Aucune notification";
 /// Most unread notifications the badge counts exactly.
 const BADGE_MAX: usize = 99;
 
-/// Bell with its badge removed: where a badge is inserted.
+/// Where a badge is inserted in the bell.
 const SVG_END: &str = "</svg>";
+
+/// The bell with the badge of every count, `0` being the bell alone and
+/// `BADGE_MAX + 1` the badge of more than [`BADGE_MAX`]: built once, as the
+/// host remembers images by their allocation.
+static BELLS: LazyLock<Vec<ImageData>> =
+    LazyLock::new(|| (0..=BADGE_MAX + 1).map(draw_bell).collect());
 
 /// The bell, as shown on the key of a module without a notification of its
 /// own.
@@ -152,6 +158,10 @@ fn notification_id(item: &ItemId) -> Option<NotificationId> {
 /// The bell, with a red badge holding `count` at its top right corner when
 /// there are unread notifications.
 fn bell_with_badge(count: usize) -> ImageData {
+    BELLS[count.min(BADGE_MAX + 1)].clone()
+}
+
+fn draw_bell(count: usize) -> ImageData {
     if count == 0 {
         return BELL.clone();
     }

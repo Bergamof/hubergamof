@@ -161,6 +161,7 @@ pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskSco
 pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};
 pub use module::{HANDLER_BUDGET, Module, ModuleError, ModuleFactory, parse_settings};
 pub use notification::{
-    Notification, NotificationId, Rgb, UnreadNotification, UnreadNotifications,
+    MAX_NOTIFICATION_CHARS, Notification, NotificationId, Rgb, UnreadNotification,
+    UnreadNotifications,
 };
 pub use paths::{expand_home, is_setting_path};

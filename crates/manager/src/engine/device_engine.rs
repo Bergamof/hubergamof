@@ -336,7 +336,7 @@ impl DeviceEngine {
                 self.dial_input(index, Call::DialRotate(ticks)).await;
             }
             InputEvent::DialDown(index) => self.dial_input(index, Call::DialPress).await,
-            InputEvent::TouchTap { .. } => self.notifications.read(Instant::now()),
+            InputEvent::TouchTap { .. } => self.tap_strip(),
             // Releases of dials act on nothing; swipes are not used yet.
             InputEvent::DialUp(_) | InputEvent::TouchSwipe { .. } | InputEvent::Disconnected => {}
         }
@@ -431,6 +431,18 @@ impl DeviceEngine {
             Vec::new()
         };
         self.run_handler(&module, call, surfaces).await;
+    }
+
+    /// A tap on the strip reads the notification on it, unless the label of a
+    /// held key covers it: it is not what the user sees.
+    fn tap_strip(&mut self) {
+        let covered = self
+            .held
+            .as_ref()
+            .is_some_and(|held| held.shown_label().is_some());
+        if !covered {
+            self.notifications.read(Instant::now());
+        }
     }
 
     fn is_navigation_dial(&self, dial: u8) -> bool {

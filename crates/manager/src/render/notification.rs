@@ -38,8 +38,8 @@ const SCROLL_SPEED_RATIO: f32 = 1.2;
 /// Time a long message stays still before it scrolls.
 pub const SCROLL_PAUSE: Duration = Duration::from_millis(1500);
 
-/// Widest text layer, in pixels: a message is cut well before (the
-/// protocol limits what modules can send), this only bounds the allocation.
+/// Widest text layer, in pixels: a message is cut well before
+/// (`MAX_NOTIFICATION_CHARS`), this only bounds the allocation.
 const MAX_LAYER_WIDTH: u32 = 16_384;
 
 /// `value` rounded down to whole pixels, within `0..=max`.

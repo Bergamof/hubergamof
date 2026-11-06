@@ -6,6 +6,12 @@ use std::time::Duration;
 
 use crate::{ImageData, ModuleInstanceId};
 
+/// Longest message, in characters; a longer one is cut with an ellipsis.
+pub const MAX_NOTIFICATION_CHARS: usize = 200;
+
+/// Appended to a message that was cut.
+const ELLIPSIS: char = '…';
+
 /// Opaque colour, as red, green and blue components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb(pub u8, pub u8, pub u8);
@@ -20,7 +26,7 @@ pub struct Rgb(pub u8, pub u8, pub u8);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Notification {
-    /// Text shown, on one line.
+    /// Text shown, on one line, at most [`MAX_NOTIFICATION_CHARS`] characters.
     pub message: String,
     /// Background colour; the host picks black or white text to stay legible.
     pub background: Rgb,
@@ -33,7 +39,7 @@ impl Notification {
     #[must_use]
     pub fn new(message: impl Into<String>, background: Rgb) -> Self {
         Self {
-            message: message.into(),
+            message: truncated(message.into()),
             background,
             timeout: None,
         }
@@ -48,6 +54,18 @@ impl Notification {
             ..self
         }
     }
+}
+
+/// `message` cut to [`MAX_NOTIFICATION_CHARS`] characters, ending with an
+/// ellipsis when it was cut.
+fn truncated(message: String) -> String {
+    if message.chars().count() <= MAX_NOTIFICATION_CHARS {
+        return message;
+    }
+    let mut kept: String = message.chars().take(MAX_NOTIFICATION_CHARS - 1).collect();
+    kept.truncate(kept.trim_end().len());
+    kept.push(ELLIPSIS);
+    kept
 }
 
 /// Identifier of a notification, unique for a device while it runs.
@@ -166,6 +184,19 @@ mod tests {
             Some(Duration::from_secs(3))
         );
         assert_eq!(notification.with_timeout(Duration::ZERO).timeout, None);
+    }
+
+    #[test]
+    fn a_long_message_is_cut_with_an_ellipsis() {
+        let long = "é".repeat(MAX_NOTIFICATION_CHARS + 50);
+        let notification = Notification::new(long, Rgb(0, 0, 0));
+        assert_eq!(notification.message.chars().count(), MAX_NOTIFICATION_CHARS);
+        assert!(notification.message.ends_with(ELLIPSIS));
+        let exact = "a".repeat(MAX_NOTIFICATION_CHARS);
+        assert_eq!(
+            Notification::new(exact.clone(), Rgb(0, 0, 0)).message,
+            exact
+        );
     }
 
     #[test]

@@ -328,3 +328,15 @@ async fn simulated_presses_are_immediate_even_under_a_notification() {
         .wait_for(|fixture| fixture.page().id == "list/list")
         .await;
 }
+
+#[tokio::test]
+async fn a_tap_under_a_held_label_does_not_read_the_notification() {
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+    fixture.inject(InputEvent::KeyDown(0));
+    tokio::time::sleep(HOLD).await;
+    fixture.tap_strip();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+}

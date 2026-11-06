@@ -143,6 +143,9 @@ impl NotificationCenter {
         if !self.on_strip {
             return;
         }
+        if !lock(&self.unread).iter().any(|unread| unread.id == id) {
+            return;
+        }
         self.queue.retain(|pending| pending.id != id);
         self.show(id, None, now);
     }
@@ -330,6 +333,23 @@ mod tests {
         center.read(now);
         center.show_again(id, now);
         assert_eq!(shown_text(&center), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn showing_a_read_notification_again_keeps_the_one_shown() {
+        let mut center = center();
+        let now = Instant::now();
+        send(&mut center, &message("un"), now);
+        send(&mut center, &message("deux"), now);
+        let second = center.handle().list()[1].id;
+        center.read(now);
+        // "deux" is shown; "un" was read and cannot come back.
+        let first = NotificationId(0);
+        center.show_again(first, now);
+        assert_eq!(shown_text(&center), Some("deux"));
+        center.show_again(NotificationId(99), now);
+        assert_eq!(shown_text(&center), Some("deux"));
+        assert_eq!(center.handle().list()[0].id, second);
     }
 
     #[tokio::test(start_paused = true)]
