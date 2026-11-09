@@ -8,6 +8,7 @@
 //! and registers as soon as it appears, and again after each restart of it.
 
 mod dbusmenu;
+mod icon;
 mod item;
 mod menu;
 mod watcher;
@@ -23,7 +24,7 @@ use tokio::task::JoinHandle;
 use zbus::Connection;
 use zbus::connection::Builder;
 
-pub use item::{TRAY_ICON, TRAY_ID, TRAY_TITLE};
+pub use item::{TRAY_ID, TRAY_TITLE};
 pub use menu::{NO_DEVICE_LABEL, OPEN_UI_LABEL, QUIT_LABEL};
 
 use dbusmenu::{DbusMenu, MENU_PATH, MenuHandler};
@@ -359,6 +360,15 @@ mod tests {
         );
         let id = property(&host, ITEM_PATH, ITEM_INTERFACE, "Id").await;
         assert_eq!(String::try_from(id).unwrap(), TRAY_ID);
+        let icon_name = property(&host, ITEM_PATH, ITEM_INTERFACE, "IconName").await;
+        assert_eq!(String::try_from(icon_name).unwrap(), "");
+        let icon = property(&host, ITEM_PATH, ITEM_INTERFACE, "IconPixmap").await;
+        let sizes: Vec<i32> = Vec::<(i32, i32, Vec<u8>)>::try_from(icon)
+            .unwrap()
+            .iter()
+            .map(|(width, _, _)| *width)
+            .collect();
+        assert_eq!(sizes, [22, 32, 48, 64]);
         let version = property(&host, MENU_PATH, MENU_INTERFACE, "Version").await;
         assert_eq!(u32::try_from(version).unwrap(), 3);
 

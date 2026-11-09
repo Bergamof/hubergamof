@@ -69,8 +69,8 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		<li
 			draggable="true"
 			class={[
-				'rounded-xl',
-				dropTarget === position && 'outline-2 outline-offset-2 outline-sky-600 outline-dashed'
+				'rounded-2xl',
+				dropTarget === position && 'outline-2 outline-offset-2 outline-ring outline-dashed'
 			]}
 			ondragstart={(event) => startDrag(event, position)}
 			ondragover={(event) => dragOver(event, position)}
@@ -96,7 +96,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 					{name}
 				</span>
 				{#if !module}
-					<span class="text-xs text-zinc-700 dark:text-zinc-300">indisponible</span>
+					<span class="text-xs text-device-muted">indisponible</span>
 				{/if}
 			</button>
 		</li>
@@ -105,7 +105,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		<button
 			id={buttonId(-1)}
 			type="button"
-			class="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-zinc-400 text-sm text-zinc-700 focus-ring hover:bg-zinc-100 dark:border-zinc-500 dark:text-zinc-300 dark:hover:bg-zinc-800"
+			class="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-device-line text-xs text-device-muted hover:bg-device-key hover:text-device-fg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5cd6cc]"
 			onclick={onadd}
 		>
 			<span aria-hidden="true" class="text-2xl leading-none">+</span>
@@ -114,7 +114,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 	</li>
 </ol>
 {#if overflows}
-	<p class="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
+	<p class="mt-3 text-sm text-device-muted">
 		L’appareil affiche {visibleRows} ligne{visibleRows > 1 ? 's' : ''} de {columns} touches à la fois
 		: les suivantes s’atteignent en faisant défiler avec la molette Navigation.
 	</p>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="HuBergamof">
+  <title>HuBergamof</title>
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#173034"/><stop offset="1" stop-color="#0A1416"/>
+    </linearGradient>
+    <linearGradient id="berg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7DA6B"/><stop offset="1" stop-color="#EE9A2E"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7.5" fill="url(#ink)"/>
+  <rect x="3.10" y="3.10" width="7.4" height="7.4" rx="1.4" fill="url(#berg)"/>
+  <rect x="12.30" y="3.10" width="7.4" height="7.4" rx="1.4" fill="#2F6A68" opacity="0.55"/>
+  <rect x="21.50" y="3.10" width="7.4" height="7.4" rx="1.4" fill="url(#berg)"/>
+  <rect x="3.10" y="12.30" width="7.4" height="7.4" rx="1.4" fill="url(#berg)"/>
+  <circle cx="16.00" cy="16.00" r="3.70" fill="url(#berg)"/>
+  <rect x="21.50" y="12.30" width="7.4" height="7.4" rx="1.4" fill="url(#berg)"/>
+  <rect x="3.10" y="21.50" width="7.4" height="7.4" rx="1.4" fill="url(#berg)"/>
+  <rect x="12.30" y="21.50" width="7.4" height="7.4" rx="1.4" fill="#2F6A68" opacity="0.55"/>
+  <rect x="21.50" y="21.50" width="7.4" height="7.4" rx="1.4" fill="url(#berg)"/>
+</svg>

@@ -97,11 +97,11 @@ none), applied with a button so that browsing the list changes nothing, and its 
 				Affecter
 			</button>
 		</div>
-		<p id="{uid}-hint" class="text-sm text-zinc-600 dark:text-zinc-400">
+		<p id="{uid}-hint" class="text-sm text-muted">
 			Un module déjà configuré garde ses réglages, partagés avec ses autres emplacements.
 		</p>
 		{#if lost}
-			<p id="{uid}-lost" class="text-sm font-medium text-amber-800 dark:text-amber-300">
+			<p id="{uid}-lost" class="text-sm font-medium text-warning">
 				« {instanceName(lost, moduleOf(lost.kind))} » n’est placé nulle part ailleurs : il sera supprimé
 				avec ses réglages.
 			</p>

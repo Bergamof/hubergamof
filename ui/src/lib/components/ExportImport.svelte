@@ -93,7 +93,7 @@ such an archive in place of the current configuration, after confirmation.
 		aria-hidden="true"
 		onchange={picked}
 	/>
-	<p role="status" class="text-sm text-zinc-700 dark:text-zinc-300">{operation.status}</p>
+	<p role="status" class="text-sm text-muted">{operation.status}</p>
 	{#if operation.problem}
 		<ProblemAlert problem={operation.problem} lead="Configuration non importée." />
 	{/if}

@@ -1,31 +1,154 @@
 @import 'tailwindcss';
 
-@layer base {
+/* Polices embarquées (sous-ensemble latin : le français y tient). Rien n'est chargé depuis un
+   serveur tiers : la CSP du gestionnaire l'interdit et l'interface doit marcher hors ligne. */
+@font-face {
+	font-family: 'Bricolage Grotesque Variable';
+	font-style: normal;
+	font-display: swap;
+	font-weight: 200 800;
+	src: url('../../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-wght-normal.woff2')
+		format('woff2-variations');
+}
+
+@font-face {
+	font-family: 'Instrument Sans Variable';
+	font-style: normal;
+	font-display: swap;
+	font-weight: 400 700;
+	src: url('../../node_modules/@fontsource-variable/instrument-sans/files/instrument-sans-latin-wght-normal.woff2')
+		format('woff2-variations');
+}
+
+@font-face {
+	font-family: 'JetBrains Mono Variable';
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 800;
+	src: url('../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2')
+		format('woff2-variations');
+}
+
+/* Palette « thé et bergamote » : neutres teintés de vert, un seul accent chaud (sélection et
+   action principale). Les valeurs changent avec le thème du système ; les utilitaires
+   (`bg-surface`, `text-muted`…) suivent donc sans variante `dark:`. */
+:root {
+	color-scheme: light dark;
+	--page: #f4f6f2;
+	--surface: #ffffff;
+	--sunken: #e9eee8;
+	--line: #cbd3c9;
+	--fg: #11201f;
+	--muted: #455654;
+	--accent: #f2b134;
+	--on-accent: #1b1404;
+	--ring: #0b6b66;
+	--ok: #0e7a4a;
+	--danger: #a11d1d;
+	--danger-soft: #fdeceb;
+	--warning: #8a5600;
+	--warning-soft: #fdf3dc;
+	--device: #0c1618;
+	--device-key: #16282a;
+	--device-strip: #0f2224;
+	--device-line: #2b4446;
+	--device-fg: #e8efec;
+	--device-muted: #9db5b1;
+	--shadow: 0 1px 2px rgb(17 32 31 / 0.06), 0 8px 24px rgb(17 32 31 / 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
 	:root {
-		color-scheme: light dark;
+		--page: #091112;
+		--surface: #111c1e;
+		--sunken: #182628;
+		--line: #2a3d3f;
+		--fg: #e8efec;
+		--muted: #9fb3af;
+		--accent: #f4c04e;
+		--ring: #5cd6cc;
+		--ok: #6fdda4;
+		--danger: #ff9f9a;
+		--danger-soft: #3a1717;
+		--warning: #f4c04e;
+		--warning-soft: #33280d;
+		--device: #060d0e;
+		--device-strip: #0b1a1c;
+		--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
+	}
+}
+
+@theme inline {
+	--color-page: var(--page);
+	--color-surface: var(--surface);
+	--color-sunken: var(--sunken);
+	--color-line: var(--line);
+	--color-fg: var(--fg);
+	--color-muted: var(--muted);
+	--color-accent: var(--accent);
+	--color-on-accent: var(--on-accent);
+	--color-ring: var(--ring);
+	--color-ok: var(--ok);
+	--color-danger: var(--danger);
+	--color-danger-soft: var(--danger-soft);
+	--color-warning: var(--warning);
+	--color-warning-soft: var(--warning-soft);
+	--color-device: var(--device);
+	--color-device-key: var(--device-key);
+	--color-device-strip: var(--device-strip);
+	--color-device-line: var(--device-line);
+	--color-device-fg: var(--device-fg);
+	--color-device-muted: var(--device-muted);
+	--shadow-card: var(--shadow);
+	--font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+@layer base {
+	body {
+		@apply bg-page font-sans text-fg antialiased;
 	}
 
-	body {
-		@apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+	h1,
+	h2,
+	h3 {
+		@apply font-display tracking-tight text-balance;
 	}
 }
 
 /* Visible keyboard focus, shared by every control. */
 @utility focus-ring {
-	@apply focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-sky-600;
+	@apply focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring;
 }
 
 /* Text input, select and textarea. */
 @utility field {
-	@apply w-full rounded-lg border border-zinc-400 bg-white px-3 py-2 text-zinc-900 focus-ring aria-invalid:border-red-700 dark:border-zinc-500 dark:bg-zinc-900 dark:text-zinc-100 dark:aria-invalid:border-red-400;
+	@apply min-h-10 w-full rounded-[10px] border border-muted bg-surface px-3 py-2 text-fg focus-ring aria-invalid:border-danger;
 }
 
 /* Secondary action button. */
 @utility secondary-button {
-	@apply min-h-6 rounded-lg border border-zinc-400 px-3 py-1.5 text-sm font-medium focus-ring hover:bg-zinc-100 aria-disabled:opacity-50 aria-disabled:hover:bg-transparent dark:border-zinc-500 dark:hover:bg-zinc-800;
+	@apply min-h-9 rounded-[10px] border border-line bg-surface px-3.5 py-1.5 text-sm font-medium text-fg focus-ring hover:border-muted hover:bg-sunken aria-disabled:opacity-50 aria-disabled:hover:border-line aria-disabled:hover:bg-surface;
 }
 
-/* A key or dial of the device, selectable to configure it. */
+/* Main action of a form or dialog: the only filled button. */
+@utility primary-button {
+	@apply min-h-9 rounded-[10px] bg-accent px-3.5 py-1.5 text-sm font-semibold text-on-accent focus-ring hover:brightness-105 aria-disabled:opacity-50;
+}
+
+/* Destructive action. */
+@utility danger-button {
+	@apply min-h-9 rounded-[10px] border border-danger bg-danger-soft px-3.5 py-1.5 text-sm font-semibold text-danger focus-ring hover:brightness-95 aria-disabled:opacity-50;
+}
+
+/* White card on the page. */
+@utility card {
+	@apply rounded-2xl border border-line bg-surface p-5 shadow-card;
+}
+
+/* A key or dial of the device, selectable to configure it. The selection is drawn with the
+   accent, on the device's dark body. */
 @utility surface-button {
-	@apply flex w-full flex-col items-center gap-1 rounded-xl p-1 text-sm focus-ring hover:bg-zinc-100 aria-current:bg-sky-100 aria-current:ring-2 aria-current:ring-sky-600 dark:hover:bg-zinc-800 dark:aria-current:bg-sky-950 dark:aria-current:ring-sky-400;
+	@apply flex w-full flex-col items-center gap-1.5 rounded-2xl p-1.5 text-center text-xs font-medium text-device-fg hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5cd6cc] aria-current:bg-device-key aria-current:ring-2 aria-current:ring-accent;
 }

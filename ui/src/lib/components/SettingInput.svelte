@@ -32,7 +32,7 @@ Form control of one module setting, chosen from its kind.
 			<input
 				{id}
 				type="checkbox"
-				class="size-5 accent-sky-700 focus-ring"
+				class="size-5 accent-ring focus-ring"
 				checked={value === true}
 				onchange={(event) => (value = event.currentTarget.checked)}
 				aria-describedby={describedBy}
@@ -78,15 +78,15 @@ Form control of one module setting, chosen from its kind.
 					aria-invalid={error ? true : undefined}
 				/>
 				{#if unit}
-					<span id="{id}-unit" class="text-sm text-zinc-700 dark:text-zinc-300">{unit}</span>
+					<span id="{id}-unit" class="text-sm text-muted">{unit}</span>
 				{/if}
 			</span>
 		{/if}
 	{/if}
 	{#if hint}
-		<p id="{id}-hint" class="text-sm text-zinc-600 dark:text-zinc-400">{hint}</p>
+		<p id="{id}-hint" class="text-sm text-muted">{hint}</p>
 	{/if}
 	{#if error}
-		<p id="{id}-error" class="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
+		<p id="{id}-error" class="text-sm font-medium text-danger">{error}</p>
 	{/if}
 </div>

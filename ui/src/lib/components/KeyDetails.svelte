@@ -67,13 +67,7 @@ removal, key image and module settings.
 		>
 			Déplacer après <span aria-hidden="true">→</span>
 		</button>
-		<button
-			type="button"
-			class="secondary-button text-red-800 dark:text-red-300"
-			onclick={onremove}
-		>
-			Supprimer la touche
-		</button>
+		<button type="button" class="danger-button" onclick={onremove}> Supprimer la touche </button>
 	</div>
 	{#if instance}
 		<!-- A new form for another instance, or once its module is known (catalog arriving late). -->
@@ -82,6 +76,6 @@ removal, key image and module settings.
 			<InstanceEditor {instance} {module} {onapply} />
 		{/key}
 	{:else}
-		<p class="text-zinc-600 dark:text-zinc-400">Le module de cette touche est introuvable.</p>
+		<p class="text-muted">Le module de cette touche est introuvable.</p>
 	{/if}
 </section>

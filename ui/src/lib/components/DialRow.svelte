@@ -35,7 +35,7 @@ Dials of the device, left to right, each showing the module assigned to it.
 				{:else}
 					<span
 						aria-hidden="true"
-						class="flex aspect-square w-full items-center justify-center rounded-full border-2 border-dashed border-zinc-400 text-xs text-zinc-600 dark:border-zinc-500 dark:text-zinc-400"
+						class="flex aspect-square w-full items-center justify-center rounded-full border-2 border-dashed border-device-line text-xs text-device-muted"
 					>
 						Libre
 					</span>
@@ -45,7 +45,7 @@ Dials of the device, left to right, each showing the module assigned to it.
 					{name}
 				</span>
 				{#if instance && !module}
-					<span class="text-xs text-zinc-700 dark:text-zinc-300">indisponible</span>
+					<span class="text-xs text-device-muted">indisponible</span>
 				{/if}
 			</button>
 		</li>

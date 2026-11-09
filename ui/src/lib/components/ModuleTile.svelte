@@ -20,8 +20,8 @@ surrounding control carries the accessible name.
 <span
 	aria-hidden="true"
 	class={[
-		'flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-900 text-center text-xs font-medium text-zinc-100',
-		unavailable ? 'border-2 border-dashed border-zinc-400' : 'ring-1 ring-zinc-700'
+		'flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-device-key text-center text-xs font-medium text-device-fg',
+		unavailable ? 'border-2 border-dashed border-device-muted' : 'ring-1 ring-device-line'
 	]}
 >
 	{#if icon}

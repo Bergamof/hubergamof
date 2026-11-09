@@ -43,7 +43,7 @@ cancels and focus returns to the opener). « Annuler », first, has the initial 
 	bind:this={dialog}
 	aria-labelledby="{uid}-title"
 	aria-describedby="{uid}-message"
-	class="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-2xl bg-white p-6 text-zinc-900 shadow-xl backdrop:bg-black/50 dark:bg-zinc-900 dark:text-zinc-100"
+	class="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-line bg-surface p-6 text-fg shadow-xl backdrop:bg-black/50"
 	onclose={closed}
 >
 	<h2 id="{uid}-title" class="text-lg font-semibold">{title}</h2>
@@ -51,11 +51,7 @@ cancels and focus returns to the opener). « Annuler », first, has the initial 
 	<div class="mt-6 flex flex-wrap justify-end gap-3">
 		<!-- First control: `showModal` focuses it, the safe choice of a confirmation. -->
 		<button type="button" class="secondary-button" onclick={oncancel}>Annuler</button>
-		<button
-			type="button"
-			class="rounded-lg bg-red-700 px-4 py-1.5 text-sm font-medium text-white focus-ring hover:bg-red-800"
-			onclick={confirm}
-		>
+		<button type="button" class="danger-button" onclick={confirm}>
 			{confirmLabel}
 		</button>
 	</div>

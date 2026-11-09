@@ -79,7 +79,7 @@ of its module. Applied right away, unlike the settings below.
 			/>
 		</span>
 		<div class="flex flex-col gap-2">
-			<p class="text-sm text-zinc-700 dark:text-zinc-300">
+			<p class="text-sm text-muted">
 				{instance.image ? 'Image personnalisée.' : 'Icône du module.'}
 			</p>
 			<div class="flex flex-wrap gap-2">
@@ -104,7 +104,7 @@ of its module. Applied right away, unlike the settings below.
 					</button>
 				{/if}
 			</div>
-			<p id="{uid}-hint" class="text-sm text-zinc-600 dark:text-zinc-400">
+			<p id="{uid}-hint" class="text-sm text-muted">
 				PNG, JPEG ou SVG, {mebibytes(MAX_IMAGE_BYTES)} au plus. Appliquée tout de suite.
 			</p>
 		</div>
@@ -118,7 +118,7 @@ of its module. Applied right away, unlike the settings below.
 		aria-hidden="true"
 		onchange={picked}
 	/>
-	<p role="status" class="text-sm text-zinc-700 dark:text-zinc-300">{status}</p>
+	<p role="status" class="text-sm text-muted">{status}</p>
 	{#if operation.problem}
 		<ProblemAlert problem={operation.problem} />
 	{/if}

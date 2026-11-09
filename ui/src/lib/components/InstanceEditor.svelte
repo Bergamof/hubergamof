@@ -137,7 +137,7 @@ and lets the user reload it.
 	{#if changedElsewhere && dirty}
 		<div
 			role="alert"
-			class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-600 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-400 dark:bg-amber-950 dark:text-amber-100"
+			class="flex flex-wrap items-center gap-3 rounded-xl border border-warning bg-warning-soft p-3 text-sm text-warning"
 		>
 			<span>Ce module a été modifié ailleurs pendant votre saisie.</span>
 			<button type="button" class="secondary-button border-current" onclick={reload}>
@@ -157,13 +157,13 @@ and lets the user reload it.
 			bind:value={label}
 			aria-describedby="{uid}-label-hint"
 		/>
-		<p id="{uid}-label-hint" class="text-sm text-zinc-600 dark:text-zinc-400">
+		<p id="{uid}-label-hint" class="text-sm text-muted">
 			Vide : nom du module. {MAX_LABEL_LENGTH} caractères au plus.
 		</p>
 	</div>
 
 	{#if !module}
-		<p class="text-sm text-zinc-600 dark:text-zinc-400">
+		<p class="text-sm text-muted">
 			Ce module n’est pas encore disponible dans cette version : seul son libellé est modifiable.
 		</p>
 	{/if}
@@ -179,7 +179,7 @@ and lets the user reload it.
 	<div class="flex flex-wrap items-center gap-3">
 		<button
 			type="submit"
-			class="rounded-lg bg-sky-700 px-4 py-2 font-medium text-white focus-ring hover:bg-sky-800 aria-disabled:opacity-60 aria-disabled:hover:bg-sky-700"
+			class="primary-button"
 			aria-disabled={!dirty || saving}
 			onclick={(event) => (dirty && !saving) || event.preventDefault()}
 		>
@@ -193,7 +193,7 @@ and lets the user reload it.
 		>
 			Annuler les modifications
 		</button>
-		<p role="status" class="text-sm text-zinc-700 dark:text-zinc-300">
+		<p role="status" class="text-sm text-muted">
 			{#if invalid}
 				Certains réglages sont invalides.
 			{:else if saved}
