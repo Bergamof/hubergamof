@@ -6,7 +6,6 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import Notices from '#lib/components/Notices.svelte';
-	import BrandLogo from '#lib/components/BrandLogo.svelte';
 	import banner from '#lib/assets/banner.svg';
 
 	/** Focus target once the last notice is dismissed. */
@@ -60,8 +59,7 @@
 </svelte:head>
 
 {#snippet hero(message: string, detail?: string)}
-	<div class="m-auto flex w-full max-w-3xl flex-col items-center gap-5 text-center">
-		<img src={banner} alt="" class="w-full rounded-2xl border border-line shadow-card" />
+	<div class="m-auto flex flex-col items-center gap-2 text-center">
 		<p class="font-display text-xl font-semibold">{message}</p>
 		{#if detail}
 			<p class="text-sm text-muted">{detail}</p>
@@ -70,15 +68,18 @@
 {/snippet}
 
 <div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-5 sm:px-6">
-	<header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+	<header class="flex flex-col gap-3">
 		<h1>
-			<BrandLogo class="h-9 w-auto text-fg" />
-			<span class="sr-only">HuBergamof</span>
+			<img
+				src={banner}
+				alt="HuBergamof"
+				class="w-full rounded-2xl border border-line shadow-card"
+			/>
 		</h1>
 		<p
 			role="status"
 			aria-live="polite"
-			class="flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface px-3.5 text-sm"
+			class="flex min-h-9 items-center gap-2 self-end rounded-full border border-line bg-surface px-3.5 text-sm"
 		>
 			<span aria-hidden="true" class={['size-2.5 rounded-full', isOnline ? 'bg-ok' : 'bg-warning']}
 			></span>

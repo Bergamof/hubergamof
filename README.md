@@ -1,6 +1,6 @@
 # HuBergamof
 
-![HuBergamof : votre Stream Deck, sous contrôle](docs/assets/banner.svg)
+![HuBergamof](docs/assets/banner.svg)
 
 Gestionnaire de Stream Deck pour Linux, à base de modules, avec une interface de configuration web locale synchronisée en temps réel.
 
