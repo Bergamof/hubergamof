@@ -6,6 +6,7 @@ import KeyGrid from './KeyGrid.svelte';
 
 const CLOCK: CatalogModule = {
 	icon: null,
+	settingIcons: {},
 	defaultSettings: {},
 	kind: 'clock',
 	name: 'Horloge',

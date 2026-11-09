@@ -75,6 +75,7 @@ fn catalog_module_without_icon() {
                 settings: Vec::new(),
             },
             icon: None,
+            setting_icons: std::collections::BTreeMap::new(),
             default_settings: json!({}),
         },
         &json!({
@@ -84,6 +85,7 @@ fn catalog_module_without_icon() {
             "capabilities": { "key": false, "dial": true, "touchZone": true },
             "settings": [],
             "icon": null,
+            "settingIcons": {},
             "defaultSettings": {}
         }),
     );
@@ -240,6 +242,10 @@ fn server_module_catalog() {
                     settings: vec![integer, choice],
                 },
                 icon: Some("data:image/png;base64,AA==".into()),
+                setting_icons: std::collections::BTreeMap::from([(
+                    "files".to_owned(),
+                    "data:image/png;base64,Ag==".to_owned(),
+                )]),
                 default_settings: json!({ "workMinutes": 25, "target": "sink" }),
             }],
         },
@@ -269,6 +275,7 @@ fn server_module_catalog() {
                     }
                 ],
                 "icon": "data:image/png;base64,AA==",
+                "settingIcons": { "files": "data:image/png;base64,Ag==" },
                 "defaultSettings": { "workMinutes": 25, "target": "sink" }
             }]
         }),

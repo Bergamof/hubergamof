@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
-import { expect, test } from './demo-manager.js';
+import { DEMO_COMPOSE_FILE, expect, test } from './demo-manager.js';
 
 // Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
 // keys Audio, Pomodoro, Docker, IntelliJ, Claude; dials Horloge, Audio, Pomodoro, Navigation.
@@ -112,14 +112,68 @@ test('refuse un réglage invalide, puis applique et conserve un réglage valide'
 	await expect(page.getByLabel('Durée du travail')).toHaveValue('30');
 });
 
-test('refuse un chemin relatif comme le gestionnaire', async ({ page }) => {
+/** A 1×1 PNG, enough for the manager to accept an icon. */
+const PIXEL_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+test('ajoute, modifie puis supprime un fichier compose avec son nom et son icône', async ({
+	page
+}) => {
 	await open(page);
 	await key(page, '3 : Docker').click();
-	const files = page.getByLabel('Fichiers compose');
-	await files.fill('relative/compose.yaml');
+	await expect(page.getByText('Aucun fichier ajouté.')).toBeVisible();
+
+	// The demo manager's dialog answers a file at once: it only has to be named.
+	await page.getByRole('button', { name: 'Ajouter un fichier…' }).click();
+	await expect(page.getByLabel('Fichier', { exact: true })).toHaveValue(DEMO_COMPOSE_FILE);
+	await page.getByLabel('Nom', { exact: true }).fill('Projet démo');
+	await page
+		.getByRole('group', { name: 'Nouveau fichier' })
+		.locator('input[type="file"]')
+		.setInputFiles({
+			name: 'icone.png',
+			mimeType: 'image/png',
+			buffer: PIXEL_PNG
+		});
+	await expect(page.getByText('Icône choisie.')).toBeVisible();
+	await page.getByRole('button', { name: 'Ajouter à la liste' }).click();
+	await expect(page.getByRole('button', { name: 'Modifier Projet démo' })).toBeFocused();
 	await page.getByRole('button', { name: 'Appliquer' }).click();
-	await expect(files).toBeFocused();
-	await expect(files).toHaveAccessibleDescription(/« relative\/compose\.yaml » : chemin absolu/);
+	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
+
+	await page.reload();
+	await key(page, '3 : Docker').click();
+	const file = page.getByRole('listitem').filter({ hasText: 'Projet démo' });
+	await expect(file).toContainText(DEMO_COMPOSE_FILE);
+	await expect(file.locator('img')).toHaveAttribute('src', /\/api\/devices\/.+\/images\/.+\.png$/);
+
+	await page.getByRole('button', { name: 'Modifier Projet démo' }).click();
+	await page.getByLabel('Nom', { exact: true }).fill('Démo renommée');
+	await page.getByRole('button', { name: 'Rétablir l’icône par défaut' }).click();
+	await page.getByRole('button', { name: 'Valider' }).click();
+	await page.getByRole('button', { name: 'Appliquer' }).click();
+	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
+	await expect(page.getByRole('listitem').filter({ hasText: 'Démo renommée' })).toBeVisible();
+
+	await page.getByRole('button', { name: 'Supprimer Démo renommée' }).click();
+	await expect(page.getByText('Aucun fichier ajouté.')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Ajouter un fichier…' })).toBeFocused();
+	await page.getByRole('button', { name: 'Appliquer' }).click();
+	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
+});
+
+test('refuse un chemin de fichier compose relatif comme le gestionnaire', async ({ page }) => {
+	await open(page);
+	await key(page, '3 : Docker').click();
+	await page.getByRole('button', { name: 'Ajouter un fichier…' }).click();
+	const path = page.getByLabel('Fichier', { exact: true });
+	await path.fill('relative/compose.yaml');
+	await page.getByRole('button', { name: 'Ajouter à la liste' }).click();
+	await expect(path).toBeFocused();
+	await expect(path).toHaveAttribute('aria-invalid', 'true');
+	await expect(path).toHaveAccessibleDescription(/« relative\/compose\.yaml » : chemin absolu/);
 });
 
 test('garde la saisie quand le gestionnaire refuse la modification', async ({ page }) => {
@@ -363,6 +417,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await expect(page.getByRole('dialog', { name: 'Ajouter une touche' })).toBeVisible();
 		await expectAccessible(page, 'sélecteur de modules');
 		await page.keyboard.press('Escape');
+
+		await key(page, '3 : Docker').click();
+		await page.getByRole('button', { name: 'Ajouter un fichier…' }).click();
+		await expect(page.getByLabel('Fichier', { exact: true })).toHaveValue(DEMO_COMPOSE_FILE);
+		await expectAccessible(page, 'ajout d’un fichier compose');
+		await page.getByRole('button', { name: 'Ajouter à la liste' }).click();
+		await expectAccessible(page, 'liste de fichiers compose');
 
 		await key(page, /^Touche 5 : Claude/).click();
 		await page.getByRole('button', { name: 'Supprimer la touche' }).click();

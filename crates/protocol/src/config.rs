@@ -6,16 +6,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::{DeviceModel, ModuleInstanceId, ModuleKind};
+use crate::{DeviceModel, ModuleInstanceId, ModuleKind, is_safe_image_name};
 
 /// Configuration schema version produced and understood by this crate.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// Highest accepted brightness, in percent.
 pub const MAX_BRIGHTNESS: u8 = 100;
-
-/// Longest accepted image file name.
-pub const MAX_IMAGE_NAME_LENGTH: usize = 128;
 
 // Bounds of a configuration: well above any real use, so that an imported
 // or received configuration cannot hold the manager back at every start.
@@ -277,18 +274,4 @@ pub fn is_identifier(identifier: &str) -> bool {
         && identifier
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-}
-
-/// Whether `name` is a plain file name of the device `images/` directory:
-/// ASCII letters, digits, `-`, `_` and `.`, not starting with a dot (no
-/// hidden file, no `..`), at most [`MAX_IMAGE_NAME_LENGTH`] characters. Such
-/// a name cannot designate another directory.
-#[must_use]
-pub fn is_safe_image_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_IMAGE_NAME_LENGTH
-        && !name.starts_with('.')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }

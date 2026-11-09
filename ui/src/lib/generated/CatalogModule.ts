@@ -14,6 +14,12 @@ export type CatalogModule = {
  */
 icon: string | null, 
 /**
+ * Icon of the items of each list setting (by setting key) that have none
+ * of their own, as a PNG data URL; a setting missing here shows the
+ * module icon.
+ */
+settingIcons: { [key in string]: string }, 
+/**
  * Settings of a new instance, as the module chooses them (usually the
  * default of every field, but a module may compute its own).
  */

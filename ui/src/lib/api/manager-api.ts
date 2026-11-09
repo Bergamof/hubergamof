@@ -1,4 +1,4 @@
-import type { ApiError, DeviceConfig, ImageUploaded } from '#lib/generated/index.js';
+import type { ApiError, DeviceConfig, FileChosen, ImageUploaded } from '#lib/generated/index.js';
 import { problemOf, type Problem } from '#lib/deck/problems.js';
 
 const MEBIBYTE = 1024 * 1024;
@@ -113,6 +113,20 @@ export class ManagerApi {
 			IMAGE_TOO_LARGE
 		);
 		return result.ok ? { ok: true, value: result.value.name } : result;
+	}
+
+	/**
+	 * Opens the desktop's file dialog and resolves the path of the compose file the user chose,
+	 * `null` when they closed it. Resolves a problem (« indisponible ») where there is no dialog.
+	 */
+	async chooseComposeFile(): Promise<ApiResult<string | null>> {
+		const result = await this.#post<FileChosen>(
+			'/api/file-chooser/compose-file',
+			new Blob([]),
+			'application/json',
+			UNEXPECTED_ANSWER
+		);
+		return result.ok ? { ok: true, value: result.value.path } : result;
 	}
 
 	/**

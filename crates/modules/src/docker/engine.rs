@@ -28,7 +28,9 @@ use tokio::sync::OnceCell;
 
 use super::backend::{ComposeAction, ContainerAction, DockerBackend, DockerChanges, DockerError};
 use super::compose::ComposeCli;
-use super::model::{ComposeLabels, ComposeTarget, Container, ContainerStatus, Health};
+use super::model::{
+    ComposeLabels, ComposeTarget, Container, ContainerStatus, Health, is_project_name,
+};
 
 /// Longest wait for an answer of the API (a stop answers once the container
 /// stopped, within its own timeout, 10 s by default).
@@ -43,6 +45,7 @@ const DEFAULT_ENDPOINT: &str = "unix:///var/run/docker.sock";
 const PROJECT_LABEL: &str = "com.docker.compose.project";
 const WORKING_DIR_LABEL: &str = "com.docker.compose.project.working_dir";
 const CONFIG_FILES_LABEL: &str = "com.docker.compose.project.config_files";
+const SERVICE_LABEL: &str = "com.docker.compose.service";
 /// Separator of the files in [`CONFIG_FILES_LABEL`].
 const CONFIG_FILES_SEPARATOR: char = ',';
 
@@ -191,6 +194,10 @@ impl DockerBackend for DockerEngine {
     ) -> Result<(), DockerError> {
         self.compose.run(target, action).await
     }
+
+    async fn compose_services(&self, target: &ComposeTarget) -> Result<Vec<String>, DockerError> {
+        self.compose.services(target).await
+    }
 }
 
 type EventStream = Pin<Box<dyn Stream<Item = Result<EventMessage, BollardError>> + Send>>;
@@ -304,7 +311,10 @@ fn health_in_status(status: &str) -> Option<Health> {
 }
 
 fn compose_labels(labels: &HashMap<String, String>) -> Option<ComposeLabels> {
-    let project = labels.get(PROJECT_LABEL)?.clone();
+    let project = labels
+        .get(PROJECT_LABEL)
+        .filter(|project| is_project_name(project))?
+        .clone();
     let config_files = labels
         .get(CONFIG_FILES_LABEL)
         .map(|files| {
@@ -319,6 +329,7 @@ fn compose_labels(labels: &HashMap<String, String>) -> Option<ComposeLabels> {
         project,
         working_dir: labels.get(WORKING_DIR_LABEL).map(PathBuf::from),
         config_files,
+        service: labels.get(SERVICE_LABEL).cloned(),
     })
 }
 
@@ -348,10 +359,21 @@ mod tests {
     }
 
     #[test]
+    fn a_project_name_compose_would_not_allow_makes_the_container_isolated() {
+        for project in ["shop/db", "-shop", "Shop", "", "a b", "shop\nINJECTED"] {
+            let container = container_of(summary(&[(PROJECT_LABEL, project)])).unwrap();
+            assert_eq!(container.compose, None, "{project:?}");
+        }
+        let container = container_of(summary(&[(PROJECT_LABEL, "my-shop_2")])).unwrap();
+        assert_eq!(container.compose.unwrap().project, "my-shop_2");
+    }
+
+    #[test]
     fn summaries_become_containers_with_their_compose_labels() {
         let container = container_of(summary(&[
             (PROJECT_LABEL, "shop"),
             (WORKING_DIR_LABEL, "/srv/shop"),
+            (SERVICE_LABEL, "web"),
             (
                 CONFIG_FILES_LABEL,
                 "/srv/shop/compose.yaml,/srv/shop/dev.yaml",
@@ -369,6 +391,7 @@ mod tests {
         );
         let labels = container.compose.unwrap();
         assert_eq!(labels.project, "shop");
+        assert_eq!(labels.service.as_deref(), Some("web"));
         assert_eq!(labels.working_dir, Some(PathBuf::from("/srv/shop")));
         assert_eq!(
             labels.config_files,

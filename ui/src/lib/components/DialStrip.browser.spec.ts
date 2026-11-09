@@ -7,6 +7,7 @@ const ICON = 'data:image/png;base64,AAAA';
 
 const AUDIO: CatalogModule = {
 	icon: ICON,
+	settingIcons: {},
 	defaultSettings: {},
 	kind: 'audio',
 	name: 'Audio',

@@ -43,6 +43,7 @@ pub use session::{ENGINE_START_TIMEOUT, MIN_LIVE_STATE_INTERVAL};
 use crate::config_store::ConfigStore;
 use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
+use crate::file_chooser::FilePicker;
 use crate::render::Renderer;
 
 /// Size of the images drawn for the UI (module icons, key images): large
@@ -83,6 +84,8 @@ pub struct ServerContext {
     pub store: ConfigStore,
     /// Renderer of the images served to the UI.
     pub renderer: Arc<Renderer>,
+    /// Opens the desktop's file dialog for the UI.
+    pub file_picker: Arc<dyn FilePicker>,
 }
 
 /// Shared by every request handler.
@@ -96,6 +99,8 @@ struct AppState {
     /// Admits one image or archive transfer at a time: each may hold tens
     /// of megabytes while decoding or zipping.
     transfers: Arc<Semaphore>,
+    /// Admits one file dialog at a time: it stays on the user's screen.
+    file_dialog: Arc<Semaphore>,
 }
 
 /// Failure to start the server.
@@ -127,6 +132,7 @@ pub fn router(
         policy: Arc::new(policy),
         shutdown,
         transfers: Arc::new(Semaphore::new(1)),
+        file_dialog: Arc::new(Semaphore::new(1)),
     };
     Router::new()
         .route(WS_PATH, get(upgrade_websocket))

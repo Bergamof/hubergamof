@@ -14,6 +14,8 @@ const ATTENTION_SVG: &str = asset!("docker-container-attention");
 const PROJECT_RUNNING_SVG: &str = asset!("docker-project-running");
 const PROJECT_STOPPED_SVG: &str = asset!("docker-project-stopped");
 const PROJECT_ATTENTION_SVG: &str = asset!("docker-project-attention");
+const SERVICE_PLANNED_SVG: &str = asset!("docker-service-planned");
+const WORKING_SVG: &str = asset!("docker-working");
 const START_SVG: &str = asset!("docker-start");
 const STOP_SVG: &str = asset!("docker-stop");
 const RESTART_SVG: &str = asset!("docker-restart");
@@ -36,6 +38,10 @@ pub(super) static PROJECT_STOPPED: LazyLock<ImageData> = LazyLock::new(|| svg(PR
 /// A compose project in trouble.
 pub(super) static PROJECT_ATTENTION: LazyLock<ImageData> =
     LazyLock::new(|| svg(PROJECT_ATTENTION_SVG));
+/// A service the compose files define, with no container yet.
+pub(super) static SERVICE_PLANNED: LazyLock<ImageData> = LazyLock::new(|| svg(SERVICE_PLANNED_SVG));
+/// A container or service an operation (`up`, `down`) is working on.
+pub(super) static WORKING: LazyLock<ImageData> = LazyLock::new(|| svg(WORKING_SVG));
 /// Start, start all.
 pub(super) static START: LazyLock<ImageData> = LazyLock::new(|| svg(START_SVG));
 /// Stop, stop all.
@@ -63,6 +69,8 @@ mod tests {
             PROJECT_RUNNING_SVG,
             PROJECT_STOPPED_SVG,
             PROJECT_ATTENTION_SVG,
+            SERVICE_PLANNED_SVG,
+            WORKING_SVG,
             START_SVG,
             STOP_SVG,
             RESTART_SVG,

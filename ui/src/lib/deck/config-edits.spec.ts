@@ -37,6 +37,7 @@ const pomodoro: CatalogModule = {
 	description: '',
 	capabilities: { key: true, dial: true, touchZone: true },
 	icon: null,
+	settingIcons: {},
 	defaultSettings: { workMinutes: 25, autoStart: false, computed: 'by the module' },
 	settings: [
 		{

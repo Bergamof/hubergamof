@@ -22,6 +22,21 @@ pub trait ConfigDefaults: Send + Sync {
     /// Kinds assigned to the dials, from left to right; a device with fewer
     /// dials takes the first ones.
     fn dial_modules(&self) -> Vec<ModuleKind>;
+
+    /// Names of the stored images the settings of `module` refer to (the
+    /// icons of its items); none by default.
+    fn settings_images(&self, _module: &ModuleInstance) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Replaces every image the settings of `module` refer to by
+    /// `replace(name)`, `None` removing the reference; nothing by default.
+    fn replace_settings_images(
+        &self,
+        _module: &mut ModuleInstance,
+        _replace: &mut dyn FnMut(&str) -> Option<String>,
+    ) {
+    }
 }
 
 impl ConfigDefaults for ModuleRegistry {
@@ -35,6 +50,24 @@ impl ConfigDefaults for ModuleRegistry {
 
     fn dial_modules(&self) -> Vec<ModuleKind> {
         self.default_layout().dials.clone()
+    }
+
+    fn settings_images(&self, module: &ModuleInstance) -> Vec<String> {
+        self.get(&module.kind).map_or_else(Vec::new, |factory| {
+            factory.descriptor().settings_images(&module.settings)
+        })
+    }
+
+    fn replace_settings_images(
+        &self,
+        module: &mut ModuleInstance,
+        replace: &mut dyn FnMut(&str) -> Option<String>,
+    ) {
+        if let Some(factory) = self.get(&module.kind) {
+            factory
+                .descriptor()
+                .replace_settings_images(&mut module.settings, replace);
+        }
     }
 }
 

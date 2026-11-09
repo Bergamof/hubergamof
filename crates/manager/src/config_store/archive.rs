@@ -57,10 +57,10 @@ pub enum ArchiveError {
     #[error("archive has more than {MAX_ARCHIVE_ENTRIES} entries")]
     TooManyEntries,
     /// An entry, or all of them, decompress beyond their limit.
-    #[error("archive entry `{0}` is too large once decompressed")]
+    #[error("archive entry {0:?} is too large once decompressed")]
     EntryTooLarge(String),
     /// An entry that is neither the configuration nor an image.
-    #[error("unexpected archive entry `{0}`")]
+    #[error("unexpected archive entry {0:?}")]
     UnexpectedEntry(String),
     /// The same entry twice.
     #[error("an archive entry appears twice")]

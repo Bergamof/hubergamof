@@ -9,6 +9,7 @@ const clock: CatalogModule = {
 	capabilities: { key: false, dial: true, touchZone: true },
 	settings: [],
 	icon: null,
+	settingIcons: {},
 	defaultSettings: {}
 };
 

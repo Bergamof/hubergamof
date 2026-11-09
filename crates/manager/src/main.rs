@@ -16,6 +16,7 @@ use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplu
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
+use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, module_catalog,
@@ -62,6 +63,11 @@ struct Cli {
     #[arg(long = "dev-origin", value_name = "URL")]
     dev_origins: Vec<DevOrigin>,
 
+    /// Answer this file at once when the interface asks for a file, instead of
+    /// opening the desktop's file dialog (tests, screenshots).
+    #[arg(long, value_name = "PATH")]
+    file_chooser_answer: Option<PathBuf>,
+
     /// Do not show the system tray icon.
     #[arg(long)]
     no_tray: bool,
@@ -100,6 +106,7 @@ async fn main() -> Result<()> {
         simulated_input: simulated_input(cli.demo),
         store,
         renderer,
+        file_picker: file_picker(cli.file_chooser_answer.clone()),
     };
     let server = match Server::bind(
         cli.port,
@@ -201,6 +208,15 @@ fn simulated_input(demo: bool) -> SimulatedInput {
     }
 }
 
+/// File dialog of the UI: the desktop's own (also with `--demo`, so that `make dev` tries
+/// the real one), or a user always choosing `answer` when one is given.
+fn file_picker(answer: Option<PathBuf>) -> Arc<dyn FilePicker> {
+    match answer {
+        Some(file) => Arc::new(SimulatedFilePicker::choosing(Some(file))),
+        None => Arc::new(PortalFilePicker),
+    }
+}
+
 fn builtin_services(demo: bool) -> BuiltinServices {
     if demo {
         // A demo shows a living clock: only the tests freeze the time.
@@ -298,6 +314,17 @@ mod tests {
         assert_eq!(cli.config_dir, PathBuf::from("config"));
         assert_eq!(cli.dev_origins, []);
         assert!(!cli.no_tray);
+        assert_eq!(
+            cli.file_chooser_answer, None,
+            "the desktop's own dialog, also in --demo"
+        );
+    }
+
+    #[test]
+    fn the_file_chooser_can_be_answered_in_advance() {
+        let cli =
+            Cli::try_parse_from(["hubergamof", "--file-chooser-answer", "/srv/a.yaml"]).unwrap();
+        assert_eq!(cli.file_chooser_answer, Some(PathBuf::from("/srv/a.yaml")));
     }
 
     #[test]

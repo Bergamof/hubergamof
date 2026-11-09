@@ -44,11 +44,12 @@ impl ProjectDefinition {
         format!("{}-{service}-1", self.name)
     }
 
-    fn labels(&self) -> ComposeLabels {
+    fn labels(&self, service: &str) -> ComposeLabels {
         ComposeLabels {
             project: self.name.clone(),
             working_dir: self.file.parent().map(PathBuf::from),
             config_files: vec![self.file.clone()],
+            service: Some(service.to_owned()),
         }
     }
 
@@ -149,7 +150,7 @@ impl SimulatedDocker {
                     let container = state.add(
                         project.container_name(service),
                         image,
-                        Some(project.labels()),
+                        Some(project.labels(service)),
                     );
                     State::set_running(container, running);
                 }
@@ -244,15 +245,21 @@ impl SimulatedDocker {
         };
         match action {
             ComposeAction::Up(variant) => {
-                for (service, image) in &project.services {
+                let wanted = |service: &str| {
+                    target.services.is_empty() || target.services.iter().any(|name| name == service)
+                };
+                for (service, image) in project.services.iter().filter(|(name, _)| wanted(name)) {
                     let name = project.container_name(service);
+                    // `--no-start` creates what is missing and starts nothing.
+                    let start = variant != UpVariant::NoStart;
                     match state.containers.iter_mut().find(|c| c.name == name) {
-                        Some(container) => State::set_running(container, true),
+                        Some(container) if start => State::set_running(container, true),
+                        Some(_) => {}
                         None => {
-                            State::set_running(
-                                state.add(name, image, Some(project.labels())),
-                                true,
-                            );
+                            let created = state.add(name, image, Some(project.labels(service)));
+                            if start {
+                                State::set_running(created, true);
+                            }
                         }
                     }
                 }
@@ -260,13 +267,24 @@ impl SimulatedDocker {
                     UpVariant::Plain => "",
                     UpVariant::Build => " --build",
                     UpVariant::Pull => " --pull",
+                    UpVariant::NoStart => " --no-start",
                 };
-                Ok(format!("up {}{suffix}", project.name))
+                let scope = scope_suffix(target);
+                Ok(format!("up {}{suffix}{scope}", project.name))
             }
             ComposeAction::Down { volumes } => {
-                state.containers.retain(|container| !belongs(container));
+                state.containers.retain(|container| {
+                    let in_scope = target.services.is_empty()
+                        || container
+                            .compose
+                            .as_ref()
+                            .and_then(|labels| labels.service.as_ref())
+                            .is_some_and(|service| target.services.contains(service));
+                    !(belongs(container) && in_scope)
+                });
                 let suffix = if volumes { " --volumes" } else { "" };
-                Ok(format!("down {}{suffix}", project.name))
+                let scope = scope_suffix(target);
+                Ok(format!("down {}{suffix}{scope}", project.name))
             }
         }
     }
@@ -356,6 +374,31 @@ impl DockerBackend for SimulatedDocker {
         self.record(done);
         self.notify();
         Ok(())
+    }
+
+    async fn compose_services(&self, target: &ComposeTarget) -> Result<Vec<String>, DockerError> {
+        self.check_available()?;
+        lock(&self.state)
+            .projects
+            .iter()
+            .find(|project| project.is(target))
+            .map(|project| {
+                project
+                    .services
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect()
+            })
+            .ok_or_else(|| DockerError::InvalidTarget("unknown project".into()))
+    }
+}
+
+/// The services a compose action is narrowed to, as the end of its record.
+fn scope_suffix(target: &ComposeTarget) -> String {
+    if target.services.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", target.services.join(" "))
     }
 }
 

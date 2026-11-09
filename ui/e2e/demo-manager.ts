@@ -52,13 +52,25 @@ async function waitUntilReady(manager: ChildProcess): Promise<void> {
  * configuration (the default layout of a Stream Deck+): tests are independent, and a retry
  * starts from scratch.
  */
+/** File the manager answers to the interface's file dialog: no desktop dialog in tests. */
+export const DEMO_COMPOSE_FILE = '/srv/demo/compose.yaml';
+
 export const test = base.extend({
 	baseURL: async ({ browserName }, use) => {
 		const configDir = await mkdtemp(join(tmpdir(), `hubergamof-e2e-${browserName}-`));
 		const port = await freePort();
 		const manager = spawn(
 			MANAGER_BINARY,
-			['--demo', '--no-tray', '--port', String(port), '--config-dir', configDir],
+			[
+				'--demo',
+				'--no-tray',
+				'--file-chooser-answer',
+				DEMO_COMPOSE_FILE,
+				'--port',
+				String(port),
+				'--config-dir',
+				configDir
+			],
 			{ stdio: ['ignore', 'pipe', 'pipe'] }
 		);
 		try {

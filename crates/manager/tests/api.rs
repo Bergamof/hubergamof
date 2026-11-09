@@ -12,14 +12,17 @@ use hubergamof_manager::config_store::{ConfigStore, IMAGES_DIR, MAX_ARCHIVE_BYTE
 use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineHandle, EngineServices, Supervisor};
+use hubergamof_manager::file_chooser::{
+    FilePicker, FilePickerError, FilePurpose, NoFilePicker, SimulatedFilePicker,
+};
 use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, ServerContext, SimulatedInput, module_catalog, router,
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, ImageSize,
-    ImageUploaded,
+    ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, FileChosen,
+    ImageSize, ImageUploaded,
 };
 use image::{ImageFormat, Rgba, RgbaImage};
 use tempfile::TempDir;
@@ -33,6 +36,7 @@ const FIRST: &str = "API0000000001";
 const SECOND: &str = "API0000000002";
 /// A Stream Deck MK.2: 5×3 keys, no dial.
 const NO_DIALS: &str = "API0000000003";
+const CHOSEN_FILE: &str = "/srv/shop/compose.yaml";
 const WAIT: Duration = Duration::from_secs(5);
 const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><rect width="1" height="1" fill="red"/></svg>"#;
 
@@ -55,6 +59,13 @@ struct Api {
 
 impl Api {
     async fn start() -> Self {
+        Self::start_with(Arc::new(SimulatedFilePicker::choosing(Some(
+            CHOSEN_FILE.into(),
+        ))))
+        .await
+    }
+
+    async fn start_with(file_picker: Arc<dyn FilePicker>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let registry = Arc::new(builtin_registry_with(BuiltinServices::simulated()));
         let services = EngineServices {
@@ -74,6 +85,7 @@ impl Api {
             simulated_input: SimulatedInput::Refused,
             store,
             renderer,
+            file_picker,
         };
         let decks = VirtualDevices::new(discovery);
         for serial in [FIRST, SECOND] {
@@ -585,5 +597,147 @@ async fn refused_imports_leave_no_image_behind() {
         );
         assert_eq!(stored_images(&api, FIRST), Vec::<String>::new());
     }
+    api.stop().await;
+}
+
+async fn choose_compose_file(api: &Api) -> Response<Body> {
+    api.send(
+        Request::post("/api/file-chooser/compose-file")
+            .header("host", HOST)
+            .header("origin", ORIGIN)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_file_chooser_answers_the_path_the_user_chose() {
+    let api = Api::start().await;
+    let response = choose_compose_file(&api).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let chosen: FileChosen = serde_json::from_slice(&bytes(response).await).unwrap();
+    assert_eq!(chosen.path.as_deref(), Some(CHOSEN_FILE));
+    api.stop().await;
+
+    let cancelled = Api::start_with(Arc::new(SimulatedFilePicker::choosing(None))).await;
+    let response = choose_compose_file(&cancelled).await;
+    let chosen: FileChosen = serde_json::from_slice(&bytes(response).await).unwrap();
+    assert_eq!(chosen.path, None, "closing the dialog is not an error");
+    cancelled.stop().await;
+}
+
+#[tokio::test]
+async fn the_file_chooser_is_unavailable_without_a_desktop() {
+    let api = Api::start_with(Arc::new(NoFilePicker)).await;
+    assert_eq!(
+        api_error(choose_compose_file(&api).await).await,
+        (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
+    );
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn the_file_chooser_is_refused_to_foreign_origins() {
+    let api = Api::start().await;
+    let response = api
+        .send(
+            Request::post("/api/file-chooser/compose-file")
+                .header("host", HOST)
+                .header("origin", "http://evil.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    api.stop().await;
+}
+
+/// A dialog that stays open until `release` is notified.
+struct HeldDialog {
+    opened: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl FilePicker for HeldDialog {
+    async fn pick_file(
+        &self,
+        _purpose: FilePurpose,
+    ) -> Result<Option<std::path::PathBuf>, FilePickerError> {
+        self.opened.notify_one();
+        self.release.notified().await;
+        Ok(Some(CHOSEN_FILE.into()))
+    }
+}
+
+#[tokio::test]
+async fn a_dialog_stays_the_only_one_even_when_its_request_is_dropped() {
+    let opened = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let api = Api::start_with(Arc::new(HeldDialog {
+        opened: Arc::clone(&opened),
+        release: Arc::clone(&release),
+    }))
+    .await;
+    let request = |router: axum::Router| {
+        router.oneshot(
+            Request::post("/api/file-chooser/compose-file")
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let first = tokio::spawn(request(api.router.clone()));
+    tokio::time::timeout(WAIT, opened.notified()).await.unwrap();
+
+    let second = request(api.router.clone()).await.unwrap();
+    assert_eq!(
+        api_error(second).await,
+        (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
+    );
+
+    // The client goes away: the dialog is still on the screen, so still the only one.
+    first.abort();
+    let _ = first.await;
+    let third = request(api.router.clone()).await.unwrap();
+    assert_eq!(third.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    release.notify_one();
+    let mut accepted = false;
+    for _ in 0..50 {
+        if request(api.router.clone()).await.unwrap().status() == StatusCode::OK {
+            accepted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        release.notify_one();
+    }
+    assert!(accepted, "a new dialog opens once the first one is over");
+    api.stop().await;
+}
+
+struct BrokenDialog;
+
+#[async_trait::async_trait]
+impl FilePicker for BrokenDialog {
+    async fn pick_file(
+        &self,
+        _purpose: FilePurpose,
+    ) -> Result<Option<std::path::PathBuf>, FilePickerError> {
+        Err(FilePickerError::Failed(
+            "secret detail /run/user/1000".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_failing_dialog_is_an_internal_error_without_its_details() {
+    let api = Api::start_with(Arc::new(BrokenDialog)).await;
+    let response = choose_compose_file(&api).await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = String::from_utf8(bytes(response).await).unwrap();
+    assert!(!body.contains("secret detail"), "{body}");
     api.stop().await;
 }

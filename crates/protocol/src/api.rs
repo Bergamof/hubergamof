@@ -15,6 +15,16 @@ pub struct ImageUploaded {
     pub name: String,
 }
 
+/// Answer to a file chooser request (`POST /api/file-chooser/…`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileChosen {
+    /// Absolute path of the file the user chose; `None` when they closed the
+    /// chooser without choosing.
+    pub path: Option<String>,
+}
+
 /// Body of a failed `/api/…` request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

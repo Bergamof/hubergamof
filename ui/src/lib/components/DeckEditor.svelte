@@ -259,6 +259,8 @@ selected key or dial.
 					<DialDetails
 						{index}
 						{config}
+						serial={device.serial}
+						{api}
 						{instance}
 						candidates={dialCandidates}
 						modules={dialModules}

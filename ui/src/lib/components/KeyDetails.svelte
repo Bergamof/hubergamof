@@ -73,7 +73,7 @@ removal, key image and module settings.
 		<!-- A new form for another instance, or once its module is known (catalog arriving late). -->
 		{#key `${instance.id}/${module?.kind ?? ''}`}
 			<KeyImagePicker {serial} {instance} {module} {api} onchange={onimage} />
-			<InstanceEditor {instance} {module} {onapply} />
+			<InstanceEditor {instance} {module} {serial} {api} {onapply} />
 		{/key}
 	{:else}
 		<p class="text-muted">Le module de cette touche est introuvable.</p>

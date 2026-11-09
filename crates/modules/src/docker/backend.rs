@@ -31,6 +31,9 @@ pub enum UpVariant {
     Build,
     /// `up --detach --pull=always`: pulls the images first.
     Pull,
+    /// `up --no-start`: creates the containers (and builds or pulls what is
+    /// missing) without starting them.
+    NoStart,
 }
 
 /// Action on a compose project.
@@ -138,10 +141,15 @@ pub trait DockerBackend: Send + Sync + fmt::Debug {
     /// Applies `action` to the container `id`.
     async fn container(&self, id: &str, action: ContainerAction) -> Result<(), DockerError>;
 
-    /// Applies `action` to the compose project `target`.
+    /// Applies `action` to the compose project `target` (to its
+    /// `target.services` when given).
     async fn compose(
         &self,
         target: &ComposeTarget,
         action: ComposeAction,
     ) -> Result<(), DockerError>;
+
+    /// The services the compose files of `target` define, by name, whether
+    /// or not they have containers.
+    async fn compose_services(&self, target: &ComposeTarget) -> Result<Vec<String>, DockerError>;
 }

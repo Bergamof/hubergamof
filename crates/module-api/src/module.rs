@@ -56,6 +56,13 @@ pub trait ModuleFactory: Send + Sync {
         None
     }
 
+    /// Icon the interface shows for the items of the list setting `key` that
+    /// have none of their own (the compose projects without a chosen image),
+    /// drawn like [`ModuleFactory::icon`]. `None` (the default): the module icon.
+    fn setting_item_icon(&self, _key: &str) -> Option<ImageData> {
+        None
+    }
+
     /// Whether pressing the dial an instance is assigned to dismisses the
     /// notification shown over the touch strip (it stays unread), the other
     /// dials being inert meanwhile. Only the navigation module does.

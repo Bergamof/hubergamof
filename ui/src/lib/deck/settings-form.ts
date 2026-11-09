@@ -1,10 +1,28 @@
 import type { JsonValue, SettingField, SettingKind } from '#lib/generated/index.js';
 
 /**
- * What a form field holds while the user edits it: a checkbox state, or the raw text of the
- * input (an integer being typed may be temporarily invalid, a path list is one path per line).
+ * A file of a file list while the user edits it: the raw texts of its fields (a path being
+ * typed may be temporarily invalid, an empty name stands for « no name »).
  */
-export type DraftValue = boolean | string;
+export interface FileEntryDraft {
+	path: string;
+	name: string;
+	/** Name of a stored image, `null` for the default icon. */
+	icon: string | null;
+}
+
+/**
+ * What a form field holds while the user edits it: a checkbox state, the raw text of the
+ * input (an integer being typed may be temporarily invalid, a path list is one path per line),
+ * or the files of a file list.
+ */
+export type DraftValue = boolean | string | FileEntryDraft[];
+
+/** Longest name of a file (`MAX_ENTRY_NAME_CHARS` of the module API). */
+export const MAX_ENTRY_NAME_CHARS = 40;
+
+/** Most files in a list (`MAX_FILE_ENTRIES` of the module API). */
+export const MAX_FILE_ENTRIES = 50;
 
 /** Form values, by setting key. */
 export type SettingsDraft = Record<string, DraftValue>;
@@ -32,11 +50,27 @@ function storedValue(kind: SettingKind, stored: JsonValue | undefined): JsonValu
 			return Array.isArray(stored) && stored.every((path) => typeof path === 'string')
 				? stored
 				: kind.default;
+		case 'fileEntryList':
+			return Array.isArray(stored) && stored.every(isStoredFile) ? stored : kind.default;
 		case 'text':
 		case 'path':
 		case 'choice':
 			return typeof stored === 'string' ? stored : kind.default;
 	}
+}
+
+/** A file as stored: a path, or (since names and icons) an object with a path. */
+function isStoredFile(value: JsonValue): boolean {
+	return typeof value === 'string' || (isRecord(value) && typeof value.path === 'string');
+}
+
+function toFileEntryDraft(stored: JsonValue): FileEntryDraft {
+	if (!isRecord(stored)) return { path: String(stored), name: '', icon: null };
+	return {
+		path: String(stored.path),
+		name: typeof stored.name === 'string' ? stored.name : '',
+		icon: typeof stored.icon === 'string' ? stored.icon : null
+	};
 }
 
 function toDraftValue(kind: SettingKind, value: JsonValue): DraftValue {
@@ -45,6 +79,8 @@ function toDraftValue(kind: SettingKind, value: JsonValue): DraftValue {
 			return value === true;
 		case 'pathList':
 			return Array.isArray(value) ? value.join('\n') : '';
+		case 'fileEntryList':
+			return Array.isArray(value) ? value.map(toFileEntryDraft) : [];
 		default:
 			return String(value);
 	}
@@ -99,6 +135,8 @@ function parseField(kind: SettingKind, draft: DraftValue): FieldResult {
 				? { ok: true, value: paths }
 				: { ok: false, error: pathError(invalid) };
 		}
+		case 'fileEntryList':
+			return parseFileEntries(Array.isArray(draft) ? draft : []);
 		case 'text':
 			return { ok: true, value: String(draft) };
 		case 'path': {
@@ -108,6 +146,54 @@ function parseField(kind: SettingKind, draft: DraftValue): FieldResult {
 				: { ok: false, error: pathError(path) };
 		}
 	}
+}
+
+/** Why `entry` cannot be saved, `undefined` when it can (same rules as the module API). */
+export function fileEntryError(entry: FileEntryDraft): string | undefined {
+	const path = entry.path.trim();
+	if (path === '') return 'Indiquer le chemin du fichier.';
+	if (!isResolvablePath(path)) return pathError(path);
+	if ([...entry.name.trim()].length > MAX_ENTRY_NAME_CHARS) {
+		return `Nom trop long : ${MAX_ENTRY_NAME_CHARS} caractères au plus.`;
+	}
+	// Same refusal as the module API: such characters scramble what the name shows.
+	if (/[\p{Cc}\u202A-\u202E\u2066-\u2069]/u.test(entry.name)) {
+		return 'Le nom ne peut pas contenir de caractère de contrôle.';
+	}
+	return undefined;
+}
+
+function parseFileEntries(entries: readonly FileEntryDraft[]): FieldResult {
+	if (entries.length > MAX_FILE_ENTRIES) {
+		return { ok: false, error: `${MAX_FILE_ENTRIES} fichiers au plus.` };
+	}
+	const files: JsonValue[] = [];
+	const seen = new Set<string>();
+	for (const entry of entries) {
+		const error = fileEntryError(entry);
+		if (error) return { ok: false, error };
+		const path = entry.path.trim();
+		if (seen.has(path)) return { ok: false, error: `« ${path} » est déjà dans la liste.` };
+		seen.add(path);
+		files.push({ path, name: entry.name.trim() || null, icon: entry.icon });
+	}
+	return { ok: true, value: files };
+}
+
+/** Whether two form values are the same (files are compared by content). */
+export function sameDraftValue(a: DraftValue | undefined, b: DraftValue | undefined): boolean {
+	if (Array.isArray(a) && Array.isArray(b)) {
+		return (
+			a.length === b.length &&
+			a.every(
+				(entry, index) =>
+					entry.path === b[index]?.path &&
+					entry.name === b[index]?.name &&
+					entry.icon === b[index]?.icon
+			)
+		);
+	}
+	return a === b;
 }
 
 /**
@@ -139,6 +225,8 @@ export function settingHint(field: SettingField): string {
 		else if (kind.max !== null) constraints.push(`Au plus ${kind.max}.`);
 	} else if (kind.type === 'pathList') {
 		constraints.push('Un chemin absolu par ligne (ou commençant par ~/).');
+	} else if (kind.type === 'fileEntryList') {
+		constraints.push(`${MAX_FILE_ENTRIES} fichiers au plus.`);
 	} else if (kind.type === 'path') {
 		constraints.push(
 			kind.directory
