@@ -68,18 +68,20 @@
 {/snippet}
 
 <div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-5 sm:px-6">
-	<header class="flex flex-col gap-3">
+	<header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
 		<h1>
 			<img
 				src={banner}
 				alt="HuBergamof"
-				class="w-full rounded-2xl border border-line shadow-card"
+				width="1280"
+				height="320"
+				class="h-20 w-auto rounded-xl border border-line sm:h-24"
 			/>
 		</h1>
 		<p
 			role="status"
 			aria-live="polite"
-			class="flex min-h-9 items-center gap-2 self-end rounded-full border border-line bg-surface px-3.5 text-sm"
+			class="flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface px-3.5 text-sm"
 		>
 			<span aria-hidden="true" class={['size-2.5 rounded-full', isOnline ? 'bg-ok' : 'bg-warning']}
 			></span>
