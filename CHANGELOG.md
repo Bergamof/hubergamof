@@ -7,6 +7,11 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Ajouté
+
+- Module Docker : chaque fichier compose déclaré a un nom et une icône au choix. Les réglages listent les fichiers ajoutés (icône, nom, chemin) ; on les ajoute avec le sélecteur de fichier natif du bureau (portail `xdg-desktop-portal`, qui donne le vrai chemin, ce qu'un `<input type="file">` ne fait pas), puis on les modifie ou les supprime sur place. Sans portail (ou sans bureau), le chemin se saisit. Le nom remplace celui du projet compose sur la touche et dans les titres ; l'icône remplace les couches. Les icônes sont stockées comme les images de touche (même contrôle, export/import zip, nettoyage des inutilisées) et lues par les modules via `ModuleContext::images()`.
+- Contrat : réglage `SettingKind::FileEntryList` (`FileEntry` : chemin, nom, icône), route `POST /api/file-chooser/compose-file` (`FileChosen`), code d'erreur `unavailable`. Les anciens réglages `composeFiles` (liste de chemins) restent lus tels quels.
+
 ### Corrigé
 
 - Image Docker : `zlib1g` est mis à jour dans l'étage d'exécution (deux CVE HIGH corrigées par Debian, absentes du digest épinglé de `debian:trixie-slim`), ce qui faisait échouer le scan Trivy de la CI.

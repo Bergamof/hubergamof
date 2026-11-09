@@ -19,6 +19,7 @@ mod cache;
 pub mod config_store;
 pub mod device;
 pub mod engine;
+pub mod file_chooser;
 pub mod render;
 pub mod server;
 #[cfg(test)]

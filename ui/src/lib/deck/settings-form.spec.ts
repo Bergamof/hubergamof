@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { SettingField, SettingKind } from '#lib/generated/index.js';
-import { parseDraft, parseLabel, settingHint, toDraft } from './settings-form.js';
+import {
+	MAX_ENTRY_NAME_CHARS,
+	MAX_FILE_ENTRIES,
+	parseDraft,
+	parseLabel,
+	sameDraftValue,
+	settingHint,
+	toDraft,
+	type FileEntryDraft
+} from './settings-form.js';
 
 function field(key: string, kind: SettingKind): SettingField {
 	return { key, label: key, help: null, kind };
@@ -139,5 +148,75 @@ describe('settingHint', () => {
 		expect(help({ type: 'path', default: '', directory: false })).toMatch(/fichier/);
 		expect(help({ type: 'pathList', default: [] })).toMatch(/par ligne/);
 		expect(help({ type: 'boolean', default: true }, 'Aide.')).toBe('Aide.');
+	});
+});
+
+describe('file lists', () => {
+	const files = [field('compose', { type: 'fileEntryList', default: [] })];
+	const draft = (value: FileEntryDraft[]) => ({ compose: value });
+	const entry = (path: string, name = '', icon: string | null = null): FileEntryDraft => ({
+		path,
+		name,
+		icon
+	});
+
+	it('shows files with their name and icon, and plain paths saved by older versions', () => {
+		expect(
+			toDraft(files, {
+				compose: [
+					'/old.yaml',
+					{ path: '~/a.yaml', name: 'Boutique', icon: 'a.png' },
+					{ path: '~/b.yaml', name: null, icon: null }
+				]
+			})
+		).toEqual({
+			compose: [entry('/old.yaml'), entry('~/a.yaml', 'Boutique', 'a.png'), entry('~/b.yaml')]
+		});
+		expect(toDraft(files, { compose: 3 })).toEqual({ compose: [] });
+		expect(toDraft(files, { compose: [4] })).toEqual({ compose: [] });
+	});
+
+	it('saves trimmed files, an empty name standing for none', () => {
+		expect(
+			parseDraft(
+				files,
+				draft([entry(' ~/a.yaml ', '  Boutique '), entry('/b.yaml', '  ', 'b.png')]),
+				{}
+			)
+		).toEqual({
+			ok: true,
+			settings: {
+				compose: [
+					{ path: '~/a.yaml', name: 'Boutique', icon: null },
+					{ path: '/b.yaml', name: null, icon: 'b.png' }
+				]
+			}
+		});
+	});
+
+	it('refuses a missing or relative path, a long name and a file listed twice', () => {
+		const error = (value: FileEntryDraft[]) => {
+			const parsed = parseDraft(files, draft(value), {});
+			return parsed.ok ? undefined : parsed.errors.compose;
+		};
+		expect(error([entry('  ')])).toMatch(/Indiquer le chemin/);
+		expect(error([entry('compose.yaml')])).toMatch(/chemin absolu/);
+		expect(error([entry('/a.yaml', 'x'.repeat(MAX_ENTRY_NAME_CHARS + 1))])).toMatch(
+			/Nom trop long/
+		);
+		expect(error([entry('/a.yaml'), entry(' /a.yaml ', 'autre')])).toMatch(/déjà dans la liste/);
+		expect(
+			error(Array.from({ length: MAX_FILE_ENTRIES + 1 }, (_, i) => entry(`/${i}.yaml`)))
+		).toMatch(/au plus/);
+		expect(error([entry('/a.yaml', 'x'.repeat(MAX_ENTRY_NAME_CHARS))])).toBeUndefined();
+	});
+
+	it('compares files by content', () => {
+		expect(sameDraftValue([entry('/a', 'x', 'i')], [entry('/a', 'x', 'i')])).toBe(true);
+		expect(sameDraftValue([entry('/a')], [entry('/b')])).toBe(false);
+		expect(sameDraftValue([entry('/a')], [entry('/a', '', 'i')])).toBe(false);
+		expect(sameDraftValue([entry('/a')], [])).toBe(false);
+		expect(sameDraftValue('a', 'a')).toBe(true);
+		expect(sameDraftValue(true, 'true')).toBe(false);
 	});
 });

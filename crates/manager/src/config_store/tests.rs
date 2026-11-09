@@ -423,7 +423,14 @@ fn imported_images_are_named_by_content_whatever_their_archived_name() {
     let (_dir, store) = store();
     let config = with_first_key_image(&store, "renamed-by-hand.png");
     let archive = archive_of(&config, &[("renamed-by-hand.png", png_image())]);
-    let prepared = prepare_import(&archive, &plus(), config.revision, sniffed).unwrap();
+    let prepared = prepare_import(
+        &archive,
+        &plus(),
+        config.revision,
+        store.defaults(),
+        sniffed,
+    )
+    .unwrap();
     let name = image_name(&png_image(), ImageKind::Png);
     assert_eq!(prepared.images, vec![(name.clone(), png_image())]);
     assert!(
@@ -457,7 +464,7 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
     let (_dir, store) = store();
     let missing = with_first_key_image(&store, "absent.png");
     assert!(matches!(
-        prepare_import(&archive_of(&missing, &[]), &plus(), 0, sniffed),
+        prepare_import(&archive_of(&missing, &[]), &plus(), 0, store.defaults(), sniffed),
         Err(ConfigStoreError::MissingImage(name)) if name == "absent.png"
     ));
     let not_an_image = with_first_key_image(&store, "a.png");
@@ -466,6 +473,7 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
             &archive_of(&not_an_image, &[("a.png", b"text".to_vec())]),
             &plus(),
             0,
+            store.defaults(),
             sniffed
         ),
         Err(ConfigStoreError::UnreadableImage { .. })
@@ -477,6 +485,7 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
             &archive_of(&invalid, &[("a.png", png_image())]),
             &plus(),
             0,
+            store.defaults(),
             sniffed
         ),
         Err(ConfigStoreError::Invalid(_))
@@ -499,6 +508,7 @@ fn images_of_instances_dropped_by_the_fit_are_left_out() {
         &archive_of(&config, &[("a.png", png_image())]),
         &mk2(),
         0,
+        store.defaults(),
         sniffed,
     )
     .unwrap();
@@ -565,4 +575,96 @@ fn stored_images_are_bounded_in_number() {
     store
         .store_image(DEMO_SERIAL, &png, ImageKind::Png)
         .unwrap();
+}
+
+/// The default configuration, the Docker module declaring one compose file
+/// with the icon `icon`.
+fn with_docker_icon(store: &ConfigStore, icon: &str) -> DeviceConfig {
+    let mut config = store.load(&plus()).unwrap().config;
+    let docker = config
+        .modules
+        .iter_mut()
+        .find(|module| module.kind.0 == "docker")
+        .unwrap();
+    docker.settings = serde_json::json!({ "composeFiles": [
+        { "path": "/srv/shop/compose.yaml", "name": "Boutique", "icon": icon }
+    ] });
+    config
+}
+
+fn docker_icon(config: &DeviceConfig) -> Option<String> {
+    let docker = config
+        .modules
+        .iter()
+        .find(|module| module.kind.0 == "docker")?;
+    docker.settings["composeFiles"][0]["icon"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+#[test]
+fn icons_named_by_the_settings_are_kept_when_the_config_is_loaded() {
+    let (_dir, store) = store();
+    let used = store
+        .store_image(DEMO_SERIAL, &png_image(), ImageKind::Png)
+        .unwrap();
+    let mut other = png_image();
+    other.push(0);
+    let unused = store
+        .store_image(DEMO_SERIAL, &other, ImageKind::Png)
+        .unwrap();
+    store
+        .save(&plus(), with_docker_icon(&store, &used))
+        .unwrap();
+
+    store.load(&plus()).unwrap();
+    assert!(store.image_path(DEMO_SERIAL, &used).unwrap().is_file());
+    assert!(!store.image_path(DEMO_SERIAL, &unused).unwrap().exists());
+}
+
+#[test]
+fn an_export_holds_the_icons_of_the_settings_and_drops_missing_ones() {
+    let (_dir, store) = store();
+    let name = store
+        .store_image(DEMO_SERIAL, &png_image(), ImageKind::Png)
+        .unwrap();
+    let archive = read_archive(
+        &store
+            .export(DEMO_SERIAL, &with_docker_icon(&store, &name))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(archive.images.len(), 1);
+    assert_eq!(docker_icon(&archive.config), Some(name));
+
+    let dangling = read_archive(
+        &store
+            .export(DEMO_SERIAL, &with_docker_icon(&store, "gone.png"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(dangling.images.is_empty());
+    assert_eq!(docker_icon(&dangling.config), None);
+}
+
+#[test]
+fn imported_icons_are_named_by_content_like_key_images() {
+    let (_dir, store) = store();
+    let config = with_docker_icon(&store, "renamed-by-hand.png");
+    let archive = archive_of(&config, &[("renamed-by-hand.png", png_image())]);
+    let prepared = prepare_import(&archive, &plus(), 0, store.defaults(), sniffed).unwrap();
+    let name = image_name(&png_image(), ImageKind::Png);
+    assert_eq!(prepared.images, vec![(name.clone(), png_image())]);
+    assert_eq!(docker_icon(&prepared.config), Some(name));
+
+    assert!(matches!(
+        prepare_import(
+            &archive_of(&config, &[]),
+            &plus(),
+            0,
+            store.defaults(),
+            sniffed
+        ),
+        Err(ConfigStoreError::MissingImage(name)) if name == "renamed-by-hand.png"
+    ));
 }

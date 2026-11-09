@@ -4,7 +4,9 @@ Form control of one module setting, chosen from its kind.
 -->
 <script lang="ts">
 	import type { SettingField } from '#lib/generated/index.js';
+	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import { settingHint, type DraftValue } from '#lib/deck/settings-form.js';
+	import FileEntryListInput from './FileEntryListInput.svelte';
 
 	interface Props {
 		field: SettingField;
@@ -12,9 +14,25 @@ Form control of one module setting, chosen from its kind.
 		idPrefix: string;
 		value: DraftValue;
 		error: string | undefined;
+		/** Device and client of the files a file list stores icons for. */
+		serial: string;
+		api: ManagerApi;
+		/** Icon of the module, shown for a file without icon. */
+		moduleIcon: string | null | undefined;
+		/** Called after a change that raises no `input` event (a file list). */
+		onedit: () => void;
 	}
 
-	let { field, idPrefix, value = $bindable(), error }: Props = $props();
+	let {
+		field,
+		idPrefix,
+		value = $bindable(),
+		error,
+		serial,
+		api,
+		moduleIcon,
+		onedit
+	}: Props = $props();
 
 	const id = $derived(`${idPrefix}-${field.key}`);
 	const hint = $derived(settingHint(field));
@@ -39,6 +57,21 @@ Form control of one module setting, chosen from its kind.
 			/>
 			{field.label}
 		</label>
+	{:else if field.kind.type === 'fileEntryList'}
+		<span id="{id}-label" class="font-medium">{field.label}</span>
+		<FileEntryListInput
+			{id}
+			labelledBy="{id}-label"
+			{describedBy}
+			entries={Array.isArray(value) ? value : []}
+			{serial}
+			{api}
+			defaultIcon={moduleIcon}
+			onchange={(entries) => {
+				value = entries;
+				onedit();
+			}}
+		/>
 	{:else}
 		<label class="font-medium" for={id}>{field.label}</label>
 		{#if field.kind.type === 'choice'}

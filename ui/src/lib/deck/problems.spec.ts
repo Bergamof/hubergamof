@@ -12,6 +12,7 @@ const KEEPS_DETAILS = {
 	inputRefused: true,
 	invalidImage: true,
 	invalidArchive: true,
+	unavailable: false,
 	internal: true
 } as const satisfies Record<ErrorCode, boolean>;
 

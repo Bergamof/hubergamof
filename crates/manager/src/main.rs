@@ -16,6 +16,7 @@ use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplu
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
+use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, module_catalog,
@@ -36,6 +37,9 @@ const DEFAULT_PORT: u16 = 7878;
 const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Longest wait for a device to blank its screens on shutdown.
+/// File `--demo` answers when the UI opens the file dialog.
+const DEMO_COMPOSE_FILE: &str = "/srv/demo/compose.yaml";
+
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Longest wait for the web server to close its connections on shutdown.
@@ -100,6 +104,7 @@ async fn main() -> Result<()> {
         simulated_input: simulated_input(cli.demo),
         store,
         renderer,
+        file_picker: file_picker(cli.demo),
     };
     let server = match Server::bind(
         cli.port,
@@ -198,6 +203,18 @@ fn simulated_input(demo: bool) -> SimulatedInput {
         SimulatedInput::Accepted
     } else {
         SimulatedInput::Refused
+    }
+}
+
+/// File dialog of the UI: the desktop's own, or in `--demo` a user always
+/// choosing the same file (no dialog to open in tests and screenshots).
+fn file_picker(demo: bool) -> Arc<dyn FilePicker> {
+    if demo {
+        Arc::new(SimulatedFilePicker::choosing(Some(
+            DEMO_COMPOSE_FILE.into(),
+        )))
+    } else {
+        Arc::new(PortalFilePicker)
     }
 }
 

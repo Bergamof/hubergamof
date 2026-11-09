@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use futures_util::FutureExt as _;
 use hubergamof_module_api::{
-    Command, EventSender, HANDLER_BUDGET, ItemId, KeyContent, Module, ModuleContext, ModuleError,
-    ModuleEvent, ModuleInstanceId, ModuleKind, NavigationView, PageContent, PageId, RedrawHandle,
-    TaskScope, UnreadNotifications, ZoneContent,
+    Command, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId, KeyContent, Module, ModuleContext,
+    ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind, NavigationView, PageContent, PageId,
+    RedrawHandle, TaskScope, UnreadNotifications, ZoneContent,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -117,6 +117,7 @@ pub(crate) struct Instances {
     redraw: RedrawHandle,
     events: mpsc::Sender<RoutedEvent>,
     unread: UnreadNotifications,
+    images: ImageLibrary,
     /// Whether the event queue was found full and not sent to since: the
     /// overflow is logged once, when it starts.
     queue_full: Arc<AtomicBool>,
@@ -132,12 +133,14 @@ impl Instances {
         redraw: RedrawHandle,
         events: mpsc::Sender<RoutedEvent>,
         unread: UnreadNotifications,
+        images: ImageLibrary,
     ) -> Self {
         Self {
             registry,
             redraw,
             events,
             unread,
+            images,
             queue_full: Arc::default(),
             live: BTreeMap::new(),
             failures: Vec::new(),
@@ -337,7 +340,8 @@ impl Instances {
             self.event_sender(&config.id, alive),
             tasks.spawner(),
         )
-        .with_unread(self.unread.clone());
+        .with_unread(self.unread.clone())
+        .with_images(self.images.clone());
         match catch_unwind(AssertUnwindSafe(|| factory.create(ctx, &config.settings))) {
             Ok(Ok(module)) => Some(module),
             Ok(Err(error)) => {
@@ -497,6 +501,7 @@ mod tests {
                 RedrawHandle::noop(),
                 events,
                 UnreadNotifications::none(),
+                ImageLibrary::empty(),
             ),
             received,
         )

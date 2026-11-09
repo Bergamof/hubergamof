@@ -166,3 +166,32 @@ describe('importArchive', () => {
 		expect(calls).toHaveLength(1);
 	});
 });
+
+describe('chooseComposeFile', () => {
+	it('posts to the file chooser and resolves the chosen path', async () => {
+		const { calls, api } = fakeFetch(() => json(200, { path: '/srv/shop/compose.yaml' }));
+		await expect(api.chooseComposeFile()).resolves.toEqual({
+			ok: true,
+			value: '/srv/shop/compose.yaml'
+		});
+		expect(calls[0]).toMatchObject({
+			input: '/api/file-chooser/compose-file',
+			init: { method: 'POST' }
+		});
+	});
+
+	it('resolves null when the user closed the dialog', async () => {
+		const { api } = fakeFetch(() => json(200, { path: null }));
+		await expect(api.chooseComposeFile()).resolves.toEqual({ ok: true, value: null });
+	});
+
+	it('explains that there is no dialog on this desktop', async () => {
+		const { api } = fakeFetch(() =>
+			json(503, { code: 'unavailable', message: 'no file chooser is available on this desktop' })
+		);
+		await expect(api.chooseComposeFile()).resolves.toMatchObject({
+			ok: false,
+			problem: { text: expect.stringMatching(/saisissez le chemin/), detail: null }
+		});
+	});
+});

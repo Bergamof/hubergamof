@@ -13,9 +13,11 @@ and lets the user reload it.
 	import type { Problem } from '#lib/deck/problems.js';
 	import { moduleName } from '#lib/deck/display.js';
 	import { cloneJson, sameJson } from '#lib/deck/json.js';
+	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import {
 		parseDraft,
 		parseLabel,
+		sameDraftValue,
 		toDraft,
 		type SettingsDraft,
 		type SettingsErrors
@@ -26,10 +28,13 @@ and lets the user reload it.
 	interface Props {
 		instance: ModuleInstance;
 		module: CatalogModule | undefined;
+		/** Device the instance belongs to, and the client storing the images of its settings. */
+		serial: string;
+		api: ManagerApi;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
 	}
 
-	let { instance, module, onapply }: Props = $props();
+	let { instance, module, serial, api, onapply }: Props = $props();
 
 	/** Longest label: it is drawn at the bottom of a key, where little more fits. */
 	const MAX_LABEL_LENGTH = 40;
@@ -57,7 +62,7 @@ and lets the user reload it.
 
 	const dirty = $derived(
 		label !== labelOf(base) ||
-			Object.entries(draftOf(base)).some(([key, value]) => draft[key] !== value)
+			Object.entries(draftOf(base)).some(([key, value]) => !sameDraftValue(draft[key], value))
 	);
 	/** While saving, the displayed instance already carries the change: not « elsewhere ». */
 	const changedElsewhere = $derived(
@@ -169,7 +174,16 @@ and lets the user reload it.
 	{/if}
 
 	{#each fields as field (field.key)}
-		<SettingInput {field} idPrefix={uid} bind:value={draft[field.key]} error={errors[field.key]} />
+		<SettingInput
+			{field}
+			idPrefix={uid}
+			bind:value={draft[field.key]}
+			error={errors[field.key]}
+			{serial}
+			{api}
+			moduleIcon={module?.icon}
+			onedit={edited}
+		/>
 	{/each}
 
 	{#if refusal}

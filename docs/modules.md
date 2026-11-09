@@ -34,7 +34,8 @@ Détail de chaque module et des briques communes ; `CLAUDE.md` n'en garde que le
   - `hub.rs` : un flux d'événements partagé, listes regroupées, actions en tâches détachées de l'instance ;
   - `engine.rs` : bollard sur socket `unix://` uniquement ;
   - `compose.rs` : `docker --host=<même socket> compose`, sans `DOCKER_CONTEXT`, fichiers/dossier/`.env` contrôlés par `trust.rs` ;
-  - `model.rs` : projets par labels + `composeFiles` déclarés prioritaires ; labels divergents → pas de compose.
+  - `model.rs` : projets par labels + `composeFiles` déclarés prioritaires ; labels divergents → pas de compose. Un fichier déclaré (`DeclaredFile` : chemin, nom, icône) donne son nom (`Project::shown_name`, l'identité du projet — ids de page — restant son nom compose) et son icône à son projet.
+  - Réglage `composeFiles` : `SettingKind::FileEntryList` (`[{ path, name, icon }]`) ; l'ancienne forme (liste de chemins) est toujours lue. L'icône est le nom d'une image stockée de l'appareil, lue en tâche de fond par `ModuleContext::images()` (`ImageLibrary`) puis gardée ; illisible ou absente → icône par défaut (couches). Une icône personnalisée n'a pas le badge d'état des couches : l'état se lit au compteur du libellé (`nom 2/3`) et au fond orange d'une attention.
 
 ## Couche bureau (`desktop/`, socle d'intellij et claude)
 - `DesktopBackend` (`SystemDesktop` / `SimulatedDesktop`) derrière un `DesktopHub` unique (un seul suivi KWin), créé par `builtin_registry_with` avec les `DesktopApp` des modules.

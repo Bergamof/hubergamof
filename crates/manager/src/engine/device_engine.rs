@@ -191,6 +191,7 @@ impl DeviceEngine {
             RedrawHandle::new(move || notify.notify_one()),
             events_tx,
             notifications.handle(),
+            services.store.image_library(&deck.info().serial),
         );
         instances.sync(&loaded.config.modules);
 

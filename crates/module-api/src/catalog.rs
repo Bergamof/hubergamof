@@ -8,7 +8,13 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{ModuleError, ModuleKind, is_setting_path, parse_settings};
+use crate::{ModuleError, ModuleKind, is_safe_image_name, is_setting_path, parse_settings};
+
+/// Longest name given to a [`FileEntry`], in characters.
+pub const MAX_ENTRY_NAME_CHARS: usize = 40;
+
+/// Most entries of a [`SettingKind::FileEntryList`].
+pub const MAX_FILE_ENTRIES: usize = 50;
 
 /// Description of a module kind available to the user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,6 +111,13 @@ pub enum SettingKind {
         /// Default value.
         default: Vec<String>,
     },
+    /// Ordered list of files, each with an optional name and icon: see
+    /// [`FileEntry`]. The UI lets the user pick a file with the system file
+    /// chooser, then name it and give it an icon.
+    FileEntryList {
+        /// Default value.
+        default: Vec<FileEntry>,
+    },
     /// One value among a fixed set.
     Choice {
         /// Default value, one of `options[].value`.
@@ -112,6 +125,24 @@ pub enum SettingKind {
         /// Allowed values.
         options: Vec<ChoiceOption>,
     },
+}
+
+/// A file of a [`SettingKind::FileEntryList`], as the user named it.
+///
+/// A setting saved before names and icons existed holds plain paths: they
+/// are still accepted, as entries with neither.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct FileEntry {
+    /// Absolute path, or starting with `~/` (see [`SettingKind::Path`]).
+    pub path: String,
+    /// Name shown for the file, at most [`MAX_ENTRY_NAME_CHARS`] characters;
+    /// the module names the file itself when absent.
+    pub name: Option<String>,
+    /// Name of a stored image of the device (see
+    /// `ModuleInstance::image`); the module draws its own icon when absent.
+    pub icon: Option<String>,
 }
 
 /// An allowed value of a [`SettingKind::Choice`] setting.
@@ -175,6 +206,59 @@ impl ModuleDescriptor {
     }
 }
 
+impl ModuleDescriptor {
+    /// Names of the stored images `settings` refer to (the icons of its file
+    /// entries), in order, duplicates included.
+    #[must_use]
+    pub fn settings_images(&self, settings: &Value) -> Vec<String> {
+        let mut images = Vec::new();
+        for icon in self.file_entry_icons(settings) {
+            if let Some(name) = icon.as_str() {
+                images.push(name.to_owned());
+            }
+        }
+        images
+    }
+
+    /// Replaces every image `settings` refer to by `replace(name)`; `None`
+    /// removes the reference. Used when images are renamed (import).
+    pub fn replace_settings_images(
+        &self,
+        settings: &mut Value,
+        mut replace: impl FnMut(&str) -> Option<String>,
+    ) {
+        for field in &self.settings {
+            if !matches!(field.kind, SettingKind::FileEntryList { .. }) {
+                continue;
+            }
+            let Some(entries) = settings.get_mut(&field.key).and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for entry in entries.iter_mut().filter_map(Value::as_object_mut) {
+                let Some(name) = entry.get(ICON_KEY).and_then(Value::as_str) else {
+                    continue;
+                };
+                match replace(name) {
+                    Some(new_name) => entry.insert(ICON_KEY.to_owned(), Value::String(new_name)),
+                    None => entry.remove(ICON_KEY),
+                };
+            }
+        }
+    }
+
+    fn file_entry_icons<'a>(&'a self, settings: &'a Value) -> impl Iterator<Item = &'a Value> {
+        self.settings
+            .iter()
+            .filter(|field| matches!(field.kind, SettingKind::FileEntryList { .. }))
+            .filter_map(|field| settings.get(&field.key)?.as_array())
+            .flatten()
+            .filter_map(|entry| entry.get(ICON_KEY))
+    }
+}
+
+/// Key of the icon in a stored [`FileEntry`].
+const ICON_KEY: &str = "icon";
+
 impl SettingField {
     /// Checks that `value` has the type of the setting and respects its
     /// constraints (bounds of an integer, options of a choice).
@@ -201,6 +285,9 @@ impl SettingKind {
             }
             Self::PathList { default } => {
                 Value::Array(default.iter().cloned().map(Value::String).collect())
+            }
+            Self::FileEntryList { default } => {
+                serde_json::to_value(default).unwrap_or_else(|_| Value::Array(Vec::new()))
             }
         }
     }
@@ -242,6 +329,7 @@ impl SettingKind {
                             .ok_or_else(|| "expected a list of strings".to_owned())?,
                     )
                 }),
+            Self::FileEntryList { .. } => check_file_entries(value),
             Self::Choice { options, .. } => {
                 let choice = value
                     .as_str()
@@ -252,6 +340,47 @@ impl SettingKind {
                 )
             }
         }
+    }
+}
+
+/// Checks a list of file entries: objects (or, for settings saved before
+/// entries had names, plain paths) with a path, and optionally a name and the
+/// name of a stored image.
+fn check_file_entries(value: &Value) -> Result<(), String> {
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "expected a list of files".to_owned())?;
+    if entries.len() > MAX_FILE_ENTRIES {
+        return Err(format!("at most {MAX_FILE_ENTRIES} files"));
+    }
+    entries.iter().try_for_each(|entry| match entry {
+        Value::String(path) => check_path(path),
+        Value::Object(fields) => check_file_entry(fields),
+        _ => Err("expected a file with a path".to_owned()),
+    })
+}
+
+fn check_file_entry(fields: &Map<String, Value>) -> Result<(), String> {
+    let path = fields
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "a file needs a `path`".to_owned())?;
+    check_path(path)?;
+    match fields.get("name") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(name)) => {
+            if name.chars().count() > MAX_ENTRY_NAME_CHARS {
+                return Err(format!(
+                    "a file name is longer than {MAX_ENTRY_NAME_CHARS} characters"
+                ));
+            }
+        }
+        Some(_) => return Err("a file `name` must be a string".to_owned()),
+    }
+    match fields.get(ICON_KEY) {
+        None | Some(Value::Null) => Ok(()),
+        Some(Value::String(icon)) if is_safe_image_name(icon) => Ok(()),
+        Some(_) => Err("a file `icon` must be the name of a stored image".to_owned()),
     }
 }
 
@@ -499,5 +628,72 @@ mod tests {
             descriptor.default_settings(),
             json!({ "flag": true, "count": 25, "paths": ["/a"], "mode": "x" })
         );
+    }
+
+    fn file_entries() -> SettingKind {
+        SettingKind::FileEntryList {
+            default: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn file_entries_hold_a_path_a_name_and_an_icon() {
+        let accepted = [
+            json!([]),
+            json!(["~/app/compose.yaml"]),
+            json!([{ "path": "/srv/compose.yaml" }]),
+            json!([{ "path": "~/a.yaml", "name": null, "icon": null }]),
+            json!([{ "path": "~/a.yaml", "name": "Web", "icon": "0f3a.png" }]),
+            json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_ENTRY_NAME_CHARS) }]),
+        ];
+        for value in accepted {
+            assert!(field("files", file_entries()).validate(&value).is_ok());
+        }
+    }
+
+    #[test]
+    fn invalid_file_entries_are_rejected() {
+        let rejected = [
+            json!("a.yaml"),
+            json!([1]),
+            json!([{}]),
+            json!([{ "path": "relative.yaml" }]),
+            json!([{ "path": "~/a.yaml", "name": 3 }]),
+            json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_ENTRY_NAME_CHARS + 1) }]),
+            json!([{ "path": "~/a.yaml", "icon": "../etc/passwd" }]),
+            json!([{ "path": "~/a.yaml", "icon": 4 }]),
+            Value::Array(vec![json!("/a.yaml"); MAX_FILE_ENTRIES + 1]),
+        ];
+        for value in rejected {
+            assert!(
+                field("files", file_entries()).validate(&value).is_err(),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_icons_of_file_entries_are_the_images_of_the_settings() {
+        let module = descriptor(vec![field("files", file_entries())]);
+        let mut settings = json!({ "files": [
+            "~/legacy.yaml",
+            { "path": "~/a.yaml", "icon": "a.png" },
+            { "path": "~/b.yaml" },
+            { "path": "~/c.yaml", "icon": "c.svg" },
+        ] });
+        assert_eq!(module.settings_images(&settings), ["a.png", "c.svg"]);
+        module.replace_settings_images(&mut settings, |name| {
+            (name == "a.png").then(|| "renamed.png".to_owned())
+        });
+        assert_eq!(
+            settings,
+            json!({ "files": [
+                "~/legacy.yaml",
+                { "path": "~/a.yaml", "icon": "renamed.png" },
+                { "path": "~/b.yaml" },
+                { "path": "~/c.yaml" },
+            ] })
+        );
+        assert_eq!(module.settings_images(&json!({})), Vec::<String>::new());
     }
 }

@@ -25,7 +25,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hubergamof_protocol::{ConfigError, DeviceConfig, DeviceInfo, ErrorCode, is_safe_image_name};
+use hubergamof_module_api::{ImageData, ImageLibrary};
+use hubergamof_protocol::{
+    ConfigError, DeviceConfig, DeviceInfo, ErrorCode, ModuleInstance, is_safe_image_name,
+};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -319,20 +322,33 @@ impl ConfigStore {
         let mut exported = config.clone();
         let mut images = ArchiveImages::new();
         for module in &mut exported.modules {
-            let Some(name) = module.image.clone() else {
-                continue;
-            };
-            let path = self.image_path(serial, &name)?;
-            match fs::read(&path) {
-                Ok(bytes) => {
-                    images.insert(name, bytes);
+            let mut missing = HashSet::new();
+            for name in self.image_names(module) {
+                if images.contains_key(&name) || missing.contains(&name) {
+                    continue;
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    tracing::warn!(%serial, image = %name, "exported without its missing image");
-                    module.image = None;
+                let path = self.image_path(serial, &name)?;
+                match fs::read(&path) {
+                    Ok(bytes) => {
+                        images.insert(name, bytes);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        tracing::warn!(%serial, image = %name, "exported without its missing image");
+                        missing.insert(name);
+                    }
+                    Err(error) => return Err(io_error(&path, error)),
                 }
-                Err(error) => return Err(io_error(&path, error)),
             }
+            if module
+                .image
+                .as_ref()
+                .is_some_and(|name| missing.contains(name))
+            {
+                module.image = None;
+            }
+            self.defaults.replace_settings_images(module, &mut |name| {
+                (!missing.contains(name)).then(|| name.to_owned())
+            });
         }
         Ok(write_archive(&exported, &images)?)
     }
@@ -389,10 +405,10 @@ impl ConfigStore {
     /// Run when the configuration is loaded, before any upload can be under
     /// way.
     fn prune_images(&self, serial: &str, config: &DeviceConfig) {
-        let used: HashSet<&str> = config
+        let used: HashSet<String> = config
             .modules
             .iter()
-            .filter_map(|module| module.image.as_deref())
+            .flat_map(|module| self.image_names(module))
             .collect();
         let Ok(dir) = self.device_dir(serial).map(|dir| dir.join(IMAGES_DIR)) else {
             return;
@@ -404,12 +420,30 @@ impl ConfigStore {
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
             .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| is_safe_image_name(name) && !used.contains(name.as_str()))
+            .filter(|name| is_safe_image_name(name) && !used.contains(name))
             .collect();
         if !unused.is_empty() {
             tracing::info!(%serial, count = unused.len(), "removing unused images");
             self.remove_images(serial, &unused);
         }
+    }
+
+    /// Names of the images `module` uses: its own, and the icons in its
+    /// settings.
+    fn image_names(&self, module: &ModuleInstance) -> Vec<String> {
+        module
+            .image
+            .iter()
+            .cloned()
+            .chain(self.defaults.settings_images(module))
+            .collect()
+    }
+
+    /// What the store knows of the modules: their defaults and the images
+    /// their settings use.
+    #[must_use]
+    pub fn defaults(&self) -> &dyn ConfigDefaults {
+        self.defaults.as_ref()
     }
 
     /// Fails with [`ConfigStoreError::TooManyImages`] when `adding` more
@@ -426,6 +460,21 @@ impl ConfigStore {
             return Err(ConfigStoreError::TooManyImages);
         }
         Ok(())
+    }
+
+    /// Reader of the images of device `serial` for its module instances: an
+    /// unsafe name, a missing or unreadable file gives `None`.
+    #[must_use]
+    pub fn image_library(&self, serial: &str) -> ImageLibrary {
+        let store = self.clone();
+        let serial = serial.to_owned();
+        ImageLibrary::new(move |name| {
+            let path = store.image_path(&serial, name).ok();
+            Box::pin(async move {
+                let bytes = tokio::fs::read(path?).await.ok()?;
+                Some(ImageData::new(bytes))
+            })
+        })
     }
 
     /// Path of image `name` of a device; the name must be a plain file name.
@@ -538,40 +587,80 @@ pub fn prepare_import(
     bytes: &[u8],
     device: &DeviceInfo,
     revision: u64,
+    defaults: &dyn ConfigDefaults,
     check: impl Fn(&[u8]) -> Result<ImageKind, String>,
 ) -> Result<PreparedImport, ConfigStoreError> {
     let Archive { config, images } = read_archive(bytes)?;
     let mut config = fit_to_device(config, device, revision);
-    let mut stored: BTreeMap<String, String> = BTreeMap::new();
-    let mut prepared = Vec::new();
+    let mut stager = ImageStager::new(&images, check);
     for module in &mut config.modules {
-        let Some(name) = module.image.take() else {
-            continue;
-        };
-        if !stored.contains_key(&name) {
-            let content = images
-                .get(&name)
-                .ok_or_else(|| ConfigStoreError::MissingImage(name.clone()))?;
-            let kind = check(content).map_err(|reason| ConfigStoreError::UnreadableImage {
-                name: name.clone(),
-                reason,
-            })?;
-            let stored_name = image_name(content, kind);
-            if !prepared
-                .iter()
-                .any(|(existing, _)| *existing == stored_name)
-            {
-                prepared.push((stored_name.clone(), content.clone()));
-            }
-            stored.insert(name.clone(), stored_name);
+        if let Some(name) = module.image.take() {
+            module.image = Some(stager.stage(&name)?);
         }
-        module.image = stored.get(&name).cloned();
+        let mut failure = None;
+        defaults.replace_settings_images(module, &mut |name| match stager.stage(name) {
+            Ok(stored) => Some(stored),
+            Err(error) => {
+                failure.get_or_insert(error);
+                None
+            }
+        });
+        if let Some(error) = failure {
+            return Err(error);
+        }
     }
     check_config(&config, device)?;
     Ok(PreparedImport {
         config,
-        images: prepared,
+        images: stager.prepared,
     })
+}
+
+/// Names the images an archive uses as they will be stored (by content),
+/// checking each once.
+struct ImageStager<'a, C> {
+    archived: &'a ArchiveImages,
+    check: C,
+    /// Stored name of each archived image already staged.
+    stored: BTreeMap<String, String>,
+    /// Images to write, by stored name.
+    prepared: Vec<(String, Vec<u8>)>,
+}
+
+impl<'a, C: Fn(&[u8]) -> Result<ImageKind, String>> ImageStager<'a, C> {
+    fn new(archived: &'a ArchiveImages, check: C) -> Self {
+        Self {
+            archived,
+            check,
+            stored: BTreeMap::new(),
+            prepared: Vec::new(),
+        }
+    }
+
+    /// The stored name of archived image `name`.
+    fn stage(&mut self, name: &str) -> Result<String, ConfigStoreError> {
+        if let Some(stored) = self.stored.get(name) {
+            return Ok(stored.clone());
+        }
+        let content = self
+            .archived
+            .get(name)
+            .ok_or_else(|| ConfigStoreError::MissingImage(name.to_owned()))?;
+        let kind = (self.check)(content).map_err(|reason| ConfigStoreError::UnreadableImage {
+            name: name.to_owned(),
+            reason,
+        })?;
+        let stored = image_name(content, kind);
+        if !self
+            .prepared
+            .iter()
+            .any(|(existing, _)| *existing == stored)
+        {
+            self.prepared.push((stored.clone(), content.clone()));
+        }
+        self.stored.insert(name.to_owned(), stored.clone());
+        Ok(stored)
+    }
 }
 
 fn set_invalid_aside(

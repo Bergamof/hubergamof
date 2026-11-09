@@ -15,6 +15,7 @@ use hubergamof_manager::config_store::ConfigStore;
 use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
+use hubergamof_manager::file_chooser::NoFilePicker;
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
@@ -158,6 +159,7 @@ impl Devices {
             simulated_input: SimulatedInput::Accepted,
             store,
             renderer,
+            file_picker: Arc::new(NoFilePicker),
         };
         Self {
             _dir: dir,

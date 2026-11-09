@@ -10,6 +10,8 @@ export type * from "./DeviceInfo";
 export type * from "./DeviceModel";
 export type * from "./DialView";
 export type * from "./ErrorCode";
+export type * from "./FileChosen";
+export type * from "./FileEntry";
 export type * from "./ImageSize";
 export type * from "./ImageUploaded";
 export type * from "./KeyState";

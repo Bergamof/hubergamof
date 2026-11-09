@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 
 use tokio::task::JoinSet;
 
-use crate::{ModuleInstanceId, UnreadNotifications};
+use crate::{ImageLibrary, ModuleInstanceId, UnreadNotifications};
 
 /// Asks the host to redraw, from anywhere (timers, watchers, other threads).
 ///
@@ -273,6 +273,7 @@ pub struct ModuleContext {
     events: EventSender,
     tasks: TaskSpawner,
     unread: UnreadNotifications,
+    images: ImageLibrary,
 }
 
 impl ModuleContext {
@@ -290,6 +291,7 @@ impl ModuleContext {
             events,
             tasks,
             unread: UnreadNotifications::none(),
+            images: ImageLibrary::empty(),
         }
     }
 
@@ -331,6 +333,12 @@ impl ModuleContext {
         Self { unread, ..self }
     }
 
+    /// The same context with `images`.
+    #[must_use]
+    pub fn with_images(self, images: ImageLibrary) -> Self {
+        Self { images, ..self }
+    }
+
     /// Identifier of the instance in the device configuration.
     #[must_use]
     pub fn instance_id(&self) -> &ModuleInstanceId {
@@ -355,6 +363,12 @@ impl ModuleContext {
     #[must_use]
     pub fn unread_notifications(&self) -> &UnreadNotifications {
         &self.unread
+    }
+
+    /// The stored images of the device, for the icons its settings name.
+    #[must_use]
+    pub fn images(&self) -> &ImageLibrary {
+        &self.images
     }
 
     /// Spawner of background tasks aborted when the instance is destroyed.

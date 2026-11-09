@@ -17,12 +17,12 @@ mod device;
 mod live;
 mod messages;
 
-pub use api::{ApiError, ImageUploaded};
+pub use api::{ApiError, FileChosen, ImageUploaded};
 pub use catalog::CatalogModule;
 pub use config::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS,
-    MAX_IDENTIFIER_LENGTH, MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES,
-    ModuleInstance, is_identifier, is_safe_image_name,
+    MAX_IDENTIFIER_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance,
+    is_identifier,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{DialView, KeyView, LiveState, PageView, ZoneView};
@@ -31,8 +31,9 @@ pub use messages::{ClientMessage, ErrorCode, ServerMessage};
 // Defined in the MPL-2.0 module API so that modules do not link GPL code;
 // re-exported here because they are part of the wire contract.
 pub use hubergamof_module_api::{
-    ChoiceOption, KeyState, ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind,
-    SettingField, SettingKind,
+    ChoiceOption, FileEntry, KeyState, MAX_ENTRY_NAME_CHARS, MAX_FILE_ENTRIES,
+    MAX_IMAGE_NAME_LENGTH, ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind,
+    SettingField, SettingKind, is_safe_image_name,
 };
 
 #[cfg(test)]

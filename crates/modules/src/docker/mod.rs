@@ -30,16 +30,17 @@ mod icons;
 mod model;
 mod simulated;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, ImageData, ItemId, KeyContent, KeyState, Module,
-    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    ModuleSurface, PageContent, PageId, PageItem, SettingField, SettingKind, TaskSpawner,
+    Command, EventSender, Feedback, FileEntry, ImageData, ImageLibrary, ItemId, KeyContent,
+    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId, PageItem, SettingField,
+    SettingKind, TaskSpawner,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -50,7 +51,7 @@ pub use backend::{
 pub use engine::DockerEngine;
 use hub::{DockerHub, DockerView, Request, Subscription};
 pub use model::{ComposeLabels, ComposeTarget, Container, ContainerStatus, Health};
-use model::{Overview, Project};
+use model::{DeclaredFile, Overview, Project};
 pub use simulated::SimulatedDocker;
 
 use crate::background::forward_states;
@@ -118,11 +119,11 @@ fn descriptor() -> ModuleDescriptor {
             key: COMPOSE_FILES_KEY.into(),
             label: "Fichiers compose".into(),
             help: Some(
-                "Fichiers compose.yaml (chemin absolu, ou commençant par ~/), proposés \
+                "Fichiers compose.yaml, avec un nom et une icône au choix, proposés \
                  même quand le projet est arrêté (après un down)."
                     .into(),
             ),
-            kind: SettingKind::PathList {
+            kind: SettingKind::FileEntryList {
                 default: Vec::new(),
             },
         }],
@@ -139,27 +140,32 @@ impl ModuleFactory for DockerFactory {
     }
 
     fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
-        DockerSettings::parse(settings).map(drop)
+        ParsedSettings::parse(settings).map(drop)
     }
 
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
-        let settings = DockerSettings::parse(settings)?;
+        let settings = ParsedSettings::parse(settings)?;
+        let images = ctx.images().clone();
         let hub = self.hub.subscribe();
         ctx.tasks().spawn(forward_states(
             hub.states(),
             ctx.events().clone(),
             DockerEvent::View,
         ));
-        Ok(Box::new(Docker {
+        let mut docker = Docker {
             settings,
             view: View::Loading,
             hub,
             events: ctx.events().clone(),
             tasks: ctx.tasks().clone(),
+            images,
+            icons: HashMap::new(),
             busy: HashSet::new(),
             confirming: None,
             next_token: 0,
-        }))
+        };
+        docker.load_missing_icons();
+        Ok(Box::new(docker))
     }
 }
 
@@ -168,31 +174,75 @@ impl ModuleFactory for DockerFactory {
 #[serde(rename_all = "camelCase", default)]
 struct DockerSettings {
     /// Compose files offered even when their project is down.
-    compose_files: Vec<PathBuf>,
+    compose_files: Vec<ComposeFileSetting>,
 }
 
-impl DockerSettings {
+/// A compose file as stored: a plain path (settings saved before files had
+/// a name and an icon) or an entry.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum ComposeFileSetting {
+    Path(PathBuf),
+    Entry(FileEntry),
+}
+
+impl ComposeFileSetting {
+    fn into_entry(self) -> FileEntry {
+        match self {
+            Self::Path(path) => FileEntry {
+                path: path.to_string_lossy().into_owned(),
+                name: None,
+                icon: None,
+            },
+            Self::Entry(entry) => entry,
+        }
+    }
+}
+
+/// What an instance reads of its settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ParsedSettings {
+    compose_files: Vec<DeclaredFile>,
+}
+
+impl ParsedSettings {
     /// Checks the types, reads them, and makes every path absolute: `~/`
     /// stands for the home directory, any other path must be absolute
     /// (compose files are given to `docker compose`, run from the manager's
-    /// directory).
+    /// directory). A blank name counts as none.
     fn parse(settings: &Value) -> Result<Self, ModuleError> {
-        let parsed: Self = descriptor().parse_settings(settings)?;
+        let parsed: DockerSettings = descriptor().parse_settings(settings)?;
         let compose_files = parsed
             .compose_files
-            .iter()
+            .into_iter()
             .map(|file| {
-                expand_user_home(file)
+                let entry = file.into_entry();
+                let path = expand_user_home(entry.path.as_ref())
                     .filter(|file| file.is_absolute())
                     .ok_or_else(|| {
                         ModuleError::InvalidSettings(format!(
                             "`{COMPOSE_FILES_KEY}`: `{}` is not an absolute path",
-                            file.display()
+                            entry.path
                         ))
-                    })
+                    })?;
+                Ok(DeclaredFile {
+                    path,
+                    name: entry
+                        .name
+                        .map(|name| name.trim().to_owned())
+                        .filter(|name| !name.is_empty()),
+                    icon: entry.icon,
+                })
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, ModuleError>>()?;
         Ok(Self { compose_files })
+    }
+
+    /// Names of the icons given to the files.
+    fn icon_names(&self) -> impl Iterator<Item = &str> {
+        self.compose_files
+            .iter()
+            .filter_map(|file| file.icon.as_deref())
     }
 }
 
@@ -402,6 +452,8 @@ enum DockerEvent {
     Outcome { key: ItemKey, ok: bool },
     /// The confirmation `token` is over.
     ConfirmExpired(u64),
+    /// Icons read from the stored images, by name.
+    Icons(HashMap<String, ImageData>),
 }
 
 /// A key pressed once, waiting for the second press.
@@ -425,11 +477,15 @@ enum View {
 
 /// One instance: the containers shown and its access to the hub.
 pub struct Docker {
-    settings: DockerSettings,
+    settings: ParsedSettings,
     view: View,
     hub: Subscription,
     events: EventSender,
     tasks: TaskSpawner,
+    images: ImageLibrary,
+    /// The icons the user gave to compose files, once read: a project whose
+    /// icon is not (yet) here shows the default one.
+    icons: HashMap<String, ImageData>,
     /// Action keys whose action runs.
     busy: HashSet<ItemKey>,
     confirming: Option<Confirmation>,
@@ -455,8 +511,42 @@ impl Docker {
         };
     }
 
+    /// Reads in the background the icons of the settings not read yet.
+    fn load_missing_icons(&mut self) {
+        let missing: Vec<String> = self
+            .settings
+            .icon_names()
+            .filter(|name| !self.icons.contains_key(*name))
+            .map(str::to_owned)
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let images = self.images.clone();
+        let events = self.events.clone();
+        self.tasks.spawn(async move {
+            let mut loaded = HashMap::new();
+            for name in missing {
+                if let Some(image) = images.load(&name).await {
+                    loaded.insert(name, image);
+                }
+            }
+            events.send(DockerEvent::Icons(loaded));
+        });
+    }
+
     fn handle(&mut self, event: DockerEvent) -> Vec<Command> {
         match event {
+            DockerEvent::Icons(loaded) => {
+                // Settings may have changed while the images were read.
+                let wanted: HashSet<&str> = self.settings.icon_names().collect();
+                self.icons.extend(
+                    loaded
+                        .into_iter()
+                        .filter(|(name, _)| wanted.contains(name.as_str())),
+                );
+                Vec::new()
+            }
             DockerEvent::View(view) => {
                 self.show(view);
                 Vec::new()
@@ -633,7 +723,7 @@ impl Docker {
             container_item(container, short)
         });
         PageContent {
-            title: project.name.clone(),
+            title: project.shown_name().to_owned(),
             items: actions.chain(variants).chain(containers).collect(),
         }
     }
@@ -665,7 +755,7 @@ impl Docker {
 }
 
 /// The projects, then the other containers.
-fn main_page(overview: &Overview) -> PageContent {
+fn main_page(overview: &Overview, custom_icons: &HashMap<String, ImageData>) -> PageContent {
     let projects = overview.projects.iter().map(|project| {
         let (icon, state) = if project.needs_attention() {
             (&icons::PROJECT_ATTENTION, KeyState::Attention)
@@ -674,9 +764,16 @@ fn main_page(overview: &Overview) -> PageContent {
         } else {
             (&icons::PROJECT_STOPPED, KeyState::Normal)
         };
+        // The user's icon replaces the layers; the state then shows in the
+        // counts of the label (and the background of an attention).
+        let icon = project
+            .icon
+            .as_ref()
+            .and_then(|name| custom_icons.get(name))
+            .unwrap_or(icon);
         let label = format!(
             "{} {}/{}",
-            project.name,
+            project.shown_name(),
             project.running(),
             project.containers.len()
         );
@@ -696,7 +793,7 @@ fn main_page(overview: &Overview) -> PageContent {
 }
 
 fn variants_title(label: &str, project: &Project) -> String {
-    format!("{label}{TITLE_SEPARATOR}{}", project.name)
+    format!("{label}{TITLE_SEPARATOR}{}", project.shown_name())
 }
 
 /// Key of a container, labelled `label`, opening its page.
@@ -768,7 +865,7 @@ impl Module for Docker {
         };
         // A project or container gone (removed, taken down): back.
         match page {
-            Page::Main => Some(main_page(overview)),
+            Page::Main => Some(main_page(overview, &self.icons)),
             Page::Project(name) => overview
                 .project(name)
                 .map(|project| self.project_page(page_id, project)),
@@ -810,7 +907,10 @@ impl Module for Docker {
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
-        self.settings = DockerSettings::parse(settings)?;
+        self.settings = ParsedSettings::parse(settings)?;
+        let wanted: HashSet<&str> = self.settings.icon_names().collect();
+        self.icons.retain(|name, _| wanted.contains(name.as_str()));
+        self.load_missing_icons();
         if let View::Ready { containers, .. } = &self.view {
             let containers = Arc::clone(containers);
             self.show(DockerView::Ready(containers));

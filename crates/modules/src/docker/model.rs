@@ -152,11 +152,40 @@ impl ComposeTarget {
     }
 }
 
+/// A compose file declared in the settings, with the name and icon the user
+/// gave it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredFile {
+    /// Absolute path.
+    pub(crate) path: PathBuf,
+    /// Name shown for its project, instead of the project name.
+    pub(crate) name: Option<String>,
+    /// Name of the stored image drawn for its project.
+    pub(crate) icon: Option<String>,
+}
+
+impl DeclaredFile {
+    /// A file with neither name nor icon.
+    #[cfg(test)]
+    pub(crate) fn plain(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            name: None,
+            icon: None,
+        }
+    }
+}
+
 /// A compose project: found from the labels of its containers, or declared
 /// in the settings (then possibly without containers, after a `down`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Project {
+    /// What identifies it (page ids): its compose name, never the custom one.
     pub(crate) name: String,
+    /// Name given by the user to its declared file, shown in place of `name`.
+    pub(crate) custom_name: Option<String>,
+    /// Icon given by the user to its declared file.
+    pub(crate) icon: Option<String>,
     /// What compose needs to act on it, `None` when its containers disagree
     /// on its files (compose is then never run on it).
     pub(crate) target: Option<ComposeTarget>,
@@ -165,6 +194,12 @@ pub(crate) struct Project {
 }
 
 impl Project {
+    /// The name shown to the user.
+    #[must_use]
+    pub(crate) fn shown_name(&self) -> &str {
+        self.custom_name.as_deref().unwrap_or(&self.name)
+    }
+
     #[must_use]
     pub(crate) fn running(&self) -> usize {
         self.containers.iter().filter(|c| c.is_running()).count()
@@ -194,7 +229,7 @@ impl Overview {
     /// file of no running project appears as its own project, named after
     /// its directory (made unique when another project has that name).
     #[must_use]
-    pub(crate) fn new(containers: &[Container], declared: &[PathBuf]) -> Self {
+    pub(crate) fn new(containers: &[Container], declared: &[DeclaredFile]) -> Self {
         let mut found: BTreeMap<String, Vec<(&Container, &ComposeLabels)>> = BTreeMap::new();
         let mut isolated = Vec::new();
         for container in containers {
@@ -218,15 +253,17 @@ impl Overview {
                 project
                     .target
                     .as_ref()
-                    .is_some_and(|target| target.files.contains(file))
+                    .is_some_and(|target| target.files.contains(&file.path))
             });
             if !claimed {
-                let name = unique_name(&project_name_of(file), &projects);
-                let target = ComposeTarget::new(None, None, vec![file.clone()]);
+                let name = unique_name(&project_name_of(&file.path), &projects);
+                let target = ComposeTarget::new(None, None, vec![file.path.clone()]);
                 projects.insert(
                     name.clone(),
                     Project {
                         name,
+                        custom_name: file.name.clone(),
+                        icon: file.icon.clone(),
                         target: Some(target),
                         containers: Vec::new(),
                     },
@@ -282,23 +319,22 @@ impl Overview {
 fn found_project(
     name: &str,
     members: &[(&Container, &ComposeLabels)],
-    declared: &[PathBuf],
+    declared: &[DeclaredFile],
 ) -> Project {
-    let own_files: Vec<PathBuf> = declared
+    let own: Vec<&DeclaredFile> = declared
         .iter()
         .filter(|file| {
             members
                 .iter()
-                .any(|(_, labels)| labels.config_files.contains(file))
+                .any(|(_, labels)| labels.config_files.contains(&file.path))
         })
-        .cloned()
         .collect();
-    let target = if let Some(first_file) = own_files.first() {
-        let directory = first_file.parent().map(PathBuf::from);
+    let target = if let Some(first_file) = own.first() {
+        let directory = first_file.path.parent().map(PathBuf::from);
         Some(ComposeTarget::new(
             Some(name.to_owned()),
             directory,
-            own_files,
+            own.iter().map(|file| file.path.clone()).collect(),
         ))
     } else {
         agreed_target(name, members)
@@ -307,6 +343,8 @@ fn found_project(
     containers.sort_by(|a, b| a.name.cmp(&b.name));
     Project {
         name: name.to_owned(),
+        custom_name: own.iter().find_map(|file| file.name.clone()),
+        icon: own.iter().find_map(|file| file.icon.clone()),
         target,
         containers,
     }
@@ -365,6 +403,10 @@ fn project_name_of(file: &Path) -> String {
 mod tests {
     use super::*;
 
+    fn plain_files<const N: usize>(paths: [&str; N]) -> Vec<DeclaredFile> {
+        paths.into_iter().map(DeclaredFile::plain).collect()
+    }
+
     fn labels(project: &str, directory: &str) -> ComposeLabels {
         ComposeLabels::new(
             project.into(),
@@ -417,10 +459,7 @@ mod tests {
             ContainerStatus::Running,
             Some("shop"),
         )];
-        let declared = [
-            PathBuf::from("/srv/shop/compose.yaml"),
-            PathBuf::from("/home/me/My Blog!/compose.yaml"),
-        ];
+        let declared = plain_files(["/srv/shop/compose.yaml", "/home/me/My Blog!/compose.yaml"]);
         let overview = Overview::new(&containers, &declared);
         assert_eq!(
             names(&overview),
@@ -431,7 +470,7 @@ mod tests {
         assert_eq!(blog.containers, []);
         let target = blog.target.as_ref().unwrap();
         assert_eq!(target.project, None, "compose names it");
-        assert_eq!(target.files, [declared[1].clone()]);
+        assert_eq!(target.files, [declared[1].path.clone()]);
     }
 
     #[test]
@@ -441,10 +480,7 @@ mod tests {
             ContainerStatus::Running,
             Some("shop"),
         )];
-        let declared = [
-            PathBuf::from("/home/me/shop/compose.yaml"),
-            PathBuf::from("/opt/shop/compose.yaml"),
-        ];
+        let declared = plain_files(["/home/me/shop/compose.yaml", "/opt/shop/compose.yaml"]);
         let overview = Overview::new(&containers, &declared);
         assert_eq!(names(&overview), ["shop", "shop (2)", "shop (3)"]);
         let running = overview.project("shop").unwrap();
@@ -455,7 +491,7 @@ mod tests {
             .target
             .as_ref()
             .unwrap();
-        assert_eq!(declared_target.files, [declared[0].clone()]);
+        assert_eq!(declared_target.files, [declared[0].path.clone()]);
     }
 
     #[test]
@@ -469,10 +505,10 @@ mod tests {
                 "/elsewhere/extra.yaml".into(),
             ],
         ));
-        let declared = [PathBuf::from("/srv/shop/compose.yaml")];
+        let declared = plain_files(["/srv/shop/compose.yaml"]);
         let overview = Overview::new(&[web], &declared);
         let target = overview.project("shop").unwrap().target.clone().unwrap();
-        assert_eq!(target.files, declared);
+        assert_eq!(target.files, [PathBuf::from("/srv/shop/compose.yaml")]);
         assert_eq!(target.directory, Some(PathBuf::from("/srv/shop")));
         assert_eq!(target.project.as_deref(), Some("shop"));
     }
@@ -487,7 +523,7 @@ mod tests {
         assert_eq!(shop.target, None);
         assert_eq!(shop.containers.len(), 2, "still shown and controllable");
         // Declaring the real file settles it.
-        let declared = [PathBuf::from("/srv/shop/compose.yaml")];
+        let declared = plain_files(["/srv/shop/compose.yaml"]);
         let mut impostor = container("shop-db-1", ContainerStatus::Running, None);
         impostor.compose = Some(labels("shop", "/tmp/evil"));
         let settled = Overview::new(&[web, impostor], &declared);
@@ -523,5 +559,38 @@ mod tests {
         let overview = Overview::new(&[looping, stopped], &[]);
         assert!(overview.needs_attention());
         assert!(overview.project("p").unwrap().needs_attention());
+    }
+
+    #[test]
+    fn a_declared_file_gives_its_name_and_icon_to_its_project() {
+        let declared = [DeclaredFile {
+            path: "/srv/shop/compose.yaml".into(),
+            name: Some("Ma boutique".into()),
+            icon: Some("shop.png".into()),
+        }];
+        let overview = Overview::new(&[], &declared);
+        let project = overview.project("shop").unwrap();
+        assert_eq!(project.shown_name(), "Ma boutique");
+        assert_eq!(project.icon.as_deref(), Some("shop.png"));
+    }
+
+    #[test]
+    fn a_running_project_takes_the_name_and_icon_of_its_declared_file() {
+        let web = container("shop-web-1", ContainerStatus::Running, Some("shop"));
+        let declared = [DeclaredFile {
+            path: "/srv/shop/compose.yaml".into(),
+            name: Some("Ma boutique".into()),
+            icon: None,
+        }];
+        let overview = Overview::new(&[web], &declared);
+        let project = overview.project("shop").unwrap();
+        assert_eq!(project.shown_name(), "Ma boutique");
+        assert_eq!(project.name, "shop", "the identity does not change");
+    }
+
+    #[test]
+    fn a_project_without_custom_name_shows_its_own() {
+        let overview = Overview::new(&[], &plain_files(["/srv/shop/compose.yaml"]));
+        assert_eq!(overview.project("shop").unwrap().shown_name(), "shop");
     }
 }

@@ -14,11 +14,14 @@ none), applied with a button so that browsing the list changes nothing, and its 
 	import type { EditOutcome } from '#lib/deck/deck-state.svelte.js';
 	import { NO_DIAL_MODULE, choiceOf, existingOption, newOption } from '#lib/deck/dial-options.js';
 	import { instanceName } from '#lib/deck/display.js';
+	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import InstanceEditor from './InstanceEditor.svelte';
 
 	interface Props {
 		index: number;
 		config: DeviceConfig;
+		serial: string;
+		api: ManagerApi;
 		instance: ModuleInstance | null;
 		/** Instances that can drive a dial, with where they are placed. */
 		candidates: readonly { instance: ModuleInstance; place: string }[];
@@ -34,6 +37,8 @@ none), applied with a button so that browsing the list changes nothing, and its 
 	let {
 		index,
 		config,
+		serial,
+		api,
 		instance,
 		candidates,
 		modules,
@@ -109,7 +114,7 @@ none), applied with a button so that browsing the list changes nothing, and its 
 	</form>
 	{#if instance}
 		{#key `${instance.id}/${module?.kind ?? ''}`}
-			<InstanceEditor {instance} {module} {onapply} />
+			<InstanceEditor {instance} {module} {serial} {api} {onapply} />
 		{/key}
 	{/if}
 </section>

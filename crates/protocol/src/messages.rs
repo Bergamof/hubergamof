@@ -134,6 +134,9 @@ pub enum ErrorCode {
     /// The configuration archive was refused: not a HuBergamof export,
     /// unexpected entries, missing image, or too large.
     InvalidArchive,
+    /// The desktop feature asked for is not available here: no file chooser
+    /// (no desktop portal, or `--demo` without one), or one is already open.
+    Unavailable,
     /// Unexpected failure inside the manager.
     Internal,
 }

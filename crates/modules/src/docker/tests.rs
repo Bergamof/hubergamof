@@ -1,5 +1,5 @@
-use hubergamof_module_api::TaskScope;
 use hubergamof_module_api::testing::TestContext;
+use hubergamof_module_api::{ImageLibrary, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -26,11 +26,16 @@ struct Harness {
 impl Harness {
     /// An instance on the demo host, once it listed the containers.
     async fn start(settings: &Value) -> Self {
+        Self::start_with_images(settings, ImageLibrary::empty()).await
+    }
+
+    /// The same, with `images` as the stored images of the device.
+    async fn start_with_images(settings: &Value, images: ImageLibrary) -> Self {
         let docker = Arc::new(SimulatedDocker::demo());
         let factory = DockerFactory::new(Arc::clone(&docker) as _);
         let TestContext { ctx, events, scope } = TestContext::new(DOCKER_KIND);
         let mut harness = Self {
-            module: factory.create(ctx, settings).unwrap(),
+            module: factory.create(ctx.with_images(images), settings).unwrap(),
             events,
             docker,
             _scope: scope,
@@ -139,6 +144,26 @@ fn compose_files_must_be_absolute_paths() {
     let descriptor = factory.descriptor();
     assert!(descriptor.capabilities.key);
     assert!(!descriptor.capabilities.dial && !descriptor.capabilities.touch_zone);
+}
+
+#[test]
+fn compose_files_take_a_name_and_an_icon_and_old_settings_still_load() {
+    let factory = DockerFactory::new(Arc::new(SimulatedDocker::empty()));
+    for valid in [
+        json!({ "composeFiles": [{ "path": "/srv/a/compose.yaml" }] }),
+        json!({ "composeFiles": [{ "path": "~/a.yaml", "name": "A", "icon": "a.png" }] }),
+        json!({ "composeFiles": ["/srv/a/compose.yaml", { "path": "~/b.yaml", "name": null }] }),
+    ] {
+        assert!(factory.validate_settings(&valid).is_ok(), "{valid}");
+    }
+    for invalid in [
+        json!({ "composeFiles": [{ "name": "sans chemin" }] }),
+        json!({ "composeFiles": [{ "path": "a.yaml" }] }),
+        json!({ "composeFiles": [{ "path": "/a.yaml", "icon": "../x.png" }] }),
+        json!({ "composeFiles": [{ "path": "/a.yaml", "name": "x".repeat(41) }] }),
+    ] {
+        assert!(factory.validate_settings(&invalid).is_err(), "{invalid}");
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -415,6 +440,59 @@ async fn a_declared_project_stays_after_down_and_comes_back_up() {
     harness.settle().await;
     assert_eq!(label(&harness.item(MAIN_PAGE, SHOP)), "boutique 3/3");
     assert_eq!(harness.docker.actions(), ["down boutique", "up boutique"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_declared_file_shows_its_custom_name() {
+    let harness = Harness::start(&json!({ "composeFiles": [
+        { "path": "/srv/boutique/compose.yaml", "name": "  Ma boutique " },
+        { "path": "/home/me/blog/compose.yaml", "name": "   " },
+    ] }))
+    .await;
+    assert_eq!(
+        label(&harness.item(MAIN_PAGE, SHOP)),
+        "Ma boutique 3/3",
+        "the running project, identified by its compose name"
+    );
+    assert_eq!(label(&harness.item(MAIN_PAGE, "project/blog")), "blog 0/0");
+    assert_eq!(harness.page(SHOP).unwrap().title, "Ma boutique");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_declared_file_shows_its_icon_once_read() {
+    let custom = ImageData::new(b"custom icon".to_vec());
+    let library = {
+        let custom = custom.clone();
+        ImageLibrary::new(move |name| {
+            let image = (name == "shop.png").then(|| custom.clone());
+            Box::pin(std::future::ready(image))
+        })
+    };
+    let mut harness = Harness::start_with_images(
+        &json!({ "composeFiles": [
+            { "path": "/srv/boutique/compose.yaml", "icon": "shop.png" },
+            { "path": "/home/me/blog/compose.yaml", "icon": "missing.png" },
+        ] }),
+        library,
+    )
+    .await;
+    assert_eq!(harness.item(MAIN_PAGE, SHOP).image, Some(custom.clone()));
+    assert_eq!(
+        harness.item(MAIN_PAGE, "project/blog").image,
+        Some(icons::PROJECT_STOPPED.clone()),
+        "an image that cannot be read leaves the default icon"
+    );
+
+    harness
+        .module
+        .update_settings(&json!({ "composeFiles": ["/srv/boutique/compose.yaml"] }))
+        .unwrap();
+    harness.settle().await;
+    assert_eq!(
+        harness.item(MAIN_PAGE, SHOP).image,
+        Some(icons::PROJECT_RUNNING.clone()),
+        "removing the icon restores the default one"
+    );
 }
 
 #[tokio::test(start_paused = true)]
