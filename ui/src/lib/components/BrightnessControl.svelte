@@ -33,7 +33,7 @@ Brightness slider: changes are sent while dragging, at most every {@link SEND_PE
 		step={STEP}
 		value={brightness}
 		aria-valuetext="{brightness} %"
-		class="h-6 w-48 accent-sky-700 focus-ring"
+		class="h-6 w-48 accent-ring focus-ring"
 		oninput={(event) => send(event.currentTarget.valueAsNumber)}
 		onchange={(event) => send.flush(event.currentTarget.valueAsNumber)}
 	/>

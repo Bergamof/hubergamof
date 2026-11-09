@@ -1,11 +1,12 @@
 <!--
 @component
-Dials of the device, left to right, each showing the module assigned to it.
+Dials of the device, left to right: a knob drawing and the name of the module assigned to each
+(its icon is already on the touch strip above).
 -->
 <script lang="ts">
 	import type { CatalogModule, ModuleInstance } from '#lib/generated/index.js';
 	import { instanceName } from '#lib/deck/display.js';
-	import ModuleTile from './ModuleTile.svelte';
+	import DialKnob from './DialKnob.svelte';
 
 	interface Props {
 		/** Instance of each dial (`null`: none assigned). */
@@ -30,22 +31,13 @@ Dials of the device, left to right, each showing the module assigned to it.
 				class="surface-button"
 				onclick={() => onselect(index)}
 			>
-				{#if instance}
-					<ModuleTile icon={module?.icon} {name} unavailable={!module} />
-				{:else}
-					<span
-						aria-hidden="true"
-						class="flex aspect-square w-full items-center justify-center rounded-full border-2 border-dashed border-zinc-400 text-xs text-zinc-600 dark:border-zinc-500 dark:text-zinc-400"
-					>
-						Libre
-					</span>
-				{/if}
+				<DialKnob assigned={instance !== null} />
 				<span class="w-full truncate">
 					<span class="sr-only">Molette {index + 1} :</span>
 					{name}
 				</span>
 				{#if instance && !module}
-					<span class="text-xs text-zinc-700 dark:text-zinc-300">indisponible</span>
+					<span class="text-xs text-device-muted">indisponible</span>
 				{/if}
 			</button>
 		</li>

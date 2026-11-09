@@ -14,10 +14,7 @@ A problem shown next to what failed: French text, then the manager's details in 
 	let { problem, lead }: Props = $props();
 </script>
 
-<div
-	role="alert"
-	class="rounded-lg border border-red-700 bg-red-50 p-3 text-sm text-red-950 dark:border-red-400 dark:bg-red-950 dark:text-red-100"
->
+<div role="alert" class="rounded-xl border border-danger bg-danger-soft p-3 text-sm text-danger">
 	<p>{lead ? `${lead} ` : ''}{problem.text}</p>
 	{#if problem.detail}
 		<p class="mt-1">Détail : <span lang="en">{problem.detail}</span></p>

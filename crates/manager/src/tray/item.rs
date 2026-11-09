@@ -14,6 +14,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::{ObjectPath, Type, interface};
 
 use super::dbusmenu::{MENU_PATH, MenuHandler};
+use super::icon;
 use super::menu::{MenuAction, NO_DEVICE_LABEL};
 
 /// Object path of the item, where hosts look for it.
@@ -25,9 +26,6 @@ pub const TRAY_ID: &str = "hubergamof";
 
 /// Title of the tray item.
 pub const TRAY_TITLE: &str = "HuBergamof";
-
-/// Generic freedesktop icon (present in every icon theme).
-pub const TRAY_ICON: &str = "input-keyboard";
 
 /// Generic application (neither communication, system service nor hardware).
 const CATEGORY: &str = "ApplicationStatus";
@@ -45,6 +43,27 @@ pub struct Pixmap {
     width: i32,
     height: i32,
     data: Vec<u8>,
+}
+
+impl Pixmap {
+    /// Square or not, `data` holds `width × height` ARGB pixels.
+    pub fn new(width: u32, height: u32, data: Vec<u8>) -> Self {
+        Self {
+            width: i32::try_from(width).unwrap_or(i32::MAX),
+            height: i32::try_from(height).unwrap_or(i32::MAX),
+            data,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn size(&self) -> usize {
+        usize::try_from(self.width).unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
 }
 
 /// Tooltip, `(sa(iiay)ss)`.
@@ -127,16 +146,16 @@ impl StatusNotifierItem {
         STATUS
     }
 
-    /// Themed icon name.
+    /// No themed icon: the host draws the pixmap.
     #[zbus(property(emits_changed_signal = "const"))]
     fn icon_name(&self) -> &'static str {
-        TRAY_ICON
+        ""
     }
 
-    /// No raster icon: the themed one is used.
+    /// The HuBergamof mark, in every embedded size.
     #[zbus(property(emits_changed_signal = "const"))]
     fn icon_pixmap(&self) -> Vec<Pixmap> {
-        Vec::new()
+        icon::pixmaps()
     }
 
     /// No extra icon theme directory.
@@ -149,8 +168,8 @@ impl StatusNotifierItem {
     #[zbus(property(emits_changed_signal = "false"))]
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
-            icon_name: TRAY_ICON.to_owned(),
-            icon_pixmap: Vec::new(),
+            icon_name: String::new(),
+            icon_pixmap: icon::pixmaps(),
             title: TRAY_TITLE.to_owned(),
             description: self.tool_tip_description(),
         }

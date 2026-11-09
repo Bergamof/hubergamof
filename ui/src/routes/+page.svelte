@@ -6,6 +6,7 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import Notices from '#lib/components/Notices.svelte';
+	import BrandWordmark from '#lib/components/BrandWordmark.svelte';
 
 	/** Focus target once the last notice is dismissed. */
 	const MAIN_ID = 'main-content';
@@ -57,16 +58,27 @@
 	<title>HuBergamof</title>
 </svelte:head>
 
-<div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-6">
-	<header class="flex flex-wrap items-center justify-between gap-4">
-		<h1 class="text-2xl font-bold tracking-tight">HuBergamof</h1>
-		<p role="status" aria-live="polite" class="flex items-center gap-2 text-sm">
-			<span
-				aria-hidden="true"
-				class={[
-					'size-2.5 rounded-full',
-					isOnline ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-amber-600 dark:bg-amber-400'
-				]}
+{#snippet hero(message: string, detail?: string)}
+	<div class="m-auto flex flex-col items-center gap-2 text-center">
+		<p class="font-display text-xl font-semibold">{message}</p>
+		{#if detail}
+			<p class="text-sm text-muted">{detail}</p>
+		{/if}
+	</div>
+{/snippet}
+
+<div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-5 sm:px-6">
+	<header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+		<h1>
+			<BrandWordmark class="h-10 w-auto text-fg" />
+			<span class="sr-only">HuBergamof</span>
+		</h1>
+		<p
+			role="status"
+			aria-live="polite"
+			class="flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface px-3.5 text-sm"
+		>
+			<span aria-hidden="true" class={['size-2.5 rounded-full', isOnline ? 'bg-ok' : 'bg-warning']}
 			></span>
 			{isOnline ? 'Connecté au gestionnaire' : 'Non connecté au gestionnaire'}
 		</p>
@@ -77,7 +89,7 @@
 			{#if !isOnline}
 				<p
 					role="alert"
-					class="rounded-lg border border-amber-600 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-400 dark:bg-amber-950 dark:text-amber-100"
+					class="rounded-xl border border-warning bg-warning-soft p-3 text-sm text-warning"
 				>
 					Connexion au gestionnaire perdue, reconnexion en cours… La configuration reste affichée
 					mais ne peut pas être modifiée.
@@ -97,21 +109,19 @@
 				<DeckEditor {deck} device={deck.device} config={deck.config} {api} />
 			</div>
 		{:else if !isOnline || !deck}
-			<div class="m-auto flex flex-col items-center gap-2 text-center">
-				<p class="text-zinc-600 dark:text-zinc-400">Connexion au gestionnaire…</p>
-				<p class="text-sm text-zinc-600 dark:text-zinc-400">
-					Si rien ne se passe, vérifiez que le service hubergamof est lancé.
-				</p>
-			</div>
+			{@render hero(
+				'Connexion au gestionnaire…',
+				'Si rien ne se passe, vérifiez que le service hubergamof est lancé.'
+			)}
 		{:else if deck.devices.length === 0}
-			<p class="m-auto text-zinc-600 dark:text-zinc-400">Aucun appareil connecté</p>
+			{@render hero('Aucun appareil connecté')}
 		{:else}
 			<Notices
 				notices={deck.notices}
 				fallbackFocusId={MAIN_ID}
 				ondismiss={(id) => deck?.dismiss(id)}
 			/>
-			<p class="m-auto text-zinc-600 dark:text-zinc-400">Chargement de la configuration…</p>
+			<p class="m-auto text-muted">Chargement de la configuration…</p>
 		{/if}
 	</main>
 </div>

@@ -30,6 +30,7 @@ selected key or dial.
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DialDetails from './DialDetails.svelte';
 	import DialRow from './DialRow.svelte';
+	import DialStrip from './DialStrip.svelte';
 	import ExportImport from './ExportImport.svelte';
 	import KeyDetails from './KeyDetails.svelte';
 	import KeyGrid from './KeyGrid.svelte';
@@ -178,50 +179,63 @@ selected key or dial.
 	}
 </script>
 
-<div class="flex flex-col gap-8">
-	<div class="flex flex-wrap items-start justify-between gap-4">
-		<BrightnessControl
-			brightness={config.brightness}
-			onchange={(brightness) => deck.edit(setBrightness(brightness))}
-		/>
-		<ExportImport {device} {api} />
-	</div>
+<div class="flex flex-col gap-6">
 	<p role="status" class="sr-only">{announcement}</p>
 
-	<div class="flex flex-col gap-8 lg:flex-row lg:items-start">
-		<div class="flex flex-col gap-8">
-			<section aria-labelledby="{uid}-keys" class="flex flex-col gap-3">
-				<h2 id="{uid}-keys" class="text-xl font-semibold">Touches</h2>
-				<KeyGrid
-					{keys}
-					{moduleOf}
-					{imageOf}
-					columns={device.capabilities.keyColumns}
-					visibleRows={device.capabilities.keyRows}
-					selected={selected?.surface === 'key' ? selected.position : undefined}
-					buttonId={keyButtonId}
-					onselect={selectKey}
-					onmove={move}
-					onadd={() => (pickerOpen = true)}
-				/>
-			</section>
-
-			{#if dials.length > 0}
-				<section aria-labelledby="{uid}-dials" class="flex flex-col gap-3">
-					<h2 id="{uid}-dials" class="text-xl font-semibold">Molettes</h2>
-					<DialRow
-						{dials}
+	<div class="flex flex-col gap-6 lg:flex-row lg:items-start">
+		<div class="flex min-w-0 flex-col gap-6 card lg:shrink-0">
+			<!-- Corps de l'appareil : touches, bande tactile (module de chaque molette), molettes. -->
+			<div
+				class="flex w-fit max-w-full flex-col gap-4 rounded-3xl border border-device-line bg-device p-5"
+			>
+				<section aria-labelledby="{uid}-keys" class="flex flex-col gap-3">
+					<h2
+						id="{uid}-keys"
+						class="font-mono text-xs font-medium tracking-widest text-device-muted uppercase"
+					>
+						Touches
+					</h2>
+					<KeyGrid
+						{keys}
 						{moduleOf}
-						selected={selected?.surface === 'dial' ? selected.index : undefined}
-						onselect={selectDial}
+						{imageOf}
+						columns={device.capabilities.keyColumns}
+						visibleRows={device.capabilities.keyRows}
+						selected={selected?.surface === 'key' ? selected.position : undefined}
+						buttonId={keyButtonId}
+						onselect={selectKey}
+						onmove={move}
+						onadd={() => (pickerOpen = true)}
 					/>
 				</section>
-			{/if}
+
+				{#if dials.length > 0}
+					<section aria-labelledby="{uid}-dials" class="flex flex-col gap-3">
+						<h2
+							id="{uid}-dials"
+							class="font-mono text-xs font-medium tracking-widest text-device-muted uppercase"
+						>
+							Molettes
+						</h2>
+						<DialStrip {dials} {moduleOf} />
+						<DialRow
+							{dials}
+							{moduleOf}
+							selected={selected?.surface === 'dial' ? selected.index : undefined}
+							onselect={selectDial}
+						/>
+					</section>
+				{/if}
+			</div>
+
+			<BrightnessControl
+				brightness={config.brightness}
+				onchange={(brightness) => deck.edit(setBrightness(brightness))}
+			/>
+			<ExportImport {device} {api} />
 		</div>
 
-		<div
-			class="min-w-0 flex-1 scroll-mt-6 rounded-2xl border border-zinc-200 p-4 lg:sticky lg:top-6 dark:border-zinc-700"
-		>
+		<div class="min-w-0 flex-1 scroll-mt-6 card lg:sticky lg:top-6">
 			{#if selected?.surface === 'key'}
 				{@const instance = keys[selected.position]}
 				{@const position = selected.position}
@@ -255,9 +269,7 @@ selected key or dial.
 					/>
 				{/key}
 			{:else}
-				<p class="text-zinc-600 dark:text-zinc-400">
-					Sélectionnez une touche ou une molette pour la configurer.
-				</p>
+				<p class="text-muted">Sélectionnez une touche ou une molette pour la configurer.</p>
 			{/if}
 		</div>
 	</div>

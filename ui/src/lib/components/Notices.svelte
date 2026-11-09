@@ -29,7 +29,7 @@ next message, or to a fallback element, rather than losing it.
 <div bind:this={list} role="alert" class="flex flex-col gap-2 empty:hidden">
 	{#each notices as notice (notice.id)}
 		<div
-			class="flex items-start justify-between gap-4 rounded-lg border border-red-700 bg-red-50 p-3 text-sm text-red-950 dark:border-red-400 dark:bg-red-950 dark:text-red-100"
+			class="flex items-start justify-between gap-4 rounded-xl border border-danger bg-danger-soft p-3 text-sm text-danger"
 		>
 			<div>
 				<p>{notice.text}</p>

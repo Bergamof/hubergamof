@@ -1,5 +1,10 @@
 # HuBergamof
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
+  <img src="docs/assets/wordmark-light.svg" alt="HuBergamof" height="48">
+</picture>
+
 Gestionnaire de Stream Deck pour Linux, à base de modules, avec une interface de configuration web locale synchronisée en temps réel.
 
 - **Gestionnaire** (Rust) : pilote les appareils (touches, molettes, bande tactile), exécute les modules, sert l'interface et un WebSocket sur `127.0.0.1:7878`, icône dans la barre système.

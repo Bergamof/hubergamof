@@ -58,8 +58,10 @@ LABEL org.opencontainers.image.title="hubergamof" \
       org.opencontainers.image.description="Stream Deck manager for Linux (demo mode)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
+# `zlib1g` est listé pour être mis à jour : le digest épinglé de la base retarde parfois sur
+# les correctifs de sécurité de Debian (Trivy, `docker`, CVE corrigeables HIGH et CRITICAL).
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libudev1 \
+    && apt-get install --yes --no-install-recommends libudev1 zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --home-dir /home/hubergamof --uid 10001 \
        --user-group --shell /usr/sbin/nologin hubergamof
