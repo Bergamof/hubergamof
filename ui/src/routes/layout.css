@@ -53,6 +53,7 @@
 	--device-strip: #0f2224;
 	--device-line: #2b4446;
 	--device-fg: #e8efec;
+	--device-ring: #5cd6cc;
 	--device-muted: #9db5b1;
 	--shadow: 0 1px 2px rgb(17 32 31 / 0.06), 0 8px 24px rgb(17 32 31 / 0.08);
 }
@@ -98,6 +99,7 @@
 	--color-device-strip: var(--device-strip);
 	--color-device-line: var(--device-line);
 	--color-device-fg: var(--device-fg);
+	--color-device-ring: var(--device-ring);
 	--color-device-muted: var(--device-muted);
 	--shadow-card: var(--shadow);
 	--font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
@@ -124,22 +126,22 @@
 
 /* Text input, select and textarea. */
 @utility field {
-	@apply min-h-10 w-full rounded-[10px] border border-muted bg-surface px-3 py-2 text-fg focus-ring aria-invalid:border-danger;
+	@apply min-h-10 w-full rounded-[10px] border border-muted bg-surface px-3 py-2 text-fg focus-ring placeholder:text-muted aria-invalid:border-danger;
 }
 
 /* Secondary action button. */
 @utility secondary-button {
-	@apply min-h-9 rounded-[10px] border border-line bg-surface px-3.5 py-1.5 text-sm font-medium text-fg focus-ring hover:border-muted hover:bg-sunken aria-disabled:opacity-50 aria-disabled:hover:border-line aria-disabled:hover:bg-surface;
+	@apply min-h-9 rounded-[10px] border border-line bg-surface px-3.5 py-1.5 text-sm font-medium text-fg focus-ring hover:border-muted hover:bg-sunken aria-disabled:opacity-60 aria-disabled:hover:border-line aria-disabled:hover:bg-surface;
 }
 
 /* Main action of a form or dialog: the only filled button. */
 @utility primary-button {
-	@apply min-h-9 rounded-[10px] bg-accent px-3.5 py-1.5 text-sm font-semibold text-on-accent focus-ring hover:brightness-105 aria-disabled:opacity-50;
+	@apply min-h-9 rounded-[10px] bg-accent px-3.5 py-1.5 text-sm font-semibold text-on-accent focus-ring hover:brightness-105 aria-disabled:opacity-60;
 }
 
 /* Destructive action. */
 @utility danger-button {
-	@apply min-h-9 rounded-[10px] border border-danger bg-danger-soft px-3.5 py-1.5 text-sm font-semibold text-danger focus-ring hover:brightness-95 aria-disabled:opacity-50;
+	@apply min-h-9 rounded-[10px] border border-danger bg-danger-soft px-3.5 py-1.5 text-sm font-semibold text-danger focus-ring hover:brightness-95 aria-disabled:opacity-60;
 }
 
 /* White card on the page. */
@@ -150,5 +152,5 @@
 /* A key or dial of the device, selectable to configure it. The selection is drawn with the
    accent, on the device's dark body. */
 @utility surface-button {
-	@apply flex w-full flex-col items-center gap-1.5 rounded-2xl p-1.5 text-center text-xs font-medium text-device-fg hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5cd6cc] aria-current:bg-device-key aria-current:ring-2 aria-current:ring-accent;
+	@apply flex w-full flex-col items-center gap-1.5 rounded-2xl p-1.5 text-center text-xs font-medium text-device-fg hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring aria-current:bg-device-key aria-current:ring-2 aria-current:ring-accent;
 }

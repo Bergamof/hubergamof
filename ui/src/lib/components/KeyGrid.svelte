@@ -70,7 +70,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 			draggable="true"
 			class={[
 				'rounded-2xl',
-				dropTarget === position && 'outline-2 outline-offset-2 outline-ring outline-dashed'
+				dropTarget === position && 'outline-2 outline-offset-2 outline-device-ring outline-dashed'
 			]}
 			ondragstart={(event) => startDrag(event, position)}
 			ondragover={(event) => dragOver(event, position)}
@@ -105,7 +105,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		<button
 			id={buttonId(-1)}
 			type="button"
-			class="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-device-line text-xs text-device-muted hover:bg-device-key hover:text-device-fg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5cd6cc]"
+			class="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-device-line text-xs text-device-muted hover:bg-device-key hover:text-device-fg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring"
 			onclick={onadd}
 		>
 			<span aria-hidden="true" class="text-2xl leading-none">+</span>
