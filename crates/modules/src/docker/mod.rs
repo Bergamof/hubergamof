@@ -498,11 +498,6 @@ impl Action {
         matches!(self, Self::Remove | Self::Down { .. })
     }
 
-    /// Destroys data: shown in attention.
-    fn is_destructive(self) -> bool {
-        self == Self::Down { volumes: true }
-    }
-
     /// The actions of `page`.
     fn of_page(page: Page<'_>) -> &'static [Self] {
         match page {
@@ -1006,8 +1001,6 @@ impl Docker {
             (action.busy_label(), KeyState::Normal)
         } else if self.is_confirming(&key) {
             (CONFIRM_LABEL, KeyState::Attention)
-        } else if action.is_destructive() {
-            (action.label(), KeyState::Attention)
         } else {
             (action.label(), KeyState::Normal)
         };

@@ -396,7 +396,7 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn down_needs_a_second_press_and_the_volumes_variant_is_in_attention() {
+async fn down_needs_a_second_press_and_only_the_confirmation_is_in_attention() {
     let mut harness = Harness::start(&json!({})).await;
     assert_eq!(
         harness.items(SHOP_DOWN),
@@ -405,9 +405,10 @@ async fn down_needs_a_second_press_and_the_volumes_variant_is_in_attention() {
             (
                 "down-volumes".into(),
                 "Avec volumes".into(),
-                KeyState::Attention
+                KeyState::Normal
             ),
-        ]
+        ],
+        "no permanent attention on the volumes variant"
     );
     assert_eq!(harness.press(SHOP_DOWN, "down-volumes").await, []);
     let confirming = harness.item(SHOP_DOWN, "down-volumes");
@@ -1050,7 +1051,7 @@ async fn the_down_of_one_service_has_the_volumes_variant_too_and_asks_twice() {
         (
             "down-volumes".into(),
             "Avec volumes".into(),
-            KeyState::Attention,
+            KeyState::Normal,
         ),
     ];
     assert_eq!(harness.items(WEB_DOWN), expected);
