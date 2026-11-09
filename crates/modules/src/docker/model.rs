@@ -1,7 +1,7 @@
 //! What Docker reports, as the module sees it: containers, and the compose
 //! projects they belong to.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Lifecycle state of a container, as Docker reports it.
@@ -53,6 +53,8 @@ pub struct ComposeLabels {
     pub working_dir: Option<PathBuf>,
     /// Compose files of the project.
     pub config_files: Vec<PathBuf>,
+    /// Service of the project the container runs, `None` when not recorded.
+    pub service: Option<String>,
 }
 
 impl ComposeLabels {
@@ -63,8 +65,32 @@ impl ComposeLabels {
             project,
             working_dir,
             config_files,
+            service: None,
         }
     }
+
+    /// The same labels, for a container of `service`.
+    #[must_use]
+    pub fn with_service(self, service: impl Into<String>) -> Self {
+        Self {
+            service: Some(service.into()),
+            ..self
+        }
+    }
+}
+
+/// Whether `name` is a project name compose allows (lowercase letters,
+/// digits, `-` and `_`, not starting with a symbol). The name of a project
+/// found from labels is part of page ids and of the arguments of compose:
+/// one that is not is not trusted.
+#[must_use]
+pub(crate) fn is_project_name(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
 }
 
 /// A container.
@@ -137,6 +163,8 @@ pub struct ComposeTarget {
     pub directory: Option<PathBuf>,
     /// Compose files, absolute.
     pub files: Vec<PathBuf>,
+    /// The services the action is about; empty: the whole project.
+    pub services: Vec<String>,
 }
 
 impl ComposeTarget {
@@ -148,7 +176,14 @@ impl ComposeTarget {
             project,
             directory,
             files,
+            services: Vec::new(),
         }
+    }
+
+    /// The same target, narrowed to `services`.
+    #[must_use]
+    pub fn with_services(self, services: Vec<String>) -> Self {
+        Self { services, ..self }
     }
 }
 
@@ -191,9 +226,18 @@ pub(crate) struct Project {
     pub(crate) target: Option<ComposeTarget>,
     /// Its containers, by name.
     pub(crate) containers: Vec<Container>,
+    /// The services its files define that have no container (not built
+    /// yet, or removed), by name.
+    pub(crate) planned: Vec<String>,
 }
 
 impl Project {
+    /// Containers and services without container.
+    #[must_use]
+    pub(crate) fn total(&self) -> usize {
+        self.containers.len() + self.planned.len()
+    }
+
     /// The name shown to the user.
     #[must_use]
     pub(crate) fn shown_name(&self) -> &str {
@@ -229,7 +273,11 @@ impl Overview {
     /// file of no running project appears as its own project, named after
     /// its directory (made unique when another project has that name).
     #[must_use]
-    pub(crate) fn new(containers: &[Container], declared: &[DeclaredFile]) -> Self {
+    pub(crate) fn new(
+        containers: &[Container],
+        declared: &[DeclaredFile],
+        services: &HashMap<String, Vec<String>>,
+    ) -> Self {
         let mut found: BTreeMap<String, Vec<(&Container, &ComposeLabels)>> = BTreeMap::new();
         let mut isolated = Vec::new();
         for container in containers {
@@ -266,9 +314,14 @@ impl Overview {
                         icon: file.icon.clone(),
                         target: Some(target),
                         containers: Vec::new(),
+                        planned: Vec::new(),
                     },
                 );
             }
+        }
+        for project in projects.values_mut() {
+            project.planned =
+                planned_services(project, services.get(&project.name).map(Vec::as_slice));
         }
         isolated.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
@@ -315,6 +368,22 @@ impl Overview {
     }
 }
 
+/// The `services` of `project` that no container runs, in the order they
+/// were defined.
+fn planned_services(project: &Project, services: Option<&[String]>) -> Vec<String> {
+    let built: HashSet<&str> = project
+        .containers
+        .iter()
+        .filter_map(|container| container.compose.as_ref()?.service.as_deref())
+        .collect();
+    services
+        .into_iter()
+        .flatten()
+        .filter(|service| !built.contains(service.as_str()))
+        .cloned()
+        .collect()
+}
+
 /// The project `name` of the containers `members`, with their labels.
 fn found_project(
     name: &str,
@@ -347,6 +416,7 @@ fn found_project(
         icon: own.iter().find_map(|file| file.icon.clone()),
         target,
         containers,
+        planned: Vec::new(),
     }
 }
 
@@ -435,7 +505,7 @@ mod tests {
             container("shop-db-1", ContainerStatus::Exited, Some("shop")),
             container("logs-app-1", ContainerStatus::Running, Some("logs")),
         ];
-        let overview = Overview::new(&containers, &[]);
+        let overview = Overview::new(&containers, &[], &HashMap::new());
         assert_eq!(names(&overview), ["logs", "shop"]);
         let shop = overview.project("shop").unwrap();
         let shop_names: Vec<_> = shop.containers.iter().map(|c| c.name.as_str()).collect();
@@ -460,7 +530,7 @@ mod tests {
             Some("shop"),
         )];
         let declared = plain_files(["/srv/shop/compose.yaml", "/home/me/My Blog!/compose.yaml"]);
-        let overview = Overview::new(&containers, &declared);
+        let overview = Overview::new(&containers, &declared, &HashMap::new());
         assert_eq!(
             names(&overview),
             ["myblog", "shop"],
@@ -481,7 +551,7 @@ mod tests {
             Some("shop"),
         )];
         let declared = plain_files(["/home/me/shop/compose.yaml", "/opt/shop/compose.yaml"]);
-        let overview = Overview::new(&containers, &declared);
+        let overview = Overview::new(&containers, &declared, &HashMap::new());
         assert_eq!(names(&overview), ["shop", "shop (2)", "shop (3)"]);
         let running = overview.project("shop").unwrap();
         assert_eq!(running.containers.len(), 1, "the running one is kept");
@@ -506,7 +576,7 @@ mod tests {
             ],
         ));
         let declared = plain_files(["/srv/shop/compose.yaml"]);
-        let overview = Overview::new(&[web], &declared);
+        let overview = Overview::new(&[web], &declared, &HashMap::new());
         let target = overview.project("shop").unwrap().target.clone().unwrap();
         assert_eq!(target.files, [PathBuf::from("/srv/shop/compose.yaml")]);
         assert_eq!(target.directory, Some(PathBuf::from("/srv/shop")));
@@ -518,7 +588,7 @@ mod tests {
         let web = container("shop-web-1", ContainerStatus::Running, Some("shop"));
         let mut impostor = container("shop-db-1", ContainerStatus::Running, None);
         impostor.compose = Some(labels("shop", "/tmp/evil"));
-        let overview = Overview::new(&[web.clone(), impostor], &[]);
+        let overview = Overview::new(&[web.clone(), impostor], &[], &HashMap::new());
         let shop = overview.project("shop").unwrap();
         assert_eq!(shop.target, None);
         assert_eq!(shop.containers.len(), 2, "still shown and controllable");
@@ -526,7 +596,7 @@ mod tests {
         let declared = plain_files(["/srv/shop/compose.yaml"]);
         let mut impostor = container("shop-db-1", ContainerStatus::Running, None);
         impostor.compose = Some(labels("shop", "/tmp/evil"));
-        let settled = Overview::new(&[web, impostor], &declared);
+        let settled = Overview::new(&[web, impostor], &declared, &HashMap::new());
         assert!(settled.project("shop").unwrap().target.is_some());
     }
 
@@ -556,7 +626,7 @@ mod tests {
         }
         let stopped = container("c", ContainerStatus::Exited, None);
         assert!(!stopped.needs_attention());
-        let overview = Overview::new(&[looping, stopped], &[]);
+        let overview = Overview::new(&[looping, stopped], &[], &HashMap::new());
         assert!(overview.needs_attention());
         assert!(overview.project("p").unwrap().needs_attention());
     }
@@ -568,7 +638,7 @@ mod tests {
             name: Some("Ma boutique".into()),
             icon: Some("shop.png".into()),
         }];
-        let overview = Overview::new(&[], &declared);
+        let overview = Overview::new(&[], &declared, &HashMap::new());
         let project = overview.project("shop").unwrap();
         assert_eq!(project.shown_name(), "Ma boutique");
         assert_eq!(project.icon.as_deref(), Some("shop.png"));
@@ -582,7 +652,7 @@ mod tests {
             name: Some("Ma boutique".into()),
             icon: None,
         }];
-        let overview = Overview::new(&[web], &declared);
+        let overview = Overview::new(&[web], &declared, &HashMap::new());
         let project = overview.project("shop").unwrap();
         assert_eq!(project.shown_name(), "Ma boutique");
         assert_eq!(project.name, "shop", "the identity does not change");
@@ -590,7 +660,39 @@ mod tests {
 
     #[test]
     fn a_project_without_custom_name_shows_its_own() {
-        let overview = Overview::new(&[], &plain_files(["/srv/shop/compose.yaml"]));
+        let overview = Overview::new(
+            &[],
+            &plain_files(["/srv/shop/compose.yaml"]),
+            &HashMap::new(),
+        );
         assert_eq!(overview.project("shop").unwrap().shown_name(), "shop");
+    }
+
+    #[test]
+    fn services_without_container_are_the_planned_ones() {
+        let web = container("shop-web-1", ContainerStatus::Exited, Some("shop"));
+        let mut web = web;
+        web.compose = web.compose.map(|labels| labels.with_service("web"));
+        let services = HashMap::from([(
+            "shop".to_owned(),
+            vec!["db".to_owned(), "web".to_owned(), "cache".to_owned()],
+        )]);
+        let overview = Overview::new(&[web], &[], &services);
+        let shop = overview.project("shop").unwrap();
+        assert_eq!(shop.planned, ["db", "cache"], "in the order of the files");
+        assert_eq!((shop.containers.len(), shop.total()), (1, 3));
+    }
+
+    #[test]
+    fn a_declared_project_has_all_its_services_planned() {
+        let declared = plain_files(["/srv/shop/compose.yaml"]);
+        let services = HashMap::from([("shop".to_owned(), vec!["web".to_owned()])]);
+        let overview = Overview::new(&[], &declared, &services);
+        assert_eq!(overview.project("shop").unwrap().planned, ["web"]);
+        let unknown = Overview::new(&[], &declared, &HashMap::new());
+        assert_eq!(
+            unknown.project("shop").unwrap().planned,
+            Vec::<String>::new()
+        );
     }
 }

@@ -374,15 +374,25 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
         .into_iter()
         .map(|(_, l, _)| l)
         .collect();
-    assert_eq!(labels, ["Up", "Up + build", "Up + pull", "Up --no-start"]);
+    assert_eq!(labels, ["Up", "Rebuild", "Pull", "No start"]);
     assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique");
-    harness.press(SHOP_UP, "up-build").await;
-    assert_eq!(label(&harness.item(SHOP_UP, "up-build")), "Up…");
+    // Pressing a variant goes back to the project page, where the work shows.
     assert_eq!(
-        harness.settle().await,
-        [feedback(SHOP_UP, "up-build", Feedback::Ok)]
+        harness.press(SHOP_UP, "up-build").await,
+        [Command::Back],
+        "the up page was opened from the project page"
     );
+    let working = harness.item(SHOP, "container/boutique-web-1");
+    assert_eq!(label(&working), "web-1 Build…");
+    assert_eq!(working.image, Some(icons::WORKING.clone()));
+    assert_eq!(label(&harness.item(MAIN_PAGE, SHOP)), "boutique Build…");
+    assert_eq!(harness.settle().await, [feedback(SHOP, "up", Feedback::Ok)]);
     assert_eq!(harness.docker.actions(), ["up boutique --build"]);
+    assert_eq!(
+        label(&harness.item(SHOP, "container/boutique-web-1")),
+        "web-1",
+        "the work is over"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -428,13 +438,25 @@ async fn a_declared_project_stays_after_down_and_comes_back_up() {
     harness.press(SHOP_DOWN, "down-keep").await;
     harness.press(SHOP_DOWN, "down-keep").await;
     harness.settle().await;
-    assert_eq!(label(&harness.item(MAIN_PAGE, SHOP)), "boutique 0/0");
+    assert_eq!(label(&harness.item(MAIN_PAGE, SHOP)), "boutique 0/3");
     let actions: Vec<_> = harness
         .items(SHOP)
         .into_iter()
         .map(|(id, _, _)| id)
         .collect();
-    assert_eq!(actions, ["start-all", "stop-all", "up", "down"]);
+    assert_eq!(
+        actions,
+        [
+            "start-all",
+            "stop-all",
+            "up",
+            "down",
+            "service/boutique/api",
+            "service/boutique/db",
+            "service/boutique/web"
+        ],
+        "the services of the file, without container since the down"
+    );
 
     harness.press(SHOP_UP, "up-plain").await;
     harness.settle().await;
@@ -507,7 +529,7 @@ async fn declaring_files_regroups_at_once() {
     harness.press("up/blog", "up-plain").await;
     assert_eq!(
         harness.settle().await,
-        [feedback("up/blog", "up-plain", Feedback::Alert)]
+        [feedback("project/blog", "up", Feedback::Alert)]
     );
 }
 
@@ -867,4 +889,190 @@ async fn an_icon_that_could_not_be_read_is_tried_again_with_the_next_settings() 
     harness.module.update_settings(&settings).unwrap();
     harness.settle().await;
     assert_eq!(harness.item(MAIN_PAGE, SHOP).image, Some(custom));
+}
+
+// ---------------------------------------------------------------- Services without container
+
+const WEB_PLANNED: &str = "service/boutique/web";
+const WEB_UP: &str = "up/boutique/web";
+const WEB_DOWN: &str = "down/boutique/web";
+const WEB: &str = "container/boutique-web-1";
+
+/// The declared shop, taken down: its services remain, without containers.
+async fn shop_taken_down() -> Harness {
+    let mut harness =
+        Harness::start(&json!({ "composeFiles": ["/srv/boutique/compose.yaml"] })).await;
+    harness.press(SHOP_DOWN, "down-keep").await;
+    harness.press(SHOP_DOWN, "down-keep").await;
+    harness.settle().await;
+    harness
+}
+
+#[tokio::test(start_paused = true)]
+async fn services_without_container_show_beside_the_containers_and_apart_from_stopped_ones() {
+    let mut harness = shop_taken_down().await;
+    let ids: Vec<_> = harness
+        .items(SHOP)
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+    assert_eq!(
+        ids[4..],
+        [
+            "service/boutique/api",
+            "service/boutique/db",
+            "service/boutique/web"
+        ],
+        "after the actions, sorted by name like containers"
+    );
+    let planned = harness.item(SHOP, WEB_PLANNED);
+    assert_eq!(planned.image, Some(icons::SERVICE_PLANNED.clone()));
+    assert_eq!(label(&planned), "web");
+
+    // Once built (not started), it is a stopped container, drawn as such.
+    harness.press(SHOP_UP, "up-no-start").await;
+    harness.settle().await;
+    let created = harness.item(SHOP, WEB);
+    assert_eq!(created.image, Some(icons::STOPPED.clone()));
+    assert!(harness.page(WEB_PLANNED).is_none(), "its page is gone");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_service_without_container_can_only_be_brought_up() {
+    let mut harness = shop_taken_down().await;
+    let page = harness.page(WEB_PLANNED).unwrap();
+    assert_eq!(page.title, "web · Non créé");
+    assert_eq!(
+        harness.items(WEB_PLANNED),
+        [("up".into(), "Up".into(), KeyState::Normal)]
+    );
+    assert_eq!(
+        harness.press(WEB_PLANNED, "up").await,
+        [Command::OpenPage(WEB_UP.into())]
+    );
+    assert_eq!(harness.page(WEB_UP).unwrap().title, "Up · web");
+
+    // Two pages to go back through: the variants page, then the service's own.
+    assert_eq!(
+        harness.press(WEB_UP, "up-build").await,
+        [Command::Back, Command::Back]
+    );
+    let working = harness.item(SHOP, WEB_PLANNED);
+    assert_eq!(label(&working), "web Build…");
+    assert_eq!(
+        label(&harness.item(SHOP, "service/boutique/db")),
+        "db",
+        "only the service the operation is about"
+    );
+    harness.settle().await;
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "up boutique --build web"
+    );
+    assert_eq!(
+        harness.status("boutique-web-1"),
+        Some(ContainerStatus::Running)
+    );
+    assert!(
+        harness.status("boutique-db-1").is_none(),
+        "the other services were left alone"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_container_has_its_own_up_and_down_for_its_service_only() {
+    let mut harness = Harness::start(&json!({})).await;
+    let ids: Vec<_> = harness
+        .items(WEB)
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+    assert_eq!(ids[ids.len() - 2..], ["up", "down"]);
+    assert_eq!(
+        harness.press(WEB, "down").await,
+        [Command::OpenPage(WEB_DOWN.into())]
+    );
+    assert_eq!(harness.page(WEB_DOWN).unwrap().title, "Down · web");
+
+    // A down asks twice, then goes back to the project page.
+    assert_eq!(
+        harness.press(WEB_DOWN, "down-keep").await,
+        Vec::<Command>::new()
+    );
+    assert_eq!(
+        harness.press(WEB_DOWN, "down-keep").await,
+        [Command::Back, Command::Back]
+    );
+    harness.settle().await;
+    assert!(harness.status("boutique-web-1").is_none());
+    assert!(
+        harness.status("boutique-db-1").is_some(),
+        "the other services stay"
+    );
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "down boutique web"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_container_outside_compose_has_no_up_and_down() {
+    let harness = Harness::start(&json!({})).await;
+    let ids: Vec<_> = harness
+        .items(REDIS)
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+    assert!(!ids.contains(&"up".to_owned()), "{ids:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_operation_at_a_time_on_a_project() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.set_latency(Duration::from_secs(2));
+    assert_eq!(harness.press(SHOP_UP, "up-pull").await, [Command::Back]);
+    assert_eq!(
+        harness.press(SHOP_UP, "up-build").await,
+        Command::alert(),
+        "refused while the first one runs"
+    );
+    assert_eq!(label(&harness.item(SHOP, WEB)), "web-1 Pull…");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    harness.settle().await;
+    assert_eq!(harness.docker.actions(), ["up boutique --pull"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_down_of_one_service_never_removes_volumes() {
+    let harness = Harness::start(&json!({})).await;
+    assert_eq!(
+        harness.items(WEB_DOWN),
+        [("down-keep".into(), "Down".into(), KeyState::Normal)],
+        "compose removes the volumes of the whole project, whatever the service"
+    );
+    assert_eq!(harness.items(SHOP_DOWN).len(), 2, "the project keeps both");
+}
+
+#[tokio::test(start_paused = true)]
+async fn services_of_projects_not_in_the_settings_are_read_when_the_project_is_opened() {
+    const MONITORING_PROMETHEUS: &str = "service/supervision/prometheus";
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.change_externally(|containers| {
+        containers.retain(|c| c.name != "supervision-prometheus-1");
+    });
+    harness.settle().await;
+    assert!(
+        harness.page(MONITORING).is_some_and(|page| page
+            .items
+            .iter()
+            .all(|item| item.id.0 != MONITORING_PROMETHEUS)),
+        "not read by itself: the project is not one of the settings"
+    );
+
+    harness.press(MAIN_PAGE, MONITORING).await;
+    harness.settle().await;
+    assert_eq!(
+        harness.item(MONITORING, MONITORING_PROMETHEUS).image,
+        Some(icons::SERVICE_PLANNED.clone())
+    );
 }

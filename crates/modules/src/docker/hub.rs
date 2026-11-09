@@ -149,6 +149,21 @@ impl Subscription {
             report,
         )
     }
+
+    /// Reads in a task of its own the services the files of `target`
+    /// define, then hands them to `report`; `false` without a Tokio runtime.
+    pub(super) fn services(
+        &self,
+        target: ComposeTarget,
+        report: impl FnOnce(Result<Vec<String>, DockerError>) + Send + 'static,
+    ) -> bool {
+        let backend = Arc::clone(&self.hub.backend);
+        spawn_action(
+            async move { backend.compose_services(&target).await },
+            Err(DockerError::Panicked),
+            report,
+        )
+    }
 }
 
 impl Drop for Subscription {
@@ -390,6 +405,9 @@ mod tests {
         }
         async fn compose(&self, _: &ComposeTarget, _: ComposeAction) -> Result<(), DockerError> {
             panic!("fragile compose");
+        }
+        async fn compose_services(&self, _: &ComposeTarget) -> Result<Vec<String>, DockerError> {
+            panic!("fragile services");
         }
     }
 

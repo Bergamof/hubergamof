@@ -11,7 +11,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Module Docker : chaque fichier compose déclaré a un nom et une icône au choix. Les réglages listent les fichiers ajoutés (icône, nom, chemin) ; on les ajoute avec le sélecteur de fichier natif du bureau (portail `xdg-desktop-portal`, qui donne le vrai chemin, ce qu'un `<input type="file">` ne fait pas), puis on les modifie ou les supprime sur place. Sans portail (ou sans bureau), le chemin se saisit. Le nom remplace celui du projet compose sur la touche et dans les titres ; l'icône remplace les couches. Les icônes sont stockées comme les images de touche (même contrôle, export/import zip, nettoyage des inutilisées) et lues par les modules via `ModuleContext::images()`.
 - Contrat : réglage `SettingKind::FileEntryList` (`FileEntry` : chemin, nom, icône), route `POST /api/file-chooser/compose-file` (`FileChosen`), code d'erreur `unavailable`. Les anciens réglages `composeFiles` (liste de chemins) restent lus tels quels.
-
+- Module Docker : les services définis par un compose mais sans conteneur (pas encore construits) apparaissent sur la page du projet, avec une icône en pointillés qui les distingue des conteneurs arrêtés ; leur page propose `up`.
+- Module Docker : la page d'un conteneur compose a ses propres `up` et `down`, limités à son service ; lancer un `up` ou un `down` ramène à la page du projet, où les entrées concernées montrent l'opération en cours (`Build…`, `Pull…`, `Up…`, `Down…`).
 - Module Docker : `Up --no-start` (page « Up » du projet) crée les conteneurs sans les démarrer (`docker compose up --no-start`).
 
 ### Corrigé
@@ -35,6 +36,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Module Docker, page « Up » : les variantes se nomment Up, Rebuild, Pull et No start.
 - Interface web refondue : palette « thé et bergamote » (neutres teintés de vert, un seul accent chaud pour la sélection et l'action principale, thèmes clair et sombre), polices embarquées (Bricolage Grotesque, Instrument Sans, JetBrains Mono, sous-ensemble latin, aucun chargement externe), appareil dessiné comme un objet sombre à gauche et réglages de la touche ou de la molette choisie à droite. Une bande tactile est dessinée entre les touches et les molettes, avec l'icône du module de chaque molette (`DialStrip`) ; les molettes sont dessinées comme des molettes (`DialKnob`, repère bergamote) avec le nom de leur module, l'icône étant déjà sur la bande. Aucun changement de comportement ni de contrat.
 - Nouvelle identité : logo (grille de touches formant un « H », molette au centre), favicon, bannière simple en en-tête de l'interface et du README : le nom seul, fond transparent, « B » en dégradé doux entre « Hub » et « Bergamof ». L'icône de la barre système n'est plus l'icône générique `input-keyboard` mais la marque, envoyée en pixmaps ARGB (22, 32, 48 et 64 px).
 

@@ -38,9 +38,24 @@ const CONTEXT_VARIABLE: &str = "DOCKER_CONTEXT";
 /// Longest wait for a compose command: `up` may pull or build images.
 const COMPOSE_TIMEOUT: Duration = Duration::from_mins(15);
 
+/// Longest wait for the list of services: it only reads the files.
+const SERVICES_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// End of the error output kept in errors and logs (compose reports its
 /// progress there, and what failed last).
 const MAX_ERROR_BYTES: usize = 4 * 1024;
+
+/// What lists the services of a project.
+const SERVICES_COMMAND: &str = "config --services";
+
+/// Largest list of services read from compose.
+const MAX_SERVICES_BYTES: usize = 64 * 1024;
+
+/// Most services of a project taken into account.
+const MAX_SERVICES: usize = 200;
+
+/// Longest service name.
+const MAX_SERVICE_NAME_BYTES: usize = 128;
 
 /// Variables of a project, read by compose from its directory.
 const ENV_FILE: &str = ".env";
@@ -91,6 +106,57 @@ impl ComposeCli {
         target: &ComposeTarget,
         action: ComposeAction,
     ) -> Result<(), DockerError> {
+        let limits = OutputLimits {
+            stdout: None,
+            stderr: MAX_ERROR_BYTES,
+        };
+        self.invoke(target, limits, self.timeout, |host, target| {
+            compose_args(host, target, action)
+        })
+        .await
+        .map(drop)
+    }
+
+    /// The services the files of `target` define (`config --services`),
+    /// with or without containers.
+    pub(super) async fn services(
+        &self,
+        target: &ComposeTarget,
+    ) -> Result<Vec<String>, DockerError> {
+        let limits = OutputLimits {
+            stdout: Some(MAX_SERVICES_BYTES),
+            stderr: MAX_ERROR_BYTES,
+        };
+        let timeout = self.timeout.min(SERVICES_TIMEOUT);
+        let finished = self.invoke(target, limits, timeout, services_args).await?;
+        let listed = String::from_utf8_lossy(&finished.stdout);
+        listed
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(MAX_SERVICES)
+            .map(|name| {
+                if is_service_name(name) {
+                    Ok(name.to_owned())
+                } else {
+                    Err(DockerError::Unreadable {
+                        command: SERVICES_COMMAND.into(),
+                        reason: "a service name is not usable".into(),
+                    })
+                }
+            })
+            .collect()
+    }
+
+    /// Runs the compose command `arguments` builds for `target`, checking
+    /// its files first, and returns it when it succeeds.
+    async fn invoke(
+        &self,
+        target: &ComposeTarget,
+        limits: OutputLimits,
+        timeout: Duration,
+        arguments: impl FnOnce(&str, &ComposeTarget) -> Result<Vec<OsString>, DockerError>,
+    ) -> Result<process::Finished, DockerError> {
         let host = self
             .host
             .as_deref()
@@ -102,31 +168,28 @@ impl ComposeCli {
         } else {
             target
         };
-        let args = compose_args(host, target, action)?;
+        let args = arguments(host, target)?;
         let command = self.command(&args);
-        let limits = OutputLimits {
-            stdout: None,
-            stderr: MAX_ERROR_BYTES,
-        };
         let line = || command_line(&args);
-        let finished = process::run(command, self.timeout, limits)
-            .await
-            .map_err(|error| match error {
-                RunError::Spawn(source) => DockerError::Spawn {
-                    program: self.program.to_string_lossy().into_owned(),
-                    source,
-                },
-                RunError::Timeout => DockerError::Timeout {
-                    command: line(),
-                    timeout: self.timeout,
-                },
-                RunError::Output(reason) => DockerError::Unreadable {
-                    command: line(),
-                    reason,
-                },
-            })?;
+        let finished =
+            process::run(command, timeout, limits)
+                .await
+                .map_err(|error| match error {
+                    RunError::Spawn(source) => DockerError::Spawn {
+                        program: self.program.to_string_lossy().into_owned(),
+                        source,
+                    },
+                    RunError::Timeout => DockerError::Timeout {
+                        command: line(),
+                        timeout,
+                    },
+                    RunError::Output(reason) => DockerError::Unreadable {
+                        command: line(),
+                        reason,
+                    },
+                })?;
         if finished.status.success() {
-            Ok(())
+            Ok(finished)
         } else {
             Err(DockerError::ComposeFailed {
                 command: line(),
@@ -156,6 +219,47 @@ fn compose_args(
     action: ComposeAction,
 ) -> Result<Vec<OsString>, DockerError> {
     let needs_files = target.project.is_none() || matches!(action, ComposeAction::Up(_));
+    let mut args = base_args(host, target, needs_files)?;
+    match action {
+        ComposeAction::Up(variant) => {
+            args.push("up".into());
+            match variant {
+                UpVariant::Plain => args.push("--detach".into()),
+                UpVariant::Build => args.extend(["--detach".into(), "--build".into()]),
+                UpVariant::Pull => args.extend(["--detach".into(), "--pull=always".into()]),
+                // Nothing runs, so there is nothing to detach from.
+                UpVariant::NoStart => args.push("--no-start".into()),
+            }
+        }
+        ComposeAction::Down { volumes } => {
+            args.push("down".into());
+            if volumes {
+                args.push("--volumes".into());
+            }
+        }
+    }
+    let services = service_arguments(target)?;
+    if !services.is_empty() {
+        // Even a name that passed the check is never read as an option.
+        args.push("--".into());
+        args.extend(services);
+    }
+    Ok(args)
+}
+
+/// Arguments of `docker` listing the services the files of `target` define.
+fn services_args(host: &str, target: &ComposeTarget) -> Result<Vec<OsString>, DockerError> {
+    let mut args = base_args(host, target, true)?;
+    args.extend(SERVICES_COMMAND.split(' ').map(OsString::from));
+    Ok(args)
+}
+
+/// The arguments naming the host, the project and its files.
+fn base_args(
+    host: &str,
+    target: &ComposeTarget,
+    needs_files: bool,
+) -> Result<Vec<OsString>, DockerError> {
     if target.files.is_empty() && needs_files {
         return Err(DockerError::InvalidTarget(
             "no compose file known for this project".into(),
@@ -175,25 +279,38 @@ fn compose_args(
     for file in &target.files {
         args.push(option("--file", absolute(file)?));
     }
-    match action {
-        ComposeAction::Up(variant) => {
-            args.push("up".into());
-            match variant {
-                UpVariant::Plain => args.push("--detach".into()),
-                UpVariant::Build => args.extend(["--detach".into(), "--build".into()]),
-                UpVariant::Pull => args.extend(["--detach".into(), "--pull=always".into()]),
-                // Nothing runs, so there is nothing to detach from.
-                UpVariant::NoStart => args.push("--no-start".into()),
-            }
-        }
-        ComposeAction::Down { volumes } => {
-            args.push("down".into());
-            if volumes {
-                args.push("--volumes".into());
-            }
-        }
-    }
     Ok(args)
+}
+
+/// The services of the action, last: each is checked, since a name read
+/// from container labels (anyone allowed to create containers sets them)
+/// must never be taken for an option.
+fn service_arguments(target: &ComposeTarget) -> Result<Vec<OsString>, DockerError> {
+    target
+        .services
+        .iter()
+        .map(|service| {
+            if is_service_name(service) {
+                Ok(service.into())
+            } else {
+                Err(DockerError::InvalidTarget(format!(
+                    "{service:?} is not a usable service name"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// Whether `name` is a service name compose allows (letters, digits, `.`,
+/// `_` and `-`, not starting with a symbol): never an option.
+fn is_service_name(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && name.len() <= MAX_SERVICE_NAME_BYTES
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 /// `name=value` as one argument.
@@ -240,7 +357,13 @@ async fn trusted_target(target: &ComposeTarget) -> Result<ComposeTarget, DockerE
     {
         check_trusted(&env).await?;
     }
-    Ok(ComposeTarget::new(target.project.clone(), directory, files))
+    // Whatever else the target carries (its services) stays: a scope lost here
+    // would widen the action to the whole project.
+    Ok(ComposeTarget {
+        directory,
+        files,
+        ..target.clone()
+    })
 }
 
 /// `path` with its links resolved, once found trusted (see
@@ -385,6 +508,81 @@ mod tests {
         );
     }
 
+    #[test]
+    fn services_narrow_the_action_and_are_given_last() {
+        let web = running("shop").with_services(vec!["web".into(), "db-2".into()]);
+        assert!(
+            line(&web, ComposeAction::Up(UpVariant::Build))
+                .ends_with(" up --detach --build -- web db-2")
+        );
+        assert!(
+            line(&web, ComposeAction::Up(UpVariant::NoStart))
+                .ends_with(" up --no-start -- web db-2")
+        );
+        assert!(
+            line(&web, ComposeAction::Down { volumes: true })
+                .ends_with(" down --volumes -- web db-2")
+        );
+        assert!(
+            line(&running("shop"), ComposeAction::Down { volumes: false }).ends_with(" down"),
+            "no service: the whole project"
+        );
+    }
+
+    #[test]
+    fn a_service_name_is_never_taken_for_an_option() {
+        for name in [
+            "--rm",
+            "-d",
+            "",
+            "a b",
+            "web;ls",
+            "../web",
+            &"x".repeat(MAX_SERVICE_NAME_BYTES + 1),
+        ] {
+            let target = running("shop").with_services(vec![name.into()]);
+            assert!(
+                matches!(
+                    compose_args(HOST, &target, ComposeAction::Up(UpVariant::Plain)),
+                    Err(DockerError::InvalidTarget(_))
+                ),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_services_are_read_from_config_and_each_name_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_docker(
+            dir.path(),
+            "printf 'web\n\n  db  \nredis-cache\n'",
+            PATIENCE,
+        );
+        let services = cli.services(&running("shop")).await.unwrap();
+        assert_eq!(services, ["web", "db", "redis-cache"]);
+        let logged = logged(dir.path());
+        assert_eq!(logged[logged.len() - 3..], ["config", "--services", "none"]);
+
+        let hostile = fake_docker(dir.path(), "printf 'web\n--rm\n'", PATIENCE);
+        assert!(matches!(
+            hostile.services(&running("shop")).await,
+            Err(DockerError::Unreadable { .. })
+        ));
+        let failing = fake_docker(dir.path(), "echo 'invalid compose' >&2; exit 1", PATIENCE);
+        assert!(matches!(
+            failing.services(&running("shop")).await,
+            Err(DockerError::ComposeFailed { .. })
+        ));
+        assert!(
+            matches!(
+                cli.services(&ComposeTarget::default()).await,
+                Err(DockerError::InvalidTarget(_))
+            ),
+            "the files are needed to read the services"
+        );
+    }
+
     #[tokio::test]
     async fn a_failure_is_reported_with_the_end_of_its_errors() {
         let dir = tempfile::tempdir().unwrap();
@@ -519,9 +717,15 @@ mod tests {
         let link = dir.path().join("project-link");
         std::os::unix::fs::symlink(&project, &link).unwrap();
         let running =
-            ComposeTarget::new(Some("shop".into()), Some(link.clone()), vec![file.clone()]);
+            ComposeTarget::new(Some("shop".into()), Some(link.clone()), vec![file.clone()])
+                .with_services(vec!["web".into()]);
 
         let resolved = trusted_target(&running).await.unwrap();
+        assert_eq!(
+            resolved.services,
+            ["web"],
+            "the scope survives the checks, or a service's down would take the project"
+        );
         assert_eq!(
             resolved.directory,
             Some(project.canonicalize().unwrap()),
