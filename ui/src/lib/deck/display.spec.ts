@@ -9,6 +9,7 @@ const audio: CatalogModule = {
 	capabilities: { key: true, dial: true, touchZone: true },
 	settings: [],
 	icon: null,
+	settingIcons: {},
 	defaultSettings: {}
 };
 

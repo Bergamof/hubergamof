@@ -17,8 +17,8 @@ Form control of one module setting, chosen from its kind.
 		/** Device and client of the files a file list stores icons for. */
 		serial: string;
 		api: ManagerApi;
-		/** Icon of the module, shown for a file without icon. */
-		moduleIcon: string | null | undefined;
+		/** Icon of an item without image of its own (module icon unless the module says otherwise). */
+		defaultIcon: string | null | undefined;
 		/** Called after a change that raises no `input` event (a file list). */
 		onedit: () => void;
 		/** Called when a file of a file list starts or stops being edited. */
@@ -32,7 +32,7 @@ Form control of one module setting, chosen from its kind.
 		error,
 		serial,
 		api,
-		moduleIcon,
+		defaultIcon,
 		onedit,
 		onediting
 	}: Props = $props();
@@ -69,7 +69,7 @@ Form control of one module setting, chosen from its kind.
 			entries={Array.isArray(value) ? value : []}
 			{serial}
 			{api}
-			defaultIcon={moduleIcon}
+			{defaultIcon}
 			invalid={error !== undefined}
 			{onediting}
 			onchange={(entries) => {

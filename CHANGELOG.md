@@ -14,6 +14,9 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Sélecteur de fichier compose : le signal de réponse du portail est écouté sans dépendre du nom du service (activé à la demande sous Ubuntu), la réponse est reconnue par le chemin de la requête renvoyé par le portail, et une erreur D-Bus réelle n'est plus déguisée en « indisponible » (elle est journalisée).
+- Réglages Docker : un fichier compose sans image personnalisée montre l'icône des projets compose (les couches) et non la baleine du module (`ModuleFactory::setting_item_icon`, `CatalogModule::setting_icons`).
+
 - Image Docker : `zlib1g` est mis à jour dans l'étage d'exécution (deux CVE HIGH corrigées par Debian, absentes du digest épinglé de `debian:trixie-slim`), ce qui faisait échouer le scan Trivy de la CI.
 
 - Bande tactile incomplète au premier démarrage ou après un rebranchement : seules les zones qui changeaient (l'horloge) s'affichaient, les écritures faites juste à la connexion étant perdues par l'appareil. Toute la bande est désormais réécrite une fois, 400 ms après le premier dessin.

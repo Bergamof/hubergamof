@@ -159,6 +159,7 @@ describe('device selection', () => {
 			capabilities: { key: false, dial: true, touchZone: true },
 			settings: [],
 			icon: null,
+			settingIcons: {},
 			defaultSettings: {}
 		};
 		connection.receive({ type: 'moduleCatalog', modules: [clock] });
@@ -216,6 +217,7 @@ describe('configuration updates', () => {
 			capabilities: { key: true, dial: true, touchZone: true },
 			settings: [],
 			icon: null,
+			settingIcons: {},
 			defaultSettings: {}
 		};
 		state.edit(addKey(clock));

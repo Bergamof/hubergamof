@@ -139,6 +139,11 @@ impl ModuleFactory for DockerFactory {
         Some(icons::MODULE.clone())
     }
 
+    fn setting_item_icon(&self, key: &str) -> Option<ImageData> {
+        // The layers of a project that has no image of its own.
+        (key == COMPOSE_FILES_KEY).then(|| icons::PROJECT_STOPPED.clone())
+    }
+
     fn validate_settings(&self, settings: &Value) -> Result<(), ModuleError> {
         ParsedSettings::parse(settings).map(drop)
     }

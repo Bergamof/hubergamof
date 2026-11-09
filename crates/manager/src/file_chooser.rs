@@ -179,16 +179,17 @@ async fn ask_portal(
     connection: &Connection,
     purpose: FilePurpose,
     token: &str,
-    path: OwnedObjectPath,
+    expected: OwnedObjectPath,
 ) -> Result<Option<PathBuf>, FilePickerError> {
     let chooser = PortalFileChooserProxy::new(connection)
         .await
         .map_err(|_| FilePickerError::Unavailable)?;
-    // Listen before asking: the answer must not be missed.
-    let request = Proxy::new(connection, PORTAL_SERVICE, path, REQUEST_INTERFACE)
+    // Listen before asking, whatever the sender: the portal is often started by the call
+    // itself (D-Bus activation), so its name has no owner yet, and the answer must not be
+    // missed. Portals send a `Response` to the caller only: no other program's answer arrives.
+    let mut responses = zbus::MessageStream::for_match_rule(response_rule()?, connection, None)
         .await
         .map_err(failed)?;
-    let mut responses = request.receive_signal("Response").await.map_err(failed)?;
 
     let options = HashMap::from([
         ("handle_token", Variant::from(token)),
@@ -196,21 +197,55 @@ async fn ask_portal(
         ("multiple", Variant::from(false)),
         ("filters", Variant::new(portal_filters(purpose))),
     ]);
-    chooser
+    let handle = chooser
         .open_file("", purpose.title(), options)
         .await
-        .map_err(|error| match error {
-            zbus::Error::MethodError(..) | zbus::Error::NameTaken => FilePickerError::Unavailable,
-            other => failed(other),
-        })?;
+        .map_err(opening_error)?;
+    // Older portals ignore the token: the request is the one they return.
+    let ours = |path: Option<&ObjectPath<'_>>| {
+        path.is_some_and(|path| path.as_str() == handle.as_str() || path == &*expected)
+    };
 
-    let response = responses
-        .next()
-        .await
-        .ok_or_else(|| FilePickerError::Failed("the dialog closed without answering".to_owned()))?;
-    let (code, results): (u32, HashMap<String, OwnedVariant>) =
-        response.body().deserialize().map_err(failed)?;
-    interpret_response(code, &results)
+    loop {
+        let message = responses
+            .next()
+            .await
+            .ok_or_else(|| FilePickerError::Failed("the bus closed without an answer".to_owned()))?
+            .map_err(failed)?;
+        if !ours(message.header().path()) {
+            continue;
+        }
+        let (code, results): (u32, HashMap<String, OwnedVariant>) =
+            message.body().deserialize().map_err(failed)?;
+        return interpret_response(code, &results);
+    }
+}
+
+/// The `Response` signals of portal requests.
+fn response_rule() -> Result<zbus::MatchRule<'static>, FilePickerError> {
+    zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface(REQUEST_INTERFACE)
+        .member("Response")
+        .build()
+        .map_err(failed)
+}
+
+/// Why the portal refused to open the dialog: unavailable when nothing serves the
+/// interface, otherwise what it said (logged, it is what tells a desktop's quirk).
+fn opening_error(error: zbus::Error) -> FilePickerError {
+    const MISSING_SERVICE: [&str; 3] = [
+        "org.freedesktop.DBus.Error.ServiceUnknown",
+        "org.freedesktop.DBus.Error.NameHasNoOwner",
+        "org.freedesktop.DBus.Error.UnknownObject",
+    ];
+    if let zbus::Error::MethodError(name, _, _) = &error
+        && MISSING_SERVICE.contains(&name.as_str())
+    {
+        return FilePickerError::Unavailable;
+    }
+    tracing::warn!(%error, "the file chooser portal refused to open the dialog");
+    failed(error)
 }
 
 /// What the `Response` of the portal says: the chosen file, `None` when the user closed the
@@ -414,6 +449,15 @@ mod tests {
             with_timeout(DIALOG_TIMEOUT, std::future::ready(Ok(())))
                 .await
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_response_rule_matches_the_signals_of_requests() {
+        let rule = response_rule().unwrap();
+        assert_eq!(
+            rule.to_string(),
+            "type='signal',interface='org.freedesktop.portal.Request',member='Response'"
         );
     }
 

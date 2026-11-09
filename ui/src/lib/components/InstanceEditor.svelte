@@ -191,7 +191,7 @@ and lets the user reload it.
 			error={errors[field.key]}
 			{serial}
 			{api}
-			moduleIcon={module?.icon}
+			defaultIcon={module?.settingIcons[field.key] ?? module?.icon}
 			onedit={edited}
 			onediting={(editing) => (editingFile = editing)}
 		/>

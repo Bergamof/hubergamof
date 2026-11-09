@@ -1,10 +1,12 @@
 //! Module catalog sent to the UI, built once at startup: the descriptor of
 //! every registered module and its icon rendered like a key.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use hubergamof_module_api::ModuleFactory;
 use hubergamof_modules::ModuleRegistry;
-use hubergamof_protocol::{CatalogModule, ModuleKind};
+use hubergamof_protocol::{CatalogModule, ModuleDescriptor, ModuleKind, SettingKind};
 
 use super::UI_IMAGE_SIZE;
 use crate::render::{ImageSource, RenderError, Renderer};
@@ -21,11 +23,31 @@ pub fn module_catalog(registry: &ModuleRegistry, renderer: &Renderer) -> Arc<[Ca
             let icon = factory
                 .icon()
                 .and_then(|icon| icon_data_url(renderer, &descriptor.kind, icon.bytes));
+            let setting_icons = setting_icons(renderer, factory.as_ref(), &descriptor);
             CatalogModule {
                 descriptor,
                 icon,
+                setting_icons,
                 default_settings: factory.default_settings(),
             }
+        })
+        .collect()
+}
+
+/// The icons of the items of the list settings of `descriptor`, by setting key.
+fn setting_icons(
+    renderer: &Renderer,
+    factory: &dyn ModuleFactory,
+    descriptor: &ModuleDescriptor,
+) -> BTreeMap<String, String> {
+    descriptor
+        .settings
+        .iter()
+        .filter(|field| matches!(field.kind, SettingKind::FileEntryList { .. }))
+        .filter_map(|field| {
+            let icon = factory.setting_item_icon(&field.key)?;
+            let url = icon_data_url(renderer, &descriptor.kind, icon.bytes)?;
+            Some((field.key.clone(), url))
         })
         .collect()
 }
@@ -99,6 +121,26 @@ mod tests {
             registry.register(Arc::new(factory));
         }
         module_catalog(&registry, &Renderer::new().unwrap())
+    }
+
+    #[test]
+    fn compose_files_without_an_image_show_the_project_icon_not_the_module_one() {
+        let registry = crate::testing::builtin_registry();
+        let catalog = module_catalog(&registry, &Renderer::new().unwrap());
+        let docker = catalog
+            .iter()
+            .find(|module| module.descriptor.kind.0 == "docker")
+            .unwrap();
+        let project_icon = docker.setting_icons.get("composeFiles").unwrap();
+        assert!(project_icon.starts_with(PNG_DATA_URL_PREFIX));
+        assert_ne!(Some(project_icon), docker.icon.as_ref());
+        for module in catalog.iter().filter(|m| m.descriptor.kind.0 != "docker") {
+            assert!(
+                module.setting_icons.is_empty(),
+                "{}",
+                module.descriptor.kind.0
+            );
+        }
     }
 
     #[test]

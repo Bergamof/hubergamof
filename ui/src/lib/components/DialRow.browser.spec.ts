@@ -6,6 +6,7 @@ import DialRow from './DialRow.svelte';
 
 const AUDIO: CatalogModule = {
 	icon: 'data:image/png;base64,AAAA',
+	settingIcons: {},
 	defaultSettings: {},
 	kind: 'audio',
 	name: 'Audio',
