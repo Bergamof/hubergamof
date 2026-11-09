@@ -9,6 +9,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Image Docker : `zlib1g` est mis à jour dans l'étage d'exécution (deux CVE HIGH corrigées par Debian, absentes du digest épinglé de `debian:trixie-slim`), ce qui faisait échouer le scan Trivy de la CI.
+
 - Bande tactile incomplète au premier démarrage ou après un rebranchement : seules les zones qui changeaient (l'horloge) s'affichaient, les écritures faites juste à la connexion étant perdues par l'appareil. Toute la bande est désormais réécrite une fois, 400 ms après le premier dessin.
 
 - Applications lancées par le gestionnaire (IntelliJ, Claude) : elles prennent aussi leur propre groupe de processus, pour ne plus se fermer avec le gestionnaire lorsqu'un signal (Ctrl-C dans le terminal) vise le groupe de celui-ci.
