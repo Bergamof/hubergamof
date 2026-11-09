@@ -19,6 +19,7 @@ function fakeApi(chosen: ApiResult<string | null> = { ok: true, value: null }) {
 async function show(entries: FileEntryDraft[], chosen?: ApiResult<string | null>) {
 	const { api, asApi } = fakeApi(chosen);
 	const onchange = vi.fn();
+	const onediting = vi.fn();
 	await render(FileEntryListInput, {
 		id: 'files',
 		labelledBy: 'files-label',
@@ -27,9 +28,11 @@ async function show(entries: FileEntryDraft[], chosen?: ApiResult<string | null>
 		serial: 'DECK',
 		api: asApi,
 		defaultIcon: 'data:image/png;base64,AAAA',
+		invalid: false,
+		onediting,
 		onchange
 	});
-	return { api, onchange };
+	return { api, onchange, onediting };
 }
 
 describe('FileEntryListInput', () => {
@@ -160,5 +163,52 @@ describe('FileEntryListInput', () => {
 		await expect.element(page.getByText('Image refusée.')).toBeVisible();
 		await page.getByRole('button', { name: 'Valider' }).click();
 		expect(onchange).toHaveBeenCalledExactlyOnceWith([SHOP]);
+	});
+
+	it('cancels the edit with Escape and gives the focus back to the file', async () => {
+		const { onchange } = await show([SHOP]);
+		await page.getByRole('button', { name: 'Modifier Boutique' }).click();
+		await page.getByLabelText('Nom').fill('Autre');
+		await userEvent.keyboard('{Escape}');
+		await expect.element(page.getByLabelText('Nom')).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Modifier Boutique' })).toHaveFocus();
+		expect(onchange).not.toHaveBeenCalled();
+	});
+
+	it('leaves the other files alone while one is being edited', async () => {
+		const { api, onchange } = await show([SHOP, BLOG]);
+		await page.getByRole('button', { name: 'Modifier Boutique' }).click();
+		// aria-disabled buttons stay in the page and ignore the click (a real click would wait).
+		for (const name of ['Supprimer blog', 'Modifier blog', 'Ajouter un fichier…']) {
+			const button = page.getByRole('button', { name }).element() as HTMLElement;
+			expect(button.getAttribute('aria-disabled')).toBe('true');
+			button.click();
+		}
+		expect(onchange).not.toHaveBeenCalled();
+		expect(api.chooseComposeFile).not.toHaveBeenCalled();
+		await expect.element(page.getByLabelText('Fichier')).toHaveValue('/srv/shop/compose.yaml');
+	});
+
+	it('tells the form when a file is being edited', async () => {
+		const { onediting } = await show([SHOP]);
+		await page.getByRole('button', { name: 'Modifier Boutique' }).click();
+		await expect.poll(() => onediting.mock.lastCall?.[0]).toBe(true);
+		await page.getByRole('button', { name: 'Annuler' }).click();
+		await expect.poll(() => onediting.mock.lastCall?.[0]).toBe(false);
+	});
+
+	it('puts the focus on the next file after a removal, else on the button adding one', async () => {
+		await show([SHOP, BLOG]);
+		await page.getByRole('button', { name: 'Supprimer Boutique' }).click();
+		await expect.element(page.getByRole('button', { name: 'Modifier Boutique' })).toHaveFocus();
+	});
+
+	it('refuses a name with control characters', async () => {
+		const { onchange } = await show([SHOP]);
+		await page.getByRole('button', { name: 'Modifier Boutique' }).click();
+		await page.getByLabelText('Nom').fill('a\u202Eb');
+		await page.getByRole('button', { name: 'Valider' }).click();
+		await expect.element(page.getByText(/caractère de contrôle/)).toBeVisible();
+		expect(onchange).not.toHaveBeenCalled();
 	});
 });

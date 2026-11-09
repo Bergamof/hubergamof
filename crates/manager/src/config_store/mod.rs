@@ -40,6 +40,8 @@ pub use archive::{
 };
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, default_config};
 
+use tokio::io::AsyncReadExt as _;
+
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};
 
 /// Directory holding one sub-directory per device serial.
@@ -137,7 +139,7 @@ pub enum ConfigStoreError {
     #[error(transparent)]
     Archive(#[from] ArchiveError),
     /// The archived configuration uses an image the archive does not hold.
-    #[error("the archive has no image `{0}`")]
+    #[error("the archive has no image {0:?}")]
     MissingImage(String),
 }
 
@@ -471,8 +473,14 @@ impl ConfigStore {
         ImageLibrary::new(move |name| {
             let path = store.image_path(&serial, name).ok();
             Box::pin(async move {
-                let bytes = tokio::fs::read(path?).await.ok()?;
-                Some(ImageData::new(bytes))
+                // Bounded like any source image, whatever the file became.
+                let file = tokio::fs::File::open(path?).await.ok()?;
+                let mut bytes = Vec::new();
+                file.take(MAX_SOURCE_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                    .await
+                    .ok()?;
+                (bytes.len() <= MAX_SOURCE_BYTES).then(|| ImageData::new(bytes))
             })
         })
     }
@@ -642,9 +650,10 @@ impl<'a, C: Fn(&[u8]) -> Result<ImageKind, String>> ImageStager<'a, C> {
         if let Some(stored) = self.stored.get(name) {
             return Ok(stored.clone());
         }
-        let content = self
-            .archived
-            .get(name)
+        // A name no image of the archive can have: not echoed beyond the error's escaped form.
+        let content = Some(name)
+            .filter(|name| is_safe_image_name(name))
+            .and_then(|name| self.archived.get(name))
             .ok_or_else(|| ConfigStoreError::MissingImage(name.to_owned()))?;
         let kind = (self.check)(content).map_err(|reason| ConfigStoreError::UnreadableImage {
             name: name.to_owned(),

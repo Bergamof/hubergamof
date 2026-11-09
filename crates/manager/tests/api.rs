@@ -12,7 +12,9 @@ use hubergamof_manager::config_store::{ConfigStore, IMAGES_DIR, MAX_ARCHIVE_BYTE
 use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineHandle, EngineServices, Supervisor};
-use hubergamof_manager::file_chooser::{FilePicker, NoFilePicker, SimulatedFilePicker};
+use hubergamof_manager::file_chooser::{
+    FilePicker, FilePickerError, FilePurpose, NoFilePicker, SimulatedFilePicker,
+};
 use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, ServerContext, SimulatedInput, module_catalog, router,
@@ -648,5 +650,94 @@ async fn the_file_chooser_is_refused_to_foreign_origins() {
         )
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    api.stop().await;
+}
+
+/// A dialog that stays open until `release` is notified.
+struct HeldDialog {
+    opened: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl FilePicker for HeldDialog {
+    async fn pick_file(
+        &self,
+        _purpose: FilePurpose,
+    ) -> Result<Option<std::path::PathBuf>, FilePickerError> {
+        self.opened.notify_one();
+        self.release.notified().await;
+        Ok(Some(CHOSEN_FILE.into()))
+    }
+}
+
+#[tokio::test]
+async fn a_dialog_stays_the_only_one_even_when_its_request_is_dropped() {
+    let opened = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let api = Api::start_with(Arc::new(HeldDialog {
+        opened: Arc::clone(&opened),
+        release: Arc::clone(&release),
+    }))
+    .await;
+    let request = |router: axum::Router| {
+        router.oneshot(
+            Request::post("/api/file-chooser/compose-file")
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let first = tokio::spawn(request(api.router.clone()));
+    tokio::time::timeout(WAIT, opened.notified()).await.unwrap();
+
+    let second = request(api.router.clone()).await.unwrap();
+    assert_eq!(
+        api_error(second).await,
+        (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
+    );
+
+    // The client goes away: the dialog is still on the screen, so still the only one.
+    first.abort();
+    let _ = first.await;
+    let third = request(api.router.clone()).await.unwrap();
+    assert_eq!(third.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    release.notify_one();
+    let mut accepted = false;
+    for _ in 0..50 {
+        if request(api.router.clone()).await.unwrap().status() == StatusCode::OK {
+            accepted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        release.notify_one();
+    }
+    assert!(accepted, "a new dialog opens once the first one is over");
+    api.stop().await;
+}
+
+struct BrokenDialog;
+
+#[async_trait::async_trait]
+impl FilePicker for BrokenDialog {
+    async fn pick_file(
+        &self,
+        _purpose: FilePurpose,
+    ) -> Result<Option<std::path::PathBuf>, FilePickerError> {
+        Err(FilePickerError::Failed(
+            "secret detail /run/user/1000".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_failing_dialog_is_an_internal_error_without_its_details() {
+    let api = Api::start_with(Arc::new(BrokenDialog)).await;
+    let response = choose_compose_file(&api).await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = String::from_utf8(bytes(response).await).unwrap();
+    assert!(!body.contains("secret detail"), "{body}");
     api.stop().await;
 }

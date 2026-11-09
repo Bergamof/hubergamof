@@ -668,3 +668,105 @@ fn imported_icons_are_named_by_content_like_key_images() {
         Err(ConfigStoreError::MissingImage(name)) if name == "renamed-by-hand.png"
     ));
 }
+
+#[tokio::test]
+async fn instances_read_the_stored_images_of_their_device_only() {
+    let (_dir, store) = store();
+    let name = store
+        .store_image(DEMO_SERIAL, &png_image(), ImageKind::Png)
+        .unwrap();
+    let library = store.image_library(DEMO_SERIAL);
+    assert_eq!(
+        library.load(&name).await.unwrap().bytes.as_ref(),
+        png_image().as_slice()
+    );
+    assert!(library.load("absent.png").await.is_none());
+    for unsafe_name in ["../config.json", "a/b.png", ".hidden", ""] {
+        assert!(library.load(unsafe_name).await.is_none(), "{unsafe_name}");
+    }
+    assert!(
+        store
+            .image_library("OTHER0000001")
+            .load(&name)
+            .await
+            .is_none(),
+        "images belong to a device"
+    );
+}
+
+#[tokio::test]
+async fn an_icon_larger_than_a_source_image_is_not_read() {
+    let (_dir, store) = store();
+    let images = store.device_dir(DEMO_SERIAL).unwrap().join(IMAGES_DIR);
+    fs::create_dir_all(&images).unwrap();
+    fs::write(images.join("huge.png"), vec![0; MAX_SOURCE_BYTES + 1]).unwrap();
+    assert!(
+        store
+            .image_library(DEMO_SERIAL)
+            .load("huge.png")
+            .await
+            .is_none()
+    );
+}
+
+#[test]
+fn settings_saved_with_plain_compose_paths_still_load_export_and_import() {
+    let (_dir, store) = store();
+    let mut config = store.load(&plus()).unwrap().config;
+    let docker = config
+        .modules
+        .iter_mut()
+        .find(|module| module.kind.0 == "docker")
+        .unwrap();
+    docker.settings = serde_json::json!({ "composeFiles": ["/srv/shop/compose.yaml"] });
+    let saved = store.save(&plus(), config).unwrap();
+
+    let loaded = store.load(&plus()).unwrap().config;
+    assert_eq!(
+        loaded, saved,
+        "kept as written, nothing pruned or rewritten"
+    );
+    let archive = store.export(DEMO_SERIAL, &loaded).unwrap();
+    let prepared = prepare_import(&archive, &plus(), 0, store.defaults(), sniffed).unwrap();
+    let docker = prepared
+        .config
+        .modules
+        .iter()
+        .find(|module| module.kind.0 == "docker")
+        .unwrap();
+    assert_eq!(
+        docker.settings,
+        serde_json::json!({ "composeFiles": ["/srv/shop/compose.yaml"] })
+    );
+}
+
+#[test]
+fn an_archive_naming_a_hostile_icon_is_refused_without_echoing_it_raw() {
+    let (_dir, store) = store();
+    let config = with_docker_icon(&store, "../x\nINJECTED");
+    let archive = archive_of(&config, &[("../x\nINJECTED", png_image())]);
+    let error = prepare_import(&archive, &plus(), 0, store.defaults(), sniffed).unwrap_err();
+    assert!(!error.to_string().contains('\n'), "{error}");
+}
+
+#[test]
+fn one_image_used_as_icon_and_as_key_image_is_kept_and_archived_once() {
+    let (_dir, store) = store();
+    let name = store
+        .store_image(DEMO_SERIAL, &png_image(), ImageKind::Png)
+        .unwrap();
+    let mut config = with_docker_icon(&store, &name);
+    let first = config.home[0].clone();
+    config
+        .modules
+        .iter_mut()
+        .find(|module| module.id == first)
+        .unwrap()
+        .image = Some(name.clone());
+    store.save(&plus(), config.clone()).unwrap();
+    store.load(&plus()).unwrap();
+    assert!(store.image_path(DEMO_SERIAL, &name).unwrap().is_file());
+
+    let archive = read_archive(&store.export(DEMO_SERIAL, &config).unwrap()).unwrap();
+    assert_eq!(archive.images.len(), 1);
+}

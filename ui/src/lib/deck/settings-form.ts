@@ -156,6 +156,10 @@ export function fileEntryError(entry: FileEntryDraft): string | undefined {
 	if ([...entry.name.trim()].length > MAX_ENTRY_NAME_CHARS) {
 		return `Nom trop long : ${MAX_ENTRY_NAME_CHARS} caractères au plus.`;
 	}
+	// Same refusal as the module API: such characters scramble what the name shows.
+	if (/[\p{Cc}\u202A-\u202E\u2066-\u2069]/u.test(entry.name)) {
+		return 'Le nom ne peut pas contenir de caractère de contrôle.';
+	}
 	return undefined;
 }
 

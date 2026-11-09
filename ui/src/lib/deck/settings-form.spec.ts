@@ -204,6 +204,7 @@ describe('file lists', () => {
 		expect(error([entry('/a.yaml', 'x'.repeat(MAX_ENTRY_NAME_CHARS + 1))])).toMatch(
 			/Nom trop long/
 		);
+		expect(error([entry('/a.yaml', 'a\u202Eb')])).toMatch(/caractère de contrôle/);
 		expect(error([entry('/a.yaml'), entry(' /a.yaml ', 'autre')])).toMatch(/déjà dans la liste/);
 		expect(
 			error(Array.from({ length: MAX_FILE_ENTRIES + 1 }, (_, i) => entry(`/${i}.yaml`)))

@@ -374,6 +374,9 @@ fn check_file_entry(fields: &Map<String, Value>) -> Result<(), String> {
                     "a file name is longer than {MAX_ENTRY_NAME_CHARS} characters"
                 ));
             }
+            if name.chars().any(is_hidden_control) {
+                return Err("a file name holds control or bidirectional characters".to_owned());
+            }
         }
         Some(_) => return Err("a file `name` must be a string".to_owned()),
     }
@@ -382,6 +385,12 @@ fn check_file_entry(fields: &Map<String, Value>) -> Result<(), String> {
         Some(Value::String(icon)) if is_safe_image_name(icon) => Ok(()),
         Some(_) => Err("a file `icon` must be the name of a stored image".to_owned()),
     }
+}
+
+/// Control characters and the bidirectional overrides (U+202A–202E, U+2066–2069): they
+/// scramble what a name shows on the device and in the logs.
+fn is_hidden_control(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// A path the host can resolve without a working directory.
@@ -645,6 +654,7 @@ mod tests {
             json!([{ "path": "~/a.yaml", "name": null, "icon": null }]),
             json!([{ "path": "~/a.yaml", "name": "Web", "icon": "0f3a.png" }]),
             json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_ENTRY_NAME_CHARS) }]),
+            json!([{ "path": "~/a.yaml", "name": "é".repeat(MAX_ENTRY_NAME_CHARS) }]),
         ];
         for value in accepted {
             assert!(field("files", file_entries()).validate(&value).is_ok());
@@ -659,6 +669,8 @@ mod tests {
             json!([{}]),
             json!([{ "path": "relative.yaml" }]),
             json!([{ "path": "~/a.yaml", "name": 3 }]),
+            json!([{ "path": "~/a.yaml", "name": "a\nb" }]),
+            json!([{ "path": "~/a.yaml", "name": "a\u{202E}b" }]),
             json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_ENTRY_NAME_CHARS + 1) }]),
             json!([{ "path": "~/a.yaml", "icon": "../etc/passwd" }]),
             json!([{ "path": "~/a.yaml", "icon": 4 }]),

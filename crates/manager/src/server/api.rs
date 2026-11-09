@@ -270,15 +270,20 @@ async fn export(
 /// answers the path of the compose file the user chose (`null` when they
 /// closed it). Needs the user at the screen, and only one dialog at a time.
 async fn choose_compose_file(State(state): State<AppState>) -> Result<Response, Failure> {
-    let _dialog = state
-        .file_dialog
-        .try_acquire()
+    let dialog = Arc::clone(&state.file_dialog)
+        .try_acquire_owned()
         .map_err(|_| Failure::new(ErrorCode::Unavailable, "a file chooser is already open"))?;
-    let chosen = state
-        .context
-        .file_picker
-        .pick_file(FilePurpose::ComposeFile)
-        .await?;
+    let picker = Arc::clone(&state.context.file_picker);
+    // The dialog lives on the user's screen whatever becomes of this request: it runs apart,
+    // holding its place until it is answered or closed, so that a client dropping its
+    // connection cannot pile dialogs up.
+    let chosen = tokio::spawn(async move {
+        let chosen = picker.pick_file(FilePurpose::ComposeFile).await;
+        drop(dialog);
+        chosen
+    })
+    .await
+    .map_err(Failure::internal)??;
     Ok(json(&FileChosen {
         path: chosen.map(|path| path.to_string_lossy().into_owned()),
     }))

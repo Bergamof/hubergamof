@@ -21,6 +21,8 @@ Form control of one module setting, chosen from its kind.
 		moduleIcon: string | null | undefined;
 		/** Called after a change that raises no `input` event (a file list). */
 		onedit: () => void;
+		/** Called when a file of a file list starts or stops being edited. */
+		onediting: (editing: boolean) => void;
 	}
 
 	let {
@@ -31,7 +33,8 @@ Form control of one module setting, chosen from its kind.
 		serial,
 		api,
 		moduleIcon,
-		onedit
+		onedit,
+		onediting
 	}: Props = $props();
 
 	const id = $derived(`${idPrefix}-${field.key}`);
@@ -67,6 +70,8 @@ Form control of one module setting, chosen from its kind.
 			{serial}
 			{api}
 			defaultIcon={moduleIcon}
+			invalid={error !== undefined}
+			{onediting}
 			onchange={(entries) => {
 				value = entries;
 				onedit();

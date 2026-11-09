@@ -36,10 +36,10 @@ const DEFAULT_PORT: u16 = 7878;
 /// Log level used when `RUST_LOG` is not set.
 const DEFAULT_LOG_FILTER: &str = "info";
 
-/// Longest wait for a device to blank its screens on shutdown.
 /// File `--demo` answers when the UI opens the file dialog.
 const DEMO_COMPOSE_FILE: &str = "/srv/demo/compose.yaml";
 
+/// Longest wait for a device to blank its screens on shutdown.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Longest wait for the web server to close its connections on shutdown.

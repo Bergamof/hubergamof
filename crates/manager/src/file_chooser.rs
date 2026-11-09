@@ -136,33 +136,62 @@ impl FilePicker for PortalFilePicker {
         let connection = Connection::session()
             .await
             .map_err(|_| FilePickerError::Unavailable)?;
-        tokio::time::timeout(DIALOG_TIMEOUT, ask_portal(&connection, purpose))
+        let token = request_token();
+        let path = request_path(&connection, &token)?;
+        let answer = with_timeout(
+            DIALOG_TIMEOUT,
+            ask_portal(&connection, purpose, &token, path.clone()),
+        )
+        .await;
+        if matches!(answer, Err(FilePickerError::Failed(_))) {
+            // The dialog may still be on screen (no answer in time): close it, so that the
+            // next one is the only one.
+            close_request(&connection, path).await;
+        }
+        answer
+    }
+}
+
+/// `future`, given up after `limit`.
+async fn with_timeout<T>(
+    limit: Duration,
+    future: impl std::future::Future<Output = Result<T, FilePickerError>>,
+) -> Result<T, FilePickerError> {
+    tokio::time::timeout(limit, future)
+        .await
+        .map_err(|_| FilePickerError::Failed("no answer from the dialog".to_owned()))?
+}
+
+/// Closes the dialog of request `path`, best effort (it may be gone already).
+async fn close_request(connection: &Connection, path: OwnedObjectPath) {
+    let closed = async {
+        Proxy::new(connection, PORTAL_SERVICE, path, REQUEST_INTERFACE)
+            .await?
+            .call_method("Close", &())
             .await
-            .map_err(|_| FilePickerError::Failed("no answer from the dialog".to_owned()))?
+    };
+    if let Err(error) = closed.await {
+        tracing::debug!(%error, "file dialog request already closed");
     }
 }
 
 async fn ask_portal(
     connection: &Connection,
     purpose: FilePurpose,
+    token: &str,
+    path: OwnedObjectPath,
 ) -> Result<Option<PathBuf>, FilePickerError> {
     let chooser = PortalFileChooserProxy::new(connection)
         .await
         .map_err(|_| FilePickerError::Unavailable)?;
-    let token = request_token();
     // Listen before asking: the answer must not be missed.
-    let request = Proxy::new(
-        connection,
-        PORTAL_SERVICE,
-        request_path(connection, &token)?,
-        REQUEST_INTERFACE,
-    )
-    .await
-    .map_err(failed)?;
+    let request = Proxy::new(connection, PORTAL_SERVICE, path, REQUEST_INTERFACE)
+        .await
+        .map_err(failed)?;
     let mut responses = request.receive_signal("Response").await.map_err(failed)?;
 
     let options = HashMap::from([
-        ("handle_token", Variant::from(token.as_str())),
+        ("handle_token", Variant::from(token)),
         ("modal", Variant::from(true)),
         ("multiple", Variant::from(false)),
         ("filters", Variant::new(portal_filters(purpose))),
@@ -181,8 +210,17 @@ async fn ask_portal(
         .ok_or_else(|| FilePickerError::Failed("the dialog closed without answering".to_owned()))?;
     let (code, results): (u32, HashMap<String, OwnedVariant>) =
         response.body().deserialize().map_err(failed)?;
+    interpret_response(code, &results)
+}
+
+/// What the `Response` of the portal says: the chosen file, `None` when the user closed the
+/// dialog, an error for anything else.
+fn interpret_response(
+    code: u32,
+    results: &HashMap<String, OwnedVariant>,
+) -> Result<Option<PathBuf>, FilePickerError> {
     match code {
-        RESPONSE_SUCCESS => Ok(Some(chosen_path(&results)?)),
+        RESPONSE_SUCCESS => Ok(Some(chosen_path(results)?)),
         RESPONSE_CANCELLED => Ok(None),
         other => Err(FilePickerError::Failed(format!("response code {other}"))),
     }
@@ -219,13 +257,18 @@ fn request_token() -> String {
     )
 }
 
-/// Path of the request the portal creates for `token`: the unique name of
-/// the caller, without its colon and with `_` for dots, then the token.
+/// Path of the request the portal creates for `token`, from the unique bus name of the
+/// caller.
 fn request_path(connection: &Connection, token: &str) -> Result<OwnedObjectPath, FilePickerError> {
     let sender = connection
         .unique_name()
         .ok_or_else(|| FilePickerError::Failed("no bus name".to_owned()))?;
-    let sender = sender.as_str().trim_start_matches(':').replace('.', "_");
+    request_path_of(sender.as_str(), token)
+}
+
+/// The caller's name without its colon and with `_` for dots, then the token.
+fn request_path_of(sender: &str, token: &str) -> Result<OwnedObjectPath, FilePickerError> {
+    let sender = sender.trim_start_matches(':').replace('.', "_");
     ObjectPath::try_from(format!("{REQUEST_PREFIX}/{sender}/{token}"))
         .map(Into::into)
         .map_err(failed)
@@ -306,6 +349,72 @@ mod tests {
         ] {
             assert_eq!(path_of_uri(uri), None, "{uri}");
         }
+    }
+
+    #[test]
+    fn the_portal_names_its_requests_after_the_caller() {
+        let path = request_path_of(":1.42", "tok").unwrap();
+        assert_eq!(
+            path.as_str(),
+            "/org/freedesktop/portal/desktop/request/1_42/tok"
+        );
+        assert!(request_path_of(":1.42", "bad token").is_err());
+    }
+
+    fn variants(uris: &[&str]) -> HashMap<String, OwnedVariant> {
+        let uris: Vec<String> = uris.iter().map(|uri| (*uri).to_owned()).collect();
+        HashMap::from([(
+            "uris".to_owned(),
+            OwnedVariant::try_from(Variant::new(uris)).unwrap(),
+        )])
+    }
+
+    #[test]
+    fn the_response_code_tells_chosen_closed_or_failed() {
+        let chosen = variants(&["file:///srv/a.yaml", "file:///srv/b.yaml"]);
+        assert_eq!(
+            interpret_response(RESPONSE_SUCCESS, &chosen).unwrap(),
+            Some("/srv/a.yaml".into()),
+            "the first file"
+        );
+        assert_eq!(
+            interpret_response(RESPONSE_CANCELLED, &HashMap::new()).unwrap(),
+            None
+        );
+        assert!(matches!(
+            interpret_response(2, &HashMap::new()),
+            Err(FilePickerError::Failed(_))
+        ));
+        for results in [
+            HashMap::new(),
+            variants(&[]),
+            variants(&["https://example.com/a.yaml"]),
+        ] {
+            assert!(matches!(
+                interpret_response(RESPONSE_SUCCESS, &results),
+                Err(FilePickerError::Failed(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn the_filters_have_the_signature_of_the_portal() {
+        use zbus::zvariant::Type as _;
+        assert_eq!(<Vec<PortalFilter>>::SIGNATURE.to_string(), "a(sa(us))");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dialog_nobody_answers_is_given_up() {
+        let waiting = std::future::pending::<Result<(), FilePickerError>>();
+        assert!(matches!(
+            with_timeout(DIALOG_TIMEOUT, waiting).await,
+            Err(FilePickerError::Failed(message)) if message.contains("no answer")
+        ));
+        assert!(
+            with_timeout(DIALOG_TIMEOUT, std::future::ready(Ok(())))
+                .await
+                .is_ok()
+        );
     }
 
     #[test]

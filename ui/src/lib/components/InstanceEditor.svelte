@@ -58,6 +58,8 @@ and lets the user reload it.
 	/** « Certains réglages sont invalides. » until the next keystroke. */
 	let invalid = $state(false);
 	let refusal: Problem | undefined = $state();
+	/** A file of a file list is being edited: what was typed there is not in the settings yet. */
+	let editingFile = $state(false);
 	let form: HTMLFormElement | undefined = $state();
 
 	const dirty = $derived(
@@ -100,12 +102,20 @@ and lets the user reload it.
 
 	async function focusFirstInvalid() {
 		await tick();
-		form?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+		form?.querySelector<HTMLElement>('[aria-invalid="true"], [data-invalid="true"]')?.focus();
 	}
 
 	async function apply(event: SubmitEvent) {
 		event.preventDefault();
 		if (saving) return;
+		if (editingFile) {
+			refusal = {
+				text: 'Validez ou annulez la modification du fichier avant d’appliquer les réglages.',
+				detail: null
+			};
+			saved = false;
+			return;
+		}
 		const parsed = parseDraft(fields, draft, instance.settings);
 		refusal = undefined;
 		saved = false;
@@ -183,6 +193,7 @@ and lets the user reload it.
 			{api}
 			moduleIcon={module?.icon}
 			onedit={edited}
+			onediting={(editing) => (editingFile = editing)}
 		/>
 	{/each}
 

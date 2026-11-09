@@ -6,7 +6,7 @@ there is none the path is typed. Files are edited and removed in place; like the
 settings, the changes are saved with « Appliquer ».
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import {
 		IMAGE_TYPES,
 		MAX_IMAGE_BYTES,
@@ -38,12 +38,26 @@ settings, the changes are saved with « Appliquer ».
 		api: ManagerApi;
 		/** Icon of a file that has none: the one of the module. */
 		defaultIcon: string | null | undefined;
+		/** The list is refused by the form: it takes the focus. */
+		invalid: boolean;
 		/** Called with the new list after every change. */
 		onchange: (entries: FileEntryDraft[]) => void;
+		/** Called when a file starts or stops being edited: the form is not applied meanwhile. */
+		onediting: (editing: boolean) => void;
 	}
 
-	let { id, labelledBy, describedBy, entries, serial, api, defaultIcon, onchange }: Props =
-		$props();
+	let {
+		id,
+		labelledBy,
+		describedBy,
+		entries,
+		serial,
+		api,
+		defaultIcon,
+		invalid,
+		onchange,
+		onediting
+	}: Props = $props();
 
 	/** The file being added (`index` is `null`) or edited, with the texts typed so far. */
 	interface Editing {
@@ -62,6 +76,13 @@ settings, the changes are saved with « Appliquer ».
 	const iconUpload = new Operation();
 
 	const full = $derived(entries.length >= MAX_FILE_ENTRIES);
+
+	$effect(() => onediting(editing !== undefined));
+	// The list changed from elsewhere (settings reloaded): what was being edited is gone.
+	$effect(() => {
+		void entries;
+		untrack(() => (editing = undefined));
+	});
 
 	/** Name of the folder of `path`: what compose calls the project unless a name is given. */
 	function folderName(path: string): string {
@@ -83,6 +104,7 @@ settings, the changes are saved with « Appliquer ».
 	}
 
 	function openEditor(index: number | null, file: FileEntryDraft) {
+		if (editing) return;
 		editing = { index, file: { ...file } };
 		editError = undefined;
 		iconUpload.clear();
@@ -101,7 +123,7 @@ settings, the changes are saved with « Appliquer ».
 	}
 
 	async function add() {
-		if (choosing || full) return;
+		if (choosing || full || editing) return;
 		const path = await chooseFile();
 		if (path !== null) {
 			if (entries.some((entry) => entry.path.trim() === path)) {
@@ -125,13 +147,14 @@ settings, the changes are saved with « Appliquer ».
 	}
 
 	function commit() {
-		if (!editing) return;
+		if (!editing || iconUpload.busy) return;
 		const file = {
 			path: editing.file.path.trim(),
 			name: editing.file.name.trim(),
 			icon: editing.file.icon
 		};
 		const { index } = editing;
+		chooserProblem = undefined;
 		const error =
 			fileEntryError(file) ??
 			(entries.some((other, position) => position !== index && other.path.trim() === file.path)
@@ -145,38 +168,56 @@ settings, the changes are saved with « Appliquer ».
 		const position = index ?? entries.length;
 		onchange(index === null ? [...entries, file] : entries.map((e, i) => (i === index ? file : e)));
 		editing = undefined;
-		announcement =
-			index === null ? `« ${shownName(file)} » ajouté.` : `« ${shownName(file)} » modifié.`;
+		announce(
+			index === null ? `« ${shownName(file)} » ajouté.` : `« ${shownName(file)} » modifié.`,
+			index === null ? entries.length + 1 : entries.length
+		);
 		void focusOn(`[data-edit="${position}"]`);
 	}
 
 	function cancel() {
-		if (!editing) return;
+		if (!editing || iconUpload.busy) return;
 		const { index } = editing;
 		editing = undefined;
+		chooserProblem = undefined;
 		void focusOn(index === null ? '[data-add]' : `[data-edit="${index}"]`);
+	}
+
+	/** Says `message`; the count makes two identical messages differ, so both are read. */
+	function announce(message: string, count: number) {
+		announcement = `${message} ${count} ${count > 1 ? 'fichiers' : 'fichier'}.`;
 	}
 
 	function remove(index: number) {
 		const file = entries[index];
-		if (!file) return;
+		if (!file || editing) return;
 		onchange(entries.filter((_, position) => position !== index));
-		editing = undefined;
-		announcement = `« ${shownName(file)} » retiré de la liste.`;
-		void focusOn('[data-add]');
+		chooserProblem = undefined;
+		announce(`« ${shownName(file)} » retiré de la liste.`, entries.length - 1);
+		// The next file, else the previous one, else the button adding one.
+		const neighbour = index < entries.length - 1 ? index : index - 1;
+		void focusOn(neighbour >= 0 ? `[data-edit="${neighbour}"]` : '[data-add]');
 	}
 
 	/** Enter in a field confirms the file instead of submitting the whole settings form. */
 	function confirmOnEnter(event: KeyboardEvent) {
-		if (event.key !== 'Enter') return;
+		if (event.key !== 'Enter' || event.isComposing) return;
 		event.preventDefault();
 		commit();
+	}
+
+	function cancelOnEscape(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || event.isComposing) return;
+		event.preventDefault();
+		event.stopPropagation();
+		cancel();
 	}
 
 	async function upload(file: File) {
 		await iconUpload.run(async () => {
 			const uploaded = await api.uploadKeyImage(serial, file);
 			if (!uploaded.ok) return uploaded.problem;
+			// Valider and Annuler wait for the upload: it is still the same edit.
 			if (editing) editing.file.icon = uploaded.value;
 			return undefined;
 		}, 'Icône choisie.');
@@ -201,88 +242,100 @@ settings, the changes are saved with « Appliquer ».
 	role="group"
 	aria-labelledby={labelledBy}
 	aria-describedby={describedBy}
+	data-invalid={invalid ? 'true' : undefined}
+	tabindex="-1"
 	class="flex flex-col gap-3"
 >
 	{#if entries.length === 0 && !editing}
 		<p class="text-sm text-muted">Aucun fichier ajouté.</p>
 	{/if}
 
-	<ul class="flex flex-col gap-2">
-		{#each entries as entry, index (index)}
-			<li class="flex flex-col gap-3 card p-3">
-				{#if editing && editing.index === index}
+	{#if entries.length > 0 || editing}
+		<ul class="flex flex-col gap-2">
+			{#each entries as entry, index (index)}
+				<li class="flex flex-col gap-3 card p-3">
+					{#if editing && editing.index === index}
+						{@render editor(editing)}
+					{:else}
+						<div class="flex flex-wrap items-center gap-3">
+							<span class="w-14 shrink-0">
+								<ModuleTile icon={iconOf(entry)} name={shownName(entry)} />
+							</span>
+							<div class="min-w-0 flex-1">
+								<p class="font-medium break-words">
+									{shownName(entry)}
+									{#if !entry.name.trim()}
+										<span class="text-sm font-normal text-muted">(nom par défaut)</span>
+									{/if}
+								</p>
+								<p class="font-mono text-sm break-all text-muted">{entry.path}</p>
+							</div>
+							<div class="flex flex-wrap gap-2">
+								<button
+									type="button"
+									class="secondary-button"
+									data-edit={index}
+									aria-label="Modifier {shownName(entry)}"
+									aria-disabled={editing !== undefined}
+									onclick={() => openEditor(index, entry)}
+								>
+									Modifier
+								</button>
+								<button
+									type="button"
+									class="danger-button"
+									aria-label="Supprimer {shownName(entry)}"
+									aria-disabled={editing !== undefined}
+									onclick={() => remove(index)}
+								>
+									Supprimer
+								</button>
+							</div>
+						</div>
+					{/if}
+				</li>
+			{/each}
+			{#if editing && editing.index === null}
+				<li class="flex flex-col gap-3 card p-3">
 					{@render editor(editing)}
-				{:else}
-					<div class="flex flex-wrap items-center gap-3">
-						<span class="w-14 shrink-0">
-							<ModuleTile icon={iconOf(entry)} name={shownName(entry)} />
-						</span>
-						<div class="min-w-0 flex-1">
-							<p class="font-medium break-words">
-								{shownName(entry)}
-								{#if !entry.name.trim()}
-									<span class="text-sm font-normal text-muted">(nom par défaut)</span>
-								{/if}
-							</p>
-							<p class="font-mono text-sm break-all text-muted">{entry.path}</p>
-						</div>
-						<div class="flex flex-wrap gap-2">
-							<button
-								type="button"
-								class="secondary-button"
-								data-edit={index}
-								aria-label="Modifier {shownName(entry)}"
-								onclick={() => openEditor(index, entry)}
-							>
-								Modifier
-							</button>
-							<button
-								type="button"
-								class="danger-button"
-								aria-label="Supprimer {shownName(entry)}"
-								onclick={() => remove(index)}
-							>
-								Supprimer
-							</button>
-						</div>
-					</div>
-				{/if}
-			</li>
-		{/each}
-		{#if editing && editing.index === null}
-			<li class="flex flex-col gap-3 card p-3">
-				{@render editor(editing)}
-			</li>
-		{/if}
-	</ul>
+				</li>
+			{/if}
+		</ul>
+	{/if}
 
 	<div class="flex flex-wrap items-center gap-2">
 		<button
 			type="button"
 			class="secondary-button"
 			data-add
-			aria-disabled={choosing || full || editing?.index === null}
+			aria-disabled={choosing || full || editing !== undefined}
+			aria-busy={choosing}
 			onclick={() => void add()}
 		>
-			{choosing ? 'Sélecteur ouvert…' : 'Ajouter un fichier…'}
+			Ajouter un fichier…
 		</button>
 		{#if choosing}
 			<span class="text-sm text-muted">Choisissez le fichier dans la fenêtre du bureau.</span>
-		{:else if full}
-			<span class="text-sm text-muted">{MAX_FILE_ENTRIES} fichiers au plus.</span>
 		{/if}
 	</div>
 	{#if chooserProblem}
 		<ProblemAlert problem={chooserProblem} />
 	{/if}
-	<p role="status" class="sr-only">{announcement}</p>
+	<p role="status" class="sr-only">
+		{choosing
+			? 'Sélecteur de fichier ouvert : choisissez le fichier dans la fenêtre du bureau.'
+			: announcement}
+	</p>
 </div>
 
 {#snippet editor(current: Editing)}
+	<!-- Escape is heard from the fields inside: the group itself takes no input. -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div
 		role="group"
-		aria-label={current.index === null ? 'Nouveau fichier' : 'Modifier le fichier'}
+		aria-label={current.index === null ? 'Nouveau fichier' : `Modifier ${shownName(current.file)}`}
 		class="flex flex-col gap-3"
+		onkeydown={cancelOnEscape}
 	>
 		<div class="flex flex-col gap-1">
 			<label class="font-medium" for="{id}-path">Fichier</label>
@@ -295,6 +348,7 @@ settings, the changes are saved with « Appliquer ».
 					class="field min-w-0 flex-1 font-mono"
 					placeholder="/chemin/vers/compose.yaml"
 					bind:value={current.file.path}
+					oninput={() => (editError = undefined)}
 					onkeydown={confirmOnEnter}
 					aria-describedby="{id}-path-hint{editError ? ` ${id}-edit-error` : ''}"
 					aria-invalid={editError ? true : undefined}
@@ -305,7 +359,7 @@ settings, the changes are saved with « Appliquer ».
 					aria-disabled={choosing}
 					onclick={() => void browse()}
 				>
-					{choosing ? 'Sélecteur ouvert…' : 'Parcourir…'}
+					Parcourir…
 				</button>
 			</span>
 			<p id="{id}-path-hint" class="text-sm text-muted">
@@ -319,7 +373,6 @@ settings, the changes are saved with « Appliquer ».
 				id="{id}-name"
 				type="text"
 				class="field"
-				maxlength={MAX_ENTRY_NAME_CHARS}
 				placeholder={folderName(current.file.path.trim()) || 'Nom du projet'}
 				bind:value={current.file.name}
 				onkeydown={confirmOnEnter}
@@ -382,10 +435,17 @@ settings, the changes are saved with « Appliquer ».
 			<p id="{id}-edit-error" role="alert" class="text-sm font-medium text-danger">{editError}</p>
 		{/if}
 		<div class="flex flex-wrap gap-2">
-			<button type="button" class="primary-button" onclick={commit}>
+			<button type="button" class="primary-button" aria-disabled={iconUpload.busy} onclick={commit}>
 				{current.index === null ? 'Ajouter à la liste' : 'Valider'}
 			</button>
-			<button type="button" class="secondary-button" onclick={cancel}>Annuler</button>
+			<button
+				type="button"
+				class="secondary-button"
+				aria-disabled={iconUpload.busy}
+				onclick={cancel}
+			>
+				Annuler
+			</button>
 		</div>
 	</div>
 {/snippet}

@@ -763,3 +763,84 @@ async fn compose_is_refused_when_the_containers_disagree_on_their_files() {
     );
     assert_eq!(harness.docker.actions().len(), 3);
 }
+
+#[tokio::test(start_paused = true)]
+async fn plain_path_settings_show_their_projects_without_name_or_icon() {
+    let harness = Harness::start(&json!({ "composeFiles": [
+        "/srv/boutique/compose.yaml",
+        { "path": "~/blog/compose.yaml", "name": "   " },
+    ] }))
+    .await;
+    assert_eq!(label(&harness.item(MAIN_PAGE, SHOP)), "boutique 3/3");
+    assert_eq!(
+        harness.item(MAIN_PAGE, SHOP).image,
+        Some(icons::PROJECT_RUNNING.clone())
+    );
+    assert_eq!(label(&harness.item(MAIN_PAGE, "project/blog")), "blog 0/0");
+}
+
+/// An image library whose reads wait until `release` is notified.
+fn held_library(release: Arc<tokio::sync::Notify>, image: ImageData) -> ImageLibrary {
+    ImageLibrary::new(move |_| {
+        let release = Arc::clone(&release);
+        let image = image.clone();
+        Box::pin(async move {
+            release.notified().await;
+            Some(image)
+        })
+    })
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_icon_arriving_after_its_setting_was_removed_is_not_shown() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let custom = ImageData::new(b"late icon".to_vec());
+    let mut harness = Harness::start_with_images(
+        &json!({ "composeFiles": [{ "path": "/srv/boutique/compose.yaml", "icon": "shop.png" }] }),
+        held_library(Arc::clone(&release), custom.clone()),
+    )
+    .await;
+    assert_eq!(
+        harness.item(MAIN_PAGE, SHOP).image,
+        Some(icons::PROJECT_RUNNING.clone()),
+        "the default icon shows while the image is being read"
+    );
+
+    harness
+        .module
+        .update_settings(&json!({ "composeFiles": ["/srv/boutique/compose.yaml"] }))
+        .unwrap();
+    release.notify_waiters();
+    harness.settle().await;
+    assert_eq!(
+        harness.item(MAIN_PAGE, SHOP).image,
+        Some(icons::PROJECT_RUNNING.clone())
+    );
+    assert_ne!(harness.item(MAIN_PAGE, SHOP).image, Some(custom));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_icon_that_could_not_be_read_is_tried_again_with_the_next_settings() {
+    let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let custom = ImageData::new(b"second try".to_vec());
+    let library = {
+        let (reads, custom) = (Arc::clone(&reads), custom.clone());
+        ImageLibrary::new(move |_| {
+            let first = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+            let image = (!first).then(|| custom.clone());
+            Box::pin(std::future::ready(image))
+        })
+    };
+    let settings = json!({ "composeFiles": [
+        { "path": "/srv/boutique/compose.yaml", "icon": "shop.png" }
+    ] });
+    let mut harness = Harness::start_with_images(&settings, library).await;
+    assert_eq!(
+        harness.item(MAIN_PAGE, SHOP).image,
+        Some(icons::PROJECT_RUNNING.clone())
+    );
+
+    harness.module.update_settings(&settings).unwrap();
+    harness.settle().await;
+    assert_eq!(harness.item(MAIN_PAGE, SHOP).image, Some(custom));
+}
