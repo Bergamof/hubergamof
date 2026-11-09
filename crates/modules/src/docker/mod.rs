@@ -420,9 +420,6 @@ const DOWN_ACTIONS: [Action; 2] = [
     Action::Down { volumes: false },
     Action::Down { volumes: true },
 ];
-/// The `down` of one service: never with the volumes, which compose
-/// removes for the whole project whatever the service named.
-const SERVICE_DOWN_ACTIONS: [Action; 1] = [Action::Down { volumes: false }];
 /// Actions of a container page; [`Action::Remove`] shown only when the
 /// container may be removed.
 const CONTAINER_ACTIONS: [Action; 4] =
@@ -459,7 +456,7 @@ impl Action {
             Self::Up(UpVariant::Pull) => "Pull",
             Self::Up(UpVariant::NoStart) => "No start",
             Self::Down { volumes: false } => DOWN_LABEL,
-            Self::Down { volumes: true } => "Down + volumes",
+            Self::Down { volumes: true } => "Avec volumes",
         }
     }
 
@@ -512,9 +509,6 @@ impl Action {
             Page::Main | Page::Service { .. } => &[],
             Page::Project(_) => &PROJECT_ACTIONS,
             Page::Up(_) => &UP_ACTIONS,
-            Page::Down(Scope {
-                service: Some(_), ..
-            }) => &SERVICE_DOWN_ACTIONS,
             Page::Down(_) => &DOWN_ACTIONS,
             Page::Container(_) => &CONTAINER_ACTIONS,
         }

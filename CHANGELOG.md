@@ -36,7 +36,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
-- Module Docker, page « Up » : les variantes se nomment Up, Rebuild, Pull et No start.
+- Module Docker, page « Up » : les variantes se nomment Up, Rebuild, Pull et No start ; page « Down » : Down et Avec volumes (aussi pour le `down` d'un seul service).
 - Interface web refondue : palette « thé et bergamote » (neutres teintés de vert, un seul accent chaud pour la sélection et l'action principale, thèmes clair et sombre), polices embarquées (Bricolage Grotesque, Instrument Sans, JetBrains Mono, sous-ensemble latin, aucun chargement externe), appareil dessiné comme un objet sombre à gauche et réglages de la touche ou de la molette choisie à droite. Une bande tactile est dessinée entre les touches et les molettes, avec l'icône du module de chaque molette (`DialStrip`) ; les molettes sont dessinées comme des molettes (`DialKnob`, repère bergamote) avec le nom de leur module, l'icône étant déjà sur la bande. Aucun changement de comportement ni de contrat.
 - Nouvelle identité : logo (grille de touches formant un « H », molette au centre), favicon, bannière simple en en-tête de l'interface et du README : le nom seul, fond transparent, « B » en dégradé doux entre « Hub » et « Bergamof ». L'icône de la barre système n'est plus l'icône générique `input-keyboard` mais la marque, envoyée en pixmaps ARGB (22, 32, 48 et 64 px).
 

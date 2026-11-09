@@ -404,7 +404,7 @@ async fn down_needs_a_second_press_and_the_volumes_variant_is_in_attention() {
             ("down-keep".into(), "Down".into(), KeyState::Normal),
             (
                 "down-volumes".into(),
-                "Down + volumes".into(),
+                "Avec volumes".into(),
                 KeyState::Attention
             ),
         ]
@@ -1043,14 +1043,37 @@ async fn one_operation_at_a_time_on_a_project() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_down_of_one_service_never_removes_volumes() {
-    let harness = Harness::start(&json!({})).await;
+async fn the_down_of_one_service_has_the_volumes_variant_too_and_asks_twice() {
+    let mut harness = Harness::start(&json!({})).await;
+    let expected = [
+        ("down-keep".into(), "Down".into(), KeyState::Normal),
+        (
+            "down-volumes".into(),
+            "Avec volumes".into(),
+            KeyState::Attention,
+        ),
+    ];
+    assert_eq!(harness.items(WEB_DOWN), expected);
+    assert_eq!(harness.items(SHOP_DOWN), expected);
+
     assert_eq!(
-        harness.items(WEB_DOWN),
-        [("down-keep".into(), "Down".into(), KeyState::Normal)],
-        "compose removes the volumes of the whole project, whatever the service"
+        harness.press(WEB_DOWN, "down-volumes").await,
+        Vec::<Command>::new(),
+        "the first press only asks"
     );
-    assert_eq!(harness.items(SHOP_DOWN).len(), 2, "the project keeps both");
+    assert_eq!(
+        label(&harness.item(WEB_DOWN, "down-volumes")),
+        "Confirmer ?"
+    );
+    assert_eq!(
+        harness.press(WEB_DOWN, "down-volumes").await,
+        [Command::Back, Command::Back]
+    );
+    harness.settle().await;
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "down boutique --volumes web"
+    );
 }
 
 #[tokio::test(start_paused = true)]
