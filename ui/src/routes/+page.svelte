@@ -6,7 +6,7 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import Notices from '#lib/components/Notices.svelte';
-	import banner from '#lib/assets/banner.svg';
+	import BrandWordmark from '#lib/components/BrandWordmark.svelte';
 
 	/** Focus target once the last notice is dismissed. */
 	const MAIN_ID = 'main-content';
@@ -70,13 +70,8 @@
 <div class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-5 sm:px-6">
 	<header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
 		<h1>
-			<img
-				src={banner}
-				alt="HuBergamof"
-				width="1280"
-				height="320"
-				class="h-20 w-auto rounded-xl border border-line sm:h-24"
-			/>
+			<BrandWordmark class="h-10 w-auto text-fg" />
+			<span class="sr-only">HuBergamof</span>
 		</h1>
 		<p
 			role="status"
