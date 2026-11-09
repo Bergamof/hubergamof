@@ -36,6 +36,43 @@ pub enum UpVariant {
     NoStart,
 }
 
+/// What a compose action is about: the whole project, or one service.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComposeScope {
+    /// Every service of the project.
+    Project,
+    /// This service only.
+    Service(String),
+}
+
+impl ComposeScope {
+    /// The scope of an action on `service` (`None`: the project).
+    #[must_use]
+    pub fn of(service: Option<&str>) -> Self {
+        service.map_or(Self::Project, |service| Self::Service(service.to_owned()))
+    }
+
+    /// Whether an action of this scope works on `service` of the project
+    /// (`None`: a container that records no service, only reached by an
+    /// action on the whole project).
+    #[must_use]
+    pub fn covers(&self, service: Option<&str>) -> bool {
+        match self {
+            Self::Project => true,
+            Self::Service(scoped) => service == Some(scoped.as_str()),
+        }
+    }
+
+    /// The service, if the scope is one.
+    #[must_use]
+    pub fn service(&self) -> Option<&str> {
+        match self {
+            Self::Project => None,
+            Self::Service(service) => Some(service),
+        }
+    }
+}
+
 /// Action on a compose project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ComposeAction {
@@ -141,15 +178,37 @@ pub trait DockerBackend: Send + Sync + fmt::Debug {
     /// Applies `action` to the container `id`.
     async fn container(&self, id: &str, action: ContainerAction) -> Result<(), DockerError>;
 
-    /// Applies `action` to the compose project `target` (to its
-    /// `target.services` when given).
+    /// Applies `action` to the compose project `target`, within `scope`.
     async fn compose(
         &self,
         target: &ComposeTarget,
+        scope: &ComposeScope,
         action: ComposeAction,
     ) -> Result<(), DockerError>;
 
     /// The services the compose files of `target` define, by name, whether
     /// or not they have containers.
     async fn compose_services(&self, target: &ComposeTarget) -> Result<Vec<String>, DockerError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scope_covers_the_services_it_names() {
+        assert!(ComposeScope::Project.covers(Some("web")));
+        assert!(
+            ComposeScope::Project.covers(None),
+            "a container with no service"
+        );
+        let web = ComposeScope::of(Some("web"));
+        assert!(web.covers(Some("web")));
+        assert!(!web.covers(Some("db")));
+        assert!(!web.covers(None));
+        assert_eq!(
+            (web.service(), ComposeScope::of(None)),
+            (Some("web"), ComposeScope::Project)
+        );
+    }
 }

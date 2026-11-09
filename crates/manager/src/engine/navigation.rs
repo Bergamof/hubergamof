@@ -74,6 +74,20 @@ impl Navigation {
         }
     }
 
+    /// Goes back to the nearest page `page` of `module` below the displayed
+    /// one, closing what was opened above it; does nothing when there is
+    /// none.
+    pub(crate) fn back_to(&mut self, module: &ModuleInstanceId, page: &PageId) {
+        let below = self.stack.len().saturating_sub(1);
+        let target = self.stack[..below]
+            .iter()
+            .rposition(|open| open.module == *module && open.page == *page);
+        if let Some(index) = target {
+            self.stack.truncate(index + 1);
+            self.row = 0;
+        }
+    }
+
     pub(crate) fn home(&mut self) {
         if !self.stack.is_empty() {
             self.stack.clear();
@@ -85,6 +99,39 @@ impl Navigation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn back_to_closes_the_pages_above_the_one_named() {
+        let mut nav = Navigation::default();
+        for page in ["project", "container", "up"] {
+            nav.open("docker".into(), page.into());
+        }
+        nav.set_row(3);
+        let docker: ModuleInstanceId = "docker".into();
+
+        nav.back_to(&docker, &"container".into());
+        assert_eq!(nav.depth(), 2);
+        assert_eq!(nav.current().map(|p| p.page.0.as_str()), Some("container"));
+        assert_eq!(nav.row(), 0);
+
+        nav.open("docker".into(), "up".into());
+        nav.back_to(&docker, &"project".into());
+        assert_eq!(nav.depth(), 1, "two pages closed at once");
+    }
+
+    #[test]
+    fn back_to_a_page_that_is_not_below_changes_nothing() {
+        let mut nav = Navigation::default();
+        nav.open("docker".into(), "project".into());
+        nav.open("docker".into(), "up".into());
+        nav.set_row(2);
+        let before = nav.clone();
+        nav.back_to(&"docker".into(), &"other".into());
+        nav.back_to(&"docker".into(), &"up".into());
+        nav.back_to(&"claude".into(), &"project".into());
+        assert_eq!(nav, before, "unknown, displayed, or of another module");
+        Navigation::default().back_to(&"docker".into(), &"project".into());
+    }
 
     #[test]
     fn the_parent_is_the_page_below_the_displayed_one() {

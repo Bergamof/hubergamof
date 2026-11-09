@@ -8,13 +8,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{ModuleError, ModuleKind, is_safe_image_name, is_setting_path, parse_settings};
-
-/// Longest name given to a [`FileEntry`], in characters.
-pub const MAX_ENTRY_NAME_CHARS: usize = 40;
-
-/// Most entries of a [`SettingKind::FileEntryList`].
-pub const MAX_FILE_ENTRIES: usize = 50;
+use crate::file_entries::check_file_entries;
+use crate::{
+    EntryNaming, FileChooser, FileEntry, ModuleError, ModuleKind, is_setting_path, parse_settings,
+};
 
 /// Description of a module kind available to the user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,6 +114,18 @@ pub enum SettingKind {
     FileEntryList {
         /// Default value.
         default: Vec<FileEntry>,
+        /// Most files in the list.
+        max_entries: usize,
+        /// Longest name of a file, in characters.
+        max_name_chars: usize,
+        /// The dialog choosing a file; without one the path is typed.
+        chooser: Option<FileChooser>,
+        /// Example path shown in the empty path field.
+        path_placeholder: String,
+        /// What the empty name field means (« Vide : nom du projet »).
+        name_hint: String,
+        /// What a file without name is called.
+        default_name: EntryNaming,
     },
     /// One value among a fixed set.
     Choice {
@@ -125,24 +134,6 @@ pub enum SettingKind {
         /// Allowed values.
         options: Vec<ChoiceOption>,
     },
-}
-
-/// A file of a [`SettingKind::FileEntryList`], as the user named it.
-///
-/// A setting saved before names and icons existed holds plain paths: they
-/// are still accepted, as entries with neither.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
-pub struct FileEntry {
-    /// Absolute path, or starting with `~/` (see [`SettingKind::Path`]).
-    pub path: String,
-    /// Name shown for the file, at most [`MAX_ENTRY_NAME_CHARS`] characters;
-    /// the module names the file itself when absent.
-    pub name: Option<String>,
-    /// Name of a stored image of the device (see
-    /// `ModuleInstance::image`); the module draws its own icon when absent.
-    pub icon: Option<String>,
 }
 
 /// An allowed value of a [`SettingKind::Choice`] setting.
@@ -286,7 +277,7 @@ impl SettingKind {
             Self::PathList { default } => {
                 Value::Array(default.iter().cloned().map(Value::String).collect())
             }
-            Self::FileEntryList { default } => {
+            Self::FileEntryList { default, .. } => {
                 serde_json::to_value(default).unwrap_or_else(|_| Value::Array(Vec::new()))
             }
         }
@@ -329,7 +320,11 @@ impl SettingKind {
                             .ok_or_else(|| "expected a list of strings".to_owned())?,
                     )
                 }),
-            Self::FileEntryList { .. } => check_file_entries(value),
+            Self::FileEntryList {
+                max_entries,
+                max_name_chars,
+                ..
+            } => check_file_entries(value, *max_entries, *max_name_chars),
             Self::Choice { options, .. } => {
                 let choice = value
                     .as_str()
@@ -341,56 +336,6 @@ impl SettingKind {
             }
         }
     }
-}
-
-/// Checks a list of file entries: objects (or, for settings saved before
-/// entries had names, plain paths) with a path, and optionally a name and the
-/// name of a stored image.
-fn check_file_entries(value: &Value) -> Result<(), String> {
-    let entries = value
-        .as_array()
-        .ok_or_else(|| "expected a list of files".to_owned())?;
-    if entries.len() > MAX_FILE_ENTRIES {
-        return Err(format!("at most {MAX_FILE_ENTRIES} files"));
-    }
-    entries.iter().try_for_each(|entry| match entry {
-        Value::String(path) => check_path(path),
-        Value::Object(fields) => check_file_entry(fields),
-        _ => Err("expected a file with a path".to_owned()),
-    })
-}
-
-fn check_file_entry(fields: &Map<String, Value>) -> Result<(), String> {
-    let path = fields
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "a file needs a `path`".to_owned())?;
-    check_path(path)?;
-    match fields.get("name") {
-        None | Some(Value::Null) => {}
-        Some(Value::String(name)) => {
-            if name.chars().count() > MAX_ENTRY_NAME_CHARS {
-                return Err(format!(
-                    "a file name is longer than {MAX_ENTRY_NAME_CHARS} characters"
-                ));
-            }
-            if name.chars().any(is_hidden_control) {
-                return Err("a file name holds control or bidirectional characters".to_owned());
-            }
-        }
-        Some(_) => return Err("a file `name` must be a string".to_owned()),
-    }
-    match fields.get(ICON_KEY) {
-        None | Some(Value::Null) => Ok(()),
-        Some(Value::String(icon)) if is_safe_image_name(icon) => Ok(()),
-        Some(_) => Err("a file `icon` must be the name of a stored image".to_owned()),
-    }
-}
-
-/// Control characters and the bidirectional overrides (U+202A–202E, U+2066–2069): they
-/// scramble what a name shows on the device and in the logs.
-fn is_hidden_control(c: char) -> bool {
-    c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// A path the host can resolve without a working directory.
@@ -639,9 +584,18 @@ mod tests {
         );
     }
 
+    const MAX_ENTRIES: usize = 50;
+    const MAX_NAME_CHARS: usize = 40;
+
     fn file_entries() -> SettingKind {
         SettingKind::FileEntryList {
             default: Vec::new(),
+            max_entries: MAX_ENTRIES,
+            max_name_chars: MAX_NAME_CHARS,
+            chooser: None,
+            path_placeholder: "/path/to/file".into(),
+            name_hint: "Empty: the file name.".into(),
+            default_name: EntryNaming::FileName,
         }
     }
 
@@ -653,8 +607,8 @@ mod tests {
             json!([{ "path": "/srv/compose.yaml" }]),
             json!([{ "path": "~/a.yaml", "name": null, "icon": null }]),
             json!([{ "path": "~/a.yaml", "name": "Web", "icon": "0f3a.png" }]),
-            json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_ENTRY_NAME_CHARS) }]),
-            json!([{ "path": "~/a.yaml", "name": "é".repeat(MAX_ENTRY_NAME_CHARS) }]),
+            json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_NAME_CHARS) }]),
+            json!([{ "path": "~/a.yaml", "name": "é".repeat(MAX_NAME_CHARS) }]),
         ];
         for value in accepted {
             assert!(field("files", file_entries()).validate(&value).is_ok());
@@ -671,10 +625,10 @@ mod tests {
             json!([{ "path": "~/a.yaml", "name": 3 }]),
             json!([{ "path": "~/a.yaml", "name": "a\nb" }]),
             json!([{ "path": "~/a.yaml", "name": "a\u{202E}b" }]),
-            json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_ENTRY_NAME_CHARS + 1) }]),
+            json!([{ "path": "~/a.yaml", "name": "x".repeat(MAX_NAME_CHARS + 1) }]),
             json!([{ "path": "~/a.yaml", "icon": "../etc/passwd" }]),
             json!([{ "path": "~/a.yaml", "icon": 4 }]),
-            Value::Array(vec![json!("/a.yaml"); MAX_FILE_ENTRIES + 1]),
+            Value::Array(vec![json!("/a.yaml"); MAX_ENTRIES + 1]),
         ];
         for value in rejected {
             assert!(

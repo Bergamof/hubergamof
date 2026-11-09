@@ -107,6 +107,7 @@ describe('uploadKeyImage', () => {
 		const { api } = fakeFetch(() => json(400, { code: 'invalidImage', message: 'bad png' }));
 		await expect(api.uploadKeyImage('DECK', png)).resolves.toEqual({
 			ok: false,
+			code: 'invalidImage',
 			problem: {
 				text: 'Image refusée : elle doit être un PNG, un JPEG ou un SVG lisible.',
 				detail: 'bad png'
@@ -167,31 +168,40 @@ describe('importArchive', () => {
 	});
 });
 
-describe('chooseComposeFile', () => {
-	it('posts to the file chooser and resolves the chosen path', async () => {
+describe('chooseFile', () => {
+	it('names the setting to the file chooser and resolves the chosen path', async () => {
 		const { calls, api } = fakeFetch(() => json(200, { path: '/srv/shop/compose.yaml' }));
-		await expect(api.chooseComposeFile()).resolves.toEqual({
+		await expect(api.chooseFile('docker', 'composeFiles')).resolves.toEqual({
 			ok: true,
 			value: '/srv/shop/compose.yaml'
 		});
-		expect(calls[0]).toMatchObject({
-			input: '/api/file-chooser/compose-file',
-			init: { method: 'POST' }
-		});
+		expect(calls[0]).toMatchObject({ input: '/api/file-chooser', init: { method: 'POST' } });
+		const body = (calls[0]?.init as { body: Blob }).body;
+		expect(JSON.parse(await body.text())).toEqual({ module: 'docker', setting: 'composeFiles' });
 	});
 
 	it('resolves null when the user closed the dialog', async () => {
 		const { api } = fakeFetch(() => json(200, { path: null }));
-		await expect(api.chooseComposeFile()).resolves.toEqual({ ok: true, value: null });
+		await expect(api.chooseFile('docker', 'composeFiles')).resolves.toEqual({
+			ok: true,
+			value: null
+		});
 	});
 
-	it('explains that there is no dialog on this desktop', async () => {
-		const { api } = fakeFetch(() =>
+	it('says whether there is no dialog on this desktop or one is already open', async () => {
+		const missing = fakeFetch(() =>
 			json(503, { code: 'unavailable', message: 'no file chooser is available on this desktop' })
 		);
-		await expect(api.chooseComposeFile()).resolves.toMatchObject({
+		await expect(missing.api.chooseFile('docker', 'composeFiles')).resolves.toMatchObject({
 			ok: false,
+			code: 'unavailable',
 			problem: { text: expect.stringMatching(/saisissez le chemin/), detail: null }
+		});
+		const busy = fakeFetch(() => json(409, { code: 'busy', message: 'a file chooser is open' }));
+		await expect(busy.api.chooseFile('docker', 'composeFiles')).resolves.toMatchObject({
+			ok: false,
+			code: 'busy',
+			problem: { text: expect.stringMatching(/déjà ouvert/) }
 		});
 	});
 });

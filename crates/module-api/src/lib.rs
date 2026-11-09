@@ -144,6 +144,7 @@ mod catalog;
 mod command;
 mod content;
 mod context;
+mod file_entries;
 mod ids;
 mod images;
 mod module;
@@ -152,10 +153,7 @@ mod paths;
 #[cfg(feature = "testing")]
 pub mod testing;
 
-pub use catalog::{
-    ChoiceOption, FileEntry, MAX_ENTRY_NAME_CHARS, MAX_FILE_ENTRIES, ModuleCapabilities,
-    ModuleDescriptor, SettingField, SettingKind,
-};
+pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingField, SettingKind};
 pub use command::{Command, Feedback, ModuleSurface};
 pub use content::{
     CalendarLeaf, ClockFace, ClockSeconds, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps,
@@ -163,6 +161,7 @@ pub use content::{
     PageContent, PageItem, PageZone, RowPosition, ZoneAccent, ZoneContent,
 };
 pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
+pub use file_entries::{EntryNaming, FileChooser, FileEntry, FileFilter, is_hidden_control};
 pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};
 pub use images::{ImageFuture, ImageLibrary, MAX_IMAGE_NAME_LENGTH, is_safe_image_name};
 pub use module::{HANDLER_BUDGET, Module, ModuleError, ModuleFactory, parse_settings};

@@ -23,14 +23,16 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use hubergamof_protocol::{ApiError, ErrorCode, FileChosen, ImageUploaded};
+use hubergamof_protocol::{
+    ApiError, ErrorCode, FileChooser, FileChooserRequest, FileChosen, ImageUploaded, SettingKind,
+};
 use serde::Serialize;
 use tokio::sync::SemaphorePermit;
 
 use super::{AppState, UI_IMAGE_SIZE};
-use crate::config_store::{ConfigStoreError, MAX_ARCHIVE_BYTES, prepare_import};
+use crate::config_store::{ConfigStoreError, MAX_ARCHIVE_BYTES};
 use crate::engine::{EngineError, EngineHandle};
-use crate::file_chooser::{FilePickerError, FilePurpose};
+use crate::file_chooser::FilePickerError;
 use crate::render::{ImageKind, ImageSource, MAX_SOURCE_BYTES, RenderError, Renderer};
 
 /// Images and their URLs never change (names come from the content).
@@ -50,7 +52,10 @@ pub(super) fn routes() -> Router<AppState> {
         )
         .route("/api/devices/{serial}/images/{name}", get(rendered_image))
         .route("/api/devices/{serial}/export", get(export))
-        .route("/api/file-chooser/compose-file", post(choose_compose_file))
+        .route(
+            "/api/file-chooser",
+            post(choose_file).layer(DefaultBodyLimit::max(MAX_CHOOSER_REQUEST_BYTES)),
+        )
         .route(
             "/api/devices/{serial}/import",
             post(import).layer(DefaultBodyLimit::max(MAX_ARCHIVE_BYTES)),
@@ -96,7 +101,7 @@ impl Failure {
         }
         match self.code {
             ErrorCode::UnknownDevice => StatusCode::NOT_FOUND,
-            ErrorCode::StaleRevision => StatusCode::CONFLICT,
+            ErrorCode::StaleRevision | ErrorCode::Busy => StatusCode::CONFLICT,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::InvalidMessage
@@ -266,19 +271,24 @@ async fn export(
         .into_response())
 }
 
-/// `POST /api/file-chooser/compose-file`: opens the desktop's file dialog and
-/// answers the path of the compose file the user chose (`null` when they
-/// closed it). Needs the user at the screen, and only one dialog at a time.
-async fn choose_compose_file(State(state): State<AppState>) -> Result<Response, Failure> {
+/// Largest body of a file chooser request.
+const MAX_CHOOSER_REQUEST_BYTES: usize = 1024;
+
+/// `POST /api/file-chooser`: opens the desktop's file dialog of a setting
+/// (`{ module, setting }`) and answers the path of the file the user chose
+/// (`null` when they closed it). The dialog is the one the setting
+/// describes; needs the user at the screen, and only one dialog at a time.
+async fn choose_file(State(state): State<AppState>, body: Bytes) -> Result<Response, Failure> {
+    let chooser = chooser_of(&state, &body)?;
     let dialog = Arc::clone(&state.file_dialog)
         .try_acquire_owned()
-        .map_err(|_| Failure::new(ErrorCode::Unavailable, "a file chooser is already open"))?;
+        .map_err(|_| Failure::new(ErrorCode::Busy, "a file chooser is already open"))?;
     let picker = Arc::clone(&state.context.file_picker);
     // The dialog lives on the user's screen whatever becomes of this request: it runs apart,
     // holding its place until it is answered or closed, so that a client dropping its
     // connection cannot pile dialogs up.
     let chosen = tokio::spawn(async move {
-        let chosen = picker.pick_file(FilePurpose::ComposeFile).await;
+        let chosen = picker.pick_file(&chooser).await;
         drop(dialog);
         chosen
     })
@@ -287,6 +297,27 @@ async fn choose_compose_file(State(state): State<AppState>) -> Result<Response, 
     Ok(json(&FileChosen {
         path: chosen.map(|path| path.to_string_lossy().into_owned()),
     }))
+}
+
+/// The dialog the setting named by `body` describes.
+fn chooser_of(state: &AppState, body: &[u8]) -> Result<FileChooser, Failure> {
+    let invalid = |reason: &str| Failure::new(ErrorCode::InvalidInput, reason);
+    let request: FileChooserRequest = (body.len() <= MAX_CHOOSER_REQUEST_BYTES)
+        .then(|| serde_json::from_slice(body).ok())
+        .flatten()
+        .ok_or_else(|| invalid("expected { module, setting }"))?;
+    state
+        .context
+        .catalog
+        .iter()
+        .filter(|module| module.descriptor.kind.0 == request.module)
+        .flat_map(|module| &module.descriptor.settings)
+        .filter(|field| field.key == request.setting)
+        .find_map(|field| match &field.kind {
+            SettingKind::FileEntryList { chooser, .. } => chooser.clone(),
+            _ => None,
+        })
+        .ok_or_else(|| invalid("no file chooser for this setting"))
 }
 
 /// `POST /api/devices/{serial}/import`: replaces the configuration by an
@@ -307,7 +338,7 @@ async fn import(
     let (config, created) = blocking(move || {
         let check =
             |bytes: &[u8]| checked_kind(&renderer, bytes).map_err(|error| error.to_string());
-        let prepared = prepare_import(&body, &device, revision, store.defaults(), check)?;
+        let prepared = store.prepare_import(&body, &device, revision, check)?;
         let created = store.write_import_images(&target, &prepared)?;
         Ok((prepared.config, created))
     })
@@ -340,6 +371,7 @@ mod tests {
             status(ErrorCode::Unavailable),
             StatusCode::SERVICE_UNAVAILABLE
         );
+        assert_eq!(status(ErrorCode::Busy), StatusCode::CONFLICT);
         assert_eq!(
             status(ErrorCode::Internal),
             StatusCode::INTERNAL_SERVER_ERROR

@@ -241,7 +241,7 @@ async fn catalog_of(services: &EngineServices) -> Result<Arc<[CatalogModule]>> {
 fn services(config_dir: &std::path::Path, builtins: BuiltinServices) -> Result<EngineServices> {
     let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
-        store: ConfigStore::new(config_dir, Arc::clone(&registry) as _),
+        store: ConfigStore::new(config_dir, Arc::clone(&registry)),
         renderer: Arc::new(Renderer::new().context("cannot initialise the renderer")?),
         registry,
     })

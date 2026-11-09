@@ -25,7 +25,9 @@ use futures_util::future::join_all;
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
-use super::backend::{ComposeAction, ContainerAction, DockerBackend, DockerChanges, DockerError};
+use super::backend::{
+    ComposeAction, ComposeScope, ContainerAction, DockerBackend, DockerChanges, DockerError,
+};
 use super::model::{ComposeTarget, Container};
 use crate::background::{
     Backoff, Listener, ReadPacer, WorkerControl, catch_panic, sleep_until, spawn_action,
@@ -69,6 +71,7 @@ pub(super) enum Request {
     /// `action` on the compose project `target`.
     Compose {
         target: ComposeTarget,
+        scope: ComposeScope,
         action: ComposeAction,
     },
 }
@@ -180,7 +183,11 @@ async fn execute(backend: &dyn DockerBackend, request: Request) -> Result<(), Do
             let results = join_all(ids.iter().map(|id| backend.container(id, action))).await;
             results.into_iter().collect()
         }
-        Request::Compose { target, action } => backend.compose(&target, action).await,
+        Request::Compose {
+            target,
+            scope,
+            action,
+        } => backend.compose(&target, &scope, action).await,
     }
 }
 
@@ -403,7 +410,12 @@ mod tests {
         async fn container(&self, _: &str, _: ContainerAction) -> Result<(), DockerError> {
             panic!("fragile action");
         }
-        async fn compose(&self, _: &ComposeTarget, _: ComposeAction) -> Result<(), DockerError> {
+        async fn compose(
+            &self,
+            _: &ComposeTarget,
+            _: &ComposeScope,
+            _: ComposeAction,
+        ) -> Result<(), DockerError> {
             panic!("fragile compose");
         }
         async fn compose_services(&self, _: &ComposeTarget) -> Result<Vec<String>, DockerError> {
@@ -458,6 +470,7 @@ mod tests {
         docker.set_latency(Duration::from_secs(5));
         let subscription = hub_on(&docker).subscribe();
         let request = Request::Compose {
+            scope: ComposeScope::Project,
             target: ComposeTarget::new(Some("boutique".into()), None, Vec::new()),
             action: ComposeAction::Down { volumes: false },
         };

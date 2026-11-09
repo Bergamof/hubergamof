@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hubergamof_module_api::{ImageData, ImageLibrary};
+use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     ConfigError, DeviceConfig, DeviceInfo, ErrorCode, ModuleInstance, is_safe_image_name,
 };
@@ -38,7 +38,7 @@ pub use archive::{
     MAX_ARCHIVE_BYTES, MAX_ARCHIVE_CONFIG_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ARCHIVE_EXPANDED_BYTES,
     read_archive, write_archive,
 };
-pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, default_config};
+pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};
 
 use tokio::io::AsyncReadExt as _;
 
@@ -193,16 +193,22 @@ pub struct LoadedConfig {
 pub struct ConfigStore {
     root: PathBuf,
     defaults: Arc<dyn ConfigDefaults>,
+    descriptors: Arc<dyn ModuleDescriptors>,
     write_lock: Arc<Mutex<()>>,
 }
 
 impl ConfigStore {
-    /// Store rooted at `root`, using `defaults` for new configurations.
+    /// Store rooted at `root`, with `modules` giving the defaults of new
+    /// configurations and describing the settings that refer to images.
     #[must_use]
-    pub fn new(root: impl Into<PathBuf>, defaults: Arc<dyn ConfigDefaults>) -> Self {
+    pub fn new<M>(root: impl Into<PathBuf>, modules: Arc<M>) -> Self
+    where
+        M: ConfigDefaults + ModuleDescriptors + 'static,
+    {
         Self {
             root: root.into(),
-            defaults,
+            defaults: modules.clone(),
+            descriptors: modules,
             write_lock: Arc::default(),
         }
     }
@@ -348,7 +354,7 @@ impl ConfigStore {
             {
                 module.image = None;
             }
-            self.defaults.replace_settings_images(module, &mut |name| {
+            self.replace_settings_images(module, |name| {
                 (!missing.contains(name)).then(|| name.to_owned())
             });
         }
@@ -437,15 +443,69 @@ impl ConfigStore {
             .image
             .iter()
             .cloned()
-            .chain(self.defaults.settings_images(module))
+            .chain(
+                self.descriptor_of(module)
+                    .map_or_else(Vec::new, |descriptor| {
+                        descriptor.settings_images(&module.settings)
+                    }),
+            )
             .collect()
     }
 
-    /// What the store knows of the modules: their defaults and the images
-    /// their settings use.
-    #[must_use]
-    pub fn defaults(&self) -> &dyn ConfigDefaults {
-        self.defaults.as_ref()
+    /// Reads archive `bytes` and prepares it for `device` at its current
+    /// `revision`, writing nothing: the configuration is fitted
+    /// ([`fit_to_device`]) and validated, and every image it uses must pass
+    /// `check` (the same check as uploads). Archived image names are only
+    /// labels: images are named by content.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigStoreError::Archive`], [`ConfigStoreError::MissingImage`],
+    /// [`ConfigStoreError::UnreadableImage`] or a validation error.
+    pub fn prepare_import(
+        &self,
+        bytes: &[u8],
+        device: &DeviceInfo,
+        revision: u64,
+        check: impl Fn(&[u8]) -> Result<ImageKind, String>,
+    ) -> Result<PreparedImport, ConfigStoreError> {
+        let Archive { config, images } = read_archive(bytes)?;
+        let mut config = fit_to_device(config, device, revision);
+        let mut stager = ImageStager::new(&images, check);
+        for module in &mut config.modules {
+            if let Some(name) = module.image.take() {
+                module.image = Some(stager.stage(&name)?);
+            }
+            if let Some(descriptor) = self.descriptor_of(module) {
+                for name in descriptor.settings_images(&module.settings) {
+                    stager.stage(&name)?;
+                }
+                descriptor
+                    .replace_settings_images(&mut module.settings, |name| stager.stored_name(name));
+            }
+        }
+        check_config(&config, device)?;
+        Ok(PreparedImport {
+            config,
+            images: stager.prepared,
+        })
+    }
+
+    /// What the module of `module` describes, `None` for a kind not provided.
+    fn descriptor_of(&self, module: &ModuleInstance) -> Option<ModuleDescriptor> {
+        self.descriptors.descriptor(&module.kind)
+    }
+
+    /// Replaces the images the settings of `module` refer to by
+    /// `replace(name)`, `None` removing the reference.
+    fn replace_settings_images(
+        &self,
+        module: &mut ModuleInstance,
+        replace: impl FnMut(&str) -> Option<String>,
+    ) {
+        if let Some(descriptor) = self.descriptor_of(module) {
+            descriptor.replace_settings_images(&mut module.settings, replace);
+        }
     }
 
     /// Fails with [`ConfigStoreError::TooManyImages`] when `adding` more
@@ -581,49 +641,6 @@ pub struct PreparedImport {
     pub images: Vec<(String, Vec<u8>)>,
 }
 
-/// Reads archive `bytes` and prepares it for `device` at its current
-/// `revision`, writing nothing: the configuration is fitted
-/// ([`fit_to_device`]) and validated, and every image it uses must pass
-/// `check` (the same check as uploads). Archived image names are only
-/// labels: images are named by content.
-///
-/// # Errors
-///
-/// [`ConfigStoreError::Archive`], [`ConfigStoreError::MissingImage`],
-/// [`ConfigStoreError::UnreadableImage`] or a validation error.
-pub fn prepare_import(
-    bytes: &[u8],
-    device: &DeviceInfo,
-    revision: u64,
-    defaults: &dyn ConfigDefaults,
-    check: impl Fn(&[u8]) -> Result<ImageKind, String>,
-) -> Result<PreparedImport, ConfigStoreError> {
-    let Archive { config, images } = read_archive(bytes)?;
-    let mut config = fit_to_device(config, device, revision);
-    let mut stager = ImageStager::new(&images, check);
-    for module in &mut config.modules {
-        if let Some(name) = module.image.take() {
-            module.image = Some(stager.stage(&name)?);
-        }
-        let mut failure = None;
-        defaults.replace_settings_images(module, &mut |name| match stager.stage(name) {
-            Ok(stored) => Some(stored),
-            Err(error) => {
-                failure.get_or_insert(error);
-                None
-            }
-        });
-        if let Some(error) = failure {
-            return Err(error);
-        }
-    }
-    check_config(&config, device)?;
-    Ok(PreparedImport {
-        config,
-        images: stager.prepared,
-    })
-}
-
 /// Names the images an archive uses as they will be stored (by content),
 /// checking each once.
 struct ImageStager<'a, C> {
@@ -643,6 +660,11 @@ impl<'a, C: Fn(&[u8]) -> Result<ImageKind, String>> ImageStager<'a, C> {
             stored: BTreeMap::new(),
             prepared: Vec::new(),
         }
+    }
+
+    /// The stored name of an archived image already staged.
+    fn stored_name(&self, name: &str) -> Option<String> {
+        self.stored.get(name).cloned()
     }
 
     /// The stored name of archived image `name`.

@@ -17,7 +17,7 @@ mod device;
 mod live;
 mod messages;
 
-pub use api::{ApiError, FileChosen, ImageUploaded};
+pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
 pub use catalog::CatalogModule;
 pub use config::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS,
@@ -31,9 +31,9 @@ pub use messages::{ClientMessage, ErrorCode, ServerMessage};
 // Defined in the MPL-2.0 module API so that modules do not link GPL code;
 // re-exported here because they are part of the wire contract.
 pub use hubergamof_module_api::{
-    ChoiceOption, FileEntry, KeyState, MAX_ENTRY_NAME_CHARS, MAX_FILE_ENTRIES,
-    MAX_IMAGE_NAME_LENGTH, ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind,
-    SettingField, SettingKind, is_safe_image_name,
+    ChoiceOption, EntryNaming, FileChooser, FileEntry, FileFilter, KeyState, MAX_IMAGE_NAME_LENGTH,
+    ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind, SettingField, SettingKind,
+    is_safe_image_name,
 };
 
 #[cfg(test)]

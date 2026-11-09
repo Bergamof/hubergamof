@@ -3,6 +3,7 @@ use hubergamof_module_api::{ImageLibrary, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use super::render::{container_item, status_label};
 use super::*;
 
 /// Longest (simulated) silence after which the instance is considered idle;
@@ -379,8 +380,8 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
     // Pressing a variant goes back to the project page, where the work shows.
     assert_eq!(
         harness.press(SHOP_UP, "up-build").await,
-        [Command::Back],
-        "the up page was opened from the project page"
+        [Command::BackTo(SHOP.into())],
+        "back to the page of the project, whichever pages lead from it"
     );
     let working = harness.item(SHOP, "container/boutique-web-1");
     assert_eq!(label(&working), "web-1 Build…");
@@ -953,10 +954,9 @@ async fn a_service_without_container_can_only_be_brought_up() {
     );
     assert_eq!(harness.page(WEB_UP).unwrap().title, "Up · web");
 
-    // Two pages to go back through: the variants page, then the service's own.
     assert_eq!(
         harness.press(WEB_UP, "up-build").await,
-        [Command::Back, Command::Back]
+        [Command::BackTo(SHOP.into())]
     );
     let working = harness.item(SHOP, WEB_PLANNED);
     assert_eq!(label(&working), "web Build…");
@@ -965,7 +965,11 @@ async fn a_service_without_container_can_only_be_brought_up() {
         "db",
         "only the service the operation is about"
     );
-    harness.settle().await;
+    assert_eq!(
+        harness.settle().await,
+        [feedback(SHOP, WEB_PLANNED, Feedback::Ok)],
+        "the outcome shows on the service entry shown when it ends"
+    );
     assert_eq!(
         harness.docker.actions().last().unwrap(),
         "up boutique --build web"
@@ -1002,9 +1006,16 @@ async fn a_container_has_its_own_up_and_down_for_its_service_only() {
     );
     assert_eq!(
         harness.press(WEB_DOWN, "down-keep").await,
-        [Command::Back, Command::Back]
+        [Command::BackTo(SHOP.into())]
     );
-    harness.settle().await;
+    assert_eq!(
+        harness.settle().await,
+        [
+            feedback(SHOP, WEB, Feedback::Ok),
+            feedback(SHOP, WEB_PLANNED, Feedback::Ok)
+        ],
+        "both entries of the service are marked: the list of containers is not up to date yet"
+    );
     assert!(harness.status("boutique-web-1").is_none());
     assert!(
         harness.status("boutique-db-1").is_some(),
@@ -1031,7 +1042,10 @@ async fn a_container_outside_compose_has_no_up_and_down() {
 async fn one_operation_at_a_time_on_a_project() {
     let mut harness = Harness::start(&json!({})).await;
     harness.docker.set_latency(Duration::from_secs(2));
-    assert_eq!(harness.press(SHOP_UP, "up-pull").await, [Command::Back]);
+    assert_eq!(
+        harness.press(SHOP_UP, "up-pull").await,
+        [Command::BackTo(SHOP.into())]
+    );
     assert_eq!(
         harness.press(SHOP_UP, "up-build").await,
         Command::alert(),
@@ -1068,7 +1082,7 @@ async fn the_down_of_one_service_has_the_volumes_variant_too_and_asks_twice() {
     );
     assert_eq!(
         harness.press(WEB_DOWN, "down-volumes").await,
-        [Command::Back, Command::Back]
+        [Command::BackTo(SHOP.into())]
     );
     harness.settle().await;
     assert_eq!(

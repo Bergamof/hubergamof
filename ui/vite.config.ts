@@ -5,7 +5,7 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { playwright } from '@vitest/browser-playwright';
 
 /** Minimum coverage (%) of `pnpm test:coverage`: measured minus 2 points, never lowered. */
-const COVERAGE_FLOOR = { lines: 53, functions: 59, branches: 58, statements: 55 };
+const COVERAGE_FLOOR = { lines: 75, functions: 77, branches: 74, statements: 79 };
 
 /** Address of the Rust manager (default port) that `pnpm dev` proxies to. */
 const MANAGER_URL = 'http://127.0.0.1:7878';

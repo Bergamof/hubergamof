@@ -15,7 +15,20 @@ pub struct ImageUploaded {
     pub name: String,
 }
 
-/// Answer to a file chooser request (`POST /api/file-chooser/…`).
+/// Body of a file chooser request (`POST /api/file-chooser`): the setting
+/// whose dialog the manager opens. The dialog itself (title, kinds of files)
+/// is the one that setting describes, never what the client says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileChooserRequest {
+    /// Module kind owning the setting.
+    pub module: String,
+    /// Key of the setting, of a list of files with a dialog.
+    pub setting: String,
+}
+
+/// Answer to a file chooser request (`POST /api/file-chooser`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

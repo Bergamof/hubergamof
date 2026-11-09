@@ -31,6 +31,11 @@ export function problemOf(code: ErrorCode, message: string): Problem {
 				text: 'Fichier refusé : ce n’est pas un export HuBergamof valide.',
 				detail: message
 			};
+		case 'busy':
+			return {
+				text: 'Un sélecteur de fichier est déjà ouvert sur le bureau : choisissez-y le fichier ou fermez-le.',
+				detail: null
+			};
 		case 'unavailable':
 			return {
 				text: 'Le sélecteur de fichier n’est pas disponible : saisissez le chemin du fichier.',
