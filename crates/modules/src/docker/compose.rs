@@ -177,11 +177,13 @@ fn compose_args(
     }
     match action {
         ComposeAction::Up(variant) => {
-            args.extend(["up".into(), "--detach".into()]);
+            args.push("up".into());
             match variant {
-                UpVariant::Plain => {}
-                UpVariant::Build => args.push("--build".into()),
-                UpVariant::Pull => args.push("--pull=always".into()),
+                UpVariant::Plain => args.push("--detach".into()),
+                UpVariant::Build => args.extend(["--detach".into(), "--build".into()]),
+                UpVariant::Pull => args.extend(["--detach".into(), "--pull=always".into()]),
+                // Nothing runs, so there is nothing to detach from.
+                UpVariant::NoStart => args.push("--no-start".into()),
             }
         }
         ComposeAction::Down { volumes } => {
@@ -313,6 +315,7 @@ mod tests {
             )
         );
         assert!(line(&blog, ComposeAction::Up(UpVariant::Plain)).ends_with(" up --detach"));
+        assert!(line(&blog, ComposeAction::Up(UpVariant::NoStart)).ends_with(" up --no-start"));
         // A project whose labels name no file can still be taken down.
         let unknown_files = ComposeTarget::new(Some("--rm".into()), None, Vec::new());
         assert_eq!(

@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page, WebSocketRoute } from '@playwright/test';
-import { expect, test } from './demo-manager.js';
+import { DEMO_COMPOSE_FILE, expect, test } from './demo-manager.js';
 
 // Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
 // keys Audio, Pomodoro, Docker, IntelliJ, Claude; dials Horloge, Audio, Pomodoro, Navigation.
@@ -117,9 +117,6 @@ const PIXEL_PNG = Buffer.from(
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
 	'base64'
 );
-
-/** Path the demo manager's file dialog always answers. */
-const DEMO_COMPOSE_FILE = '/srv/demo/compose.yaml';
 
 test('ajoute, modifie puis supprime un fichier compose avec son nom et son icône', async ({
 	page

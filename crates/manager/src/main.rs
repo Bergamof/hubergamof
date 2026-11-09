@@ -36,9 +36,6 @@ const DEFAULT_PORT: u16 = 7878;
 /// Log level used when `RUST_LOG` is not set.
 const DEFAULT_LOG_FILTER: &str = "info";
 
-/// File `--demo` answers when the UI opens the file dialog.
-const DEMO_COMPOSE_FILE: &str = "/srv/demo/compose.yaml";
-
 /// Longest wait for a device to blank its screens on shutdown.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -65,6 +62,11 @@ struct Cli {
     /// (`http://localhost:5173`). Repeatable.
     #[arg(long = "dev-origin", value_name = "URL")]
     dev_origins: Vec<DevOrigin>,
+
+    /// Answer this file at once when the interface asks for a file, instead of
+    /// opening the desktop's file dialog (tests, screenshots).
+    #[arg(long, value_name = "PATH")]
+    file_chooser_answer: Option<PathBuf>,
 
     /// Do not show the system tray icon.
     #[arg(long)]
@@ -104,7 +106,7 @@ async fn main() -> Result<()> {
         simulated_input: simulated_input(cli.demo),
         store,
         renderer,
-        file_picker: file_picker(cli.demo),
+        file_picker: file_picker(cli.file_chooser_answer.clone()),
     };
     let server = match Server::bind(
         cli.port,
@@ -206,15 +208,12 @@ fn simulated_input(demo: bool) -> SimulatedInput {
     }
 }
 
-/// File dialog of the UI: the desktop's own, or in `--demo` a user always
-/// choosing the same file (no dialog to open in tests and screenshots).
-fn file_picker(demo: bool) -> Arc<dyn FilePicker> {
-    if demo {
-        Arc::new(SimulatedFilePicker::choosing(Some(
-            DEMO_COMPOSE_FILE.into(),
-        )))
-    } else {
-        Arc::new(PortalFilePicker)
+/// File dialog of the UI: the desktop's own (also with `--demo`, so that `make dev` tries
+/// the real one), or a user always choosing `answer` when one is given.
+fn file_picker(answer: Option<PathBuf>) -> Arc<dyn FilePicker> {
+    match answer {
+        Some(file) => Arc::new(SimulatedFilePicker::choosing(Some(file))),
+        None => Arc::new(PortalFilePicker),
     }
 }
 
@@ -315,6 +314,17 @@ mod tests {
         assert_eq!(cli.config_dir, PathBuf::from("config"));
         assert_eq!(cli.dev_origins, []);
         assert!(!cli.no_tray);
+        assert_eq!(
+            cli.file_chooser_answer, None,
+            "the desktop's own dialog, also in --demo"
+        );
+    }
+
+    #[test]
+    fn the_file_chooser_can_be_answered_in_advance() {
+        let cli =
+            Cli::try_parse_from(["hubergamof", "--file-chooser-answer", "/srv/a.yaml"]).unwrap();
+        assert_eq!(cli.file_chooser_answer, Some(PathBuf::from("/srv/a.yaml")));
     }
 
     #[test]

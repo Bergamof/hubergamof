@@ -31,6 +31,9 @@ pub enum UpVariant {
     Build,
     /// `up --detach --pull=always`: pulls the images first.
     Pull,
+    /// `up --no-start`: creates the containers (and builds or pulls what is
+    /// missing) without starting them.
+    NoStart,
 }
 
 /// Action on a compose project.

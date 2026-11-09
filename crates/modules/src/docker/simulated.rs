@@ -246,13 +246,16 @@ impl SimulatedDocker {
             ComposeAction::Up(variant) => {
                 for (service, image) in &project.services {
                     let name = project.container_name(service);
+                    // `--no-start` creates what is missing and starts nothing.
+                    let start = variant != UpVariant::NoStart;
                     match state.containers.iter_mut().find(|c| c.name == name) {
-                        Some(container) => State::set_running(container, true),
+                        Some(container) if start => State::set_running(container, true),
+                        Some(_) => {}
                         None => {
-                            State::set_running(
-                                state.add(name, image, Some(project.labels())),
-                                true,
-                            );
+                            let created = state.add(name, image, Some(project.labels()));
+                            if start {
+                                State::set_running(created, true);
+                            }
                         }
                     }
                 }
@@ -260,6 +263,7 @@ impl SimulatedDocker {
                     UpVariant::Plain => "",
                     UpVariant::Build => " --build",
                     UpVariant::Pull => " --pull",
+                    UpVariant::NoStart => " --no-start",
                 };
                 Ok(format!("up {}{suffix}", project.name))
             }

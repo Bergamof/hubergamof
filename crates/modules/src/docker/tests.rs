@@ -374,7 +374,7 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
         .into_iter()
         .map(|(_, l, _)| l)
         .collect();
-    assert_eq!(labels, ["Up", "Up + build", "Up + pull"]);
+    assert_eq!(labels, ["Up", "Up + build", "Up + pull", "Up --no-start"]);
     assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique");
     harness.press(SHOP_UP, "up-build").await;
     assert_eq!(label(&harness.item(SHOP_UP, "up-build")), "Up…");
@@ -658,14 +658,38 @@ async fn removing_one_container_then_another_asks_again() {
 #[tokio::test(start_paused = true)]
 async fn every_up_variant_reaches_compose() {
     let mut harness = Harness::start(&json!({})).await;
-    for item in ["up-plain", "up-build", "up-pull"] {
+    for item in ["up-plain", "up-build", "up-pull", "up-no-start"] {
         harness.press(SHOP_UP, item).await;
         harness.settle().await;
     }
     assert_eq!(
         harness.docker.actions(),
-        ["up boutique", "up boutique --build", "up boutique --pull"]
+        [
+            "up boutique",
+            "up boutique --build",
+            "up boutique --pull",
+            "up boutique --no-start"
+        ]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn up_without_start_creates_the_missing_containers_and_starts_nothing() {
+    let mut harness =
+        Harness::start(&json!({ "composeFiles": ["/srv/boutique/compose.yaml"] })).await;
+    harness.press(SHOP_DOWN, "down-keep").await;
+    harness.press(SHOP_DOWN, "down-keep").await;
+    harness.settle().await;
+    assert!(harness.status("boutique-web-1").is_none());
+
+    harness.press(SHOP_UP, "up-no-start").await;
+    harness.settle().await;
+    assert_eq!(
+        harness.status("boutique-web-1"),
+        Some(ContainerStatus::Created),
+        "created, not running"
+    );
+    assert_eq!(label(&harness.item(MAIN_PAGE, SHOP)), "boutique 0/3");
 }
 
 #[tokio::test(start_paused = true)]

@@ -312,10 +312,11 @@ enum Action {
 }
 
 const PROJECT_ACTIONS: [Action; 2] = [Action::StartAll, Action::StopAll];
-const UP_ACTIONS: [Action; 3] = [
+const UP_ACTIONS: [Action; 4] = [
     Action::Up(UpVariant::Plain),
     Action::Up(UpVariant::Build),
     Action::Up(UpVariant::Pull),
+    Action::Up(UpVariant::NoStart),
 ];
 const DOWN_ACTIONS: [Action; 2] = [
     Action::Down { volumes: false },
@@ -338,6 +339,7 @@ impl Action {
             Self::Up(UpVariant::Plain) => "up-plain",
             Self::Up(UpVariant::Build) => "up-build",
             Self::Up(UpVariant::Pull) => "up-pull",
+            Self::Up(UpVariant::NoStart) => "up-no-start",
             Self::Down { volumes: false } => "down-keep",
             Self::Down { volumes: true } => "down-volumes",
         }
@@ -354,6 +356,7 @@ impl Action {
             Self::Up(UpVariant::Plain) => UP_LABEL,
             Self::Up(UpVariant::Build) => "Up + build",
             Self::Up(UpVariant::Pull) => "Up + pull",
+            Self::Up(UpVariant::NoStart) => "Up --no-start",
             Self::Down { volumes: false } => DOWN_LABEL,
             Self::Down { volumes: true } => "Down + volumes",
         }
