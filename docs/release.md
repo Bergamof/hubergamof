@@ -7,9 +7,9 @@ Case « Publier un patch même sans feat, fix ni perf » : pour publier quand le
 
 Le workflow `.github/workflows/release.yml` enchaîne trois jobs :
 
-1. **gate** — fige le SHA de `main` ; attend la fin du dernier run de `CI` sur ce SHA (quel que soit l'événement : push, PR, planification) et échoue s'il est en erreur, annulé ou introuvable ; calcule la version.
+1. **gate** — fige le SHA de `main` ; attend la fin du dernier run de `CI` sur ce SHA et sur `main` (événements `push` et planification ; jamais un run de PR) et échoue s'il est en erreur, annulé ou introuvable ; calcule la version.
 2. **build** (Ubuntu 24.04, sans cache) — fixe la version dans `Cargo.toml`/`Cargo.lock` (copie de travail, jamais committée), `make build`, `make package`, `lintian`, puis installe chaque paquet dans un conteneur propre (`make package-smoke`) ; produit `SHA256SUMS`.
-3. **publish** — `gh release create vX.Y.Z --target <SHA>` : crée en une opération la release, le tag, les livrables et la note.
+3. **publish** — crée d'abord le tag `vX.Y.Z` au SHA vérifié par l'API (échec s'il existe déjà), puis la release avec `--verify-tag` : livrables, `SHA256SUMS` et note.
 
 ## Numéro de version
 
@@ -42,7 +42,8 @@ Les deux contiennent le même binaire (UI embarquée), construit sur Ubuntu 24.0
 **Fichiers installés** : `/usr/bin/hubergamof`, `/usr/lib/udev/rules.d/70-hubergamof.rules`, `/usr/lib/systemd/user/hubergamof.service` (configuration dans `~/.config/hubergamof`).
 
 **Scripts de maintenance** (`packaging/package/hooks.sh`, communs aux deux formats) :
-- installation/mise à jour : rechargement d'udev et rejeu des évènements (un appareil branché est accessible sans débranchement), `systemctl --global enable` (actif pour tous les utilisateurs au prochain login), puis `daemon-reload` et `restart` dans chaque session graphique déjà ouverte (`systemctl --user --machine=<utilisateur>@.host`) ;
+- installation : rechargement d'udev et évènements `change` limités aux appareils Elgato (un appareil branché est accessible sans débranchement), `systemctl --global enable` (actif pour tous les utilisateurs au prochain login), puis `daemon-reload` et `restart` dans chaque session graphique déjà ouverte (`systemctl --user --machine=<utilisateur>@.host`) ;
+- mise à jour : idem, mais `try-restart` : un service arrêté volontairement le reste ;
 - retrait : arrêt dans les sessions, désactivation globale, rechargement d'udev ;
 - aucune étape ne fait échouer l'opération ; la configuration de l'utilisateur n'est jamais supprimée.
 
@@ -63,5 +64,11 @@ make package-smoke    # installation puis retrait dans des conteneurs Ubuntu 24.
 
 - Les images de `packaging/package/{arch,ubuntu}/Dockerfile` sont épinglées par digest (Dependabot).
 - Le build de release n'utilise aucun cache (Rust, pnpm) : une release ne repart jamais d'un cache.
-- Le dernier run de CI compte même s'il vient de la planification hebdomadaire : une dérive de dépendances bloque la release jusqu'à correction.
+- Le dernier run de CI (push ou planification) compte, même hebdomadaire : une dérive de dépendances bloque la release jusqu'à correction.
 - `make install` (depuis les sources, `~/.local/bin`) et le paquet peuvent cohabiter : l'unité de `~/.config/systemd/user` l'emporte sur celle du paquet.
+
+## Décisions et pistes de sécurité (revue cerbere-le-paranoiaque)
+
+- **Service activé pour tous les comptes** : voulu (« le paquet crée et démarre le service »), hypothèse du projet : poste mono-utilisateur, voir `docs/security.md`.
+- **Pistes non faites**, à décider : attestation de provenance des livrables (`actions/attest-build-provenance`, SHA à épingler) ; `cargo deny`/`pnpm audit` rejoués dans `gate` ; empreinte d'intégrité dans `packageManager` de `ui/package.json` ; ruleset GitHub protégeant les tags `v*` (réglage du dépôt, à faire à la main).
+- Les sujets de commit passent tels quels dans les notes, sauf `@nom` mis en code.

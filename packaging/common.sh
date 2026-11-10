@@ -93,5 +93,6 @@ check_pactl() {
 
 reload_udev_rules() {
 	sudo udevadm control --reload-rules
-	sudo udevadm trigger --subsystem-match=usb --subsystem-match=hidraw
+	sudo udevadm trigger --action=change --subsystem-match=usb --attr-match=idVendor=0fd9
+	sudo udevadm trigger --action=change --subsystem-match=hidraw
 }

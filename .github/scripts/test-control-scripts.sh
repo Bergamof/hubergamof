@@ -176,14 +176,16 @@ notes_repo="$(mktemp -d)"
 	git commit -q --allow-empty -m "fix: crash au démarrage (#8)"
 	git commit -q --allow-empty -m "feat!: nouveau format"
 	git commit -q --allow-empty -m "ci: étape de plus"
+	git commit -q --allow-empty -m "docs: merci @someone et @org-team"
 )
 notes="$(cd "$notes_repo" && GITHUB_SERVER_URL=https://example.invalid GITHUB_REPOSITORY=o/r \
 	"$here/release-notes.sh" 1.1.0 HEAD v1.0.0)"
 rm -rf "$notes_repo"
+# shellcheck disable=SC2016  # backticks Markdown littéraux
 for fragment in '## HuBergamof 1.1.0' '### Changements incompatibles' '- nouveau format' \
 	'### Nouveautés' '- **docker** : nouvelle page ([#7](https://example.invalid/o/r/pull/7))' \
 	'### Corrections' '- crash au démarrage ([#8](https://example.invalid/o/r/pull/8))' \
-	'### Autres changements' '- ci : étape de plus' 'hubergamof_1.1.0_amd64.deb' \
+	'### Autres changements' '- ci : étape de plus' '- docs : merci `@someone` et `@org-team`' 'hubergamof_1.1.0_amd64.deb' \
 	'hubergamof-1.1.0-1-x86_64.pkg.tar.zst' 'compare/v1.0.0...v1.1.0'; do
 	if [[ "$notes" != *"$fragment"* ]]; then
 		echo "ÉCHEC : release-notes.sh, « $fragment » absent" >&2
@@ -205,13 +207,17 @@ expect_verdict() { # expect_verdict <attendu> <JSON> <libellé>
 	fi
 }
 expect_verdict missing '{"workflow_runs":[]}' "aucun run"
-expect_verdict success '{"workflow_runs":[{"created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}' "run vert"
-expect_verdict failure '{"workflow_runs":[{"created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"failure"}]}' "run rouge"
-expect_verdict failure '{"workflow_runs":[{"created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"cancelled"}]}' "run annulé"
-expect_verdict pending '{"workflow_runs":[{"created_at":"2026-01-01T00:00:00Z","status":"in_progress","conclusion":null}]}' "run en cours"
-expect_verdict pending '{"workflow_runs":[{"created_at":"2026-01-01T00:00:00Z","status":"queued","conclusion":null}]}' "run en file"
-expect_verdict success '{"workflow_runs":[{"created_at":"2026-01-02T00:00:00Z","status":"completed","conclusion":"success"},{"created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"failure"}]}' "le plus récent est vert"
-expect_verdict failure '{"workflow_runs":[{"created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"},{"created_at":"2026-01-02T00:00:00Z","status":"completed","conclusion":"failure"}]}' "le plus récent est rouge"
+expect_verdict success '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}' "run vert"
+expect_verdict failure '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"failure"}]}' "run rouge"
+expect_verdict failure '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"cancelled"}]}' "run annulé"
+expect_verdict pending '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"in_progress","conclusion":null}]}' "run en cours"
+expect_verdict pending '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"queued","conclusion":null}]}' "run en file"
+expect_verdict success '{"workflow_runs":[{"event":"push","created_at":"2026-01-02T00:00:00Z","status":"completed","conclusion":"success"},{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"failure"}]}' "le plus récent est vert"
+expect_verdict failure '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"},{"event":"push","created_at":"2026-01-02T00:00:00Z","status":"completed","conclusion":"failure"}]}' "le plus récent est rouge"
+
+expect_verdict success '{"workflow_runs":[{"event":"schedule","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}' "run planifié accepté"
+expect_verdict missing '{"workflow_runs":[{"event":"pull_request","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}' "run de PR ignoré"
+expect_verdict success '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"},{"event":"pull_request","created_at":"2026-01-02T00:00:00Z","status":"completed","conclusion":"failure"}]}' "un run de PR plus récent ne compte pas"
 
 # set-version.sh : Cargo.toml et Cargo.lock, rien d'autre.
 version_dir="$(mktemp -d)"
@@ -306,6 +312,9 @@ if run_hook hubergamof_post_install HOOKS_FAIL_RESTART=1 && ! grep -q 'a échou�
 	echo "ÉCHEC : hooks.sh, l'échec d'un démarrage doit être signalé sans interrompre" >&2
 	failures=$((failures + 1))
 fi
+run_hook "hubergamof_post_install upgrade" HOOKS_FAIL_RESTART=
+expect_log '--user --machine=alice@.host try-restart hubergamof.service' "mise à jour : redémarrage seulement là où il tourne"
+expect_no_log ' restart hubergamof.service' "mise à jour : pas de démarrage forcé"
 run_hook hubergamof_pre_remove HOOKS_FAIL_RESTART=
 expect_log '--user --machine=alice@.host stop hubergamof.service' "arrêt avant retrait"
 expect_log '--global disable hubergamof.service' "désactivation globale"

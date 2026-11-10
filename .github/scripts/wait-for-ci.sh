@@ -7,7 +7,8 @@
 #         wait-for-ci.sh --verdict        (lit les runs en JSON sur l'entrée standard)
 #
 # --verdict affiche : success | pending | failure | missing. Le run retenu est
-# le plus récent du commit, quel que soit l'événement (push, PR, planification).
+# le plus récent du commit sur main, produit par un push ou la planification
+# (jamais par une PR, dont le workflow peut venir d'une autre branche).
 # Codes (attente) : 0 CI verte, 1 CI en échec ou introuvable, 2 usage.
 set -euo pipefail
 
@@ -19,7 +20,8 @@ readonly MAX_WAIT_SECONDS="${WAIT_FOR_CI_MAX_SECONDS:-3600}"
 
 verdict() {
 	jq -r '
-		(.workflow_runs // []) | sort_by(.created_at) | last
+		[.workflow_runs // [] | .[] | select(.event == "push" or .event == "schedule")]
+		| sort_by(.created_at) | last
 		| if . == null then "missing"
 		  elif .status != "completed" then "pending"
 		  elif .conclusion == "success" then "success"
@@ -41,7 +43,7 @@ repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY manquant}"
 
 started="$SECONDS"
 while true; do
-	runs="$(gh api "repos/$repository/actions/workflows/$CI_WORKFLOW/runs?head_sha=$sha&per_page=100")"
+	runs="$(gh api "repos/$repository/actions/workflows/$CI_WORKFLOW/runs?head_sha=$sha&branch=main&per_page=100")"
 	result="$(verdict <<<"$runs")"
 	elapsed=$((SECONDS - started))
 	case "$result" in

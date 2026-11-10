@@ -27,8 +27,8 @@ cp "$here/PKGBUILD" "$repo_root/LICENSE" "$work/"
 	cat "$here/hooks.sh"
 	cat <<'FUNCTIONS'
 
-post_install() { hubergamof_post_install; }
-post_upgrade() { hubergamof_post_install; }
+post_install() { hubergamof_post_install install; }
+post_upgrade() { hubergamof_post_install upgrade; }
 pre_remove() { hubergamof_pre_remove; }
 post_remove() { hubergamof_post_remove; }
 FUNCTIONS

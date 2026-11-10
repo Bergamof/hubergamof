@@ -21,13 +21,16 @@ hubergamof_note() { printf 'hubergamof : %s\n' "$*" >&2; }
 
 hubergamof_systemd_running() { [ -d "$HUBERGAMOF_SYSTEMD_DIR" ]; }
 
-# Recharge les règles udev puis rejoue les évènements d'ajout : un Stream Deck déjà
-# branché reçoit son accès sans débranchement.
+# Recharge les règles udev puis rejoue des évènements « change » : un Stream Deck
+# déjà branché reçoit son accès sans débranchement.
 hubergamof_reload_udev() {
 	command -v udevadm >/dev/null 2>&1 || return 0
 	hubergamof_systemd_running || return 0
 	udevadm control --reload-rules >/dev/null 2>&1 || true
-	udevadm trigger --action=add --subsystem-match=usb --subsystem-match=hidraw >/dev/null 2>&1 || true
+	# « change » (pas « add ») et fabricant Elgato seulement : ne touche ni aux autres
+	# appareils USB ni à leurs pilotes. uaccess s'applique aussi sur « change ».
+	udevadm trigger --action=change --subsystem-match=usb --attr-match=idVendor=0fd9 >/dev/null 2>&1 || true
+	udevadm trigger --action=change --subsystem-match=hidraw >/dev/null 2>&1 || true
 }
 
 # Applique `systemctl --user <action>` dans chaque session graphique ouverte.
@@ -45,14 +48,21 @@ hubergamof_in_graphical_sessions() {
 	done
 }
 
+# Usage : hubergamof_post_install install|upgrade
+# install : le service est démarré dans les sessions ouvertes. upgrade : il n'est
+# redémarré que là où il tourne déjà (un service arrêté volontairement le reste).
 hubergamof_post_install() {
+	hubergamof_mode="${1:-install}"
 	hubergamof_reload_udev
 	if hubergamof_systemd_running && command -v systemctl >/dev/null 2>&1; then
 		systemctl --global enable "$HUBERGAMOF_UNIT" >/dev/null 2>&1 \
 			|| hubergamof_note "activation globale du service impossible : « systemctl --user enable --now $HUBERGAMOF_UNIT »."
 		hubergamof_in_graphical_sessions daemon-reload
-		# restart : démarre le service, ou reprend le nouveau binaire après une mise à jour.
-		hubergamof_in_graphical_sessions restart "$HUBERGAMOF_UNIT"
+		if [ "$hubergamof_mode" = upgrade ]; then
+			hubergamof_in_graphical_sessions try-restart "$HUBERGAMOF_UNIT"
+		else
+			hubergamof_in_graphical_sessions restart "$HUBERGAMOF_UNIT"
+		fi
 	fi
 	hubergamof_note "service actif dans les sessions graphiques ouvertes, au prochain login sinon."
 	hubergamof_note "module Docker : l'utilisateur doit appartenir au groupe « docker »."

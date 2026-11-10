@@ -26,6 +26,8 @@ DIST_DIR := dist
 RELEASE_BINARY := target/release/hubergamof
 ARCH_IMAGE := hubergamof-package-arch
 UBUNTU_IMAGE := hubergamof-package-ubuntu
+# Dossier de sortie du paquet Arch, dans le conteneur.
+ARCH_OUT := /tmp/package-out
 # Origines du serveur de dev Vite (port par défaut 5173), autorisées par le
 # gestionnaire en plus des siennes (contrôle strict Host/Origin).
 VITE_DEV_ORIGINS := http://localhost:5173 http://127.0.0.1:5173
@@ -206,14 +208,17 @@ package: package-deb package-arch ## Paquets .deb (Ubuntu) et pacman (Manjaro) d
 package-deb: ## Paquet .deb (dpkg-deb, dpkg-shlibdeps)
 	"$(CURDIR)/$(PACKAGE_DIR)/build-deb.sh" "$(RELEASE_BINARY)" "$(PACKAGE_VERSION)" "$(DIST_DIR)"
 
-# makepkg refuse root : conteneur Arch, avec un dossier de sortie accessible à son
-# utilisateur (le dossier lui-même seulement ; le .deb reste à l'utilisateur courant).
+# makepkg refuse root : conteneur Arch (utilisateur « builder »). Le paquet sort du
+# conteneur par un flux tar : aucun dossier du poste n'est ouvert en écriture à
+# d'autres comptes (dist/ sert ensuite à des installations en root). Les messages
+# de makepkg passent sur stderr pour ne pas se mêler à l'archive.
 package-arch: ## Paquet pacman (.pkg.tar.zst, makepkg dans un conteneur Arch)
 	mkdir -p "$(DIST_DIR)"
-	chmod 0777 "$(DIST_DIR)"
 	$(DOCKER) build --quiet --tag "$(ARCH_IMAGE)" "$(PACKAGE_DIR)/arch"
-	$(DOCKER) run --rm -v "$(CURDIR):/src:ro" -v "$(CURDIR)/$(DIST_DIR):/dist" "$(ARCH_IMAGE)" \
-		"/src/$(PACKAGE_DIR)/build-arch.sh" "/src/$(RELEASE_BINARY)" "$(PACKAGE_VERSION)" /dist
+	$(DOCKER) run --rm -v "$(CURDIR):/src:ro" "$(ARCH_IMAGE)" \
+		bash -c '"$$0" "$$@" >&2 && tar -C "$$3" -c .' \
+		"/src/$(PACKAGE_DIR)/build-arch.sh" "/src/$(RELEASE_BINARY)" "$(PACKAGE_VERSION)" "$(ARCH_OUT)" \
+		| tar -x -C "$(DIST_DIR)"
 
 package-lint: ## lintian sur le .deb (erreurs bloquantes)
 	lintian --fail-on error "$(DIST_DIR)/hubergamof_$(PACKAGE_VERSION)_amd64.deb"

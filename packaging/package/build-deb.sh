@@ -100,7 +100,7 @@ write_script() { # write_script <nom> <corps>
 }
 # shellcheck disable=SC2016  # $1 est évalué par le script généré, pas ici
 write_script postinst 'case "$1" in
-configure) hubergamof_post_install ;;
+configure) if [ -n "$2" ]; then hubergamof_post_install upgrade; else hubergamof_post_install install; fi ;;
 esac
 exit 0'
 # shellcheck disable=SC2016

@@ -150,15 +150,23 @@ jobs:
           SHA: ${{ needs.gate.outputs.sha }}
           PREVIOUS_TAG: ${{ needs.gate.outputs.previous_tag }}
         run: .github/scripts/release-notes.sh "$VERSION" "$SHA" "$PREVIOUS_TAG" > release-notes.md
-      # gh crée le tag au commit vérifié en même temps que la release.
-      - name: Create the release and the tag
+      # La ref est créée d'abord : l'appel échoue si le tag existe déjà (poussé entre
+      # gate et publish), au lieu de rattacher les livrables à un autre commit.
+      - name: Create the tag
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.gate.outputs.version }}
           SHA: ${{ needs.gate.outputs.sha }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/git/refs"
+          -f "ref=refs/tags/v$VERSION" -f "sha=$SHA"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.gate.outputs.version }}
         run: |
           url="$(gh release create "v$VERSION" dist/* \
-            --target "$SHA" \
+            --verify-tag \
             --title "HuBergamof $VERSION" \
             --notes-file release-notes.md)"
           echo "Release publiée : $url" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -24,9 +24,12 @@ range="$target"
 
 breaking=() features=() fixes=() performance=() others=()
 
-# `(#18)` en fin de sujet devient un lien vers la PR.
+# Sujet publié tel quel, sauf : `(#18)` devient un lien vers la PR, et `@nom` est
+# mis en code pour ne notifier personne.
+# shellcheck disable=SC2016  # les backticks sont du Markdown littéral
 link_pull_requests() {
-	sed -E "s|\(#([0-9]+)\)|([#\1]($repo_url/pull/\1))|g" <<<"$1"
+	sed -E -e "s|\(#([0-9]+)\)|([#\1]($repo_url/pull/\1))|g" \
+		-e 's/(^|[^`[:alnum:]])@([A-Za-z0-9_-]+)/\1`@\2`/g' <<<"$1"
 }
 
 classify() {
