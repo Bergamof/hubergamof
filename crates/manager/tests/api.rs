@@ -13,7 +13,7 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineHandle, EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{
-    FilePicker, FilePickerError, FilePurpose, NoFilePicker, SimulatedFilePicker,
+    FilePicker, FilePickerError, NoFilePicker, SimulatedFilePicker,
 };
 use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
 use hubergamof_manager::server::{
@@ -21,8 +21,8 @@ use hubergamof_manager::server::{
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, FileChosen,
-    ImageSize, ImageUploaded,
+    ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, FileChooser,
+    FileChosen, ImageSize, ImageUploaded,
 };
 use image::{ImageFormat, Rgba, RgbaImage};
 use tempfile::TempDir;
@@ -36,6 +36,8 @@ const FIRST: &str = "API0000000001";
 const SECOND: &str = "API0000000002";
 /// A Stream Deck MK.2: 5×3 keys, no dial.
 const NO_DIALS: &str = "API0000000003";
+/// The file chooser of the compose files of the Docker module.
+const CHOOSER_REQUEST: &str = r#"{ "module": "docker", "setting": "composeFiles" }"#;
 const CHOSEN_FILE: &str = "/srv/shop/compose.yaml";
 const WAIT: Duration = Duration::from_secs(5);
 const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><rect width="1" height="1" fill="red"/></svg>"#;
@@ -69,7 +71,7 @@ impl Api {
         let dir = tempfile::tempdir().unwrap();
         let registry = Arc::new(builtin_registry_with(BuiltinServices::simulated()));
         let services = EngineServices {
-            store: ConfigStore::new(dir.path(), Arc::clone(&registry) as _),
+            store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
             renderer: Arc::new(Renderer::new().unwrap()),
             registry: Arc::clone(&registry),
         };
@@ -496,7 +498,7 @@ async fn reads_of_the_api_made_from_another_site_are_refused() {
             Request::get(format!("/api/devices/{FIRST}/export"))
                 .header("host", HOST)
                 .header("sec-fetch-site", "cross-site")
-                .body(Body::empty())
+                .body(Body::from(CHOOSER_REQUEST))
                 .unwrap(),
         )
         .await;
@@ -602,10 +604,10 @@ async fn refused_imports_leave_no_image_behind() {
 
 async fn choose_compose_file(api: &Api) -> Response<Body> {
     api.send(
-        Request::post("/api/file-chooser/compose-file")
+        Request::post("/api/file-chooser")
             .header("host", HOST)
             .header("origin", ORIGIN)
-            .body(Body::empty())
+            .body(Body::from(CHOOSER_REQUEST))
             .unwrap(),
     )
     .await
@@ -642,10 +644,10 @@ async fn the_file_chooser_is_refused_to_foreign_origins() {
     let api = Api::start().await;
     let response = api
         .send(
-            Request::post("/api/file-chooser/compose-file")
+            Request::post("/api/file-chooser")
                 .header("host", HOST)
                 .header("origin", "http://evil.example")
-                .body(Body::empty())
+                .body(Body::from(CHOOSER_REQUEST))
                 .unwrap(),
         )
         .await;
@@ -663,7 +665,7 @@ struct HeldDialog {
 impl FilePicker for HeldDialog {
     async fn pick_file(
         &self,
-        _purpose: FilePurpose,
+        _chooser: &FileChooser,
     ) -> Result<Option<std::path::PathBuf>, FilePickerError> {
         self.opened.notify_one();
         self.release.notified().await;
@@ -682,10 +684,10 @@ async fn a_dialog_stays_the_only_one_even_when_its_request_is_dropped() {
     .await;
     let request = |router: axum::Router| {
         router.oneshot(
-            Request::post("/api/file-chooser/compose-file")
+            Request::post("/api/file-chooser")
                 .header("host", HOST)
                 .header("origin", ORIGIN)
-                .body(Body::empty())
+                .body(Body::from(CHOOSER_REQUEST))
                 .unwrap(),
         )
     };
@@ -695,14 +697,14 @@ async fn a_dialog_stays_the_only_one_even_when_its_request_is_dropped() {
     let second = request(api.router.clone()).await.unwrap();
     assert_eq!(
         api_error(second).await,
-        (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
+        (StatusCode::CONFLICT, ErrorCode::Busy)
     );
 
     // The client goes away: the dialog is still on the screen, so still the only one.
     first.abort();
     let _ = first.await;
     let third = request(api.router.clone()).await.unwrap();
-    assert_eq!(third.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(third.status(), StatusCode::CONFLICT);
 
     release.notify_one();
     let mut accepted = false;
@@ -724,7 +726,7 @@ struct BrokenDialog;
 impl FilePicker for BrokenDialog {
     async fn pick_file(
         &self,
-        _purpose: FilePurpose,
+        _chooser: &FileChooser,
     ) -> Result<Option<std::path::PathBuf>, FilePickerError> {
         Err(FilePickerError::Failed(
             "secret detail /run/user/1000".into(),
@@ -739,5 +741,35 @@ async fn a_failing_dialog_is_an_internal_error_without_its_details() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = String::from_utf8(bytes(response).await).unwrap();
     assert!(!body.contains("secret detail"), "{body}");
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn a_file_chooser_is_only_opened_for_a_setting_that_describes_one() {
+    let api = Api::start().await;
+    let ask = |body: String| {
+        api.send(
+            Request::post("/api/file-chooser")
+                .header("host", HOST)
+                .header("origin", ORIGIN)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+    };
+    for body in [
+        r#"{ "module": "docker", "setting": "nothing" }"#,
+        r#"{ "module": "audio", "setting": "composeFiles" }"#,
+        r#"{ "module": "pomodoro", "setting": "workMinutes" }"#,
+        r#"{ "module": "docker" }"#,
+        "not json",
+    ] {
+        assert_eq!(
+            api_error(ask(body.to_owned()).await).await,
+            (StatusCode::BAD_REQUEST, ErrorCode::InvalidInput),
+            "{body}"
+        );
+    }
+    let huge = format!(r#"{{ "module": "{}", "setting": "x" }}"#, "d".repeat(2000));
+    assert_eq!(ask(huge).await.status(), StatusCode::PAYLOAD_TOO_LARGE);
     api.stop().await;
 }

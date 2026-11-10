@@ -17,6 +17,8 @@ Form control of one module setting, chosen from its kind.
 		/** Device and client of the files a file list stores icons for. */
 		serial: string;
 		api: ManagerApi;
+		/** Kind of the module the setting belongs to. */
+		moduleKind: string;
 		/** Icon of an item without image of its own (module icon unless the module says otherwise). */
 		defaultIcon: string | null | undefined;
 		/** Called after a change that raises no `input` event (a file list). */
@@ -32,6 +34,7 @@ Form control of one module setting, chosen from its kind.
 		error,
 		serial,
 		api,
+		moduleKind,
 		defaultIcon,
 		onedit,
 		onediting
@@ -66,6 +69,9 @@ Form control of one module setting, chosen from its kind.
 			{id}
 			labelledBy="{id}-label"
 			{describedBy}
+			kind={field.kind}
+			module={moduleKind}
+			setting={field.key}
 			entries={Array.isArray(value) ? value : []}
 			{serial}
 			{api}

@@ -1,4 +1,11 @@
-import type { ApiError, DeviceConfig, FileChosen, ImageUploaded } from '#lib/generated/index.js';
+import type {
+	ApiError,
+	DeviceConfig,
+	ErrorCode,
+	FileChooserRequest,
+	FileChosen,
+	ImageUploaded
+} from '#lib/generated/index.js';
 import { problemOf, type Problem } from '#lib/deck/problems.js';
 
 const MEBIBYTE = 1024 * 1024;
@@ -17,7 +24,14 @@ const UNKNOWN_TYPE = 'application/octet-stream';
 
 const HTTP_PAYLOAD_TOO_LARGE = 413;
 
-export type ApiResult<T> = { ok: true; value: T } | { ok: false; problem: Problem };
+/** A request that failed: what to tell the user, and the manager's code when it gave one. */
+export interface ApiFailure {
+	ok: false;
+	problem: Problem;
+	code?: ErrorCode;
+}
+
+export type ApiResult<T> = { ok: true; value: T } | ApiFailure;
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -78,15 +92,21 @@ function isApiError(value: unknown): value is ApiError {
 	);
 }
 
-async function problemFrom(response: Response, tooLarge: Problem): Promise<Problem> {
-	if (response.status === HTTP_PAYLOAD_TOO_LARGE) return tooLarge;
+async function failureFrom(response: Response, tooLarge: Problem): Promise<ApiFailure> {
+	if (response.status === HTTP_PAYLOAD_TOO_LARGE) return { ok: false, problem: tooLarge };
 	try {
 		const body: unknown = await response.json();
-		if (isApiError(body)) return problemOf(body.code, body.message);
+		if (isApiError(body)) {
+			return { ok: false, problem: problemOf(body.code, body.message), code: body.code };
+		}
 	} catch {
 		// Not an API answer (proxy, crash…): reported below with its status.
 	}
-	return { text: 'Le gestionnaire a signalé une erreur.', detail: `HTTP ${response.status}` };
+	const problem = {
+		text: 'Le gestionnaire a signalé une erreur.',
+		detail: `HTTP ${response.status}`
+	};
+	return { ok: false, problem };
 }
 
 /** Client of the internal HTTP routes of the manager (`/api/…`). */
@@ -116,13 +136,15 @@ export class ManagerApi {
 	}
 
 	/**
-	 * Opens the desktop's file dialog and resolves the path of the compose file the user chose,
-	 * `null` when they closed it. Resolves a problem (« indisponible ») where there is no dialog.
+	 * Opens the desktop's file dialog of the file setting `setting` of module `module` and
+	 * resolves the path the user chose, `null` when they closed it. The failure says (`code`)
+	 * when there is no dialog on this desktop (`unavailable`) or one is already open (`busy`).
 	 */
-	async chooseComposeFile(): Promise<ApiResult<string | null>> {
+	async chooseFile(module: string, setting: string): Promise<ApiResult<string | null>> {
+		const request: FileChooserRequest = { module, setting };
 		const result = await this.#post<FileChosen>(
-			'/api/file-chooser/compose-file',
-			new Blob([]),
+			'/api/file-chooser',
+			new Blob([JSON.stringify(request)]),
 			'application/json',
 			UNEXPECTED_ANSWER
 		);
@@ -156,7 +178,7 @@ export class ManagerApi {
 		} catch {
 			return { ok: false, problem: NO_CONNECTION };
 		}
-		if (!response.ok) return { ok: false, problem: await problemFrom(response, tooLarge) };
+		if (!response.ok) return failureFrom(response, tooLarge);
 		try {
 			return { ok: true, value: (await response.json()) as T };
 		} catch {

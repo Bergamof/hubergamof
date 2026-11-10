@@ -163,8 +163,6 @@ pub struct ComposeTarget {
     pub directory: Option<PathBuf>,
     /// Compose files, absolute.
     pub files: Vec<PathBuf>,
-    /// The services the action is about; empty: the whole project.
-    pub services: Vec<String>,
 }
 
 impl ComposeTarget {
@@ -176,14 +174,7 @@ impl ComposeTarget {
             project,
             directory,
             files,
-            services: Vec::new(),
         }
-    }
-
-    /// The same target, narrowed to `services`.
-    #[must_use]
-    pub fn with_services(self, services: Vec<String>) -> Self {
-        Self { services, ..self }
     }
 }
 

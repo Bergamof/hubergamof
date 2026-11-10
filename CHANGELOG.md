@@ -9,6 +9,9 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- API des modules : `Command::BackTo(PageId)` revient à une page du module en fermant celles qui sont ouvertes au-dessus.
+- Contrat : code d'erreur `busy` (409) quand une boîte de dialogue de fichier est déjà ouverte ; le sélecteur de fichier est décrit par le réglage (`FileChooser`, `EntryNaming`, bornes `max_entries`/`max_name_chars`, textes) et la route devient `POST /api/file-chooser` (`FileChooserRequest { module, setting }`) : l'interface de liste de fichiers ne contient plus rien de propre à compose.
+
 - Module Docker : chaque fichier compose déclaré a un nom et une icône au choix. Les réglages listent les fichiers ajoutés (icône, nom, chemin) ; on les ajoute avec le sélecteur de fichier natif du bureau (portail `xdg-desktop-portal`, qui donne le vrai chemin, ce qu'un `<input type="file">` ne fait pas), puis on les modifie ou les supprime sur place. Sans portail (ou sans bureau), le chemin se saisit. Le nom remplace celui du projet compose sur la touche et dans les titres ; l'icône remplace les couches. Les icônes sont stockées comme les images de touche (même contrôle, export/import zip, nettoyage des inutilisées) et lues par les modules via `ModuleContext::images()`.
 - Contrat : réglage `SettingKind::FileEntryList` (`FileEntry` : chemin, nom, icône), route `POST /api/file-chooser/compose-file` (`FileChosen`), code d'erreur `unavailable`. Les anciens réglages `composeFiles` (liste de chemins) restent lus tels quels.
 - Module Docker : les services définis par un compose mais sans conteneur (pas encore construits) apparaissent sur la page du projet, avec une icône en pointillés qui les distingue des conteneurs arrêtés ; leur page propose `up`.
@@ -16,6 +19,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Module Docker : `Up --no-start` (page « Up » du projet) crée les conteneurs sans les démarrer (`docker compose up --no-start`).
 
 ### Corrigé
+
+- Module Docker : le ✓/⚠ d'un `up`/`down` sur un service s'affiche sur son entrée (conteneur ou service sans conteneur) et non sur la touche du projet.
 
 - `make dev` : le sélecteur de fichier compose ouvre maintenant la vraie boîte du bureau. `--demo` le remplaçait par une réponse fixe ; cette réponse est devenue l'option `--file-chooser-answer <fichier>`, que seuls les tests e2e passent.
 
@@ -36,6 +41,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Interne : `docker/mod.rs` découpé en `settings`, `pages`, `actions`, `operation` et `render` ; la portée service d'une action compose est un paramètre (`ComposeScope`) et non plus un champ de `ComposeTarget` ; `FileEntry` lit seul l'ancien format (liste de chemins) ; `ConfigStore` prend les descripteurs des modules par un trait propre (`ModuleDescriptors`) au lieu de méthodes à corps vide de `ConfigDefaults`, `prepare_import` en est une méthode.
 - Module Docker, page « Up » : les variantes se nomment Up, Rebuild, Pull et No start ; page « Down » : Down et Avec volumes (aussi pour le `down` d'un seul service).
 - Interface web refondue : palette « thé et bergamote » (neutres teintés de vert, un seul accent chaud pour la sélection et l'action principale, thèmes clair et sombre), polices embarquées (Bricolage Grotesque, Instrument Sans, JetBrains Mono, sous-ensemble latin, aucun chargement externe), appareil dessiné comme un objet sombre à gauche et réglages de la touche ou de la molette choisie à droite. Une bande tactile est dessinée entre les touches et les molettes, avec l'icône du module de chaque molette (`DialStrip`) ; les molettes sont dessinées comme des molettes (`DialKnob`, repère bergamote) avec le nom de leur module, l'icône étant déjà sur la bande. Aucun changement de comportement ni de contrat.
 - Nouvelle identité : logo (grille de touches formant un « H », molette au centre), favicon, bannière simple en en-tête de l'interface et du README : le nom seul, fond transparent, « B » en dégradé doux entre « Hub » et « Bergamof ». L'icône de la barre système n'est plus l'icône générique `input-keyboard` mais la marque, envoyée en pixmaps ARGB (22, 32, 48 et 64 px).

@@ -141,7 +141,7 @@ impl Devices {
         registry.register(Arc::new(CounterFactory));
         let registry = Arc::new(registry);
         let services = EngineServices {
-            store: ConfigStore::new(dir.path(), Arc::clone(&registry) as _),
+            store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
             renderer: Arc::new(Renderer::new().unwrap()),
             registry: Arc::clone(&registry),
         };

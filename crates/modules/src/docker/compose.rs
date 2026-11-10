@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
-use super::backend::{ComposeAction, DockerError, UpVariant};
+use super::backend::{ComposeAction, ComposeScope, DockerError, UpVariant};
 use super::model::ComposeTarget;
 use crate::process::{self, OutputLimits, RunError};
 use crate::trust;
@@ -104,6 +104,7 @@ impl ComposeCli {
     pub(super) async fn run(
         &self,
         target: &ComposeTarget,
+        scope: &ComposeScope,
         action: ComposeAction,
     ) -> Result<(), DockerError> {
         let limits = OutputLimits {
@@ -111,7 +112,7 @@ impl ComposeCli {
             stderr: MAX_ERROR_BYTES,
         };
         self.invoke(target, limits, self.timeout, |host, target| {
-            compose_args(host, target, action)
+            compose_args(host, target, scope, action)
         })
         .await
         .map(drop)
@@ -216,6 +217,7 @@ impl ComposeCli {
 fn compose_args(
     host: &str,
     target: &ComposeTarget,
+    scope: &ComposeScope,
     action: ComposeAction,
 ) -> Result<Vec<OsString>, DockerError> {
     let needs_files = target.project.is_none() || matches!(action, ComposeAction::Up(_));
@@ -238,11 +240,10 @@ fn compose_args(
             }
         }
     }
-    let services = service_arguments(target)?;
-    if !services.is_empty() {
+    if let Some(service) = scope.service() {
+        let service = service_argument(service)?;
         // Even a name that passed the check is never read as an option.
-        args.push("--".into());
-        args.extend(services);
+        args.extend(["--".into(), service]);
     }
     Ok(args)
 }
@@ -282,23 +283,17 @@ fn base_args(
     Ok(args)
 }
 
-/// The services of the action, last: each is checked, since a name read
-/// from container labels (anyone allowed to create containers sets them)
-/// must never be taken for an option.
-fn service_arguments(target: &ComposeTarget) -> Result<Vec<OsString>, DockerError> {
-    target
-        .services
-        .iter()
-        .map(|service| {
-            if is_service_name(service) {
-                Ok(service.into())
-            } else {
-                Err(DockerError::InvalidTarget(format!(
-                    "{service:?} is not a usable service name"
-                )))
-            }
-        })
-        .collect()
+/// The service of an action, last: checked, since a name read from container
+/// labels (anyone allowed to create containers sets them) must never be
+/// taken for an option.
+fn service_argument(service: &str) -> Result<OsString, DockerError> {
+    if is_service_name(service) {
+        Ok(service.into())
+    } else {
+        Err(DockerError::InvalidTarget(format!(
+            "{service:?} is not a usable service name"
+        )))
+    }
 }
 
 /// Whether `name` is a service name compose allows (letters, digits, `.`,
@@ -357,13 +352,7 @@ async fn trusted_target(target: &ComposeTarget) -> Result<ComposeTarget, DockerE
     {
         check_trusted(&env).await?;
     }
-    // Whatever else the target carries (its services) stays: a scope lost here
-    // would widen the action to the whole project.
-    Ok(ComposeTarget {
-        directory,
-        files,
-        ..target.clone()
-    })
+    Ok(ComposeTarget::new(target.project.clone(), directory, files))
 }
 
 /// `path` with its links resolved, once found trusted (see
@@ -416,7 +405,12 @@ mod tests {
     }
 
     fn line(target: &ComposeTarget, action: ComposeAction) -> String {
-        command_line(&compose_args(HOST, target, action).unwrap())
+        command_line(&compose_args(HOST, target, &ComposeScope::Project, action).unwrap())
+    }
+
+    fn line_for(service: &str, action: ComposeAction) -> String {
+        let scope = ComposeScope::Service(service.into());
+        command_line(&compose_args(HOST, &running("shop"), &scope, action).unwrap())
     }
 
     #[test]
@@ -451,9 +445,11 @@ mod tests {
     #[test]
     fn relative_paths_and_projects_without_files_are_refused() {
         let up = ComposeAction::Up(UpVariant::Plain);
-        let refused = |target: &ComposeTarget, action| compose_args(HOST, target, action).is_err();
+        let refused = |target: &ComposeTarget, action| {
+            compose_args(HOST, target, &ComposeScope::Project, action).is_err()
+        };
         assert!(matches!(
-            compose_args(HOST, &declared("compose.yaml"), up),
+            compose_args(HOST, &declared("compose.yaml"), &ComposeScope::Project, up),
             Err(DockerError::InvalidTarget(_))
         ));
         let mut relative_directory = running("shop");
@@ -492,9 +488,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_docker(dir.path(), "exit 0", PATIENCE);
         let spaced = declared("/home/me/my projects/compose.yaml");
-        cli.run(&spaced, ComposeAction::Down { volumes: false })
-            .await
-            .unwrap();
+        cli.run(
+            &spaced,
+            &ComposeScope::Project,
+            ComposeAction::Down { volumes: false },
+        )
+        .await
+        .unwrap();
         assert_eq!(
             logged(dir.path()),
             [
@@ -509,19 +509,18 @@ mod tests {
     }
 
     #[test]
-    fn services_narrow_the_action_and_are_given_last() {
-        let web = running("shop").with_services(vec!["web".into(), "db-2".into()]);
+    fn a_service_scope_narrows_the_action_and_comes_last() {
         assert!(
-            line(&web, ComposeAction::Up(UpVariant::Build))
-                .ends_with(" up --detach --build -- web db-2")
+            line_for("web", ComposeAction::Up(UpVariant::Build))
+                .ends_with(" up --detach --build -- web")
         );
         assert!(
-            line(&web, ComposeAction::Up(UpVariant::NoStart))
-                .ends_with(" up --no-start -- web db-2")
+            line_for("web", ComposeAction::Up(UpVariant::NoStart))
+                .ends_with(" up --no-start -- web")
         );
         assert!(
-            line(&web, ComposeAction::Down { volumes: true })
-                .ends_with(" down --volumes -- web db-2")
+            line_for("db-2", ComposeAction::Down { volumes: true })
+                .ends_with(" down --volumes -- db-2")
         );
         assert!(
             line(&running("shop"), ComposeAction::Down { volumes: false }).ends_with(" down"),
@@ -540,10 +539,15 @@ mod tests {
             "../web",
             &"x".repeat(MAX_SERVICE_NAME_BYTES + 1),
         ] {
-            let target = running("shop").with_services(vec![name.into()]);
+            let scope = ComposeScope::Service(name.into());
             assert!(
                 matches!(
-                    compose_args(HOST, &target, ComposeAction::Up(UpVariant::Plain)),
+                    compose_args(
+                        HOST,
+                        &running("shop"),
+                        &scope,
+                        ComposeAction::Up(UpVariant::Plain)
+                    ),
                     Err(DockerError::InvalidTarget(_))
                 ),
                 "{name:?}"
@@ -592,7 +596,11 @@ mod tests {
             PATIENCE,
         );
         let error = failing
-            .run(&running("shop"), ComposeAction::Up(UpVariant::Plain))
+            .run(
+                &running("shop"),
+                &ComposeScope::Project,
+                ComposeAction::Up(UpVariant::Plain),
+            )
             .await
             .unwrap_err();
         let DockerError::ComposeFailed { status, stderr, .. } = &error else {
@@ -608,7 +616,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let stuck = fake_docker(dir.path(), "sleep 30", Duration::from_millis(50));
         let error = stuck
-            .run(&running("shop"), ComposeAction::Down { volumes: false })
+            .run(
+                &running("shop"),
+                &ComposeScope::Project,
+                ComposeAction::Down { volumes: false },
+            )
             .await
             .unwrap_err();
         assert!(matches!(error, DockerError::Timeout { .. }), "{error}");
@@ -617,7 +629,11 @@ mod tests {
         missing.program = "/nonexistent/docker".into();
         missing.check_files = false;
         let error = missing
-            .run(&running("shop"), ComposeAction::Down { volumes: false })
+            .run(
+                &running("shop"),
+                &ComposeScope::Project,
+                ComposeAction::Down { volumes: false },
+            )
             .await
             .unwrap_err();
         assert!(matches!(error, DockerError::Spawn { .. }), "{error}");
@@ -627,7 +643,11 @@ mod tests {
     async fn without_a_local_host_compose_is_refused() {
         let cli = ComposeCli::new(None);
         let error = cli
-            .run(&running("shop"), ComposeAction::Down { volumes: false })
+            .run(
+                &running("shop"),
+                &ComposeScope::Project,
+                ComposeAction::Down { volumes: false },
+            )
             .await
             .unwrap_err();
         assert!(matches!(error, DockerError::Unreachable(_)), "{error}");
@@ -639,6 +659,7 @@ mod tests {
         let error = cli
             .run(
                 &declared("/nonexistent/compose.yaml"),
+                &ComposeScope::Project,
                 ComposeAction::Up(UpVariant::Plain),
             )
             .await
@@ -717,15 +738,9 @@ mod tests {
         let link = dir.path().join("project-link");
         std::os::unix::fs::symlink(&project, &link).unwrap();
         let running =
-            ComposeTarget::new(Some("shop".into()), Some(link.clone()), vec![file.clone()])
-                .with_services(vec!["web".into()]);
+            ComposeTarget::new(Some("shop".into()), Some(link.clone()), vec![file.clone()]);
 
         let resolved = trusted_target(&running).await.unwrap();
-        assert_eq!(
-            resolved.services,
-            ["web"],
-            "the scope survives the checks, or a service's down would take the project"
-        );
         assert_eq!(
             resolved.directory,
             Some(project.canonicalize().unwrap()),

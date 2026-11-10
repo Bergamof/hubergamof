@@ -603,6 +603,7 @@ impl DeviceEngine {
             match command {
                 Command::OpenPage(page) => self.nav.open(source.clone(), page),
                 Command::Back => self.nav.back(),
+                Command::BackTo(page) => self.nav.back_to(source, &page),
                 Command::GoHome => self.nav.home(),
                 Command::ScrollRows(delta) => {
                     let items = self.page_item_count();

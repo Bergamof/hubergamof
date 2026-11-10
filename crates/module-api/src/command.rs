@@ -15,6 +15,11 @@ pub enum Command {
     OpenPage(PageId),
     /// Returns to the previous page; does nothing on the home page.
     Back,
+    /// Returns to a page of the module that returned the command: the pages
+    /// opened above it are closed. Does nothing when that page is not on the
+    /// navigation stack below the displayed one (it was never opened, or
+    /// is the displayed page).
+    BackTo(PageId),
     /// Returns to the home page.
     GoHome,
     /// Scrolls the displayed page by this many rows (positive: down); the

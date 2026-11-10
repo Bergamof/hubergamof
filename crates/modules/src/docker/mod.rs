@@ -28,12 +28,17 @@
 //! of the containers. Everything is sorted by name, so that keys keep
 //! their place.
 
+mod actions;
 mod backend;
 mod compose;
 mod engine;
 mod hub;
 mod icons;
 mod model;
+mod operation;
+mod pages;
+mod render;
+mod settings;
 mod simulated;
 
 use std::collections::{HashMap, HashSet};
@@ -43,46 +48,38 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, Feedback, FileEntry, ImageData, ImageLibrary, ItemId, KeyContent,
-    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId, PageItem, SettingField,
-    SettingKind, TaskSpawner,
+    Command, EventSender, Feedback, ImageData, ImageLibrary, ItemId, KeyContent, KeyState, Module,
+    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
+    ModuleSurface, PageContent, PageId, PageItem, TaskSpawner,
 };
-use serde::Deserialize;
 use serde_json::Value;
 
 pub use backend::{
-    ComposeAction, ContainerAction, DockerBackend, DockerChanges, DockerError, UpVariant,
+    ComposeAction, ComposeScope, ContainerAction, DockerBackend, DockerChanges, DockerError,
+    UpVariant,
 };
 pub use engine::DockerEngine;
 use hub::{DockerHub, DockerView, Request, Subscription};
 pub use model::{ComposeLabels, ComposeTarget, Container, ContainerStatus, Health};
-use model::{DeclaredFile, Overview, Project};
+use model::{Overview, Project};
 pub use simulated::SimulatedDocker;
 
+use actions::{Action, UP_ACTIONS};
+use operation::{Operation, OperationKind};
+use pages::{
+    DOWN_ITEM, MAIN_PAGE, PROJECT_PREFIX, Page, Scope, UP_ITEM, container_id, project_id,
+    service_id,
+};
+use render::{main_page, variants_title};
+use settings::{COMPOSE_FILES_KEY, ParsedSettings};
+
 use crate::background::forward_states;
-use crate::paths::expand_user_home;
 
 /// Kind of the Docker module.
 pub const DOCKER_KIND: &str = "docker";
 
 /// Time given for the second press confirming a removal or a `down`.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
-
-const COMPOSE_FILES_KEY: &str = "composeFiles";
-
-/// Page opened by the home key.
-const MAIN_PAGE: &str = "docker";
-/// Prefixes of the pages (and of the items opening them) of a project, of
-/// its `up` and `down` variants, of a container; followed by its name.
-const PROJECT_PREFIX: &str = "project/";
-const UP_PREFIX: &str = "up/";
-const DOWN_PREFIX: &str = "down/";
-const CONTAINER_PREFIX: &str = "container/";
-const SERVICE_PREFIX: &str = "service/";
-/// Items of a project page opening the pages of its variants.
-const UP_ITEM: &str = "up";
-const DOWN_ITEM: &str = "down";
 
 const MODULE_LABEL: &str = "Docker";
 const UP_LABEL: &str = "Up";
@@ -123,18 +120,7 @@ fn descriptor() -> ModuleDescriptor {
             dial: false,
             touch_zone: false,
         },
-        settings: vec![SettingField {
-            key: COMPOSE_FILES_KEY.into(),
-            label: "Fichiers compose".into(),
-            help: Some(
-                "Fichiers compose.yaml, avec un nom et une icône au choix, proposés \
-                 même quand le projet est arrêté (après un down)."
-                    .into(),
-            ),
-            kind: SettingKind::FileEntryList {
-                default: Vec::new(),
-            },
-        }],
+        settings: vec![settings::compose_files_field()],
     }
 }
 
@@ -184,348 +170,6 @@ impl ModuleFactory for DockerFactory {
         docker.load_missing_icons();
         Ok(Box::new(docker))
     }
-}
-
-/// Settings of a Docker instance.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-struct DockerSettings {
-    /// Compose files offered even when their project is down.
-    compose_files: Vec<ComposeFileSetting>,
-}
-
-/// A compose file as stored: a plain path (settings saved before files had
-/// a name and an icon) or an entry.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
-enum ComposeFileSetting {
-    Path(PathBuf),
-    Entry(FileEntry),
-}
-
-impl ComposeFileSetting {
-    fn into_entry(self) -> FileEntry {
-        match self {
-            Self::Path(path) => FileEntry {
-                path: path.to_string_lossy().into_owned(),
-                name: None,
-                icon: None,
-            },
-            Self::Entry(entry) => entry,
-        }
-    }
-}
-
-/// What an instance reads of its settings.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct ParsedSettings {
-    compose_files: Vec<DeclaredFile>,
-}
-
-impl ParsedSettings {
-    /// Checks the types, reads them, and makes every path absolute: `~/`
-    /// stands for the home directory, any other path must be absolute
-    /// (compose files are given to `docker compose`, run from the manager's
-    /// directory). A blank name counts as none.
-    fn parse(settings: &Value) -> Result<Self, ModuleError> {
-        let parsed: DockerSettings = descriptor().parse_settings(settings)?;
-        let compose_files = parsed
-            .compose_files
-            .into_iter()
-            .map(|file| {
-                let entry = file.into_entry();
-                let path = expand_user_home(entry.path.as_ref())
-                    .filter(|file| file.is_absolute())
-                    .ok_or_else(|| {
-                        ModuleError::InvalidSettings(format!(
-                            "`{COMPOSE_FILES_KEY}`: `{}` is not an absolute path",
-                            entry.path
-                        ))
-                    })?;
-                Ok(DeclaredFile {
-                    path,
-                    name: entry
-                        .name
-                        .map(|name| name.trim().to_owned())
-                        .filter(|name| !name.is_empty()),
-                    icon: entry.icon,
-                })
-            })
-            .collect::<Result<_, ModuleError>>()?;
-        Ok(Self { compose_files })
-    }
-
-    /// Names of the icons given to the files.
-    fn icon_names(&self) -> impl Iterator<Item = &str> {
-        self.compose_files
-            .iter()
-            .filter_map(|file| file.icon.as_deref())
-    }
-}
-
-/// What an `up` or `down` page is about: a whole project, or one service of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Scope<'a> {
-    project: &'a str,
-    service: Option<&'a str>,
-}
-
-impl<'a> Scope<'a> {
-    /// `project`, or `project/service`.
-    fn parse(rest: &'a str) -> Self {
-        match rest.split_once('/') {
-            Some((project, service)) => Self {
-                project,
-                service: Some(service),
-            },
-            None => Self {
-                project: rest,
-                service: None,
-            },
-        }
-    }
-
-    /// Pages to go back through to reach the page of the project: the
-    /// variants page of a service was opened from its own page.
-    fn pages_to_project(self) -> usize {
-        1 + usize::from(self.service.is_some())
-    }
-}
-
-/// A page of the module, from its id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Page<'a> {
-    Main,
-    Project(&'a str),
-    Up(Scope<'a>),
-    Down(Scope<'a>),
-    Container(&'a str),
-    /// A service of a project that has no container.
-    Service {
-        project: &'a str,
-        service: &'a str,
-    },
-}
-
-impl<'a> Page<'a> {
-    fn parse(id: &'a str) -> Option<Self> {
-        if id == MAIN_PAGE {
-            return Some(Self::Main);
-        }
-        if let Some(rest) = id.strip_prefix(SERVICE_PREFIX) {
-            let (project, service) = rest.split_once('/')?;
-            return Some(Self::Service { project, service });
-        }
-        let named = [
-            (PROJECT_PREFIX, Self::Project as fn(&'a str) -> Self),
-            (UP_PREFIX, |rest| Self::Up(Scope::parse(rest))),
-            (DOWN_PREFIX, |rest| Self::Down(Scope::parse(rest))),
-            (CONTAINER_PREFIX, Self::Container),
-        ];
-        named
-            .into_iter()
-            .find_map(|(prefix, page)| id.strip_prefix(prefix).map(page))
-    }
-
-    /// What an `up` or `down` page is about.
-    fn scope(self) -> Option<Scope<'a>> {
-        match self {
-            Self::Up(scope) | Self::Down(scope) => Some(scope),
-            _ => None,
-        }
-    }
-
-    /// The page opened by `item` of this page, if it opens one.
-    fn opened_by(self, item: &str, overview: &Overview) -> Option<PageId> {
-        let opens_child = item.starts_with(PROJECT_PREFIX) || item.starts_with(CONTAINER_PREFIX);
-        match self {
-            Self::Main if opens_child => Some(item.into()),
-            Self::Project(_)
-                if item.starts_with(CONTAINER_PREFIX) || item.starts_with(SERVICE_PREFIX) =>
-            {
-                Some(item.into())
-            }
-            Self::Project(name) if item == UP_ITEM => Some(up_id(name, None).into()),
-            Self::Project(name) if item == DOWN_ITEM => Some(down_id(name, None).into()),
-            Self::Container(name) => {
-                let (project, service) = compose_service(overview.container(name)?)?;
-                match item {
-                    UP_ITEM => Some(up_id(project, Some(service)).into()),
-                    DOWN_ITEM => Some(down_id(project, Some(service)).into()),
-                    _ => None,
-                }
-            }
-            Self::Service { project, service } if item == UP_ITEM => {
-                Some(up_id(project, Some(service)).into())
-            }
-            _ => None,
-        }
-    }
-}
-
-/// The project and service a compose container runs.
-fn compose_service(container: &Container) -> Option<(&str, &str)> {
-    let labels = container.compose.as_ref()?;
-    Some((labels.project.as_str(), labels.service.as_deref()?))
-}
-
-fn project_id(name: &str) -> String {
-    format!("{PROJECT_PREFIX}{name}")
-}
-
-fn container_id(name: &str) -> String {
-    format!("{CONTAINER_PREFIX}{name}")
-}
-
-fn service_id(project: &str, service: &str) -> String {
-    format!("{SERVICE_PREFIX}{project}/{service}")
-}
-
-fn scoped_id(prefix: &str, project: &str, service: Option<&str>) -> String {
-    match service {
-        Some(service) => format!("{prefix}{project}/{service}"),
-        None => format!("{prefix}{project}"),
-    }
-}
-
-fn up_id(project: &str, service: Option<&str>) -> String {
-    scoped_id(UP_PREFIX, project, service)
-}
-
-fn down_id(project: &str, service: Option<&str>) -> String {
-    scoped_id(DOWN_PREFIX, project, service)
-}
-
-/// What an action key does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Action {
-    StartAll,
-    StopAll,
-    Start,
-    Stop,
-    Restart,
-    Remove,
-    Up(UpVariant),
-    Down { volumes: bool },
-}
-
-const PROJECT_ACTIONS: [Action; 2] = [Action::StartAll, Action::StopAll];
-const UP_ACTIONS: [Action; 4] = [
-    Action::Up(UpVariant::Plain),
-    Action::Up(UpVariant::Build),
-    Action::Up(UpVariant::Pull),
-    Action::Up(UpVariant::NoStart),
-];
-const DOWN_ACTIONS: [Action; 2] = [
-    Action::Down { volumes: false },
-    Action::Down { volumes: true },
-];
-/// Actions of a container page; [`Action::Remove`] shown only when the
-/// container may be removed.
-const CONTAINER_ACTIONS: [Action; 4] =
-    [Action::Start, Action::Stop, Action::Restart, Action::Remove];
-
-impl Action {
-    fn item(self) -> &'static str {
-        match self {
-            Self::StartAll => "start-all",
-            Self::StopAll => "stop-all",
-            Self::Start => "start",
-            Self::Stop => "stop",
-            Self::Restart => "restart",
-            Self::Remove => "remove",
-            Self::Up(UpVariant::Plain) => "up-plain",
-            Self::Up(UpVariant::Build) => "up-build",
-            Self::Up(UpVariant::Pull) => "up-pull",
-            Self::Up(UpVariant::NoStart) => "up-no-start",
-            Self::Down { volumes: false } => "down-keep",
-            Self::Down { volumes: true } => "down-volumes",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::StartAll => "Tout démarrer",
-            Self::StopAll => "Tout arrêter",
-            Self::Start => "Démarrer",
-            Self::Stop => "Arrêter",
-            Self::Restart => "Redémarrer",
-            Self::Remove => "Supprimer",
-            Self::Up(UpVariant::Plain) => UP_LABEL,
-            Self::Up(UpVariant::Build) => "Rebuild",
-            Self::Up(UpVariant::Pull) => "Pull",
-            Self::Up(UpVariant::NoStart) => "No start",
-            Self::Down { volumes: false } => DOWN_LABEL,
-            Self::Down { volumes: true } => "Avec volumes",
-        }
-    }
-
-    /// Label while it runs.
-    fn busy_label(self) -> &'static str {
-        match self {
-            Self::StartAll | Self::Start => "Démarrage…",
-            Self::StopAll | Self::Stop => "Arrêt…",
-            Self::Restart => "Redémarrage…",
-            Self::Remove => "Suppression…",
-            Self::Up(_) | Self::Down { .. } => {
-                self.operation().map_or("", OperationKind::working_label)
-            }
-        }
-    }
-
-    /// The operation of a project (or of one of its services) it starts.
-    fn operation(self) -> Option<OperationKind> {
-        match self {
-            Self::Up(variant) => Some(OperationKind::Up(variant)),
-            Self::Down { .. } => Some(OperationKind::Down),
-            _ => None,
-        }
-    }
-
-    fn icon(self) -> &'static ImageData {
-        match self {
-            Self::StartAll | Self::Start => &icons::START,
-            Self::StopAll | Self::Stop => &icons::STOP,
-            Self::Restart => &icons::RESTART,
-            Self::Remove => &icons::REMOVE,
-            Self::Up(_) => &icons::UP,
-            Self::Down { .. } => &icons::DOWN,
-        }
-    }
-
-    /// Destroys something: needs a second press.
-    fn needs_confirmation(self) -> bool {
-        matches!(self, Self::Remove | Self::Down { .. })
-    }
-
-    /// The actions of `page`.
-    fn of_page(page: Page<'_>) -> &'static [Self] {
-        match page {
-            Page::Main | Page::Service { .. } => &[],
-            Page::Project(_) => &PROJECT_ACTIONS,
-            Page::Up(_) => &UP_ACTIONS,
-            Page::Down(_) => &DOWN_ACTIONS,
-            Page::Container(_) => &CONTAINER_ACTIONS,
-        }
-    }
-
-    /// The action of `item` on `page`.
-    fn of(page: Page<'_>, item: &str) -> Option<Self> {
-        Self::of_page(page)
-            .iter()
-            .copied()
-            .find(|action| action.item() == item)
-    }
-}
-
-/// What an action amounts to on the current containers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Plan {
-    /// Already done (nothing to start…).
-    Nothing,
-    Run(Request),
-    /// Cannot be done: project or container gone, not removable…
-    Refused,
 }
 
 /// An item of a page.
@@ -615,44 +259,6 @@ pub struct Docker {
     /// The `up` and `down` running, shown on the entries they work on.
     operations: Vec<Operation>,
     next_operation: u64,
-}
-
-/// What an operation does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OperationKind {
-    Up(UpVariant),
-    Down,
-}
-
-impl OperationKind {
-    /// What the entries it works on say while it runs.
-    fn working_label(self) -> &'static str {
-        match self {
-            Self::Up(UpVariant::Build) => "Build…",
-            Self::Up(UpVariant::Pull) => "Pull…",
-            Self::Up(_) => "Up…",
-            Self::Down => "Down…",
-        }
-    }
-}
-
-/// An `up` or a `down` of a project, or of some of its services, under way.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Operation {
-    id: u64,
-    project: String,
-    /// Its services; empty: the whole project.
-    services: Vec<String>,
-    kind: OperationKind,
-}
-
-impl Operation {
-    /// Whether it works on `service` of its project (`None`: a container
-    /// that records no service, only reached by a whole-project operation).
-    fn covers(&self, service: Option<&str>) -> bool {
-        self.services.is_empty()
-            || service.is_some_and(|service| self.services.iter().any(|name| name == service))
-    }
 }
 
 impl Docker {
@@ -795,13 +401,15 @@ impl Docker {
                     return Vec::new();
                 };
                 let operation = self.operations.remove(position);
-                // The project page is where the operation was left running.
-                let item = match operation.kind {
-                    OperationKind::Up(_) => UP_ITEM,
-                    OperationKind::Down => DOWN_ITEM,
-                };
-                let key = ItemKey::new(&project_id(&operation.project).into(), &item.into());
-                vec![key.feedback(Feedback::of(ok))]
+                // The page of the project is where the operation was left running: the
+                // outcome shows on what it worked on.
+                let project_page: PageId = project_id(&operation.project).into();
+                self.outcome_items(&operation)
+                    .into_iter()
+                    .map(|item| {
+                        ItemKey::new(&project_page, &item.into()).feedback(Feedback::of(ok))
+                    })
+                    .collect()
             }
             DockerEvent::Icons(loaded) => {
                 // Settings may have changed while the images were read.
@@ -835,6 +443,34 @@ impl Docker {
         }
     }
 
+    /// The items of the page of its project an operation marks when it ends:
+    /// the key of its kind when it was about the whole project, else its
+    /// service, as the entry it is at that moment (a container, or a service
+    /// without one; the list of containers may not be up to date yet, so
+    /// both are named, the one that is not shown is ignored).
+    fn outcome_items(&self, operation: &Operation) -> Vec<String> {
+        let Some(service) = operation.scope.service() else {
+            let key = match operation.kind {
+                OperationKind::Up(_) => UP_ITEM,
+                OperationKind::Down => DOWN_ITEM,
+            };
+            return vec![key.to_owned()];
+        };
+        let container = self
+            .overview()
+            .and_then(|overview| overview.project(&operation.project))
+            .and_then(|project| {
+                project.containers.iter().find(|c| {
+                    c.compose.as_ref().and_then(|l| l.service.as_deref()) == Some(service)
+                })
+            });
+        container
+            .map(|container| container_id(&container.name))
+            .into_iter()
+            .chain([service_id(&operation.project, service)])
+            .collect()
+    }
+
     fn is_confirming(&self, key: &ItemKey) -> bool {
         self.confirming
             .as_ref()
@@ -860,386 +496,6 @@ impl Docker {
             token,
         });
         false
-    }
-
-    fn perform(&mut self, key: ItemKey, page: Page<'_>, action: Action) -> Vec<Command> {
-        if self.busy.contains(&key) {
-            return Vec::new();
-        }
-        let request = match self.plan(page, action) {
-            Plan::Run(request) => request,
-            Plan::Nothing => return vec![key.feedback(Feedback::Ok)],
-            Plan::Refused => return Command::alert(),
-        };
-        if action.needs_confirmation() && !self.confirmed(&key) {
-            return Vec::new();
-        }
-        if let (Some(scope), Some(kind)) = (page.scope(), action.operation()) {
-            return self.start_operation(scope, kind, request);
-        }
-        let events = self.events.clone();
-        let outcome_key = key.clone();
-        let started = self.hub.run(request, move |outcome| {
-            if let Err(error) = &outcome {
-                tracing::warn!(%error, "Docker action failed");
-            }
-            // An instance gone meanwhile needs no outcome.
-            let _ = events.send(DockerEvent::Outcome {
-                key: outcome_key,
-                ok: outcome.is_ok(),
-            });
-        });
-        if started {
-            self.busy.insert(key);
-            Vec::new()
-        } else {
-            Command::alert()
-        }
-    }
-
-    /// Starts an `up` or a `down`, and leaves its page for the one of the
-    /// project, where what it works on shows.
-    fn start_operation(
-        &mut self,
-        scope: Scope<'_>,
-        kind: OperationKind,
-        request: Request,
-    ) -> Vec<Command> {
-        if self.operations.iter().any(|op| op.project == scope.project) {
-            return Command::alert();
-        }
-        self.next_operation += 1;
-        let id = self.next_operation;
-        let events = self.events.clone();
-        let started = self.hub.run(request, move |outcome| {
-            if let Err(error) = &outcome {
-                tracing::warn!(%error, "Docker action failed");
-            }
-            let _ = events.send(DockerEvent::OperationEnded {
-                id,
-                ok: outcome.is_ok(),
-            });
-        });
-        if !started {
-            return Command::alert();
-        }
-        self.operations.push(Operation {
-            id,
-            project: scope.project.to_owned(),
-            services: scope.service.map(str::to_owned).into_iter().collect(),
-            kind,
-        });
-        vec![Command::Back; scope.pages_to_project()]
-    }
-
-    /// What `action` on `page` amounts to on the containers shown.
-    fn plan(&self, page: Page<'_>, action: Action) -> Plan {
-        let Some(overview) = self.overview() else {
-            return Plan::Refused;
-        };
-        let compose = |scope: Scope<'_>, action| {
-            let target = overview
-                .project(scope.project)
-                .and_then(|p| p.target.clone());
-            target.map_or(Plan::Refused, |target| {
-                let target = match scope.service {
-                    Some(service) => target.with_services(vec![service.to_owned()]),
-                    None => target,
-                };
-                Plan::Run(Request::Compose { target, action })
-            })
-        };
-        match (page, action) {
-            (Page::Project(name), Action::StartAll | Action::StopAll) => {
-                let Some(project) = overview.project(name) else {
-                    return Plan::Refused;
-                };
-                let start = action == Action::StartAll;
-                let ids: Vec<String> = project
-                    .containers
-                    .iter()
-                    .filter(|c| c.is_running() != start)
-                    .map(|c| c.id.clone())
-                    .collect();
-                if ids.is_empty() {
-                    return Plan::Nothing;
-                }
-                let action = if start {
-                    ContainerAction::Start
-                } else {
-                    ContainerAction::Stop
-                };
-                Plan::Run(Request::Containers { ids, action })
-            }
-            (Page::Up(scope), Action::Up(variant)) => compose(scope, ComposeAction::Up(variant)),
-            (Page::Down(scope), Action::Down { volumes }) => {
-                compose(scope, ComposeAction::Down { volumes })
-            }
-            (Page::Container(name), _) => {
-                let Some(container) = overview.container(name) else {
-                    return Plan::Refused;
-                };
-                let action = match action {
-                    Action::Start => ContainerAction::Start,
-                    Action::Stop => ContainerAction::Stop,
-                    Action::Restart => ContainerAction::Restart,
-                    Action::Remove if container.is_removable() => ContainerAction::Remove,
-                    _ => return Plan::Refused,
-                };
-                Plan::Run(Request::Containers {
-                    ids: vec![container.id.clone()],
-                    action,
-                })
-            }
-            _ => Plan::Refused,
-        }
-    }
-
-    fn action_key(&self, page: &PageId, action: Action) -> PageItem {
-        let key = ItemKey::new(page, &action.item().into());
-        let (label, state) = if self.busy.contains(&key) {
-            (action.busy_label(), KeyState::Normal)
-        } else if self.is_confirming(&key) {
-            (CONFIRM_LABEL, KeyState::Attention)
-        } else {
-            (action.label(), KeyState::Normal)
-        };
-        PageItem {
-            id: key.item,
-            key: KeyContent::with_icon(action.icon(), label).in_state(state),
-        }
-    }
-
-    fn project_page(&self, page: &PageId, project: &Project) -> PageContent {
-        let actions = PROJECT_ACTIONS
-            .iter()
-            .map(|action| self.action_key(page, *action));
-        let variants = [up_item(), down_item()];
-        let prefix = format!("{}-", project.name);
-        let built = project.containers.iter().map(|container| {
-            let short = container
-                .name
-                .strip_prefix(&prefix)
-                .unwrap_or(&container.name);
-            let service = container
-                .compose
-                .as_ref()
-                .and_then(|c| c.service.as_deref());
-            let item = self.working(project, service, container_id(&container.name), short);
-            (
-                short,
-                item.unwrap_or_else(|| container_item(container, short)),
-            )
-        });
-        let planned = project.planned.iter().map(|service| {
-            let item = self.working(
-                project,
-                Some(service),
-                service_id(&project.name, service),
-                service,
-            );
-            (
-                service.as_str(),
-                item.unwrap_or_else(|| planned_item(&project.name, service)),
-            )
-        });
-        let mut entries: Vec<(&str, PageItem)> = built.chain(planned).collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        PageContent {
-            title: project.shown_name().to_owned(),
-            items: actions
-                .chain(variants)
-                .chain(entries.into_iter().map(|(_, item)| item))
-                .collect(),
-        }
-    }
-
-    /// The key of an entry of `project` (a container, or a service without
-    /// one) that an operation is working on: its name and what is done.
-    fn working(
-        &self,
-        project: &Project,
-        service: Option<&str>,
-        id: String,
-        label: &str,
-    ) -> Option<PageItem> {
-        let operation = self
-            .operations
-            .iter()
-            .find(|op| op.project == project.name && op.covers(service))?;
-        let label = format!("{label} {}", operation.kind.working_label());
-        Some(PageItem {
-            id: id.into(),
-            key: KeyContent::with_icon(&icons::WORKING, &label),
-        })
-    }
-
-    fn variants_page(&self, page: &PageId, title: String, actions: &[Action]) -> PageContent {
-        PageContent {
-            title,
-            items: actions
-                .iter()
-                .map(|action| self.action_key(page, *action))
-                .collect(),
-        }
-    }
-
-    fn container_page(
-        &self,
-        page: &PageId,
-        container: &Container,
-        overview: &Overview,
-    ) -> PageContent {
-        let actions = CONTAINER_ACTIONS
-            .iter()
-            .filter(|action| **action != Action::Remove || container.is_removable())
-            .map(|action| self.action_key(page, *action));
-        // A compose container also has its own `up` and `down`.
-        let scoped = compose_service(container)
-            .and_then(|(project, _)| overview.project(project)?.target.as_ref())
-            .map(|_| [up_item(), down_item()])
-            .into_iter()
-            .flatten();
-        PageContent {
-            title: format!(
-                "{}{TITLE_SEPARATOR}{}",
-                container.name,
-                status_label(container)
-            ),
-            items: actions.chain(scoped).collect(),
-        }
-    }
-
-    /// The page of a service no container runs: it can only be brought up.
-    fn service_page(project: &Project, service: &str) -> Option<PageContent> {
-        project
-            .planned
-            .iter()
-            .any(|name| name == service)
-            .then(|| PageContent {
-                title: format!("{service}{TITLE_SEPARATOR}{NOT_BUILT_LABEL}"),
-                items: project
-                    .target
-                    .as_ref()
-                    .map(|_| vec![up_item()])
-                    .unwrap_or_default(),
-            })
-    }
-}
-
-/// The key opening the page of the variants of `up`.
-fn up_item() -> PageItem {
-    PageItem {
-        id: UP_ITEM.into(),
-        key: KeyContent::with_icon(&icons::UP, UP_LABEL),
-    }
-}
-
-/// The key opening the page of the variants of `down`.
-fn down_item() -> PageItem {
-    PageItem {
-        id: DOWN_ITEM.into(),
-        key: KeyContent::with_icon(&icons::DOWN, DOWN_LABEL),
-    }
-}
-
-/// The projects, then the other containers.
-fn main_page(
-    overview: &Overview,
-    custom_icons: &HashMap<String, ImageData>,
-    operations: &[Operation],
-) -> PageContent {
-    let projects = overview.projects.iter().map(|project| {
-        let (icon, state) = if project.needs_attention() {
-            (&icons::PROJECT_ATTENTION, KeyState::Attention)
-        } else if project.running() > 0 {
-            (&icons::PROJECT_RUNNING, KeyState::Active)
-        } else {
-            (&icons::PROJECT_STOPPED, KeyState::Normal)
-        };
-        // The user's icon replaces the layers; the state then shows in the
-        // counts of the label (and the background of an attention).
-        let icon = project
-            .icon
-            .as_ref()
-            .and_then(|name| custom_icons.get(name))
-            .unwrap_or(icon);
-        let label = format!(
-            "{} {}/{}",
-            project.shown_name(),
-            project.running(),
-            project.total()
-        );
-        if let Some(operation) = operations.iter().find(|op| op.project == project.name) {
-            let label = format!(
-                "{} {}",
-                project.shown_name(),
-                operation.kind.working_label()
-            );
-            return PageItem {
-                id: project_id(&project.name).into(),
-                key: KeyContent::with_icon(&icons::WORKING, &label),
-            };
-        }
-        PageItem {
-            id: project_id(&project.name).into(),
-            key: KeyContent::with_icon(icon, &label).in_state(state),
-        }
-    });
-    let containers = overview
-        .isolated
-        .iter()
-        .map(|container| container_item(container, &container.name));
-    PageContent {
-        title: MODULE_LABEL.into(),
-        items: projects.chain(containers).collect(),
-    }
-}
-
-/// Title of an `up` or `down` page: `label` and what it is about.
-fn variants_title(label: &str, project: &Project, service: Option<&str>) -> String {
-    format!(
-        "{label}{TITLE_SEPARATOR}{}",
-        service.unwrap_or_else(|| project.shown_name())
-    )
-}
-
-/// Key of a service of a project that has no container.
-fn planned_item(project: &str, service: &str) -> PageItem {
-    PageItem {
-        id: service_id(project, service).into(),
-        key: KeyContent::with_icon(&icons::SERVICE_PLANNED, service),
-    }
-}
-
-/// Key of a container, labelled `label`, opening its page.
-fn container_item(container: &Container, label: &str) -> PageItem {
-    let (icon, state) = if container.needs_attention() {
-        (&icons::ATTENTION, KeyState::Attention)
-    } else if container.is_running() {
-        (&icons::RUNNING, KeyState::Active)
-    } else {
-        (&icons::STOPPED, KeyState::Normal)
-    };
-    PageItem {
-        id: container_id(&container.name).into(),
-        key: KeyContent::with_icon(icon, label).in_state(state),
-    }
-}
-
-fn status_label(container: &Container) -> &'static str {
-    match (container.status, container.health) {
-        (ContainerStatus::Running, Some(Health::Unhealthy)) => "Défaillant",
-        (ContainerStatus::Running, Some(Health::Starting)) => "Démarrage",
-        (ContainerStatus::Running, _) => "En marche",
-        (ContainerStatus::Created, _) => "Créé",
-        (ContainerStatus::Paused, _) => "En pause",
-        (ContainerStatus::Restarting, _) => "Redémarre",
-        (ContainerStatus::Removing, _) => "Suppression",
-        (ContainerStatus::Exited, _) => "Arrêté",
-        (ContainerStatus::Dead, _) => "Mort",
-        (ContainerStatus::Stopping, _) => "Arrêt",
-        (ContainerStatus::Unknown, _) => "Inconnu",
     }
 }
 

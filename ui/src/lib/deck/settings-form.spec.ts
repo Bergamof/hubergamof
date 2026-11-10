@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SettingField, SettingKind } from '#lib/generated/index.js';
 import {
-	MAX_ENTRY_NAME_CHARS,
-	MAX_FILE_ENTRIES,
 	parseDraft,
 	parseLabel,
 	sameDraftValue,
@@ -152,7 +150,20 @@ describe('settingHint', () => {
 });
 
 describe('file lists', () => {
-	const files = [field('compose', { type: 'fileEntryList', default: [] })];
+	const MAX_FILE_ENTRIES = 3;
+	const MAX_ENTRY_NAME_CHARS = 10;
+	const files = [
+		field('compose', {
+			type: 'fileEntryList',
+			default: [],
+			maxEntries: MAX_FILE_ENTRIES,
+			maxNameChars: MAX_ENTRY_NAME_CHARS,
+			chooser: null,
+			pathPlaceholder: '/chemin/vers/fichier',
+			nameHint: 'Vide : nom du fichier.',
+			defaultName: 'fileName'
+		})
+	];
 	const draft = (value: FileEntryDraft[]) => ({ compose: value });
 	const entry = (path: string, name = '', icon: string | null = null): FileEntryDraft => ({
 		path,

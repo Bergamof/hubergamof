@@ -10,8 +10,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use hubergamof_modules::docker::{
-    ComposeAction, ComposeTarget, Container, ContainerAction, ContainerStatus, DockerBackend,
-    DockerChanges, DockerEngine, UpVariant,
+    ComposeAction, ComposeScope, ComposeTarget, Container, ContainerAction, ContainerStatus,
+    DockerBackend, DockerChanges, DockerEngine, UpVariant,
 };
 
 /// Small image, pinned by digest (busybox 1.37): the test runs what was
@@ -156,7 +156,11 @@ async fn a_compose_project_goes_up_and_down() {
     let mut changes = engine.changes().await.expect("changes followed");
 
     engine
-        .compose(&target, ComposeAction::Up(UpVariant::Plain))
+        .compose(
+            &target,
+            &ComposeScope::Project,
+            ComposeAction::Up(UpVariant::Plain),
+        )
         .await
         .unwrap();
     let up = until(&engine, &mut changes, |all| {
@@ -166,7 +170,11 @@ async fn a_compose_project_goes_up_and_down() {
     assert_eq!(of_project(&up).len(), 1, "one service");
 
     engine
-        .compose(&target, ComposeAction::Down { volumes: false })
+        .compose(
+            &target,
+            &ComposeScope::Project,
+            ComposeAction::Down { volumes: false },
+        )
         .await
         .unwrap();
     until(&engine, &mut changes, |all| of_project(all).is_empty()).await;

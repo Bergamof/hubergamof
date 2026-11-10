@@ -17,10 +17,9 @@ settings, the changes are saved with « Appliquer ».
 	import { Operation } from '#lib/deck/operation.svelte.js';
 	import type { Problem } from '#lib/deck/problems.js';
 	import {
-		MAX_ENTRY_NAME_CHARS,
-		MAX_FILE_ENTRIES,
 		fileEntryError,
-		type FileEntryDraft
+		type FileEntryDraft,
+		type FileEntryListKind
 	} from '#lib/deck/settings-form.js';
 	import ModuleTile from './ModuleTile.svelte';
 	import ProblemAlert from './ProblemAlert.svelte';
@@ -32,6 +31,11 @@ settings, the changes are saved with « Appliquer ».
 		labelledBy: string;
 		/** Ids of the elements describing the list (help, error). */
 		describedBy: string | undefined;
+		/** The setting: its limits, dialog and texts. */
+		kind: FileEntryListKind;
+		/** Module kind and key of the setting, which name its file dialog to the manager. */
+		module: string;
+		setting: string;
 		entries: FileEntryDraft[];
 		/** Device the icons are stored for. */
 		serial: string;
@@ -50,6 +54,9 @@ settings, the changes are saved with « Appliquer ».
 		id,
 		labelledBy,
 		describedBy,
+		kind,
+		module,
+		setting,
 		entries,
 		serial,
 		api,
@@ -72,10 +79,12 @@ settings, the changes are saved with « Appliquer ».
 	/** The file dialog is open on the user's screen. */
 	let choosing = $state(false);
 	let chooserProblem: Problem | undefined = $state();
+	/** The last attempt found no dialog on this desktop: the path is typed. */
+	let noDialog = $state(false);
 	let announcement = $state('');
 	const iconUpload = new Operation();
 
-	const full = $derived(entries.length >= MAX_FILE_ENTRIES);
+	const full = $derived(entries.length >= kind.maxEntries);
 
 	$effect(() => onediting(editing !== undefined));
 	// The list changed from elsewhere (settings reloaded): what was being edited is gone.
@@ -84,14 +93,15 @@ settings, the changes are saved with « Appliquer ».
 		untrack(() => (editing = undefined));
 	});
 
-	/** Name of the folder of `path`: what compose calls the project unless a name is given. */
-	function folderName(path: string): string {
+	/** What a file without name is called, as the module says (`kind.defaultName`). */
+	function defaultName(path: string): string {
 		const segments = path.split('/').filter((segment) => segment !== '' && segment !== '~');
+		if (kind.defaultName === 'fileName') return segments[segments.length - 1] ?? path;
 		return segments.length >= 2 ? (segments[segments.length - 2] ?? path) : path;
 	}
 
 	function shownName(file: FileEntryDraft): string {
-		return file.name.trim() || folderName(file.path.trim());
+		return file.name.trim() || defaultName(file.path.trim());
 	}
 
 	function iconOf(file: FileEntryDraft): string | null | undefined {
@@ -115,15 +125,21 @@ settings, the changes are saved with « Appliquer ».
 	async function chooseFile(): Promise<string | null> {
 		choosing = true;
 		chooserProblem = undefined;
-		const result = await api.chooseComposeFile();
+		noDialog = false;
+		const result = await api.chooseFile(module, setting);
 		choosing = false;
 		if (result.ok) return result.value;
 		chooserProblem = result.problem;
+		noDialog = result.code === 'unavailable';
 		return null;
 	}
 
 	async function add() {
 		if (choosing || full || editing) return;
+		if (!kind.chooser) {
+			openEditor(null, { path: '', name: '', icon: null });
+			return;
+		}
 		const path = await chooseFile();
 		if (path !== null) {
 			if (entries.some((entry) => entry.path.trim() === path)) {
@@ -131,7 +147,7 @@ settings, the changes are saved with « Appliquer ».
 				return;
 			}
 			openEditor(null, { path, name: '', icon: null });
-		} else if (chooserProblem) {
+		} else if (noDialog) {
 			// No dialog on this desktop: the path is typed.
 			openEditor(null, { path: '', name: '', icon: null });
 		}
@@ -156,7 +172,7 @@ settings, the changes are saved with « Appliquer ».
 		const { index } = editing;
 		chooserProblem = undefined;
 		const error =
-			fileEntryError(file) ??
+			fileEntryError(file, kind) ??
 			(entries.some((other, position) => position !== index && other.path.trim() === file.path)
 				? `« ${file.path} » est déjà dans la liste.`
 				: undefined);
@@ -346,24 +362,28 @@ settings, the changes are saved with « Appliquer ».
 					type="text"
 					spellcheck="false"
 					class="field min-w-0 flex-1 font-mono"
-					placeholder="/chemin/vers/compose.yaml"
+					placeholder={kind.pathPlaceholder}
 					bind:value={current.file.path}
 					oninput={() => (editError = undefined)}
 					onkeydown={confirmOnEnter}
 					aria-describedby="{id}-path-hint{editError ? ` ${id}-edit-error` : ''}"
 					aria-invalid={editError ? true : undefined}
 				/>
-				<button
-					type="button"
-					class="secondary-button"
-					aria-disabled={choosing}
-					onclick={() => void browse()}
-				>
-					Parcourir…
-				</button>
+				{#if kind.chooser}
+					<button
+						type="button"
+						class="secondary-button"
+						aria-disabled={choosing}
+						onclick={() => void browse()}
+					>
+						Parcourir…
+					</button>
+				{/if}
 			</span>
 			<p id="{id}-path-hint" class="text-sm text-muted">
-				Chemin absolu (ou commençant par ~/), choisi avec « Parcourir » ou saisi.
+				Chemin absolu (ou commençant par ~/){kind.chooser
+					? ', choisi avec « Parcourir » ou saisi'
+					: ''}.
 			</p>
 		</div>
 
@@ -373,13 +393,14 @@ settings, the changes are saved with « Appliquer ».
 				id="{id}-name"
 				type="text"
 				class="field"
-				placeholder={folderName(current.file.path.trim()) || 'Nom du projet'}
+				placeholder={defaultName(current.file.path.trim()) || 'Nom'}
 				bind:value={current.file.name}
 				onkeydown={confirmOnEnter}
 				aria-describedby="{id}-name-hint"
 			/>
 			<p id="{id}-name-hint" class="text-sm text-muted">
-				Vide : nom du projet compose. {MAX_ENTRY_NAME_CHARS} caractères au plus.
+				{kind.nameHint}
+				{kind.maxNameChars} caractères au plus.
 			</p>
 		</div>
 

@@ -530,7 +530,7 @@ pub(super) fn registry(probe: &Probe) -> Arc<ModuleRegistry> {
 pub(super) fn services(dir: &TempDir, probe: &Probe) -> EngineServices {
     let registry = registry(probe);
     EngineServices {
-        store: ConfigStore::new(dir.path(), Arc::clone(&registry) as _),
+        store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
         renderer: Arc::new(crate::render::Renderer::new().unwrap()),
         registry,
     }

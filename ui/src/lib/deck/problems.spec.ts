@@ -13,6 +13,7 @@ const KEEPS_DETAILS = {
 	invalidImage: true,
 	invalidArchive: true,
 	unavailable: false,
+	busy: false,
 	internal: true
 } as const satisfies Record<ErrorCode, boolean>;
 

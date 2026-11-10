@@ -135,8 +135,11 @@ pub enum ErrorCode {
     /// unexpected entries, missing image, or too large.
     InvalidArchive,
     /// The desktop feature asked for is not available here: no file chooser
-    /// (no desktop portal, or `--demo` without one), or one is already open.
+    /// (no desktop portal on this desktop).
     Unavailable,
+    /// The desktop feature asked for is in use: a file chooser is already
+    /// open. Asking again later may work.
+    Busy,
     /// Unexpected failure inside the manager.
     Internal,
 }

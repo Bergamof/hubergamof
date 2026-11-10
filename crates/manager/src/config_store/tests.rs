@@ -423,14 +423,9 @@ fn imported_images_are_named_by_content_whatever_their_archived_name() {
     let (_dir, store) = store();
     let config = with_first_key_image(&store, "renamed-by-hand.png");
     let archive = archive_of(&config, &[("renamed-by-hand.png", png_image())]);
-    let prepared = prepare_import(
-        &archive,
-        &plus(),
-        config.revision,
-        store.defaults(),
-        sniffed,
-    )
-    .unwrap();
+    let prepared = store
+        .prepare_import(&archive, &plus(), config.revision, sniffed)
+        .unwrap();
     let name = image_name(&png_image(), ImageKind::Png);
     assert_eq!(prepared.images, vec![(name.clone(), png_image())]);
     assert!(
@@ -464,16 +459,15 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
     let (_dir, store) = store();
     let missing = with_first_key_image(&store, "absent.png");
     assert!(matches!(
-        prepare_import(&archive_of(&missing, &[]), &plus(), 0, store.defaults(), sniffed),
+        store.prepare_import(&archive_of(&missing, &[]), &plus(), 0, sniffed),
         Err(ConfigStoreError::MissingImage(name)) if name == "absent.png"
     ));
     let not_an_image = with_first_key_image(&store, "a.png");
     assert!(matches!(
-        prepare_import(
+        store.prepare_import(
             &archive_of(&not_an_image, &[("a.png", b"text".to_vec())]),
             &plus(),
             0,
-            store.defaults(),
             sniffed
         ),
         Err(ConfigStoreError::UnreadableImage { .. })
@@ -481,11 +475,10 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
     let mut invalid = with_first_key_image(&store, "a.png");
     invalid.brightness = 250;
     assert!(matches!(
-        prepare_import(
+        store.prepare_import(
             &archive_of(&invalid, &[("a.png", png_image())]),
             &plus(),
             0,
-            store.defaults(),
             sniffed
         ),
         Err(ConfigStoreError::Invalid(_))
@@ -504,14 +497,14 @@ fn images_of_instances_dropped_by_the_fit_are_left_out() {
         .find(|m| m.id == dial_only)
         .unwrap();
     module.image = Some("a.png".into());
-    let prepared = prepare_import(
-        &archive_of(&config, &[("a.png", png_image())]),
-        &mk2(),
-        0,
-        store.defaults(),
-        sniffed,
-    )
-    .unwrap();
+    let prepared = store
+        .prepare_import(
+            &archive_of(&config, &[("a.png", png_image())]),
+            &mk2(),
+            0,
+            sniffed,
+        )
+        .unwrap();
     assert_eq!(prepared.images, Vec::new());
 }
 
@@ -652,17 +645,16 @@ fn imported_icons_are_named_by_content_like_key_images() {
     let (_dir, store) = store();
     let config = with_docker_icon(&store, "renamed-by-hand.png");
     let archive = archive_of(&config, &[("renamed-by-hand.png", png_image())]);
-    let prepared = prepare_import(&archive, &plus(), 0, store.defaults(), sniffed).unwrap();
+    let prepared = store.prepare_import(&archive, &plus(), 0, sniffed).unwrap();
     let name = image_name(&png_image(), ImageKind::Png);
     assert_eq!(prepared.images, vec![(name.clone(), png_image())]);
     assert_eq!(docker_icon(&prepared.config), Some(name));
 
     assert!(matches!(
-        prepare_import(
+        store.prepare_import(
             &archive_of(&config, &[]),
             &plus(),
             0,
-            store.defaults(),
             sniffed
         ),
         Err(ConfigStoreError::MissingImage(name)) if name == "renamed-by-hand.png"
@@ -727,7 +719,7 @@ fn settings_saved_with_plain_compose_paths_still_load_export_and_import() {
         "kept as written, nothing pruned or rewritten"
     );
     let archive = store.export(DEMO_SERIAL, &loaded).unwrap();
-    let prepared = prepare_import(&archive, &plus(), 0, store.defaults(), sniffed).unwrap();
+    let prepared = store.prepare_import(&archive, &plus(), 0, sniffed).unwrap();
     let docker = prepared
         .config
         .modules
@@ -745,7 +737,9 @@ fn an_archive_naming_a_hostile_icon_is_refused_without_echoing_it_raw() {
     let (_dir, store) = store();
     let config = with_docker_icon(&store, "../x\nINJECTED");
     let archive = archive_of(&config, &[("../x\nINJECTED", png_image())]);
-    let error = prepare_import(&archive, &plus(), 0, store.defaults(), sniffed).unwrap_err();
+    let error = store
+        .prepare_import(&archive, &plus(), 0, sniffed)
+        .unwrap_err();
     assert!(!error.to_string().contains('\n'), "{error}");
 }
 

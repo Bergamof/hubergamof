@@ -18,11 +18,8 @@ export interface FileEntryDraft {
  */
 export type DraftValue = boolean | string | FileEntryDraft[];
 
-/** Longest name of a file (`MAX_ENTRY_NAME_CHARS` of the module API). */
-export const MAX_ENTRY_NAME_CHARS = 40;
-
-/** Most files in a list (`MAX_FILE_ENTRIES` of the module API). */
-export const MAX_FILE_ENTRIES = 50;
+/** The kind of a list of files: its limits, dialog and texts come from the module. */
+export type FileEntryListKind = Extract<SettingKind, { type: 'fileEntryList' }>;
 
 /** Form values, by setting key. */
 export type SettingsDraft = Record<string, DraftValue>;
@@ -136,7 +133,7 @@ function parseField(kind: SettingKind, draft: DraftValue): FieldResult {
 				: { ok: false, error: pathError(invalid) };
 		}
 		case 'fileEntryList':
-			return parseFileEntries(Array.isArray(draft) ? draft : []);
+			return parseFileEntries(Array.isArray(draft) ? draft : [], kind);
 		case 'text':
 			return { ok: true, value: String(draft) };
 		case 'path': {
@@ -149,12 +146,12 @@ function parseField(kind: SettingKind, draft: DraftValue): FieldResult {
 }
 
 /** Why `entry` cannot be saved, `undefined` when it can (same rules as the module API). */
-export function fileEntryError(entry: FileEntryDraft): string | undefined {
+export function fileEntryError(entry: FileEntryDraft, kind: FileEntryListKind): string | undefined {
 	const path = entry.path.trim();
 	if (path === '') return 'Indiquer le chemin du fichier.';
 	if (!isResolvablePath(path)) return pathError(path);
-	if ([...entry.name.trim()].length > MAX_ENTRY_NAME_CHARS) {
-		return `Nom trop long : ${MAX_ENTRY_NAME_CHARS} caractères au plus.`;
+	if ([...entry.name.trim()].length > kind.maxNameChars) {
+		return `Nom trop long : ${kind.maxNameChars} caractères au plus.`;
 	}
 	// Same refusal as the module API: such characters scramble what the name shows.
 	if (/[\p{Cc}\u202A-\u202E\u2066-\u2069]/u.test(entry.name)) {
@@ -163,14 +160,17 @@ export function fileEntryError(entry: FileEntryDraft): string | undefined {
 	return undefined;
 }
 
-function parseFileEntries(entries: readonly FileEntryDraft[]): FieldResult {
-	if (entries.length > MAX_FILE_ENTRIES) {
-		return { ok: false, error: `${MAX_FILE_ENTRIES} fichiers au plus.` };
+function parseFileEntries(
+	entries: readonly FileEntryDraft[],
+	kind: FileEntryListKind
+): FieldResult {
+	if (entries.length > kind.maxEntries) {
+		return { ok: false, error: `${kind.maxEntries} fichiers au plus.` };
 	}
 	const files: JsonValue[] = [];
 	const seen = new Set<string>();
 	for (const entry of entries) {
-		const error = fileEntryError(entry);
+		const error = fileEntryError(entry, kind);
 		if (error) return { ok: false, error };
 		const path = entry.path.trim();
 		if (seen.has(path)) return { ok: false, error: `« ${path} » est déjà dans la liste.` };
@@ -226,7 +226,7 @@ export function settingHint(field: SettingField): string {
 	} else if (kind.type === 'pathList') {
 		constraints.push('Un chemin absolu par ligne (ou commençant par ~/).');
 	} else if (kind.type === 'fileEntryList') {
-		constraints.push(`${MAX_FILE_ENTRIES} fichiers au plus.`);
+		constraints.push(`${kind.maxEntries} fichiers au plus.`);
 	} else if (kind.type === 'path') {
 		constraints.push(
 			kind.directory

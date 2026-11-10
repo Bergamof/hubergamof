@@ -1,0 +1,279 @@
+//! What the keys of the action pages do, and what it amounts to.
+
+use hubergamof_module_api::Command;
+
+use super::{
+    ComposeAction, ComposeScope, ContainerAction, DOWN_LABEL, Docker, DockerEvent, Feedback,
+    ImageData, ItemKey, Operation, OperationKind, Page, Request, Scope, UP_LABEL, UpVariant, icons,
+    project_id,
+};
+
+/// What an action key does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Action {
+    StartAll,
+    StopAll,
+    Start,
+    Stop,
+    Restart,
+    Remove,
+    Up(UpVariant),
+    Down { volumes: bool },
+}
+
+pub(super) const PROJECT_ACTIONS: [Action; 2] = [Action::StartAll, Action::StopAll];
+
+pub(super) const UP_ACTIONS: [Action; 4] = [
+    Action::Up(UpVariant::Plain),
+    Action::Up(UpVariant::Build),
+    Action::Up(UpVariant::Pull),
+    Action::Up(UpVariant::NoStart),
+];
+
+pub(super) const DOWN_ACTIONS: [Action; 2] = [
+    Action::Down { volumes: false },
+    Action::Down { volumes: true },
+];
+
+/// Actions of a container page; [`Action::Remove`] shown only when the
+/// container may be removed.
+pub(super) const CONTAINER_ACTIONS: [Action; 4] =
+    [Action::Start, Action::Stop, Action::Restart, Action::Remove];
+
+impl Action {
+    pub(super) fn item(self) -> &'static str {
+        match self {
+            Self::StartAll => "start-all",
+            Self::StopAll => "stop-all",
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+            Self::Remove => "remove",
+            Self::Up(UpVariant::Plain) => "up-plain",
+            Self::Up(UpVariant::Build) => "up-build",
+            Self::Up(UpVariant::Pull) => "up-pull",
+            Self::Up(UpVariant::NoStart) => "up-no-start",
+            Self::Down { volumes: false } => "down-keep",
+            Self::Down { volumes: true } => "down-volumes",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::StartAll => "Tout démarrer",
+            Self::StopAll => "Tout arrêter",
+            Self::Start => "Démarrer",
+            Self::Stop => "Arrêter",
+            Self::Restart => "Redémarrer",
+            Self::Remove => "Supprimer",
+            Self::Up(UpVariant::Plain) => UP_LABEL,
+            Self::Up(UpVariant::Build) => "Rebuild",
+            Self::Up(UpVariant::Pull) => "Pull",
+            Self::Up(UpVariant::NoStart) => "No start",
+            Self::Down { volumes: false } => DOWN_LABEL,
+            Self::Down { volumes: true } => "Avec volumes",
+        }
+    }
+
+    /// Label while it runs.
+    pub(super) fn busy_label(self) -> &'static str {
+        match self {
+            Self::StartAll | Self::Start => "Démarrage…",
+            Self::StopAll | Self::Stop => "Arrêt…",
+            Self::Restart => "Redémarrage…",
+            Self::Remove => "Suppression…",
+            Self::Up(_) | Self::Down { .. } => {
+                self.operation().map_or("", OperationKind::working_label)
+            }
+        }
+    }
+
+    /// The operation of a project (or of one of its services) it starts.
+    pub(super) fn operation(self) -> Option<OperationKind> {
+        match self {
+            Self::Up(variant) => Some(OperationKind::Up(variant)),
+            Self::Down { .. } => Some(OperationKind::Down),
+            _ => None,
+        }
+    }
+
+    pub(super) fn icon(self) -> &'static ImageData {
+        match self {
+            Self::StartAll | Self::Start => &icons::START,
+            Self::StopAll | Self::Stop => &icons::STOP,
+            Self::Restart => &icons::RESTART,
+            Self::Remove => &icons::REMOVE,
+            Self::Up(_) => &icons::UP,
+            Self::Down { .. } => &icons::DOWN,
+        }
+    }
+
+    /// Destroys something: needs a second press.
+    pub(super) fn needs_confirmation(self) -> bool {
+        matches!(self, Self::Remove | Self::Down { .. })
+    }
+
+    /// The actions of `page`.
+    pub(super) fn of_page(page: Page<'_>) -> &'static [Self] {
+        match page {
+            Page::Main | Page::Service { .. } => &[],
+            Page::Project(_) => &PROJECT_ACTIONS,
+            Page::Up(_) => &UP_ACTIONS,
+            Page::Down(_) => &DOWN_ACTIONS,
+            Page::Container(_) => &CONTAINER_ACTIONS,
+        }
+    }
+
+    /// The action of `item` on `page`.
+    pub(super) fn of(page: Page<'_>, item: &str) -> Option<Self> {
+        Self::of_page(page)
+            .iter()
+            .copied()
+            .find(|action| action.item() == item)
+    }
+}
+
+/// What an action amounts to on the current containers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Plan {
+    /// Already done (nothing to start…).
+    Nothing,
+    Run(Request),
+    /// Cannot be done: project or container gone, not removable…
+    Refused,
+}
+
+impl Docker {
+    pub(super) fn perform(&mut self, key: ItemKey, page: Page<'_>, action: Action) -> Vec<Command> {
+        if self.busy.contains(&key) {
+            return Vec::new();
+        }
+        let request = match self.plan(page, action) {
+            Plan::Run(request) => request,
+            Plan::Nothing => return vec![key.feedback(Feedback::Ok)],
+            Plan::Refused => return Command::alert(),
+        };
+        if action.needs_confirmation() && !self.confirmed(&key) {
+            return Vec::new();
+        }
+        if let (Some(scope), Some(kind)) = (page.scope(), action.operation()) {
+            return self.start_operation(scope, kind, request);
+        }
+        let events = self.events.clone();
+        let outcome_key = key.clone();
+        let started = self.hub.run(request, move |outcome| {
+            if let Err(error) = &outcome {
+                tracing::warn!(%error, "Docker action failed");
+            }
+            // An instance gone meanwhile needs no outcome.
+            let _ = events.send(DockerEvent::Outcome {
+                key: outcome_key,
+                ok: outcome.is_ok(),
+            });
+        });
+        if started {
+            self.busy.insert(key);
+            Vec::new()
+        } else {
+            Command::alert()
+        }
+    }
+
+    /// Starts an `up` or a `down`, and leaves its page for the one of the
+    /// project, where what it works on shows.
+    pub(super) fn start_operation(
+        &mut self,
+        scope: Scope<'_>,
+        kind: OperationKind,
+        request: Request,
+    ) -> Vec<Command> {
+        if self.operations.iter().any(|op| op.project == scope.project) {
+            return Command::alert();
+        }
+        self.next_operation += 1;
+        let id = self.next_operation;
+        let events = self.events.clone();
+        let started = self.hub.run(request, move |outcome| {
+            if let Err(error) = &outcome {
+                tracing::warn!(%error, "Docker action failed");
+            }
+            let _ = events.send(DockerEvent::OperationEnded {
+                id,
+                ok: outcome.is_ok(),
+            });
+        });
+        if !started {
+            return Command::alert();
+        }
+        self.operations.push(Operation {
+            id,
+            project: scope.project.to_owned(),
+            scope: ComposeScope::of(scope.service),
+            kind,
+        });
+        vec![Command::BackTo(project_id(scope.project).into())]
+    }
+
+    /// What `action` on `page` amounts to on the containers shown.
+    pub(super) fn plan(&self, page: Page<'_>, action: Action) -> Plan {
+        let Some(overview) = self.overview() else {
+            return Plan::Refused;
+        };
+        let compose = |scope: Scope<'_>, action| {
+            let target = overview
+                .project(scope.project)
+                .and_then(|p| p.target.clone());
+            target.map_or(Plan::Refused, |target| {
+                Plan::Run(Request::Compose {
+                    target,
+                    scope: ComposeScope::of(scope.service),
+                    action,
+                })
+            })
+        };
+        match (page, action) {
+            (Page::Project(name), Action::StartAll | Action::StopAll) => {
+                let Some(project) = overview.project(name) else {
+                    return Plan::Refused;
+                };
+                let start = action == Action::StartAll;
+                let ids: Vec<String> = project
+                    .containers
+                    .iter()
+                    .filter(|c| c.is_running() != start)
+                    .map(|c| c.id.clone())
+                    .collect();
+                if ids.is_empty() {
+                    return Plan::Nothing;
+                }
+                let action = if start {
+                    ContainerAction::Start
+                } else {
+                    ContainerAction::Stop
+                };
+                Plan::Run(Request::Containers { ids, action })
+            }
+            (Page::Up(scope), Action::Up(variant)) => compose(scope, ComposeAction::Up(variant)),
+            (Page::Down(scope), Action::Down { volumes }) => {
+                compose(scope, ComposeAction::Down { volumes })
+            }
+            (Page::Container(name), _) => {
+                let Some(container) = overview.container(name) else {
+                    return Plan::Refused;
+                };
+                let action = match action {
+                    Action::Start => ContainerAction::Start,
+                    Action::Stop => ContainerAction::Stop,
+                    Action::Restart => ContainerAction::Restart,
+                    Action::Remove if container.is_removable() => ContainerAction::Remove,
+                    _ => return Plan::Refused,
+                };
+                Plan::Run(Request::Containers {
+                    ids: vec![container.id.clone()],
+                    action,
+                })
+            }
+            _ => Plan::Refused,
+        }
+    }
+}

@@ -10,7 +10,8 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 
 use super::backend::{
-    ComposeAction, ContainerAction, DockerBackend, DockerChanges, DockerError, UpVariant,
+    ComposeAction, ComposeScope, ContainerAction, DockerBackend, DockerChanges, DockerError,
+    UpVariant,
 };
 use super::model::{ComposeLabels, ComposeTarget, Container, ContainerStatus, Health};
 
@@ -229,6 +230,7 @@ impl SimulatedDocker {
     fn apply_to_project(
         state: &mut State,
         target: &ComposeTarget,
+        scope: &ComposeScope,
         action: ComposeAction,
     ) -> Result<String, DockerError> {
         let project = state
@@ -245,10 +247,11 @@ impl SimulatedDocker {
         };
         match action {
             ComposeAction::Up(variant) => {
-                let wanted = |service: &str| {
-                    target.services.is_empty() || target.services.iter().any(|name| name == service)
-                };
-                for (service, image) in project.services.iter().filter(|(name, _)| wanted(name)) {
+                for (service, image) in project
+                    .services
+                    .iter()
+                    .filter(|(name, _)| scope.covers(Some(name)))
+                {
                     let name = project.container_name(service);
                     // `--no-start` creates what is missing and starts nothing.
                     let start = variant != UpVariant::NoStart;
@@ -269,21 +272,19 @@ impl SimulatedDocker {
                     UpVariant::Pull => " --pull",
                     UpVariant::NoStart => " --no-start",
                 };
-                let scope = scope_suffix(target);
+                let scope = scope_suffix(scope);
                 Ok(format!("up {}{suffix}{scope}", project.name))
             }
             ComposeAction::Down { volumes } => {
                 state.containers.retain(|container| {
-                    let in_scope = target.services.is_empty()
-                        || container
-                            .compose
-                            .as_ref()
-                            .and_then(|labels| labels.service.as_ref())
-                            .is_some_and(|service| target.services.contains(service));
-                    !(belongs(container) && in_scope)
+                    let service = container
+                        .compose
+                        .as_ref()
+                        .and_then(|labels| labels.service.as_deref());
+                    !(belongs(container) && scope.covers(service))
                 });
                 let suffix = if volumes { " --volumes" } else { "" };
-                let scope = scope_suffix(target);
+                let scope = scope_suffix(scope);
                 Ok(format!("down {}{suffix}{scope}", project.name))
             }
         }
@@ -366,11 +367,12 @@ impl DockerBackend for SimulatedDocker {
     async fn compose(
         &self,
         target: &ComposeTarget,
+        scope: &ComposeScope,
         action: ComposeAction,
     ) -> Result<(), DockerError> {
         self.take_time().await;
         self.check_available()?;
-        let done = Self::apply_to_project(&mut lock(&self.state), target, action)?;
+        let done = Self::apply_to_project(&mut lock(&self.state), target, scope, action)?;
         self.record(done);
         self.notify();
         Ok(())
@@ -394,12 +396,10 @@ impl DockerBackend for SimulatedDocker {
 }
 
 /// The services a compose action is narrowed to, as the end of its record.
-fn scope_suffix(target: &ComposeTarget) -> String {
-    if target.services.is_empty() {
-        String::new()
-    } else {
-        format!(" {}", target.services.join(" "))
-    }
+fn scope_suffix(scope: &ComposeScope) -> String {
+    scope
+        .service()
+        .map_or_else(String::new, |service| format!(" {service}"))
 }
 
 fn verb(action: ContainerAction) -> &'static str {
@@ -478,7 +478,11 @@ mod tests {
             ..ComposeTarget::default()
         };
         docker
-            .compose(&shop, ComposeAction::Down { volumes: true })
+            .compose(
+                &shop,
+                &ComposeScope::Project,
+                ComposeAction::Down { volumes: true },
+            )
             .await
             .unwrap();
         assert!(docker.named("boutique-web-1").is_none());
@@ -488,17 +492,26 @@ mod tests {
             ..ComposeTarget::default()
         };
         docker
-            .compose(&by_file, ComposeAction::Up(UpVariant::Pull))
+            .compose(
+                &by_file,
+                &ComposeScope::Project,
+                ComposeAction::Up(UpVariant::Pull),
+            )
             .await
             .unwrap();
         assert!(docker.named("boutique-web-1").unwrap().is_running());
         docker
-            .compose(&by_file, ComposeAction::Up(UpVariant::Build))
+            .compose(
+                &by_file,
+                &ComposeScope::Project,
+                ComposeAction::Up(UpVariant::Build),
+            )
             .await
             .unwrap();
         docker
             .compose(
                 &ComposeTarget::default(),
+                &ComposeScope::Project,
                 ComposeAction::Up(UpVariant::Plain),
             )
             .await

@@ -26,7 +26,9 @@ use bollard::{API_DEFAULT_VERSION, Docker};
 use futures_util::{Stream, StreamExt};
 use tokio::sync::OnceCell;
 
-use super::backend::{ComposeAction, ContainerAction, DockerBackend, DockerChanges, DockerError};
+use super::backend::{
+    ComposeAction, ComposeScope, ContainerAction, DockerBackend, DockerChanges, DockerError,
+};
 use super::compose::ComposeCli;
 use super::model::{
     ComposeLabels, ComposeTarget, Container, ContainerStatus, Health, is_project_name,
@@ -190,9 +192,10 @@ impl DockerBackend for DockerEngine {
     async fn compose(
         &self,
         target: &ComposeTarget,
+        scope: &ComposeScope,
         action: ComposeAction,
     ) -> Result<(), DockerError> {
-        self.compose.run(target, action).await
+        self.compose.run(target, scope, action).await
     }
 
     async fn compose_services(&self, target: &ComposeTarget) -> Result<Vec<String>, DockerError> {

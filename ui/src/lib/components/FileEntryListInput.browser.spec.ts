@@ -2,21 +2,40 @@ import { describe, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import type { ApiResult, ManagerApi } from '#lib/api/manager-api.js';
-import type { FileEntryDraft } from '#lib/deck/settings-form.js';
+import type { FileEntryDraft, FileEntryListKind } from '#lib/deck/settings-form.js';
 import FileEntryListInput from './FileEntryListInput.svelte';
 
 const SHOP: FileEntryDraft = { path: '/srv/shop/compose.yaml', name: 'Boutique', icon: 'shop.png' };
+/** The setting of the compose files of the Docker module. */
+const COMPOSE: FileEntryListKind = {
+	type: 'fileEntryList',
+	default: [],
+	maxEntries: 50,
+	maxNameChars: 40,
+	chooser: {
+		title: 'Choisir un fichier compose',
+		filters: [{ name: 'Fichiers compose', globs: ['*.yaml', '*.yml'] }]
+	},
+	pathPlaceholder: '/chemin/vers/compose.yaml',
+	nameHint: 'Vide : nom du projet compose.',
+	defaultName: 'folderName'
+};
+
 const BLOG: FileEntryDraft = { path: '~/blog/compose.yaml', name: '', icon: null };
 
 function fakeApi(chosen: ApiResult<string | null> = { ok: true, value: null }) {
 	const api = {
-		chooseComposeFile: vi.fn().mockResolvedValue(chosen),
+		chooseFile: vi.fn().mockResolvedValue(chosen),
 		uploadKeyImage: vi.fn().mockResolvedValue({ ok: true, value: 'uploaded.png' })
 	};
 	return { api, asApi: api as unknown as ManagerApi };
 }
 
-async function show(entries: FileEntryDraft[], chosen?: ApiResult<string | null>) {
+async function show(
+	entries: FileEntryDraft[],
+	chosen?: ApiResult<string | null>,
+	kind: FileEntryListKind = COMPOSE
+) {
 	const { api, asApi } = fakeApi(chosen);
 	const onchange = vi.fn();
 	const onediting = vi.fn();
@@ -24,6 +43,9 @@ async function show(entries: FileEntryDraft[], chosen?: ApiResult<string | null>
 		id: 'files',
 		labelledBy: 'files-label',
 		describedBy: undefined,
+		kind,
+		module: 'docker',
+		setting: 'composeFiles',
 		entries,
 		serial: 'DECK',
 		api: asApi,
@@ -58,7 +80,7 @@ describe('FileEntryListInput', () => {
 	it('adds the file chosen in the desktop dialog, with a name and an icon', async () => {
 		const { api, onchange } = await show([], { ok: true, value: '/srv/api/compose.yaml' });
 		await page.getByRole('button', { name: 'Ajouter un fichier…' }).click();
-		expect(api.chooseComposeFile).toHaveBeenCalledOnce();
+		expect(api.chooseFile).toHaveBeenCalledExactlyOnceWith('docker', 'composeFiles');
 		await expect.element(page.getByLabelText('Fichier')).toHaveValue('/srv/api/compose.yaml');
 		await page.getByLabelText('Nom').fill('API interne');
 		const input = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -83,6 +105,7 @@ describe('FileEntryListInput', () => {
 	it('lets the path be typed where there is no dialog', async () => {
 		const { onchange } = await show([], {
 			ok: false,
+			code: 'unavailable',
 			problem: { text: 'Le sélecteur de fichier n’est pas disponible.', detail: null }
 		});
 		await page.getByRole('button', { name: 'Ajouter un fichier…' }).click();
@@ -185,7 +208,7 @@ describe('FileEntryListInput', () => {
 			button.click();
 		}
 		expect(onchange).not.toHaveBeenCalled();
-		expect(api.chooseComposeFile).not.toHaveBeenCalled();
+		expect(api.chooseFile).not.toHaveBeenCalled();
 		await expect.element(page.getByLabelText('Fichier')).toHaveValue('/srv/shop/compose.yaml');
 	});
 
@@ -209,6 +232,52 @@ describe('FileEntryListInput', () => {
 		await page.getByLabelText('Nom').fill('a\u202Eb');
 		await page.getByRole('button', { name: 'Valider' }).click();
 		await expect.element(page.getByText(/caractère de contrôle/)).toBeVisible();
+		expect(onchange).not.toHaveBeenCalled();
+	});
+
+	it('leaves the typing to the user when the dialog is busy elsewhere, without opening the form', async () => {
+		const { onchange } = await show([], {
+			ok: false,
+			code: 'busy',
+			problem: { text: 'Un sélecteur de fichier est déjà ouvert.', detail: null }
+		});
+		await page.getByRole('button', { name: 'Ajouter un fichier…' }).click();
+		await expect.element(page.getByText(/déjà ouvert/)).toBeVisible();
+		await expect.element(page.getByLabelText('Fichier')).not.toBeInTheDocument();
+		expect(onchange).not.toHaveBeenCalled();
+	});
+
+	it('takes its limits, texts and naming from the setting, and types the path without a dialog', async () => {
+		const plain: FileEntryListKind = {
+			...COMPOSE,
+			maxEntries: 1,
+			maxNameChars: 5,
+			chooser: null,
+			pathPlaceholder: '/data/exemple.csv',
+			nameHint: 'Vide : nom du fichier.',
+			defaultName: 'fileName'
+		};
+		const { api, onchange } = await show(
+			[{ path: '/data/a.csv', name: '', icon: null }],
+			undefined,
+			plain
+		);
+		await expect.element(page.getByText(/^a\.csv/)).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Ajouter un fichier…' }))
+			.toHaveAttribute('aria-disabled', 'true');
+		expect(api.chooseFile).not.toHaveBeenCalled();
+
+		await page.getByRole('button', { name: 'Modifier a.csv' }).click();
+		await expect
+			.element(page.getByLabelText('Fichier'))
+			.toHaveAttribute('placeholder', '/data/exemple.csv');
+		await expect.element(page.getByRole('button', { name: 'Parcourir…' })).not.toBeInTheDocument();
+		await expect.element(page.getByText(/Vide : nom du fichier/)).toBeVisible();
+		await expect.element(page.getByText(/5 caractères au plus/)).toBeVisible();
+		await page.getByLabelText('Nom').fill('trop long');
+		await page.getByRole('button', { name: 'Valider' }).click();
+		await expect.element(page.getByText('Nom trop long : 5 caractères au plus.')).toBeVisible();
 		expect(onchange).not.toHaveBeenCalled();
 	});
 });

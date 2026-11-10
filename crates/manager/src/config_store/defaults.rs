@@ -1,5 +1,6 @@
 //! Configuration generated for a device seen for the first time.
 
+use hubergamof_module_api::ModuleDescriptor;
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{
     CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, ModuleInstance, ModuleInstanceId, ModuleKind,
@@ -22,21 +23,6 @@ pub trait ConfigDefaults: Send + Sync {
     /// Kinds assigned to the dials, from left to right; a device with fewer
     /// dials takes the first ones.
     fn dial_modules(&self) -> Vec<ModuleKind>;
-
-    /// Names of the stored images the settings of `module` refer to (the
-    /// icons of its items); none by default.
-    fn settings_images(&self, _module: &ModuleInstance) -> Vec<String> {
-        Vec::new()
-    }
-
-    /// Replaces every image the settings of `module` refer to by
-    /// `replace(name)`, `None` removing the reference; nothing by default.
-    fn replace_settings_images(
-        &self,
-        _module: &mut ModuleInstance,
-        _replace: &mut dyn FnMut(&str) -> Option<String>,
-    ) {
-    }
 }
 
 impl ConfigDefaults for ModuleRegistry {
@@ -51,23 +37,18 @@ impl ConfigDefaults for ModuleRegistry {
     fn dial_modules(&self) -> Vec<ModuleKind> {
         self.default_layout().dials.clone()
     }
+}
 
-    fn settings_images(&self, module: &ModuleInstance) -> Vec<String> {
-        self.get(&module.kind).map_or_else(Vec::new, |factory| {
-            factory.descriptor().settings_images(&module.settings)
-        })
-    }
+/// The settings the modules describe, for what a configuration holds besides
+/// its own fields: the images its settings refer to.
+pub trait ModuleDescriptors: Send + Sync {
+    /// What module `kind` is and takes; `None` for a kind not provided.
+    fn descriptor(&self, kind: &ModuleKind) -> Option<ModuleDescriptor>;
+}
 
-    fn replace_settings_images(
-        &self,
-        module: &mut ModuleInstance,
-        replace: &mut dyn FnMut(&str) -> Option<String>,
-    ) {
-        if let Some(factory) = self.get(&module.kind) {
-            factory
-                .descriptor()
-                .replace_settings_images(&mut module.settings, replace);
-        }
+impl ModuleDescriptors for ModuleRegistry {
+    fn descriptor(&self, kind: &ModuleKind) -> Option<ModuleDescriptor> {
+        self.get(kind).map(|factory| factory.descriptor())
     }
 }
 

@@ -16,37 +16,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
+use hubergamof_module_api::FileChooser;
 use thiserror::Error;
 use zbus::{Connection, ObjectPath, OwnedObjectPath, OwnedVariant, Proxy, Variant, proxy};
 
 /// Longest time the dialog may stay open before it is given up.
 pub const DIALOG_TIMEOUT: Duration = Duration::from_mins(10);
-
-/// What the chosen file is for: sets the dialog's title and filters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FilePurpose {
-    /// A compose file of the Docker module.
-    ComposeFile,
-}
-
-impl FilePurpose {
-    fn title(self) -> &'static str {
-        match self {
-            Self::ComposeFile => "Choisir un fichier compose",
-        }
-    }
-
-    /// Dialog filters: a name and its globs, the file kinds of the purpose
-    /// first, then everything (compose files may have any name).
-    fn filters(self) -> Vec<(&'static str, Vec<&'static str>)> {
-        match self {
-            Self::ComposeFile => vec![
-                ("Fichiers compose", vec!["*.yaml", "*.yml"]),
-                ("Tous les fichiers", vec!["*"]),
-            ],
-        }
-    }
-}
 
 /// Why no file came back.
 #[derive(Debug, Error)]
@@ -68,7 +43,7 @@ pub trait FilePicker: Send + Sync {
     /// # Errors
     ///
     /// [`FilePickerError`] when there is no dialog, or it failed.
-    async fn pick_file(&self, purpose: FilePurpose) -> Result<Option<PathBuf>, FilePickerError>;
+    async fn pick_file(&self, chooser: &FileChooser) -> Result<Option<PathBuf>, FilePickerError>;
 }
 
 /// No dialog (used where no desktop is wanted).
@@ -77,7 +52,7 @@ pub struct NoFilePicker;
 
 #[async_trait]
 impl FilePicker for NoFilePicker {
-    async fn pick_file(&self, _purpose: FilePurpose) -> Result<Option<PathBuf>, FilePickerError> {
+    async fn pick_file(&self, _chooser: &FileChooser) -> Result<Option<PathBuf>, FilePickerError> {
         Err(FilePickerError::Unavailable)
     }
 }
@@ -98,7 +73,7 @@ impl SimulatedFilePicker {
 
 #[async_trait]
 impl FilePicker for SimulatedFilePicker {
-    async fn pick_file(&self, _purpose: FilePurpose) -> Result<Option<PathBuf>, FilePickerError> {
+    async fn pick_file(&self, _chooser: &FileChooser) -> Result<Option<PathBuf>, FilePickerError> {
         Ok(self.chosen.clone())
     }
 }
@@ -132,7 +107,7 @@ const RESPONSE_CANCELLED: u32 = 1;
 
 #[async_trait]
 impl FilePicker for PortalFilePicker {
-    async fn pick_file(&self, purpose: FilePurpose) -> Result<Option<PathBuf>, FilePickerError> {
+    async fn pick_file(&self, chooser: &FileChooser) -> Result<Option<PathBuf>, FilePickerError> {
         let connection = Connection::session()
             .await
             .map_err(|_| FilePickerError::Unavailable)?;
@@ -140,7 +115,7 @@ impl FilePicker for PortalFilePicker {
         let path = request_path(&connection, &token)?;
         let answer = with_timeout(
             DIALOG_TIMEOUT,
-            ask_portal(&connection, purpose, &token, path.clone()),
+            ask_portal(&connection, chooser, &token, path.clone()),
         )
         .await;
         if matches!(answer, Err(FilePickerError::Failed(_))) {
@@ -177,11 +152,11 @@ async fn close_request(connection: &Connection, path: OwnedObjectPath) {
 
 async fn ask_portal(
     connection: &Connection,
-    purpose: FilePurpose,
+    chooser: &FileChooser,
     token: &str,
     expected: OwnedObjectPath,
 ) -> Result<Option<PathBuf>, FilePickerError> {
-    let chooser = PortalFileChooserProxy::new(connection)
+    let portal = PortalFileChooserProxy::new(connection)
         .await
         .map_err(|_| FilePickerError::Unavailable)?;
     // Listen before asking, whatever the sender: the portal is often started by the call
@@ -195,10 +170,10 @@ async fn ask_portal(
         ("handle_token", Variant::from(token)),
         ("modal", Variant::from(true)),
         ("multiple", Variant::from(false)),
-        ("filters", Variant::new(portal_filters(purpose))),
+        ("filters", Variant::new(portal_filters(chooser))),
     ]);
-    let handle = chooser
-        .open_file("", purpose.title(), options)
+    let handle = portal
+        .open_file("", &chooser.title, options)
         .await
         .map_err(opening_error)?;
     // Older portals ignore the token: the request is the one they return.
@@ -268,14 +243,14 @@ fn failed(error: impl std::fmt::Display) -> FilePickerError {
 type PortalFilter = (String, Vec<(u32, String)>);
 
 /// The filters as the portal reads them: `a(sa(us))`, globs of type 0.
-fn portal_filters(purpose: FilePurpose) -> Vec<PortalFilter> {
-    purpose
-        .filters()
-        .into_iter()
-        .map(|(name, globs)| {
+fn portal_filters(chooser: &FileChooser) -> Vec<PortalFilter> {
+    chooser
+        .filters
+        .iter()
+        .map(|filter| {
             (
-                name.to_owned(),
-                globs.into_iter().map(|glob| (0, glob.to_owned())).collect(),
+                filter.name.clone(),
+                filter.globs.iter().map(|glob| (0, glob.clone())).collect(),
             )
         })
         .collect()
@@ -352,6 +327,8 @@ fn hex_digit(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    use hubergamof_module_api::FileFilter;
+
     use super::*;
 
     #[test]
@@ -461,6 +438,20 @@ mod tests {
         );
     }
 
+    fn compose_chooser() -> FileChooser {
+        let filter = |name: &str, globs: &[&str]| FileFilter {
+            name: name.into(),
+            globs: globs.iter().map(|glob| (*glob).into()).collect(),
+        };
+        FileChooser {
+            title: "Choisir un fichier compose".into(),
+            filters: vec![
+                filter("Fichiers compose", &["*.yaml", "*.yml"]),
+                filter("Tous les fichiers", &["*"]),
+            ],
+        }
+    }
+
     #[test]
     fn requests_have_distinct_tokens() {
         assert_ne!(request_token(), request_token());
@@ -468,7 +459,7 @@ mod tests {
 
     #[test]
     fn the_filters_follow_the_portal_signature() {
-        let filters = portal_filters(FilePurpose::ComposeFile);
+        let filters = portal_filters(&compose_chooser());
         assert_eq!(filters[0].0, "Fichiers compose");
         assert_eq!(
             filters[0].1,
@@ -481,18 +472,18 @@ mod tests {
     async fn simulated_and_missing_pickers_answer_without_a_desktop() {
         let chosen = SimulatedFilePicker::choosing(Some("/srv/a.yaml".into()));
         assert_eq!(
-            chosen.pick_file(FilePurpose::ComposeFile).await.unwrap(),
+            chosen.pick_file(&compose_chooser()).await.unwrap(),
             Some("/srv/a.yaml".into())
         );
         assert_eq!(
             SimulatedFilePicker::choosing(None)
-                .pick_file(FilePurpose::ComposeFile)
+                .pick_file(&compose_chooser())
                 .await
                 .unwrap(),
             None
         );
         assert!(matches!(
-            NoFilePicker.pick_file(FilePurpose::ComposeFile).await,
+            NoFilePicker.pick_file(&compose_chooser()).await,
             Err(FilePickerError::Unavailable)
         ));
     }
