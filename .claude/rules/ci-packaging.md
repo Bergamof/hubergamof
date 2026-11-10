@@ -24,3 +24,4 @@ paths:
 - Outil téléchargé hors action (`install-release-binary.sh`) : somme SHA-256 épinglée dans le workflow, jamais vérifiée contre le fichier de sommes de la même release.
 - zizmor `self-repository` (`uses: $/…`) désactivé : actionlint 1.7.12 refuse cette syntaxe ; à réactiver avec un actionlint qui la connaît.
 - Job `test` : `cargo llvm-cov` remplace `cargo test` (mêmes tests) ; le TOTAL donne régions, fonctions puis lignes (dernier pourcentage).
+- pnpm épinglé avec empreinte (`pnpm@X+sha512.…`, vérifiée par Corepack : une empreinte fausse donne « Mismatch hashes ») : changer la version sans l'empreinte fait échouer `make ui-deps`, le job `docker` et `pnpm/action-setup` ; `corepack use pnpm@<version>` depuis `ui/` écrit les deux.
