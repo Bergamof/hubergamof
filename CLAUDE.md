@@ -9,7 +9,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Déploiement : un seul binaire `hubergamof` (UI embarquée), service utilisateur systemd + règle udev.
 
 ## Environnement
-- Versions épinglées dans : `rust-toolchain.toml`, `.nvmrc`, `ui/package.json` (`packageManager`, `engines`) — source de vérité, lue aussi par la CI.
+- Versions épinglées dans : `rust-toolchain.toml`, `.nvmrc`, `ui/package.json` (`packageManager`, `engines`) — source de vérité, lue aussi par la CI. `packageManager` porte l'empreinte sha512 de pnpm : pour monter pnpm, `corepack use pnpm@<version>` depuis `ui/` (écrit version et empreinte).
 - Activation (manuelle et auto) : voir la section dédiée du `README.md`.
 - Toute montée de version d'outil se fait dans ces fichiers ET dans le `Dockerfile` (et le README si la démarche change), dans le même commit.
 - Node ≥ 24.12 (`engines`) : le Corepack des Node plus anciens (< 0.34.5) ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`, cache `~/.cache/node/corepack/v1/pnpm/<version>` incomplet à effacer) ; `make check-node` (prérequis de `ui-deps`) le détecte. Minimum lu depuis `engines` par `.github/scripts/check-node-version.sh`.
