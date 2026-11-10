@@ -55,7 +55,8 @@ check_files() {
 	[[ "$(stat -c %a "$BINARY")" == 755 ]] || fail "$BINARY n'est pas en 0755"
 	grep -qF -- "$EXPECTED_EXEC_START" "$UNIT" || fail "ExecStart inattendu dans $UNIT"
 	grep -q 'TAG+="uaccess"' "$UDEV_RULE" || fail "règle udev sans uaccess"
-	if grep -rq 'MODE="0666"' "$UDEV_RULE"; then fail "règle udev ouverte à tous"; fi
+	# Hors commentaires : l'en-tête de la règle cite MODE="0666" pour expliquer pourquoi on l'évite.
+	if grep -v '^[[:space:]]*#' "$UDEV_RULE" | grep -q 'MODE='; then fail "règle udev ouverte à tous"; fi
 }
 
 check_binary() {
