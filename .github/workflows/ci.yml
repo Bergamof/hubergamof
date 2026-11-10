@@ -98,7 +98,7 @@ jobs:
           make test-scripts
       - name: Install zizmor
         if: ${{ !cancelled() }}
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: zizmor@${{ env.ZIZMOR_VERSION }}
       - name: Workflows (zizmor)
@@ -142,7 +142,7 @@ jobs:
           cache-key: coverage
       - uses: ./.github/actions/setup-ui
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
       # Composants Svelte testés dans un vrai Chromium (mode navigateur de Vitest).
@@ -396,7 +396,7 @@ jobs:
         with:
           install: "false"
       - name: Install cargo-deny
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-deny@0.20
 
