@@ -221,7 +221,7 @@ package-lint: ## lintian sur le .deb (erreurs bloquantes)
 package-smoke: ## Installe chaque paquet dans un conteneur propre (Ubuntu, Arch) puis le désinstalle
 	$(DOCKER) build --quiet --tag "$(UBUNTU_IMAGE)" "$(PACKAGE_DIR)/ubuntu"
 	$(DOCKER) build --quiet --tag "$(ARCH_IMAGE)" "$(PACKAGE_DIR)/arch"
-	$(DOCKER) run --rm -v "$(CURDIR):/src:ro" -v "$(CURDIR)/$(DIST_DIR):/dist:ro" "$(UBUNTU_IMAGE)" \
+	$(DOCKER) run --rm --user root -v "$(CURDIR):/src:ro" -v "$(CURDIR)/$(DIST_DIR):/dist:ro" "$(UBUNTU_IMAGE)" \
 		"/src/$(PACKAGE_DIR)/smoke-test.sh" deb "$(PACKAGE_VERSION)" /dist
 	$(DOCKER) run --rm --user root -v "$(CURDIR):/src:ro" -v "$(CURDIR)/$(DIST_DIR):/dist:ro" "$(ARCH_IMAGE)" \
 		"/src/$(PACKAGE_DIR)/smoke-test.sh" arch "$(PACKAGE_VERSION)" /dist
