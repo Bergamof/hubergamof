@@ -34,8 +34,8 @@ install_package() {
 		apt-get update -qq
 		apt-get install -y -qq "$dist/hubergamof_${version}_amd64.deb"
 	else
-		pacman -Syu --noconfirm --quiet
-		pacman -U --noconfirm --quiet "$dist/hubergamof-${version}-1-x86_64.pkg.tar.zst"
+		pacman -Syu --noconfirm
+		pacman -U --noconfirm "$dist/hubergamof-${version}-1-x86_64.pkg.tar.zst"
 	fi
 }
 
@@ -89,7 +89,7 @@ check_systemd_files() {
 
 check_arch_lint() {
 	local report
-	pacman -S --noconfirm --quiet namcap
+	pacman -S --noconfirm namcap
 	report="$(namcap "$dist/hubergamof-${version}-1-x86_64.pkg.tar.zst" || true)"
 	printf '%s\n' "$report"
 	if grep -q ' E: ' <<<"$report"; then fail "namcap signale des erreurs"; fi
