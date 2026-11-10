@@ -70,5 +70,6 @@ make package-smoke    # installation puis retrait dans des conteneurs Ubuntu 24.
 ## Décisions et pistes de sécurité (revue cerbere-le-paranoiaque)
 
 - **Service activé pour tous les comptes** : voulu (« le paquet crée et démarre le service »), hypothèse du projet : poste mono-utilisateur, voir `docs/security.md`.
-- **Pistes non faites**, à décider : attestation de provenance des livrables (`actions/attest-build-provenance`, SHA à épingler) ; `cargo deny`/`pnpm audit` rejoués dans `gate` ; empreinte d'intégrité dans `packageManager` de `ui/package.json` ; ruleset GitHub protégeant les tags `v*` (réglage du dépôt, à faire à la main).
+- **Pistes écartées** (usage personnel, postes mono-utilisateur) : attestation de provenance des livrables (`actions/attest-build-provenance`, SHA à épingler ; indisponible sur dépôt privé sans Enterprise) ; `cargo deny`/`pnpm audit` rejoués dans `gate` ; ruleset GitHub protégeant les tags `v*` (réglage du dépôt, à faire à la main si besoin). À rouvrir si le dépôt devient public.
+- **Fait** : pnpm épinglé avec son empreinte sha512 (`packageManager` de `ui/package.json`), vérifiée par Corepack.
 - Les sujets de commit passent tels quels dans les notes, sauf `@nom` mis en code.
