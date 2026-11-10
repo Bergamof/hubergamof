@@ -1,0 +1,164 @@
+# Release manuelle, depuis `main` uniquement :
+#   1. gate    : branche main, CI verte sur le commit (attend si elle tourne),
+#                version déduite des commits depuis le dernier tag (1.0.0 au début) ;
+#   2. build   : binaire, paquets .deb et Arch, tests d'installation en conteneur ;
+#   3. publish : release GitHub (livrables, SHA256SUMS, notes) et tag vX.Y.Z.
+# La version n'est jamais committée : elle vient du tag, fixée dans la copie de
+# travail de la CI (set-version.sh). Build sans cache : une release ne repart
+# jamais d'un cache. Voir docs/release.md.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_patch:
+        description: "Publier un patch même sans feat, fix ni perf depuis le dernier tag"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Une seule release à la fois ; une release en cours n'est jamais annulée.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # pnpm est installé par pnpm/action-setup : le Makefile l'appelle directement.
+  PNPM: pnpm
+  CARGO_TERM_COLOR: never
+
+jobs:
+  gate:
+    name: Contrôles et version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lire les runs de la CI.
+      actions: read
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+    steps:
+      # « Run workflow » accepte n'importe quelle branche : refus explicite.
+      - name: Main branch only
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "$REF" != refs/heads/main ]]; then
+            echo "Une release se lance depuis main uniquement (branche : $REF)." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Tout le reste porte sur ce commit, même si main avance pendant l'attente.
+      - name: Pin the commit
+        id: target
+        run: echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Wait for a green CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/wait-for-ci.sh "$GITHUB_SHA"
+      - name: Compute the version
+        id: version
+        env:
+          FORCE_PATCH: ${{ inputs.force_patch }}
+        run: |
+          flags=()
+          if [[ "$FORCE_PATCH" == true ]]; then flags+=(--force-patch); fi
+          version="$(.github/scripts/next-version.sh "${flags[@]}" "$GITHUB_SHA")"
+          previous_tag="$(.github/scripts/next-version.sh --previous-tag "$GITHUB_SHA")"
+          if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
+            echo "Le tag v$version existe déjà." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+          echo "Version à publier : $version (précédente : ${previous_tag:-aucune})"
+
+  build:
+    name: Build et paquets
+    needs: gate
+    # 24.04 explicitement : la plus ancienne glibc visée (voir ci.yml, job package).
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-ui
+        with:
+          cache: "false"
+      - name: Install packaging tools
+        run: sudo apt-get install --yes --no-install-recommends lintian
+      - name: Set the version
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: .github/scripts/set-version.sh "$VERSION"
+      - name: make build
+        run: make build
+      - name: Build packages
+        run: make package
+      - name: Lint the .deb
+        run: make package-lint
+      - name: Install packages in clean containers
+        run: make package-smoke
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.deb *.pkg.tar.zst > SHA256SUMS
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-packages
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publication
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      # Créer la release et le tag.
+      contents: write
+      # Télécharger les paquets du job build.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --name release-packages --dir dist
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+          SHA: ${{ needs.gate.outputs.sha }}
+          PREVIOUS_TAG: ${{ needs.gate.outputs.previous_tag }}
+        run: .github/scripts/release-notes.sh "$VERSION" "$SHA" "$PREVIOUS_TAG" > release-notes.md
+      # gh crée le tag au commit vérifié en même temps que la release.
+      - name: Create the release and the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          url="$(gh release create "v$VERSION" dist/* \
+            --target "$SHA" \
+            --title "HuBergamof $VERSION" \
+            --notes-file release-notes.md)"
+          echo "Release publiée : $url" | tee -a "$GITHUB_STEP_SUMMARY"

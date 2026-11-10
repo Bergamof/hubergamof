@@ -81,3 +81,15 @@ updates:
     groups:
       base-images:
         patterns: ["*"]
+
+  # Images des conteneurs de construction et de test des paquets (digests).
+  - package-ecosystem: docker
+    directories:
+      - /packaging/package/arch
+      - /packaging/package/ubuntu
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Paris
+    commit-message:
+      prefix: "chore(docker)"

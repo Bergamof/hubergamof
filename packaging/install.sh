@@ -14,6 +14,7 @@ readonly UNIT_TEMPLATE="$PACKAGING_DIR/systemd/$SERVICE_NAME"
 # La configuration reste pour l'instant dans le dépôt (déplacement vers ~/.config prévu).
 readonly CONFIG_DIR="$REPO_ROOT/config"
 readonly CONFIG_PLACEHOLDER="@CONFIG_DIR@"
+readonly BINARY_PLACEHOLDER="@BINARY@"
 
 usage_text() {
 	cat <<EOF
@@ -49,7 +50,8 @@ install_binary() {
 install_unit() {
 	local template unit
 	template="$(<"$UNIT_TEMPLATE")"
-	unit="${template//"$CONFIG_PLACEHOLDER"/"$(escape_for_exec_start "$CONFIG_DIR")"}"
+	unit="${template//"$BINARY_PLACEHOLDER"/"$(escape_for_exec_start "$INSTALLED_BINARY")"}"
+	unit="${unit//"$CONFIG_PLACEHOLDER"/"$(escape_for_exec_start "$CONFIG_DIR")"}"
 	info "Installation du service utilisateur dans $INSTALLED_UNIT"
 	mkdir -p "$UNIT_DIR" "$CONFIG_DIR"
 	printf '%s\n' "$unit" >"$INSTALLED_UNIT"

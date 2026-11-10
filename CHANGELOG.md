@@ -9,6 +9,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Release : workflow manuel `release.yml` (depuis `main` seulement, CI verte exigée sur le commit, attente d'un run en cours). Version déduite des Conventional Commits depuis le dernier tag (1.0.0 au début, forçage d'un patch possible), release GitHub avec note, `SHA256SUMS` et tag `vX.Y.Z`.
+- Paquets `.deb` (Ubuntu 24.04+, Debian 12+) et pacman (Manjaro, Arch) : dépendances obligatoires dont `pactl` et un serveur de son, optionnelles pour Docker, portail de fichiers et extension de tray ; règle udev, service utilisateur activé pour tous et démarré dans les sessions graphiques ouvertes. Cibles `make package*`, job CI `package` (lintian, installation en conteneurs Ubuntu et Arch).
 - API des modules : `Command::BackTo(PageId)` revient à une page du module en fermant celles qui sont ouvertes au-dessus.
 - Contrat : code d'erreur `busy` (409) quand une boîte de dialogue de fichier est déjà ouverte ; le sélecteur de fichier est décrit par le réglage (`FileChooser`, `EntryNaming`, bornes `max_entries`/`max_name_chars`, textes) et la route devient `POST /api/file-chooser` (`FileChooserRequest { module, setting }`) : l'interface de liste de fichiers ne contient plus rien de propre à compose.
 

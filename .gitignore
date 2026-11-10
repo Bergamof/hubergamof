@@ -31,3 +31,5 @@ node_modules/
 
 # Worktrees des agents Claude Code
 /.claude/worktrees/
+# Paquets (make package)
+dist/

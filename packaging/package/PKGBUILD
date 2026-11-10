@@ -1,0 +1,24 @@
+# HuBergamof — paquet Arch Linux / Manjaro. Installe le binaire déjà compilé
+# (build-arch.sh dépose l'arborescence dans ./stage et génère hubergamof.install).
+# La version vient de l'environnement : HUBERGAMOF_VERSION=X.Y.Z makepkg …
+pkgname=hubergamof
+pkgver="${HUBERGAMOF_VERSION:?HUBERGAMOF_VERSION manquant}"
+pkgrel=1
+pkgdesc='Stream Deck manager with a local web interface'
+arch=('x86_64')
+url='https://github.com/Bergamof/hubergamof'
+license=('GPL-3.0-or-later')
+# libpulse apporte pactl (module Audio) ; pulse-native-provider = pipewire-pulse ou pulseaudio.
+depends=('systemd-libs' 'libpulse' 'pulse-native-provider' 'xdg-utils')
+optdepends=(
+	'docker: module Docker (groupe docker requis)'
+	'xdg-desktop-portal: sélecteur de fichier natif'
+)
+# Binaire déjà strippé par le profil release.
+options=('!strip' '!debug')
+install=hubergamof.install
+
+package() {
+	cp -a "$startdir/stage/." "$pkgdir/"
+	install -Dm644 "$startdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
