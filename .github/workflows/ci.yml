@@ -94,7 +94,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           actionlint
-          shellcheck --external-sources --source-path=SCRIPTDIR/.. packaging/*.sh .github/scripts/*.sh
+          shellcheck --external-sources --source-path=SCRIPTDIR/.. packaging/*.sh packaging/package/*.sh .github/scripts/*.sh
           make test-scripts
       - name: Install zizmor
         if: ${{ !cancelled() }}
@@ -263,6 +263,47 @@ jobs:
           binary=$(du -h target/release/hubergamof 2>/dev/null | cut -f1)
           ui=$(du -sh ui/build 2>/dev/null | cut -f1)
           echo "summary=binaire ${binary:-absent}, UI ${ui:-absente}" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Paquets
+    # 24.04 explicitement (et non latest) : c'est la plus ancienne glibc visée,
+    # comme dans release.yml ; un binaire construit plus récent ne tournerait pas
+    # sur Manjaro stable.
+    runs-on: ubuntu-24.04
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: release
+      - uses: ./.github/actions/setup-ui
+      - name: Install packaging tools
+        run: sudo apt-get install --yes --no-install-recommends lintian
+      - name: make build
+        run: make build
+      - name: Build packages
+        run: make package
+      - name: Lint the .deb
+        run: make package-lint
+      # Installe chaque paquet dans un conteneur propre (Ubuntu 24.04, Arch) :
+      # dépendances résolues, binaire lançable, unité et règle udev valides.
+      - name: Install packages in clean containers
+        run: make package-smoke
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: dist/
+          retention-days: 7
+      - name: Summary
+        id: summary
+        if: always()
+        run: |
+          packages=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.pkg.tar.zst' \) 2>/dev/null | wc -l)
+          echo "summary=${packages} paquet(s) construit(s), installation testée" >> "$GITHUB_OUTPUT"
 
   docker:
     name: Image Docker
@@ -496,7 +537,7 @@ jobs:
 
   report:
     name: Compte rendu
-    needs: [lint, test, contract, e2e, build, docker, docker-it, security, lighthouse]
+    needs: [lint, test, contract, e2e, build, package, docker, docker-it, security, lighthouse]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:

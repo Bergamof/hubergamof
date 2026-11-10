@@ -7,6 +7,10 @@ inputs:
     description: Installer les dépendances (pnpm install --frozen-lockfile).
     required: false
     default: "true"
+  cache:
+    description: Mettre en cache le store pnpm (désactivé pour le build de release).
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -19,7 +23,7 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version-file: .nvmrc
-        cache: pnpm
+        cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
         cache-dependency-path: ui/pnpm-lock.yaml
 
     - name: Install dependencies

@@ -1,6 +1,8 @@
 # HuBergamof — service systemd utilisateur (gabarit).
-# packaging/install.sh remplace @CONFIG_DIR@ par le chemin absolu, échappé, du
-# dossier de configuration, puis installe l'unité dans ~/.config/systemd/user/.
+# Gabarit commun : packaging/install.sh (installation depuis les sources) et
+# packaging/package/stage.sh (paquets .deb et Arch) remplacent, sur la ligne
+# ExecStart, les jetons entre arobases par le chemin du binaire et le dossier de
+# configuration (échappés pour une ligne ExecStart).
 #
 # Rattaché à la session graphique (modèle de systemd.special(7)) : le service
 # démarre une fois que l'environnement de bureau a importé WAYLAND_DISPLAY/DISPLAY
@@ -15,7 +17,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/hubergamof --config-dir "@CONFIG_DIR@"
+ExecStart=@BINARY@ --config-dir "@CONFIG_DIR@"
 Restart=on-failure
 RestartSec=2
 

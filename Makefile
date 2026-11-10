@@ -18,6 +18,16 @@ DOCKER ?= docker
 # Version de Lighthouse CI utilisée en local et en CI (`make lighthouse`).
 LHCI_VERSION ?= 0.15.1
 DOCKER_IMAGE ?= hubergamof:dev
+# Paquets : version lue dans le Cargo.toml du workspace (la release l'y fixe
+# d'après le tag avant de construire), binaire release, dossier de sortie.
+PACKAGE_VERSION ?= $(shell sed -nE '/^\[workspace\.package\]/,/^\[/ s/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)
+PACKAGE_DIR := packaging/package
+DIST_DIR := dist
+RELEASE_BINARY := target/release/hubergamof
+ARCH_IMAGE := hubergamof-package-arch
+UBUNTU_IMAGE := hubergamof-package-ubuntu
+# Dossier de sortie du paquet Arch, dans le conteneur.
+ARCH_OUT := /tmp/package-out
 # Origines du serveur de dev Vite (port par défaut 5173), autorisées par le
 # gestionnaire en plus des siennes (contrôle strict Host/Origin).
 VITE_DEV_ORIGINS := http://localhost:5173 http://127.0.0.1:5173
@@ -34,7 +44,7 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 .PHONY: help dev run lint lint-rust lint-ui lint-shell-exec lint-workflows fmt test test-rust test-ui test-e2e \
 	test-scripts coverage coverage-rust coverage-ui test-docker \
 	gen-types check-types check-versions check-node check-branch check deny ui-deps ui-build build \
-	lighthouse docker install uninstall clean
+	lighthouse docker install uninstall clean package package-deb package-arch package-lint package-smoke
 
 help: ## Affiche cette aide
 	@printf 'Usage : make <cible>\n\n'
@@ -191,6 +201,36 @@ install: build ## Installe binaire, service systemd utilisateur et règle udev
 uninstall: ## Désinstalle binaire, service et règle udev (garde la configuration)
 	"$(CURDIR)/packaging/uninstall.sh"
 
+## ---------------------------------------------------------------- Paquets
+
+package: package-deb package-arch ## Paquets .deb (Ubuntu) et pacman (Manjaro) dans dist/ (après make build)
+
+package-deb: ## Paquet .deb (dpkg-deb, dpkg-shlibdeps)
+	"$(CURDIR)/$(PACKAGE_DIR)/build-deb.sh" "$(RELEASE_BINARY)" "$(PACKAGE_VERSION)" "$(DIST_DIR)"
+
+# makepkg refuse root : conteneur Arch (utilisateur « builder »). Le paquet sort du
+# conteneur par un flux tar : aucun dossier du poste n'est ouvert en écriture à
+# d'autres comptes (dist/ sert ensuite à des installations en root). Les messages
+# de makepkg passent sur stderr pour ne pas se mêler à l'archive.
+package-arch: ## Paquet pacman (.pkg.tar.zst, makepkg dans un conteneur Arch)
+	mkdir -p "$(DIST_DIR)"
+	$(DOCKER) build --quiet --tag "$(ARCH_IMAGE)" "$(PACKAGE_DIR)/arch"
+	$(DOCKER) run --rm -v "$(CURDIR):/src:ro" "$(ARCH_IMAGE)" \
+		bash -c '"$$0" "$$@" >&2 && tar -C "$$3" -c .' \
+		"/src/$(PACKAGE_DIR)/build-arch.sh" "/src/$(RELEASE_BINARY)" "$(PACKAGE_VERSION)" "$(ARCH_OUT)" \
+		| tar -x -C "$(DIST_DIR)"
+
+package-lint: ## lintian sur le .deb (erreurs bloquantes)
+	lintian --fail-on error "$(DIST_DIR)/hubergamof_$(PACKAGE_VERSION)_amd64.deb"
+
+package-smoke: ## Installe chaque paquet dans un conteneur propre (Ubuntu, Arch) puis le désinstalle
+	$(DOCKER) build --quiet --tag "$(UBUNTU_IMAGE)" "$(PACKAGE_DIR)/ubuntu"
+	$(DOCKER) build --quiet --tag "$(ARCH_IMAGE)" "$(PACKAGE_DIR)/arch"
+	$(DOCKER) run --rm --user root -v "$(CURDIR):/src:ro" -v "$(CURDIR)/$(DIST_DIR):/dist:ro" "$(UBUNTU_IMAGE)" \
+		"/src/$(PACKAGE_DIR)/smoke-test.sh" deb "$(PACKAGE_VERSION)" /dist
+	$(DOCKER) run --rm --user root -v "$(CURDIR):/src:ro" -v "$(CURDIR)/$(DIST_DIR):/dist:ro" "$(ARCH_IMAGE)" \
+		"/src/$(PACKAGE_DIR)/smoke-test.sh" arch "$(PACKAGE_VERSION)" /dist
+
 clean: ## Supprime les artefacts de build (target, ui/build, rapports)
 	$(CARGO) clean
-	rm -rf "$(UI_DIR)/build" "$(UI_DIR)/.svelte-kit" .lighthouseci
+	rm -rf "$(UI_DIR)/build" "$(UI_DIR)/.svelte-kit" .lighthouseci "$(DIST_DIR)"

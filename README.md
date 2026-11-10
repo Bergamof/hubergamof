@@ -65,9 +65,23 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 | `make build` | UI puis binaire release `target/release/hubergamof` qui l'embarque |
 | `make docker` | image de build reproductible (mode `--demo`, pas l'usage normal) |
 | `make lighthouse` | audit Lighthouse de l'UI servie par `hubergamof --demo` (port 7881) : Accessibilité, Bonnes pratiques et Performance ≥ 90 |
+| `make package` / `make package-lint` / `make package-smoke` | paquets `.deb` et pacman dans `dist/` (après `make build` ; Docker requis), `lintian`, test d'installation en conteneurs |
 | `make install` / `make uninstall` | installe/retire le binaire (`~/.local/bin`), le service systemd utilisateur et la règle udev |
 
-## Installation sur le poste
+## Installation par paquet
+
+Les [releases GitHub](https://github.com/Bergamof/hubergamof/releases) fournissent un paquet par distribution :
+
+```sh
+# Ubuntu 24.04+, Debian 12+
+sudo apt install ./hubergamof_X.Y.Z_amd64.deb
+# Manjaro, Arch Linux
+sudo pacman -U hubergamof-X.Y.Z-1-x86_64.pkg.tar.zst
+```
+
+Le paquet installe les dépendances nécessaires (dont `pactl` et un serveur de son pour le module Audio), la règle udev et le service utilisateur, qu'il démarre dans les sessions graphiques ouvertes. Docker est facultatif (module Docker : l'utilisateur doit être dans le groupe `docker`). La configuration est dans `~/.config/hubergamof`. Détails, numérotation et fabrication des releases : [`docs/release.md`](docs/release.md).
+
+## Installation depuis les sources
 
 ```sh
 make build
@@ -86,9 +100,11 @@ Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre
 
 ## CI
 
-`.github/workflows/ci.yml` vérifie chaque pull request (et chaque push sur `main`, plus une fois par semaine) : lint (dont zizmor), tests avec couverture, contrat TypeScript à jour, tests e2e, build, image Docker, intégration avec un vrai Docker (si la PR touche le module), sécurité (cargo-deny, `pnpm audit`, gitleaks, Trivy) et Lighthouse. Un job final commente la PR avec un compte rendu.
+`.github/workflows/ci.yml` vérifie chaque pull request (et chaque push sur `main`, plus une fois par semaine) : lint (dont zizmor), tests avec couverture, contrat TypeScript à jour, tests e2e, build, image Docker, intégration avec un vrai Docker (si la PR touche le module), sécurité (cargo-deny, `pnpm audit`, gitleaks, Trivy) et Lighthouse. Un job `package` construit et installe les paquets en conteneur. Un job final commente la PR avec un compte rendu.
 
-Recommandé : protéger `main` en rendant obligatoires les jobs `lint`, `test`, `contract`, `e2e`, `build`, `docker`, `docker-it`, `security` et `lighthouse`.
+`.github/workflows/release.yml` (lancé à la main, sur `main`) publie une release : voir [`docs/release.md`](docs/release.md).
+
+Recommandé : protéger `main` en rendant obligatoires les jobs `lint`, `test`, `contract`, `e2e`, `build`, `package`, `docker`, `docker-it`, `security` et `lighthouse`.
 
 ## Licence
 

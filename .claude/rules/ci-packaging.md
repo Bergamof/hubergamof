@@ -19,6 +19,8 @@ paths:
 - Valider avec `actionlint`, `shellcheck` et `zizmor` (`make lint-workflows`, config `.github/zizmor.yml`) ; `make` doit fonctionner depuis une machine propre avec les prérequis du README.
 
 ## Pièges
+- Release (`release.yml`, `docs/release.md`) : manuelle sur `main`, SHA figé, CI verte exigée, build sans cache sur ubuntu-24.04 (glibc la plus ancienne visée, pour Manjaro stable), version jamais committée (`set-version.sh`), tag créé par `gh release create --target`. Tout nouveau script de `.github/scripts/` ou de `packaging/package/` entre dans shellcheck (`ci.yml`) et `test-control-scripts.sh`.
+- Paquets : un seul binaire, deux formats ; `hooks.sh` (POSIX sh) est inclus tel quel dans les scripts dpkg et le `.install` pacman, ne doit jamais échouer ; le service est une unité utilisateur (`--global enable`, démarrage par `--machine=<user>@.host`). `make package-smoke` installe chaque paquet en conteneur ; `lintian` bloque sur les erreurs.
 - Le Makefile appelle `check-node` avant `pnpm install` : pnpm 12 ne démarre pas sous Corepack < 0.34.5 (Node < 24.12), donc `engines` ne peut pas s'en charger. Relever le minimum = changer `engines.node` seulement (le script le lit).
 - Les scripts de `.github/scripts/` sont couverts par shellcheck en CI et par `test-control-scripts.sh` : tout nouveau script de contrôle y ajoute ses cas.
 - Outil téléchargé hors action (`install-release-binary.sh`) : somme SHA-256 épinglée dans le workflow, jamais vérifiée contre le fichier de sommes de la même release.

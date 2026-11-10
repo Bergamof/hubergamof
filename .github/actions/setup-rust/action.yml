@@ -5,8 +5,11 @@ description: >-
   épinglée dans rust-toolchain.toml, avec cache des dépendances et de target/.
 inputs:
   cache-key:
-    description: Clé de cache partagée (une par type de compilation pour éviter les collisions).
-    required: true
+    description: >-
+      Clé de cache partagée (une par type de compilation pour éviter les collisions).
+      Vide : aucun cache (build de release, jamais construit depuis un cache).
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -24,6 +27,7 @@ runs:
         rustc --version
 
     - name: Cache cargo
+      if: inputs.cache-key != ''
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         shared-key: ${{ inputs.cache-key }}
