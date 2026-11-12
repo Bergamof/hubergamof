@@ -11,11 +11,23 @@ come with it).
 		open: boolean;
 		title: string;
 		modules: readonly CatalogModule[];
+		/** What to tell about a module besides its description, if anything. */
+		notice?: (module: CatalogModule) => string | undefined;
+		/** Said when there is nothing to pick, and why. */
+		empty?: string;
 		onpick: (module: CatalogModule) => void;
 		onclose: () => void;
 	}
 
-	let { open, title, modules, onpick, onclose }: Props = $props();
+	let {
+		open,
+		title,
+		modules,
+		notice,
+		empty = 'Aucun module disponible.',
+		onpick,
+		onclose
+	}: Props = $props();
 
 	const uid = $props.id();
 	let dialog: HTMLDialogElement | undefined = $state();
@@ -39,10 +51,11 @@ come with it).
 		<button type="button" class="secondary-button" onclick={onclose}> Fermer </button>
 	</div>
 	{#if modules.length === 0}
-		<p class="p-4 text-muted">Aucun module disponible.</p>
+		<p class="p-4 text-muted">{empty}</p>
 	{:else}
 		<ul class="flex max-h-[70vh] flex-col gap-1 overflow-y-auto p-2">
 			{#each modules as module (module.kind)}
+				{@const note = notice?.(module)}
 				<li>
 					<button
 						type="button"
@@ -53,6 +66,9 @@ come with it).
 						<span class="flex flex-col">
 							<span class="font-medium">{module.name}</span>
 							<span class="text-sm text-muted">{module.description}</span>
+							{#if note}
+								<span class="text-sm font-medium">{note}</span>
+							{/if}
 						</span>
 					</button>
 				</li>

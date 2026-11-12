@@ -15,7 +15,7 @@ function module(kind: string, name: string, functionName: string): CatalogModule
 		kind,
 		name,
 		description: '',
-		capabilities: { key: true },
+		capabilities: { key: true, multipleInstances: false },
 		dialFunctions: [{ id: 'main', name: functionName, description: `Réglage de ${name}.` }],
 		icon: null,
 		settingIcons: {},
@@ -42,11 +42,11 @@ const CONFIG = {
 	modules: [instance('audio')]
 } as unknown as DeviceConfig;
 
-async function show(assignment: DialAssignment = VOLUME) {
+async function show(assignment: DialAssignment = VOLUME, config: DeviceConfig = CONFIG, index = 0) {
 	const onassign = vi.fn();
 	await render(DialDetails, {
-		index: 0,
-		config: CONFIG,
+		index,
+		config,
 		serial: 'DECK',
 		api: {} as ManagerApi,
 		assignment,
@@ -74,6 +74,33 @@ describe('DialDetails', () => {
 		await expect
 			.element(page.getByRole('option', { name: 'Contrôle du volume (Audio, molette 1)' }))
 			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('option', { name: 'Contrôle du pomodoro (Pomodoro, nouveau)' }))
+			.toBeInTheDocument();
+	});
+
+	it('tells that the settings are shared with the key of a module that exists once', async () => {
+		await show(VOLUME, { ...CONFIG, home: ['audio'] } as unknown as DeviceConfig);
+		await expect.element(page.getByText(/réglages sont partagés avec sa touche/)).toBeVisible();
+	});
+
+	it('says nothing about sharing when the module is on no key', async () => {
+		await show();
+		await expect
+			.element(page.getByText(/réglages sont partagés avec sa touche/))
+			.not.toBeInTheDocument();
+	});
+
+	it('does not offer a module that another dial already has', async () => {
+		const config = {
+			...CONFIG,
+			dials: [VOLUME, { kind: 'none' }],
+			modules: [instance('audio'), instance('pomodoro')]
+		} as unknown as DeviceConfig;
+		await show({ kind: 'none' }, config, 1);
+		await expect
+			.element(page.getByRole('option', { name: 'Contrôle du volume (Audio, molette 1)' }))
+			.not.toBeInTheDocument();
 		await expect
 			.element(page.getByRole('option', { name: 'Contrôle du pomodoro (Pomodoro, nouveau)' }))
 			.toBeInTheDocument();

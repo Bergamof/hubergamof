@@ -108,7 +108,10 @@ impl ModuleFactory for CounterFactory {
             kind: COUNTER_KIND.into(),
             name: "Counter".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities { key: true },
+            capabilities: ModuleCapabilities {
+                key: true,
+                ..Default::default()
+            },
             dial_functions: Vec::new(),
             settings: Vec::new(),
         }

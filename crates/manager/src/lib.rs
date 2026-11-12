@@ -23,6 +23,7 @@ pub mod device;
 pub mod engine;
 pub mod file_chooser;
 pub mod launcher;
+pub mod placement;
 pub mod render;
 pub mod server;
 pub mod strip;

@@ -36,7 +36,7 @@ use hubergamof_module_api::{DialFunctionId, ModuleFactory, ModuleKind};
 use serde_json::{Map, Value};
 
 /// Built-in modules shown on the home page of a new device, in key order.
-pub const DEFAULT_HOME_MODULES: [&str; 5] = ["audio", "pomodoro", "docker", "intellij", "claude"];
+pub const DEFAULT_HOME_MODULES: [&str; 4] = ["audio", "docker", "intellij", "claude"];
 
 /// What a dial of a new device is assigned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,7 +237,9 @@ mod tests {
     use std::time::Duration;
 
     use hubergamof_module_api::testing::TestContext;
-    use hubergamof_module_api::{Module, ModuleEvent, StripWidget, TaskScope, VolumeWidget};
+    use hubergamof_module_api::{
+        Module, ModuleCapabilities, ModuleEvent, StripWidget, TaskScope, VolumeWidget,
+    };
     use serde_json::json;
     use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -350,6 +352,44 @@ mod tests {
             registry.default_settings(&docker::DOCKER_KIND.into()),
             json!({ "composeFiles": [] })
         );
+    }
+
+    #[test]
+    fn modules_declare_where_they_go_and_how_often() {
+        let registry = simulated_registry();
+        let capabilities = |kind: &str| {
+            registry
+                .get(&kind.into())
+                .unwrap_or_else(|| panic!("no module {kind}"))
+                .descriptor()
+                .capabilities
+        };
+        let on_a_key = ModuleCapabilities {
+            key: true,
+            multiple_instances: false,
+        };
+        assert_eq!(capabilities("pomodoro"), ModuleCapabilities::default());
+        assert_eq!(
+            capabilities("docker"),
+            ModuleCapabilities {
+                key: true,
+                multiple_instances: true
+            }
+        );
+        for kind in ["audio", "intellij", "claude", "notifications"] {
+            assert_eq!(capabilities(kind), on_a_key, "{kind}");
+        }
+    }
+
+    #[test]
+    fn the_default_home_page_only_holds_modules_with_a_key() {
+        let registry = simulated_registry();
+        for kind in &registry.default_layout().home {
+            assert!(
+                registry.get(kind).unwrap().descriptor().capabilities.key,
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]

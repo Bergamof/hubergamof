@@ -220,7 +220,10 @@ impl ModuleFactory for ListFactory {
             kind: LIST_KIND.into(),
             name: "List".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities { key: true },
+            capabilities: ModuleCapabilities {
+                key: true,
+                ..Default::default()
+            },
             dial_functions: Vec::new(),
             settings: vec![
                 SettingField {
@@ -424,7 +427,10 @@ impl ModuleFactory for FragileFactory {
             kind: FRAGILE_KIND.into(),
             name: "Fragile".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities { key: true },
+            capabilities: ModuleCapabilities {
+                key: true,
+                ..Default::default()
+            },
             dial_functions: vec![DialFunctionDescriptor {
                 id: FRAGILE_FUNCTION.into(),
                 name: "Turn".into(),
@@ -604,10 +610,28 @@ pub(super) async fn start_settled(info: DeviceInfo) -> Fixture {
 
 /// Starts an engine on a deck whose brightness fails if `fail_brightness`.
 pub(super) async fn start_with(info: DeviceInfo, fail_brightness: bool) -> Fixture {
+    start_after(info, fail_brightness, |_| {}).await
+}
+
+/// Starts an engine on a device whose configuration `prepare` stored first.
+pub(super) async fn start_with_stored(
+    info: DeviceInfo,
+    prepare: impl FnOnce(&DeviceInfo, &ConfigStore),
+) -> Fixture {
+    let stored_for = info.clone();
+    start_after(info, false, move |store| prepare(&stored_for, store)).await
+}
+
+async fn start_after(
+    info: DeviceInfo,
+    fail_brightness: bool,
+    prepare: impl FnOnce(&ConfigStore),
+) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let probe = Probe::default();
     let services = services(&dir, &probe);
     let store = services.store.clone();
+    prepare(&store);
     let deck = Arc::new(CountingDeck {
         inner: Arc::new(VirtualDeck::new(info)),
         key_writes: AtomicUsize::new(0),

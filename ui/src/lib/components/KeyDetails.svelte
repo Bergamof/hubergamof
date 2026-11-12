@@ -17,6 +17,8 @@ removal, key image and module settings.
 		count: number;
 		instance: ModuleInstance | undefined;
 		module: CatalogModule | undefined;
+		/** A dial uses the same instance: the module exists once, its settings are shared. */
+		sharedWithDial?: boolean;
 		serial: string;
 		api: ManagerApi;
 		/** Id of the heading, for the page to bring it into view. */
@@ -34,6 +36,7 @@ removal, key image and module settings.
 		count,
 		instance,
 		module,
+		sharedWithDial = false,
 		serial,
 		api,
 		headingId,
@@ -74,6 +77,11 @@ removal, key image and module settings.
 	</div>
 	{#if instance}
 		<!-- A new form for another instance, or once its module is known (catalog arriving late). -->
+		{#if sharedWithDial}
+			<p class="text-sm text-muted">
+				Ce module n’existe qu’une fois : ses réglages sont partagés avec sa molette.
+			</p>
+		{/if}
 		{#key `${instance.id}/${module?.kind ?? ''}`}
 			<KeyImagePicker {serial} {instance} {module} {api} onchange={onimage} />
 			<InstanceEditor {instance} {module} {serial} {api} {onapply} {ondiscard} />

@@ -6,6 +6,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
+use crate::placement::PlacementChange;
 use crate::testing::builtin_registry;
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
@@ -58,10 +59,7 @@ fn missing_config_is_created_from_defaults() {
     assert_eq!(config.serial, DEMO_SERIAL);
     assert_eq!(config.revision, 0);
     assert_eq!(config.brightness, DEFAULT_BRIGHTNESS);
-    assert_eq!(
-        config.home,
-        ids(&["audio", "pomodoro", "docker", "intellij", "claude"])
-    );
+    assert_eq!(config.home, ids(&["audio", "docker", "intellij", "claude"]));
     assert_eq!(
         config.dials,
         [
@@ -79,7 +77,8 @@ fn missing_config_is_created_from_defaults() {
     );
     assert_eq!(config.strip, StripConfig::default());
     let kinds: Vec<&str> = config.modules.iter().map(|m| m.kind.0.as_str()).collect();
-    assert_eq!(kinds, ["audio", "pomodoro", "docker", "intellij", "claude"]);
+    // Pomodoro has no key: its instance exists for its dial only.
+    assert_eq!(kinds, ["audio", "docker", "intellij", "claude", "pomodoro"]);
     assert!(config.modules.iter().all(|m| m.id.0 == m.kind.0));
     config.validate().unwrap();
 
@@ -786,4 +785,195 @@ fn one_image_used_as_icon_and_as_key_image_is_kept_and_archived_once() {
 
     let archive = read_archive(&store.export(DEMO_SERIAL, &config).unwrap()).unwrap();
     assert_eq!(archive.images.len(), 1);
+}
+
+fn instance(id: &str, kind: &str) -> ModuleInstance {
+    ModuleInstance {
+        id: id.into(),
+        kind: kind.into(),
+        label: None,
+        image: None,
+        settings: serde_json::json!({}),
+    }
+}
+
+/// Stores `edit` applied to the default configuration, bypassing every check,
+/// then loads it back.
+fn load_edited(edit: impl FnOnce(&mut DeviceConfig)) -> (TempDir, LoadedConfig) {
+    let (dir, store) = store();
+    let mut config = store.load(&plus()).unwrap().config;
+    edit(&mut config);
+    write_atomically(&config_file(&dir, DEMO_SERIAL), &config).unwrap();
+    let loaded = store.load(&plus()).unwrap();
+    (dir, loaded)
+}
+
+fn changes(loaded: &LoadedConfig) -> &[PlacementChange] {
+    match &loaded.outcome {
+        LoadOutcome::Normalized { changes } => changes,
+        other => panic!("not normalized: {other:?}"),
+    }
+}
+
+#[test]
+fn a_module_without_key_is_removed_from_the_home_page_but_keeps_its_dial() {
+    let (dir, loaded) = load_edited(|config| config.home.push("pomodoro".into()));
+    assert_eq!(
+        changes(&loaded),
+        [PlacementChange::RemovedFromKeys {
+            module: "Pomodoro".into()
+        }]
+    );
+    assert_eq!(
+        loaded.config.home,
+        ids(&["audio", "docker", "intellij", "claude"])
+    );
+    assert!(loaded.config.modules.iter().any(|m| m.id.0 == "pomodoro"));
+    // Written back, with a new revision for the clients.
+    assert_eq!(loaded.config.revision, 1);
+    let written: DeviceConfig =
+        serde_json::from_slice(&fs::read(config_file(&dir, DEMO_SERIAL)).unwrap()).unwrap();
+    assert_eq!(written, loaded.config);
+}
+
+#[test]
+fn a_module_without_key_and_dial_disappears() {
+    let (_dir, loaded) = load_edited(|config| {
+        config.dials[1] = DialAssignment::None;
+        config.home.push("pomodoro".into());
+    });
+    assert!(!loaded.config.modules.iter().any(|m| m.id.0 == "pomodoro"));
+}
+
+#[test]
+fn a_single_instance_module_configured_twice_is_merged_into_the_first() {
+    let (_dir, loaded) = load_edited(|config| {
+        config.modules.push(instance("audio-2", "audio"));
+        config.home.push("audio-2".into());
+        config.dials[3] = DialAssignment::Module {
+            instance: "audio-2".into(),
+            function: "volume".into(),
+        };
+    });
+    assert_eq!(
+        changes(&loaded),
+        [
+            PlacementChange::MergedInstances {
+                module: "Audio".into()
+            },
+            PlacementChange::RemovedDuplicateKey {
+                module: "Audio".into()
+            },
+            PlacementChange::RemovedDuplicateDial {
+                module: "Audio".into()
+            }
+        ]
+    );
+    assert_eq!(
+        loaded.config.home,
+        ids(&["audio", "docker", "intellij", "claude"])
+    );
+    // The merged instance is already on dial 0: a module has one dial only.
+    assert_eq!(loaded.config.dials[3], DialAssignment::None);
+    assert_eq!(
+        loaded
+            .config
+            .modules
+            .iter()
+            .filter(|m| m.kind.0 == "audio")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_single_instance_shown_on_two_keys_keeps_one_key() {
+    let (_dir, loaded) = load_edited(|config| config.home.push("claude".into()));
+    assert_eq!(
+        loaded
+            .config
+            .home
+            .iter()
+            .filter(|id| id.0 == "claude")
+            .count(),
+        1
+    );
+    assert_eq!(changes(&loaded).len(), 1);
+}
+
+#[test]
+fn docker_may_be_configured_and_shown_several_times() {
+    let (_dir, loaded) = load_edited(|config| {
+        config.modules.push(instance("docker-2", "docker"));
+        config.home.push("docker-2".into());
+    });
+    assert_eq!(loaded.outcome, LoadOutcome::Loaded);
+    assert_eq!(loaded.config.revision, 0);
+    assert!(loaded.config.home.iter().any(|id| id.0 == "docker-2"));
+}
+
+#[test]
+fn unknown_kinds_are_left_alone() {
+    let (_dir, loaded) = load_edited(|config| {
+        config.modules.push(instance("a", "teleporter"));
+        config.modules.push(instance("b", "teleporter"));
+        config.home.extend(ids(&["a", "b"]));
+    });
+    assert_eq!(loaded.outcome, LoadOutcome::Loaded);
+}
+
+#[test]
+fn an_import_is_brought_back_to_the_rules() {
+    let (_dir, store) = store();
+    let mut config = store.load(&plus()).unwrap().config;
+    config.home.push("pomodoro".into());
+    let bytes = write_archive(&config, &ArchiveImages::default()).unwrap();
+    let prepared = store
+        .prepare_import(&bytes, &plus(), 0, |_| Ok(ImageKind::Png))
+        .unwrap();
+    assert!(!prepared.config.home.iter().any(|id| id.0 == "pomodoro"));
+}
+
+#[test]
+fn a_normalized_configuration_is_loaded_as_it_is_the_next_time() {
+    let (dir, loaded) = load_edited(|config| config.home.push("pomodoro".into()));
+    assert!(matches!(loaded.outcome, LoadOutcome::Normalized { .. }));
+    assert_eq!(loaded.config.revision, 1);
+    let store = ConfigStore::new(dir.path(), Arc::new(builtin_registry()));
+    let again = store.load(&plus()).unwrap();
+    assert_eq!(again.outcome, LoadOutcome::Loaded);
+    assert_eq!(again.config, loaded.config);
+}
+
+#[test]
+fn a_saved_configuration_is_never_normalized() {
+    let (_dir, store) = store();
+    let mut config = store.load(&plus()).unwrap().config;
+    config.brightness = 10;
+    let saved = store.save(&plus(), config).unwrap();
+    let loaded = store.load(&plus()).unwrap();
+    assert_eq!(loaded.outcome, LoadOutcome::Loaded);
+    assert_eq!(loaded.config, saved);
+}
+
+#[test]
+fn an_import_with_a_duplicate_merges_it() {
+    let (_dir, store) = store();
+    let mut config = store.load(&plus()).unwrap().config;
+    config.modules.push(instance("audio-2", "audio"));
+    config.home.push("audio-2".into());
+    let bytes = write_archive(&config, &ArchiveImages::default()).unwrap();
+    let prepared = store
+        .prepare_import(&bytes, &plus(), 3, |_| Ok(ImageKind::Png))
+        .unwrap();
+    assert_eq!(prepared.config.revision, 3);
+    assert_eq!(
+        prepared
+            .config
+            .modules
+            .iter()
+            .filter(|m| m.kind.0 == "audio")
+            .count(),
+        1
+    );
 }

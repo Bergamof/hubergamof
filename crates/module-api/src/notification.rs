@@ -78,7 +78,8 @@ pub struct NotificationId(pub u64);
 pub struct UnreadNotification {
     /// Identifier, for [`crate::Command::ShowNotification`].
     pub id: NotificationId,
-    /// Module instance that sent it.
+    /// Module instance that sent it; `hubergamof` for the manager itself
+    /// (no instance has that id).
     pub source: ModuleInstanceId,
     /// Icon of the sending module, if it has one.
     pub icon: Option<ImageData>,

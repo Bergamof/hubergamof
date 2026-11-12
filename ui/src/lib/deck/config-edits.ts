@@ -50,6 +50,41 @@ export function createInstance(config: DeviceConfig, module: CatalogModule): Mod
 	};
 }
 
+/**
+ * The instance every placement of `module` shares: a module that does not allow several
+ * instances has at most one on the device, whatever its key and dials. `undefined` when the
+ * module may be configured several times or has no instance yet.
+ */
+export function sharedInstance(
+	config: DeviceConfig,
+	module: CatalogModule
+): ModuleInstance | undefined {
+	if (module.capabilities.multipleInstances) return undefined;
+	return config.modules.find((instance) => instance.kind === module.kind);
+}
+
+/** Whether a key can be added for `module`: it may be on a key, and not already on one if single. */
+export function canAddKey(config: DeviceConfig, module: CatalogModule): boolean {
+	if (!module.capabilities.key) return false;
+	const shared = sharedInstance(config, module);
+	return !shared || !config.home.includes(shared.id);
+}
+
+/** Whether a dial can get a new instance of `module` (a single-instance one is chosen as existing). */
+export function canCreateInstance(config: DeviceConfig, module: CatalogModule): boolean {
+	return sharedInstance(config, module) === undefined;
+}
+
+/** Whether a dial other than `dial` has a function of a module of `kind`: a module has one dial at most. */
+export function kindOnOtherDial(config: DeviceConfig, kind: string, dial: number): boolean {
+	return config.dials.some(
+		(assignment, index) =>
+			index !== dial &&
+			assignment.kind === 'module' &&
+			config.modules.find((module) => module.id === assignment.instance)?.kind === kind
+	);
+}
+
 /** The instance a dial function belongs to, if the dial has a function of a module. */
 export function dialInstance(assignment: DialAssignment): ModuleInstanceId | undefined {
 	return assignment.kind === 'module' ? assignment.instance : undefined;
@@ -90,9 +125,16 @@ export function setTheme(theme: DeviceTheme): ConfigEdit {
 	return (config) => ({ ...config, theme });
 }
 
-/** Adds a key with a new instance of `module` at the end of the home page. */
+/**
+ * Adds a key at the end of the home page: with a new instance of `module`, or with the instance
+ * it already has when it allows a single one (its settings are then shared with its dials).
+ * Nothing changes when the module cannot be on a key or already is.
+ */
 export function addKey(module: CatalogModule): ConfigEdit {
 	return (config) => {
+		if (!canAddKey(config, module)) return config;
+		const shared = sharedInstance(config, module);
+		if (shared) return { ...config, home: [...config.home, shared.id] };
 		const instance = createInstance(config, module);
 		return {
 			...config,
@@ -138,8 +180,17 @@ export type DialChoice =
 export function assignDial(dial: number, choice: DialChoice): ConfigEdit {
 	return (config) => {
 		if (dial < 0 || dial >= config.dials.length) return config;
-		const added = choice.type === 'new' ? createInstance(config, choice.module) : undefined;
-		const assignment = assignmentOf(choice, added);
+		const kind =
+			choice.type === 'new'
+				? choice.module.kind
+				: choice.type === 'existing'
+					? config.modules.find((module) => module.id === choice.instance)?.kind
+					: undefined;
+		if (kind !== undefined && kindOnOtherDial(config, kind, dial)) return config;
+		const shared = choice.type === 'new' ? sharedInstance(config, choice.module) : undefined;
+		const added =
+			choice.type === 'new' && !shared ? createInstance(config, choice.module) : undefined;
+		const assignment = assignmentOf(choice, added ?? shared);
 		return withoutUnusedInstances({
 			...config,
 			modules: added ? [...config.modules, added] : config.modules,
@@ -148,7 +199,8 @@ export function assignDial(dial: number, choice: DialChoice): ConfigEdit {
 	};
 }
 
-function assignmentOf(choice: DialChoice, added: ModuleInstance | undefined): DialAssignment {
+/** `instance`: the one a `new` choice ends up with (created, or the module's single one). */
+function assignmentOf(choice: DialChoice, instance: ModuleInstance | undefined): DialAssignment {
 	switch (choice.type) {
 		case 'navigation':
 			return { kind: 'navigation' };
@@ -159,7 +211,7 @@ function assignmentOf(choice: DialChoice, added: ModuleInstance | undefined): Di
 		case 'new':
 			return {
 				kind: 'module',
-				instance: added?.id ?? choice.module.kind,
+				instance: instance?.id ?? choice.module.kind,
 				function: choice.function
 			};
 		default:

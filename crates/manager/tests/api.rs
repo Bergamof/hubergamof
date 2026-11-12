@@ -537,8 +537,8 @@ async fn imports_fit_the_target_model_both_ways() {
     assert_eq!(on_mk2.model, DeviceModel::Mk2);
     assert_eq!(on_mk2.dials, Vec::new());
     assert_eq!(on_mk2.home, plus.home);
-    // Every default module is on the home page: none is dropped.
-    assert_eq!(on_mk2.modules.len(), plus.modules.len());
+    // The pomodoro has no key and the device no dial: it is the only module dropped.
+    assert_eq!(on_mk2.modules.len(), plus.modules.len() - 1);
     assert_eq!(api.config(NO_DIALS).await, on_mk2);
 
     let response = import(&api, SECOND, export(&api, NO_DIALS).await).await;

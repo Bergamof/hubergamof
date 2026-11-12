@@ -6,7 +6,7 @@ const audio: CatalogModule = {
 	kind: 'audio',
 	name: 'Audio',
 	description: '',
-	capabilities: { key: true },
+	capabilities: { key: true, multipleInstances: false },
 	dialFunctions: [{ id: 'volume', name: 'Contrôle du volume', description: '' }],
 	settings: [],
 	icon: null,

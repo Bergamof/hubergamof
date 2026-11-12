@@ -11,7 +11,7 @@ const CLOCK: CatalogModule = {
 	kind: 'clock',
 	name: 'Horloge',
 	description: '',
-	capabilities: { key: true },
+	capabilities: { key: true, multipleInstances: false },
 	dialFunctions: [],
 	settings: []
 };

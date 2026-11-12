@@ -23,9 +23,10 @@ use super::live::{LiveSnapshot, PageSummary};
 use super::navigation::Navigation;
 use super::notifications::NotificationCenter;
 use super::painter::Painter;
+use super::placement_notice;
 use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
-use crate::config_store::check_config;
+use crate::config_store::{LoadOutcome, check_config};
 use crate::device::{self, DeckBackend, InputEvent, StripLayout};
 use crate::render::ImageSource;
 use crate::strip::SystemHistory;
@@ -231,6 +232,14 @@ impl DeviceEngine {
             live,
             config_tx,
         };
+        if let LoadOutcome::Normalized { changes } = &loaded.outcome {
+            engine.notifications.notify(
+                placement_notice::source(),
+                None,
+                &placement_notice::notice(changes),
+                Instant::now(),
+            );
+        }
         if has_strip {
             engine.strip_settle = Some(Instant::now() + STRIP_SETTLE_DELAY);
             engine.sample_system().await;

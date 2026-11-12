@@ -183,8 +183,11 @@ fn default_settings_are_the_classic_cycle() {
             "notificationSeconds": 10
         })
     );
-    let capabilities = factory.descriptor().capabilities;
-    assert!(capabilities.key);
+    // Pomodoro is driven by a dial: no key, one instance.
+    assert_eq!(
+        factory.descriptor().capabilities,
+        ModuleCapabilities::default()
+    );
 }
 
 #[test]
