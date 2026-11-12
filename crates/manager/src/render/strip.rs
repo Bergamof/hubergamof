@@ -615,15 +615,23 @@ impl Renderer {
                 draw_mark(canvas, feedback, left, palette);
                 continue;
             }
-            // Each part takes at most half of the cell: a long text is
-            // shortened, never drawn over the next dial.
-            let room =
-                (cell - 2.0 * HINT_MARGIN - HINT_PART_GAP) / 2.0 - HINT_ICON_SIZE - HINT_ICON_GAP;
+            // The parts share the room of the cell: the turn part takes at most
+            // half of it when both are there, the click part what is left. A
+            // long text is shortened, never drawn over the next dial.
+            let total = cell - 2.0 * HINT_MARGIN;
+            let chrome = HINT_ICON_SIZE + HINT_ICON_GAP;
+            let half = (total - HINT_PART_GAP) / 2.0 - chrome;
             let mut x = left;
             if let Some(rotate) = &hint.rotate {
+                let room = if hint.press.is_some() {
+                    half
+                } else {
+                    total - chrome
+                };
                 x = self.draw_hint_part(canvas, Glyph::Rotate, rotate, (x, room), palette)?;
             }
             if let Some(press) = &hint.press {
+                let room = total - (x - left) - chrome;
                 self.draw_hint_part(canvas, Glyph::Press, press, (x, room), palette)?;
             }
         }
@@ -1127,6 +1135,20 @@ mod tests {
             drawn_in(image.image(), LIGHT.background, (212, 86, 4, 12)),
             0
         );
+    }
+
+    #[test]
+    fn a_lone_reminder_may_take_the_whole_cell() {
+        let mut lone = face();
+        lone.hints[1].rotate = None;
+        lone.hints[1].press = Some("Menu pomodoro".into());
+        let mut short = lone.clone();
+        short.hints[1].press = Some("Menu".into());
+        // Past the half of the cell where a reminder shared with another is cut.
+        let beyond_half = (200 + 16 + 14 + 70, 88, 12, 8);
+        let ink = |face: &StripFace| drawn_in(render(face).image(), LIGHT.background, beyond_half);
+        assert!(ink(&lone) > 0, "the whole text is drawn");
+        assert_eq!(ink(&short), 0);
     }
 
     #[test]
