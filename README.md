@@ -94,6 +94,8 @@ La configuration des appareils est, pour l'instant, stockée dans le dépôt : `
 
 Interface : <http://127.0.0.1:7878> (ou via l'icône de la barre système).
 
+Le lanceur de bureau **HuBergamof** (menu des applications, posé par le paquet ou par `make install`) ouvre l'interface et, si le gestionnaire ne tourne plus (quitté depuis la barre système, service arrêté ou abandonné par systemd après des échecs répétés), relance d'abord le service. En ligne de commande : `hubergamof open` (`--port` si le port a été changé).
+
 ## Vie privée
 
 Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre attention, le gestionnaire observe les notifications de bureau de la session (`org.freedesktop.Notifications`). Seules celles envoyées par ces applications, reconnues par l'exécutable de l'expéditeur (et, pour claude.ai ouvert dans Brave, par le site que le navigateur indique : les notifications des autres sites sont écartées), sont retenues, pour mettre leur touche en attention : leur texte n'est ni affiché ni conservé ; les autres sont ignorées sans être conservées ni journalisées. Les fenêtres sont suivies par un script KWin qui ne transmet que celles des applications suivies. Un journal de débogage de zbus (`RUST_LOG=zbus=trace`) afficherait en revanche les messages du bus : à éviter hors diagnostic.

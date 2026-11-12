@@ -2,7 +2,8 @@
 # Installe le paquet dans un conteneur propre et vérifie ce qu'un utilisateur
 # attend : dépendances résolues (dont pactl), fichiers posés, binaire lançable à
 # la bonne version, unité et règle udev valides, scripts de maintenance sans
-# erreur (sans systemd en cours d'exécution), désinstallation propre.
+# erreur (sans systemd en cours d'exécution), lanceur de bureau valide et ses
+# icônes, désinstallation propre.
 #
 # À lancer en root dans le conteneur (make package-smoke) :
 #   smoke-test.sh <deb|arch> <version> <dossier des paquets>
@@ -19,6 +20,12 @@ dist="$3"
 readonly BINARY=/usr/bin/hubergamof
 readonly UNIT=/usr/lib/systemd/user/hubergamof.service
 readonly UDEV_RULE=/usr/lib/udev/rules.d/70-hubergamof.rules
+readonly DESKTOP_ENTRY=/usr/share/applications/hubergamof.desktop
+readonly ICONS=(
+	/usr/share/icons/hicolor/scalable/apps/hubergamof.svg
+	/usr/share/icons/hicolor/{22x22,32x32,48x48,64x64}/apps/hubergamof.png
+)
+readonly EXPECTED_DESKTOP_EXEC='Exec="/usr/bin/hubergamof" open'
 readonly EXPECTED_EXEC_START='ExecStart=/usr/bin/hubergamof --config-dir "%E/hubergamof"'
 readonly PACTL_MIN_MAJOR=16
 
@@ -49,7 +56,7 @@ remove_package() {
 
 check_files() {
 	local path
-	for path in "$BINARY" "$UNIT" "$UDEV_RULE"; do
+	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "$DESKTOP_ENTRY" "${ICONS[@]}"; do
 		[[ -e "$path" ]] || fail "fichier absent : $path"
 	done
 	[[ "$(stat -c %a "$BINARY")" == 755 ]] || fail "$BINARY n'est pas en 0755"
@@ -87,6 +94,19 @@ check_systemd_files() {
 	fi
 }
 
+# Le lanceur relance le service par `hubergamof open` ; son format est vérifié
+# par desktop-file-validate (installé ici, absent des images de base).
+check_desktop_entry() {
+	grep -qxF -- "$EXPECTED_DESKTOP_EXEC" "$DESKTOP_ENTRY" || fail "Exec inattendu dans $DESKTOP_ENTRY"
+	if [[ "$kind" == deb ]]; then
+		apt-get install -y -qq desktop-file-utils
+	else
+		pacman -S --noconfirm desktop-file-utils
+	fi
+	desktop-file-validate "$DESKTOP_ENTRY" || fail "lanceur de bureau invalide"
+	"$BINARY" open --help >/dev/null || fail "sous-commande « open » absente"
+}
+
 check_arch_lint() {
 	local report
 	pacman -S --noconfirm namcap
@@ -97,7 +117,7 @@ check_arch_lint() {
 
 check_removed() {
 	local path
-	for path in "$BINARY" "$UNIT" "$UDEV_RULE"; do
+	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "$DESKTOP_ENTRY" "${ICONS[@]}"; do
 		[[ ! -e "$path" ]] || fail "fichier resté après désinstallation : $path"
 	done
 }
@@ -112,6 +132,8 @@ step "pactl (module Audio)"
 check_pactl
 step "Unité systemd et règle udev"
 check_systemd_files
+step "Lanceur de bureau"
+check_desktop_entry
 if [[ "$kind" == arch ]]; then
 	step "namcap"
 	check_arch_lint

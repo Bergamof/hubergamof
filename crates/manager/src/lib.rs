@@ -14,12 +14,15 @@
 //!   [`engine::EngineHandle`].
 //! - [`server`]: the local web server (UI files and `/ws` WebSocket).
 //! - [`tray`]: the system tray icon (`StatusNotifierItem`).
+//! - [`launcher`]: `hubergamof open`, starting the service and opening the UI
+//!   from the desktop launcher.
 
 mod cache;
 pub mod config_store;
 pub mod device;
 pub mod engine;
 pub mod file_chooser;
+pub mod launcher;
 pub mod render;
 pub mod server;
 #[cfg(test)]

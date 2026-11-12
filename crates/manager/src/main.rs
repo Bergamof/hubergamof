@@ -3,23 +3,25 @@
 //! Attaches devices (real or `--demo`), runs a page engine per device, serves
 //! the web UI on `127.0.0.1` and shows a tray icon, until Ctrl-C, SIGTERM or
 //! the tray's « Quitter »; then closes the UI connections and blanks the
-//! screens.
+//! screens. `hubergamof open` (desktop launcher) starts the service when it
+//! is not running and opens the web interface.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use hubergamof_manager::config_store::ConfigStore;
 use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
+use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
-    DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, module_catalog,
+    DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, local_address, module_catalog,
 };
 use hubergamof_manager::tray::{TrayIcon, quit_on};
 use hubergamof_modules::clock::SystemClock;
@@ -51,7 +53,7 @@ struct Cli {
     demo: bool,
 
     /// Port of the local web interface (bound to 127.0.0.1 only).
-    #[arg(long, default_value_t = DEFAULT_PORT)]
+    #[arg(long, default_value_t = DEFAULT_PORT, global = true)]
     port: u16,
 
     /// Directory holding the per-device configuration.
@@ -71,6 +73,18 @@ struct Cli {
     /// Do not show the system tray icon.
     #[arg(long)]
     no_tray: bool,
+
+    /// Run a command instead of the manager.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// Commands run instead of the manager.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Open the web interface on `--port`, starting the manager's systemd
+    /// user service first when it is not running (desktop launcher).
+    Open,
 }
 
 /// Where devices come from.
@@ -83,6 +97,28 @@ enum DeviceSource {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing();
+    match cli.command {
+        Some(Command::Open) => open_ui(cli.port).await,
+        None => run_manager(cli).await,
+    }
+}
+
+/// Opens the web interface, bringing the service back first if needed.
+async fn open_ui(port: u16) -> Result<()> {
+    let outcome = launcher::open_ui(
+        local_address(port),
+        &SystemdUserService,
+        &XdgOpen,
+        launcher::START_TIMEOUT,
+    )
+    .await?;
+    if outcome == Outcome::Started {
+        tracing::info!("{} started", launcher::SERVICE_UNIT);
+    }
+    Ok(())
+}
+
+async fn run_manager(cli: Cli) -> Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         demo = cli.demo,
@@ -314,6 +350,7 @@ mod tests {
         assert_eq!(cli.config_dir, PathBuf::from("config"));
         assert_eq!(cli.dev_origins, []);
         assert!(!cli.no_tray);
+        assert!(cli.command.is_none(), "runs the manager");
         assert_eq!(
             cli.file_chooser_answer, None,
             "the desktop's own dialog, also in --demo"
@@ -349,6 +386,19 @@ mod tests {
         assert_eq!(origins, ["http://localhost:5173", "http://127.0.0.1:5173"]);
         assert_eq!(cli.port, 9000);
         assert_eq!(cli.config_dir, PathBuf::from("/tmp/deck"));
+    }
+
+    #[test]
+    fn open_uses_the_port_of_the_manager() {
+        let cli = Cli::try_parse_from(["hubergamof", "open"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Open)));
+        assert_eq!(cli.port, DEFAULT_PORT);
+        for args in [
+            ["hubergamof", "--port", "9000", "open"],
+            ["hubergamof", "open", "--port", "9000"],
+        ] {
+            assert_eq!(Cli::try_parse_from(args).unwrap().port, 9000, "{args:?}");
+        }
     }
 
     #[test]
