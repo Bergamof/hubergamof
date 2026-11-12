@@ -69,6 +69,7 @@ fn wire_value(value: PropertyValue) -> OwnedVariant {
     match value {
         PropertyValue::Text(text) => OwnedVariant::from(zbus::Str::from(text)),
         PropertyValue::Flag(flag) => OwnedVariant::from(flag),
+        PropertyValue::Int(number) => OwnedVariant::from(number),
     }
 }
 

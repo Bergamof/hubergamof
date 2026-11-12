@@ -466,11 +466,12 @@ mod tests {
         let marked = children
             .into_iter()
             .map(|child| WireLayout::try_from(Variant::from(child)).unwrap().1)
-            .map(|properties| label(&properties))
-            .find_map(|text| {
-                text.strip_prefix(menu::SELECTED_MARK)
-                    .map(|name| name.trim().to_owned())
-            });
+            .find(|properties| {
+                properties
+                    .get("toggle-state")
+                    .is_some_and(|state| i32::try_from(state.clone()).is_ok_and(|state| state == 1))
+            })
+            .map(|properties| label(&properties));
         (revision, marked)
     }
 
@@ -600,16 +601,18 @@ mod tests {
         assert_eq!(layout, Some((2, menu::THEME_ID)));
         let (updated, removed) = marks.unwrap();
         assert_eq!(removed, []);
-        let labels: Vec<(i32, String)> = updated
+        let states: Vec<(i32, i32)> = updated
             .iter()
-            .map(|(id, properties)| (*id, label(properties)))
+            .map(|(id, properties)| {
+                (
+                    *id,
+                    i32::try_from(properties["toggle-state"].clone()).unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
-            labels,
-            [
-                (menu::THEME_LIGHT_ID, "○ Clair".to_owned()),
-                (menu::THEME_DARK_ID, "● Sombre".to_owned())
-            ]
+            states,
+            [(menu::THEME_LIGHT_ID, 0), (menu::THEME_DARK_ID, 1)]
         );
     }
 }
