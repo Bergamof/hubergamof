@@ -38,7 +38,6 @@ async function show(
 ) {
 	const { api, asApi } = fakeApi(chosen);
 	const onchange = vi.fn();
-	const onediting = vi.fn();
 	await render(FileEntryListInput, {
 		id: 'files',
 		labelledBy: 'files-label',
@@ -51,10 +50,9 @@ async function show(
 		api: asApi,
 		defaultIcon: 'data:image/png;base64,AAAA',
 		invalid: false,
-		onediting,
 		onchange
 	});
-	return { api, onchange, onediting };
+	return { api, onchange };
 }
 
 describe('FileEntryListInput', () => {
@@ -210,14 +208,6 @@ describe('FileEntryListInput', () => {
 		expect(onchange).not.toHaveBeenCalled();
 		expect(api.chooseFile).not.toHaveBeenCalled();
 		await expect.element(page.getByLabelText('Fichier')).toHaveValue('/srv/shop/compose.yaml');
-	});
-
-	it('tells the form when a file is being edited', async () => {
-		const { onediting } = await show([SHOP]);
-		await page.getByRole('button', { name: 'Modifier Boutique' }).click();
-		await expect.poll(() => onediting.mock.lastCall?.[0]).toBe(true);
-		await page.getByRole('button', { name: 'Annuler' }).click();
-		await expect.poll(() => onediting.mock.lastCall?.[0]).toBe(false);
 	});
 
 	it('puts the focus on the next file after a removal, else on the button adding one', async () => {

@@ -89,21 +89,23 @@ test('déplace une touche à la souris', async ({ page }) => {
 	await expect(page.getByText('Touche déplacée en position 3 sur 5.')).toBeAttached();
 });
 
-test('refuse un réglage invalide, puis applique et conserve un réglage valide', async ({
+test('refuse un réglage invalide, puis enregistre sans bouton un réglage valide', async ({
 	page
 }) => {
 	await open(page);
 	await key(page, '2 : Pomodoro').click();
 	const work = page.getByLabel('Durée du travail');
 	await work.fill('0');
-	await page.getByRole('button', { name: 'Appliquer' }).click();
+	await work.press('Tab');
 	await expect(work).toHaveAttribute('aria-invalid', 'true');
-	await expect(work).toBeFocused();
 	await expect(work).toHaveAccessibleDescription(/min Entre 1 et 120\. Valeur minimale : 1\./);
+	await expect(page.getByText(/Réglage invalide/)).toBeVisible();
 
 	await work.fill('30');
+	await work.press('Enter');
+	await expect(work).not.toHaveAttribute('aria-invalid');
+	// A text is saved once the typing pauses, without leaving the field.
 	await page.getByLabel('Libellé').fill('Focus');
-	await page.getByRole('button', { name: 'Appliquer' }).click();
 	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
 	await expect(key(page, '2 : Focus')).toBeVisible();
 
@@ -140,7 +142,6 @@ test('ajoute, modifie puis supprime un fichier compose avec son nom et son icôn
 	await expect(page.getByText('Icône choisie.')).toBeVisible();
 	await page.getByRole('button', { name: 'Ajouter à la liste' }).click();
 	await expect(page.getByRole('button', { name: 'Modifier Projet démo' })).toBeFocused();
-	await page.getByRole('button', { name: 'Appliquer' }).click();
 	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
 
 	await page.reload();
@@ -153,15 +154,16 @@ test('ajoute, modifie puis supprime un fichier compose avec son nom et son icôn
 	await page.getByLabel('Nom', { exact: true }).fill('Démo renommée');
 	await page.getByRole('button', { name: 'Rétablir l’icône par défaut' }).click();
 	await page.getByRole('button', { name: 'Valider' }).click();
-	await page.getByRole('button', { name: 'Appliquer' }).click();
 	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
 	await expect(page.getByRole('listitem').filter({ hasText: 'Démo renommée' })).toBeVisible();
 
 	await page.getByRole('button', { name: 'Supprimer Démo renommée' }).click();
 	await expect(page.getByText('Aucun fichier ajouté.')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Ajouter un fichier…' })).toBeFocused();
-	await page.getByRole('button', { name: 'Appliquer' }).click();
 	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
+	await page.reload();
+	await key(page, '3 : Docker').click();
+	await expect(page.getByText('Aucun fichier ajouté.')).toBeVisible();
 });
 
 test('refuse un chemin de fichier compose relatif comme le gestionnaire', async ({ page }) => {
@@ -193,7 +195,7 @@ test('garde la saisie quand le gestionnaire refuse la modification', async ({ pa
 	await open(page);
 	await key(page, '2 : Pomodoro').click();
 	await page.getByLabel('Libellé').fill('Focus');
-	await page.getByRole('button', { name: 'Appliquer' }).click();
+	await page.getByLabel('Libellé').press('Enter');
 
 	const refusal = page.getByRole('alert').filter({ hasText: 'Réglages non enregistrés' });
 	await expect(refusal).toContainText('Le gestionnaire a refusé la modification');
@@ -257,21 +259,20 @@ test('synchronise les modifications entre deux onglets', async ({ page, context 
 	await page.getByRole('slider', { name: 'Luminosité' }).fill('35');
 	await expect(other.getByRole('slider', { name: 'Luminosité' })).toHaveValue('35');
 
-	// An untouched form follows the other tab; a modified one is kept and flagged.
+	// The fields untouched follow the other tab; one being typed is kept, then saved.
 	await key(other, '2 : Pomodoro').click();
 	await key(page, '2 : Pomodoro').click();
 	await page.getByLabel('Libellé').fill('Focus');
-	await page.getByRole('button', { name: 'Appliquer' }).click();
+	await page.getByLabel('Libellé').press('Enter');
 	await expect(other.getByLabel('Libellé')).toHaveValue('Focus');
 
 	await other.getByLabel('Durée du travail').fill('40');
 	await page.getByLabel('Libellé').fill('Zen');
-	await page.getByRole('button', { name: 'Appliquer' }).click();
-	await expect(other.getByRole('alert')).toContainText('modifié ailleurs');
-	await expect(other.getByLabel('Durée du travail')).toHaveValue('40');
-	await other.getByRole('button', { name: 'Recharger' }).click();
+	await page.getByLabel('Libellé').press('Enter');
 	await expect(other.getByLabel('Libellé')).toHaveValue('Zen');
-	await expect(other.getByLabel('Durée du travail')).toHaveValue('25');
+	await expect(other.getByLabel('Durée du travail')).toHaveValue('40');
+	await expect(page.getByLabel('Durée du travail')).toHaveValue('40');
+	await expect(page.getByLabel('Libellé')).toHaveValue('Zen');
 });
 
 test('se reconnecte au gestionnaire en gardant l’éditeur affiché', async ({ page }) => {
@@ -293,7 +294,7 @@ test('se reconnecte au gestionnaire en gardant l’éditeur affiché', async ({ 
 	// Selected again on the new connection: an edit is saved on the current revision.
 	await key(page, '1 : Audio').click();
 	await page.getByLabel('Libellé').fill('Volume');
-	await page.getByRole('button', { name: 'Appliquer' }).click();
+	await page.getByLabel('Libellé').press('Enter');
 	await expect(page.getByText('Réglages enregistrés.')).toBeVisible();
 	await expect(key(page, '1 : Volume')).toBeVisible();
 });
@@ -409,7 +410,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 		const work = page.getByLabel('Durée du travail');
 		await work.fill('0');
-		await page.getByRole('button', { name: 'Appliquer' }).click();
+		await work.press('Tab');
 		await expect(work).toHaveAttribute('aria-invalid', 'true');
 		await expectAccessible(page, 'réglages en erreur');
 

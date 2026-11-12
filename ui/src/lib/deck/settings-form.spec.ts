@@ -55,7 +55,7 @@ describe('parseDraft', () => {
 
 	it('builds typed settings and keeps the settings the form does not know', () => {
 		expect(parseDraft(fields, valid, { future: 'kept', minutes: 25 })).toEqual({
-			ok: true,
+			errors: {},
 			settings: {
 				future: 'kept',
 				enabled: false,
@@ -76,10 +76,7 @@ describe('parseDraft', () => {
 		['61', 'Valeur maximale : 60.'],
 		['99999999999999999999', 'Nombre trop grand.']
 	])('refuses the integer %j', (minutes, error) => {
-		expect(parseDraft(fields, { ...valid, minutes }, {})).toEqual({
-			ok: false,
-			errors: { minutes: error }
-		});
+		expect(parseDraft(fields, { ...valid, minutes }, {}).errors).toEqual({ minutes: error });
 	});
 
 	it.each([
@@ -90,22 +87,34 @@ describe('parseDraft', () => {
 		['files', '~/', '« ~/ » : chemin absolu attendu, commençant par / ou ~/.'],
 		['files', '~/./', '« ~/./ » : chemin absolu attendu, commençant par / ou ~/.']
 	])('refuses the relative path in %s: %j', (key, value, error) => {
-		expect(parseDraft(fields, { ...valid, [key]: value }, {})).toEqual({
-			ok: false,
-			errors: { [key]: error }
-		});
+		expect(parseDraft(fields, { ...valid, [key]: value }, {}).errors).toEqual({ [key]: error });
 	});
 
 	it('accepts home paths and an empty single path', () => {
 		const parsed = parseDraft(fields, { ...valid, folder: '', files: '~/a\n/b' }, {});
-		expect(parsed).toMatchObject({ ok: true, settings: { folder: '', files: ['~/a', '/b'] } });
+		expect(parsed).toMatchObject({ errors: {}, settings: { folder: '', files: ['~/a', '/b'] } });
 	});
 
 	it('refuses a value outside the choices', () => {
-		expect(parseDraft(fields, { ...valid, target: 'other' }, {})).toEqual({
-			ok: false,
-			errors: { target: 'Choisir une des valeurs proposées.' }
+		expect(parseDraft(fields, { ...valid, target: 'other' }, {}).errors).toEqual({
+			target: 'Choisir une des valeurs proposées.'
 		});
+	});
+
+	it('keeps the original value of a refused field and saves the valid ones', () => {
+		const parsed = parseDraft(
+			fields,
+			{ ...valid, minutes: 'douze', name: 'Pause' },
+			{ minutes: 25, name: 'Travail' }
+		);
+		expect(parsed.errors).toEqual({ minutes: 'Saisir un nombre entier.' });
+		expect(parsed.settings).toMatchObject({ minutes: 25, name: 'Pause' });
+	});
+
+	it('leaves out a refused field the original settings do not have', () => {
+		expect(parseDraft(fields, { ...valid, minutes: '0' }, {}).settings).not.toHaveProperty(
+			'minutes'
+		);
 	});
 
 	it('accepts unbounded integers and fills fields missing from the draft', () => {
@@ -113,10 +122,10 @@ describe('parseDraft', () => {
 			field('count', { type: 'integer', default: 3, min: null, max: null, unit: null })
 		];
 		expect(parseDraft(unbounded, { count: '-40' }, {})).toEqual({
-			ok: true,
+			errors: {},
 			settings: { count: -40 }
 		});
-		expect(parseDraft(unbounded, {}, {})).toEqual({ ok: true, settings: { count: 3 } });
+		expect(parseDraft(unbounded, {}, {})).toEqual({ errors: {}, settings: { count: 3 } });
 	});
 });
 
@@ -195,7 +204,7 @@ describe('file lists', () => {
 				{}
 			)
 		).toEqual({
-			ok: true,
+			errors: {},
 			settings: {
 				compose: [
 					{ path: '~/a.yaml', name: 'Boutique', icon: null },
@@ -207,8 +216,7 @@ describe('file lists', () => {
 
 	it('refuses a missing or relative path, a long name and a file listed twice', () => {
 		const error = (value: FileEntryDraft[]) => {
-			const parsed = parseDraft(files, draft(value), {});
-			return parsed.ok ? undefined : parsed.errors.compose;
+			return parseDraft(files, draft(value), {}).errors.compose;
 		};
 		expect(error([entry('  ')])).toMatch(/Indiquer le chemin/);
 		expect(error([entry('compose.yaml')])).toMatch(/chemin absolu/);

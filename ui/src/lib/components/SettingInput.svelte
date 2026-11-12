@@ -1,6 +1,9 @@
 <!--
 @component
-Form control of one module setting, chosen from its kind.
+Form control of one module setting, chosen from its kind. A choice is reported done at once
+(`oncommit`); typed text is reported as it is typed (`ontype`, the form waits for a pause) and
+done when the field is left or Enter is pressed in a one-line field. Escape asks for the saved
+value back (`onrevert`).
 -->
 <script lang="ts">
 	import type { SettingField } from '#lib/generated/index.js';
@@ -21,10 +24,12 @@ Form control of one module setting, chosen from its kind.
 		moduleKind: string;
 		/** Icon of an item without image of its own (module icon unless the module says otherwise). */
 		defaultIcon: string | null | undefined;
-		/** Called after a change that raises no `input` event (a file list). */
-		onedit: () => void;
-		/** Called when a file of a file list starts or stops being edited. */
-		onediting: (editing: boolean) => void;
+		/** Called at each keystroke of a text: the change is not finished yet. */
+		ontype: () => void;
+		/** Called when a change is finished: a choice made, a text field left or confirmed. */
+		oncommit: () => void;
+		/** Called on Escape in a text field: the saved value is wanted back. */
+		onrevert: () => void;
 	}
 
 	let {
@@ -36,9 +41,28 @@ Form control of one module setting, chosen from its kind.
 		api,
 		moduleKind,
 		defaultIcon,
-		onedit,
-		onediting
+		ontype,
+		oncommit,
+		onrevert
 	}: Props = $props();
+
+	/** Enter confirms a one-line text (there is no button to submit the form any more). */
+	function confirmOnEnter(event: KeyboardEvent) {
+		if (event.key !== 'Enter' || event.isComposing) return;
+		event.preventDefault();
+		oncommit();
+	}
+
+	function revertOnEscape(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || event.isComposing) return;
+		event.preventDefault();
+		onrevert();
+	}
+
+	function typed(text: string) {
+		value = text;
+		ontype();
+	}
 
 	const id = $derived(`${idPrefix}-${field.key}`);
 	const hint = $derived(settingHint(field));
@@ -58,7 +82,10 @@ Form control of one module setting, chosen from its kind.
 				type="checkbox"
 				class="size-5 accent-ring focus-ring"
 				checked={value === true}
-				onchange={(event) => (value = event.currentTarget.checked)}
+				onchange={(event) => {
+					value = event.currentTarget.checked;
+					oncommit();
+				}}
 				aria-describedby={describedBy}
 			/>
 			{field.label}
@@ -77,10 +104,9 @@ Form control of one module setting, chosen from its kind.
 			{api}
 			{defaultIcon}
 			invalid={error !== undefined}
-			{onediting}
 			onchange={(entries) => {
 				value = entries;
-				onedit();
+				oncommit();
 			}}
 		/>
 	{:else}
@@ -90,7 +116,10 @@ Form control of one module setting, chosen from its kind.
 				{id}
 				class="field"
 				value={String(value)}
-				onchange={(event) => (value = event.currentTarget.value)}
+				onchange={(event) => {
+					value = event.currentTarget.value;
+					oncommit();
+				}}
 				aria-describedby={describedBy}
 				aria-invalid={error ? true : undefined}
 			>
@@ -105,7 +134,9 @@ Form control of one module setting, chosen from its kind.
 				spellcheck="false"
 				class="field"
 				value={String(value)}
-				oninput={(event) => (value = event.currentTarget.value)}
+				oninput={(event) => typed(event.currentTarget.value)}
+				onchange={oncommit}
+				onkeydown={revertOnEscape}
 				aria-describedby={describedBy}
 				aria-invalid={error ? true : undefined}></textarea>
 		{:else}
@@ -117,7 +148,12 @@ Form control of one module setting, chosen from its kind.
 					spellcheck={field.kind.type === 'text'}
 					class="field"
 					value={String(value)}
-					oninput={(event) => (value = event.currentTarget.value)}
+					oninput={(event) => typed(event.currentTarget.value)}
+					onchange={oncommit}
+					onkeydown={(event) => {
+						confirmOnEnter(event);
+						revertOnEscape(event);
+					}}
 					aria-describedby={describedBy}
 					aria-invalid={error ? true : undefined}
 				/>
