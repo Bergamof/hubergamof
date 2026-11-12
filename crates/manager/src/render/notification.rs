@@ -28,6 +28,11 @@ const ACTION_FONT_RATIO: f32 = 0.15;
 /// Distance between the reminder baseline and the strip bottom, relative to
 /// the strip height (above the time bar).
 const ACTION_BASELINE_RATIO: f32 = 0.10;
+/// Icon side when a reminder is drawn, relative to the strip height.
+const ACTION_ICON_RATIO: f32 = 0.56;
+/// Space above the icon when a reminder is drawn, relative to the strip
+/// height.
+const ACTION_ICON_TOP_RATIO: f32 = 0.07;
 /// Share of the dial column the reminder may fill.
 const ACTION_WIDTH_SHARE: f32 = 0.92;
 /// Height of the remaining-time bar, relative to the strip height.
@@ -134,6 +139,23 @@ impl Metrics {
         }
     }
 
+    /// Side, left and top of the icon. With an action reminder at the bottom
+    /// the icon is smaller and sits higher, centred in the room it keeps, so
+    /// that it does not touch the reminder; the message does not move.
+    fn icon_placement(&self, with_action: bool) -> (u32, u32, u32) {
+        if !with_action {
+            return (self.icon, self.edge, self.edge);
+        }
+        let height = f32_from(self.height);
+        let side = pixels(height * ACTION_ICON_RATIO, self.icon);
+        let left = self.edge + (self.icon - side) / 2;
+        (
+            side,
+            left,
+            pixels(height * ACTION_ICON_TOP_RATIO, self.height),
+        )
+    }
+
     fn loop_length(&self, text_width: f32) -> f32 {
         text_width + f32_from(self.height) * LOOP_GAP_RATIO
     }
@@ -183,17 +205,18 @@ impl Renderer {
         let background = Rgba([red, green, blue, u8::MAX]);
         let mut canvas = RgbaImage::from_pixel(look.size.width, look.size.height, background);
         if let Some(icon) = look.icon {
-            let side = ImageSize {
-                width: metrics.icon,
-                height: metrics.icon,
+            let (side, left, top) = metrics.icon_placement(look.action.is_some());
+            let side_size = ImageSize {
+                width: side,
+                height: side,
             };
             let rendered =
-                self.render_key(&KeyRequest::new(side, Some(icon), None).transparent())?;
+                self.render_key(&KeyRequest::new(side_size, Some(icon), None).transparent())?;
             imageops::overlay(
                 &mut canvas,
                 rendered.image().as_ref(),
-                i64::from(metrics.edge),
-                i64::from(metrics.edge),
+                i64::from(left),
+                i64::from(top),
             );
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
@@ -593,5 +616,16 @@ mod tests {
             .render_notification(&with_action, Duration::ZERO, None)
             .unwrap();
         assert_eq!(drawn.image, bare.image);
+    }
+
+    #[test]
+    fn the_icon_rises_and_shrinks_when_an_action_is_shown() {
+        let metrics = Metrics::of(STRIP);
+        let (side, left, top) = metrics.icon_placement(true);
+        let (full, full_left, full_top) = metrics.icon_placement(false);
+        assert!(side < full && top < full_top && left >= full_left);
+        // Still centred on the same column and clear of the reminder line.
+        assert_eq!(left * 2 + side, full_left * 2 + full);
+        assert!(top + side < 76, "{}", top + side);
     }
 }
