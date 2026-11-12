@@ -2,8 +2,9 @@
 @component
 Label and settings form of a module instance, saved as it is edited: a choice at once, a text
 once it is finished (field left, Enter, or a pause in the typing of {@link TYPING_PAUSE_MS}).
-Escape in a text field gives back its saved value. A field refused stays as typed, with its
-error, and is not saved; the valid ones are. A refusal of the manager keeps what was typed and
+Escape in a text field gives back its saved value. A field refused stays as typed and is not
+saved; the valid ones are. Its error shows once the field is left or confirmed, never at a
+pause in the typing, where the text is often unfinished. A refusal of the manager keeps what was typed and
 says why. When the instance changes elsewhere (another tab), the fields left untouched follow;
 one being changed keeps what is typed, saved over the other change once finished.
 -->
@@ -58,22 +59,26 @@ one being changed keeps what is typed, saved over the other change once finished
 	let base = $state(initial);
 	let label = $state(labelOf(initial));
 	let draft: SettingsDraft = $state(draftOf(initial));
-	/** Errors shown, from the last finished change (not at every keystroke). */
+	/** Errors shown: those of the fields left or confirmed (see {@link save}). */
 	let errors: SettingsErrors = $state({});
 	let saving = $state(false);
-	/** A change was finished while saving: saved next, with whatever is typed by then. */
-	let saveAgain = false;
-	let saved = $state(false);
+	/** A save was asked while saving: done next, with whatever is typed by then. */
+	let saveAgain: { showErrors: boolean } | undefined;
+	/** Last outcome said by the status: kept while typing, so it is not read again and again. */
+	let notice = $state('');
 	let refusal: Problem | undefined = $state();
 
-	const saveAfterPause = debounce(() => void save(), TYPING_PAUSE_MS);
+	const saveAfterPause = debounce(() => void save({ showErrors: false }), TYPING_PAUSE_MS);
 
 	const parsed = $derived(parseDraft(fields, draft, base.settings));
 	/** While saving, the displayed instance already carries the change: not « elsewhere ». */
 	const changedElsewhere = $derived(
 		!saving && (base.label !== instance.label || !sameJson(base.settings, instance.settings))
 	);
-	const invalid = $derived(Object.keys(errors).length > 0);
+	/** Names the fields refused, so the status says which ones are not saved. */
+	const invalidFields = $derived(
+		fields.filter((field) => errors[field.key] !== undefined).map((field) => field.label)
+	);
 
 	// Keeps the form in step with the configuration, which may change from another tab at any
 	// time.
@@ -118,68 +123,93 @@ one being changed keeps what is typed, saved over the other change once finished
 
 	/** A keystroke: saved once the typing pauses, unless the field is left first. */
 	function typed() {
-		saved = false;
 		saveAfterPause();
 	}
 
-	/** A change is finished: saved now. */
+	/** A change is finished: saved now, its errors shown. */
 	function commit() {
-		saveAfterPause.flush();
+		saveAfterPause.cancel();
+		void save({ showErrors: true });
+	}
+
+	async function reverted() {
+		saveAfterPause.cancel();
+		await save({ showErrors: true });
+		if (!refusal) notice = 'Valeur enregistrée rétablie.';
 	}
 
 	function revertLabel() {
 		label = labelOf(base);
-		commit();
+		void reverted();
 	}
 
 	function revertSetting(key: string) {
 		const value = draftOf(base)[key];
 		if (value !== undefined) draft[key] = value;
-		commit();
+		void reverted();
 	}
 
 	/**
-	 * Saves what the form holds, leaving out the fields refused. One save at a time: a change
-	 * finished meanwhile is saved right after, with the latest values.
+	 * The errors to show: all of them once a change is finished; at a pause in the typing, only
+	 * those already shown that still apply (a field being corrected loses its error).
 	 */
-	async function save() {
+	function errorsToShow(showErrors: boolean): SettingsErrors {
+		if (showErrors) return parsed.errors;
+		return Object.fromEntries(
+			Object.entries(parsed.errors).filter(([key]) => errors[key] !== undefined)
+		);
+	}
+
+	/**
+	 * Saves what the form holds, leaving out the fields refused. One save at a time: one asked
+	 * meanwhile is done right after, with the latest values.
+	 */
+	async function save({ showErrors }: { showErrors: boolean }) {
 		if (saving) {
-			saveAgain = true;
+			saveAgain = { showErrors: showErrors || (saveAgain?.showErrors ?? false) };
 			return;
 		}
-		errors = parsed.errors;
+		errors = errorsToShow(showErrors);
 		const changes: InstanceChanges = { label: parseLabel(label), settings: parsed.settings };
 		if (changes.label === (base.label ?? null) && sameJson(changes.settings, base.settings)) {
-			// Back to the saved values (Escape, or the same text typed again): all is saved.
+			// Back to the saved values (Escape, or the same text typed again): nothing to send.
 			refusal = undefined;
-			saved = !invalid;
 			return;
 		}
 		refusal = undefined;
-		saved = false;
 		saving = true;
-		const outcome = await onapply(changes);
-		saving = false;
-		if (outcome.saved) {
-			rebase();
-			saved = true;
-		} else {
-			refusal = outcome.problem;
+		try {
+			const outcome = await onapply(changes);
+			if (outcome.saved) {
+				rebase();
+				notice = 'Réglages enregistrés.';
+			} else {
+				refusal = outcome.problem;
+				notice = '';
+			}
+		} finally {
+			saving = false;
 		}
-		if (saveAgain) {
-			saveAgain = false;
-			await save();
-		}
+		const next = saveAgain;
+		saveAgain = undefined;
+		if (next) await save(next);
 	}
 </script>
 
 <form
 	class="flex flex-col gap-4"
 	aria-labelledby="{uid}-title"
+	aria-describedby="{uid}-help"
 	onsubmit={(event) => event.preventDefault()}
 	novalidate
 >
-	<h3 id="{uid}-title" class="font-semibold">Réglages</h3>
+	<div class="flex flex-col gap-1">
+		<h3 id="{uid}-title" class="font-semibold">Réglages</h3>
+		<p id="{uid}-help" class="text-sm text-muted">
+			Enregistrés automatiquement : un choix tout de suite, un texte à la fin de la saisie (pause,
+			Tab ou Entrée). Échap rétablit la valeur enregistrée d’un champ.
+		</p>
+	</div>
 
 	<div class="flex flex-col gap-1">
 		<label class="font-medium" for="{uid}-label">Libellé</label>
@@ -232,17 +262,17 @@ one being changed keeps what is typed, saved over the other change once finished
 		<ProblemAlert problem={refusal} lead="Réglages non enregistrés." />
 	{/if}
 
-	<p role="status" class="text-sm text-muted">
-		{#if invalid}
-			Réglage invalide : il n’est pas enregistré tant qu’il n’est pas corrigé.
-		{:else if saving}
-			Enregistrement…
-		{:else if saved}
-			Réglages enregistrés.
+	<p class="flex flex-wrap gap-x-2 text-sm text-muted">
+		<!-- Only the outcome is read out: « Enregistrement… » would be cut at every pause. -->
+		<span role="status">
+			{#if invalidFields.length > 0}
+				Non enregistré tant que ce n’est pas corrigé : {invalidFields.join(', ')}.
+			{:else}
+				{notice}
+			{/if}
+		</span>
+		{#if saving}
+			<span aria-hidden="true">Enregistrement…</span>
 		{/if}
-	</p>
-	<p class="text-sm text-muted">
-		Les modifications sont enregistrées automatiquement. Échap dans un champ rétablit sa valeur
-		enregistrée.
 	</p>
 </form>

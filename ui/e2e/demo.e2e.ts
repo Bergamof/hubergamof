@@ -99,7 +99,9 @@ test('refuse un réglage invalide, puis enregistre sans bouton un réglage valid
 	await work.press('Tab');
 	await expect(work).toHaveAttribute('aria-invalid', 'true');
 	await expect(work).toHaveAccessibleDescription(/min Entre 1 et 120\. Valeur minimale : 1\./);
-	await expect(page.getByText(/Réglage invalide/)).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: 'Non enregistré' })).toContainText(
+		'Durée du travail'
+	);
 
 	await work.fill('30');
 	await work.press('Enter');
