@@ -11,6 +11,8 @@ readonly BIN_DIR="$HOME/.local/bin"
 readonly INSTALLED_BINARY="$BIN_DIR/hubergamof"
 readonly UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 readonly INSTALLED_UNIT="$UNIT_DIR/$SERVICE_NAME"
+# Lanceur de bureau et icônes (menus et bureaux suivent ce dossier d'eux-mêmes).
+readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 readonly UDEV_RULE_NAME="70-hubergamof.rules"
 readonly UDEV_RULE_SOURCE="$PACKAGING_DIR/udev/$UDEV_RULE_NAME"
 readonly UDEV_RULE_TARGET="/etc/udev/rules.d/$UDEV_RULE_NAME"

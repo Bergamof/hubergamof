@@ -27,8 +27,14 @@ export type SettingsDraft = Record<string, DraftValue>;
 /** Error messages of the invalid fields, by setting key. */
 export type SettingsErrors = Record<string, string>;
 
-export type ParsedSettings =
-	{ ok: true; settings: Record<string, JsonValue> } | { ok: false; errors: SettingsErrors };
+/**
+ * Settings to save and the fields refused: an invalid field keeps its value from the original
+ * settings, so the valid ones can be saved without it.
+ */
+export interface ParsedSettings {
+	settings: Record<string, JsonValue>;
+	errors: SettingsErrors;
+}
 
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 
@@ -239,7 +245,8 @@ export function settingHint(field: SettingField): string {
 
 /**
  * Checks the form values like the manager does (types, bounds, choices) and builds the
- * settings to save. Settings unknown to the form (written by another version) are kept.
+ * settings to save. Settings unknown to the form (written by another version) are kept, and so
+ * is the original value of a field refused (see {@link ParsedSettings}).
  */
 export function parseDraft(
 	fields: readonly SettingField[],
@@ -256,7 +263,7 @@ export function parseDraft(
 		if (result.ok) settings[field.key] = result.value;
 		else errors[field.key] = result.error;
 	}
-	return Object.keys(errors).length === 0 ? { ok: true, settings } : { ok: false, errors };
+	return { settings, errors };
 }
 
 /** The label to save: trimmed, `null` when empty (the module default is shown). */

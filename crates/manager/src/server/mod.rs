@@ -153,6 +153,18 @@ async fn upgrade_websocket(State(state): State<AppState>, upgrade: WebSocketUpgr
         .on_upgrade(move |socket| session::run(socket, state))
 }
 
+/// Address of the web interface on `port`: always the loopback interface.
+#[must_use]
+pub fn local_address(port: u16) -> SocketAddr {
+    SocketAddr::from((Ipv4Addr::LOCALHOST, port))
+}
+
+/// URL of the web interface served at `address`.
+#[must_use]
+pub fn ui_url(address: SocketAddr) -> String {
+    format!("http://{address}/")
+}
+
 /// The server, bound and ready to run.
 pub struct Server {
     listener: TcpListener,
@@ -175,7 +187,7 @@ impl Server {
         assets: Arc<dyn AssetSource>,
         shutdown: watch::Receiver<bool>,
     ) -> Result<Self, ServerError> {
-        let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let requested = local_address(port);
         let bind_error = |source| ServerError::Bind {
             address: requested,
             source,
@@ -200,7 +212,7 @@ impl Server {
     /// URL of the web interface.
     #[must_use]
     pub fn url(&self) -> String {
-        format!("http://{}/", self.address)
+        ui_url(self.address)
     }
 
     /// Serves until shutdown, then waits for the open connections (WebSocket

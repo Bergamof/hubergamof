@@ -2,8 +2,8 @@
 @component
 List of files, each with a name and an icon of the user's choice (compose files of the Docker
 module). A file is added from the desktop's own file dialog, which gives its real path; where
-there is none the path is typed. Files are edited and removed in place; like the other
-settings, the changes are saved with « Appliquer ».
+there is none the path is typed. Files are edited and removed in place; a file is saved once
+confirmed (« Ajouter à la liste », « Valider ») or removed, never while being typed.
 -->
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
@@ -46,8 +46,6 @@ settings, the changes are saved with « Appliquer ».
 		invalid: boolean;
 		/** Called with the new list after every change. */
 		onchange: (entries: FileEntryDraft[]) => void;
-		/** Called when a file starts or stops being edited: the form is not applied meanwhile. */
-		onediting: (editing: boolean) => void;
 	}
 
 	let {
@@ -62,8 +60,7 @@ settings, the changes are saved with « Appliquer ».
 		api,
 		defaultIcon,
 		invalid,
-		onchange,
-		onediting
+		onchange
 	}: Props = $props();
 
 	/** The file being added (`index` is `null`) or edited, with the texts typed so far. */
@@ -86,7 +83,6 @@ settings, the changes are saved with « Appliquer ».
 
 	const full = $derived(entries.length >= kind.maxEntries);
 
-	$effect(() => onediting(editing !== undefined));
 	// The list changed from elsewhere (settings reloaded): what was being edited is gone.
 	$effect(() => {
 		void entries;

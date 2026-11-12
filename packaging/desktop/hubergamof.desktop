@@ -1,0 +1,18 @@
+# HuBergamof — lanceur de bureau (gabarit).
+# packaging/install.sh et packaging/package/stage.sh remplacent le jeton de la
+# clé Exec par le chemin du binaire (échappé pour une clé Exec). `hubergamof open` démarre le
+# service utilisateur s'il ne tourne pas, puis ouvre l'interface web.
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=HuBergamof
+GenericName=Stream Deck manager
+GenericName[fr]=Gestionnaire de Stream Deck
+Comment=Start the Stream Deck manager and open its configuration
+Comment[fr]=Démarrer le gestionnaire de Stream Deck et ouvrir sa configuration
+Exec=@BINARY@ open
+Icon=hubergamof
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=Stream Deck;Elgato;streamdeck;
+StartupNotify=false

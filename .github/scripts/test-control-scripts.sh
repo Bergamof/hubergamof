@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests des scripts de contrôle et de release (cas passants et refusés) :
 # check-node-version, check-branch-name, check_pactl, next-version, release-notes,
-# wait-for-ci (verdict), set-version.
+# wait-for-ci (verdict), set-version, lanceur de bureau (install-desktop.sh et
+# sa suppression par uninstall.sh).
 #
 # Usage : test-control-scripts.sh
 set -uo pipefail
@@ -325,6 +326,51 @@ if [[ -s "$hooks_dir/log" ]]; then
 	failures=$((failures + 1))
 fi
 rm -rf "$hooks_dir"
+
+# Lanceur de bureau : clé Exec échappée pour un chemin piégé, fichiers posés
+# exactement ceux que liste desktop_entry_files (que uninstall.sh retire).
+desktop_dir="$(mktemp -d)"
+cat >"$desktop_dir/runner.sh" <<'RUNNER'
+set -euo pipefail
+source "$1/packaging/desktop/install-desktop.sh"
+install_desktop_entry "$2" "$3/share"
+grep '^Exec=' "$3/share/$DESKTOP_ENTRY_TARGET" >"$3/exec"
+desktop_entry_files | sort >"$3/listed"
+(cd "$3/share" && find . -type f | sed 's|^\./||' | sort) >"$3/installed"
+RUNNER
+# shellcheck disable=SC2016  # chemin et clé littéraux, rien à développer
+tricky_binary='/home/a b/$x`y"z%w\q/hubergamof'
+# shellcheck disable=SC2016
+expected_exec='Exec="/home/a b/\\$x\\`y\\"z%%w\\\\q/hubergamof" open'
+if ! "$BASH" "$desktop_dir/runner.sh" "$here/../.." "$tricky_binary" "$desktop_dir"; then
+	echo "ÉCHEC : install-desktop.sh, pose du lanceur" >&2
+	failures=$((failures + 1))
+elif [[ "$(<"$desktop_dir/exec")" != "$expected_exec" ]]; then
+	echo "ÉCHEC : install-desktop.sh, clé Exec « $(<"$desktop_dir/exec") », attendue « $expected_exec »" >&2
+	failures=$((failures + 1))
+elif ! cmp -s "$desktop_dir/listed" "$desktop_dir/installed"; then
+	echo "ÉCHEC : install-desktop.sh, desktop_entry_files ne liste pas les fichiers posés" >&2
+	failures=$((failures + 1))
+elif command -v desktop-file-validate >/dev/null \
+	&& ! desktop-file-validate "$desktop_dir/share/applications/hubergamof.desktop" >/dev/null; then
+	echo "ÉCHEC : install-desktop.sh, lanceur refusé par desktop-file-validate" >&2
+	failures=$((failures + 1))
+fi
+# uninstall.sh : remove_launcher retire tout ce qui a été posé.
+cat >"$desktop_dir/remove.sh" <<'REMOVE'
+set -euo pipefail
+source "$1/packaging/desktop/install-desktop.sh"
+DATA_DIR="$2/share"
+info() { :; }
+eval "$(sed -n '/^remove_launcher() {/,/^}/p' "$1/packaging/uninstall.sh")"
+remove_launcher
+REMOVE
+if ! "$BASH" "$desktop_dir/remove.sh" "$here/../.." "$desktop_dir" \
+	|| [[ -n "$(find "$desktop_dir/share" -type f)" ]]; then
+	echo "ÉCHEC : uninstall.sh, remove_launcher laisse des fichiers du lanceur" >&2
+	failures=$((failures + 1))
+fi
+rm -rf "$desktop_dir"
 
 if [[ $failures -ne 0 ]]; then
 	echo "$failures test(s) en échec." >&2

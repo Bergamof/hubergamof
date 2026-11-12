@@ -49,6 +49,8 @@ nothing, and the settings of the module of that function.
 		headingId: string;
 		onassign: (choice: DialChoice) => void;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
+		/** Called when the settings editor goes away with refused fields (see `InstanceEditor`). */
+		ondiscard: (fields: string[]) => void;
 	}
 
 	let {
@@ -63,7 +65,8 @@ nothing, and the settings of the module of that function.
 		moduleOf,
 		headingId,
 		onassign,
-		onapply
+		onapply,
+		ondiscard
 	}: Props = $props();
 
 	/** What the functions of the manager do, as the user reads it. */
@@ -174,7 +177,7 @@ nothing, and the settings of the module of that function.
 			)} ».
 		</p>
 		{#key `${instance.id}/${module?.kind ?? ''}`}
-			<InstanceEditor {instance} {module} {serial} {api} {onapply} />
+			<InstanceEditor {instance} {module} {serial} {api} {onapply} {ondiscard} />
 		{/key}
 	{/if}
 </section>

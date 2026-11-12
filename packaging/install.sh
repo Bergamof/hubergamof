@@ -2,12 +2,16 @@
 # HuBergamof — installation pour l'utilisateur courant (idempotente) :
 #   1. binaire release dans ~/.local/bin ;
 #   2. service systemd utilisateur, activé et (re)démarré ;
-#   3. règle udev pour accéder aux Stream Deck sans root (sudo, après confirmation).
+#   3. lanceur de bureau « HuBergamof » et icônes dans ~/.local/share (relance le
+#      service s'il a été arrêté, puis ouvre l'interface) ;
+#   4. règle udev pour accéder aux Stream Deck sans root (sudo, après confirmation).
 # Prérequis : `make build` (le binaire release embarque l'UI).
 set -euo pipefail
 
 # shellcheck source=packaging/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# shellcheck source=packaging/desktop/install-desktop.sh
+source "$PACKAGING_DIR/desktop/install-desktop.sh"
 
 readonly RELEASE_BINARY="$REPO_ROOT/target/release/hubergamof"
 readonly UNIT_TEMPLATE="$PACKAGING_DIR/systemd/$SERVICE_NAME"
@@ -63,6 +67,11 @@ install_unit() {
 	systemctl --user restart "$SERVICE_NAME"
 }
 
+install_launcher() {
+	info "Installation du lanceur de bureau dans $DATA_DIR/applications"
+	install_desktop_entry "$INSTALLED_BINARY" "$DATA_DIR"
+}
+
 install_udev_rule() {
 	if [[ "$SKIP_UDEV" == true ]]; then
 		info "Règle udev ignorée (--no-udev)."
@@ -97,6 +106,7 @@ main() {
 	check_pactl
 	install_binary
 	install_unit
+	install_launcher
 	install_udev_rule
 	info "HuBergamof installé. État : systemctl --user status $SERVICE_NAME"
 }

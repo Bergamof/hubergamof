@@ -56,7 +56,8 @@ async function show(assignment: DialAssignment = VOLUME) {
 		moduleOf: (kind: string) => MODULES.find((candidate) => candidate.kind === kind),
 		headingId: 'details-heading',
 		onassign,
-		onapply: vi.fn()
+		onapply: vi.fn(),
+		ondiscard: vi.fn()
 	});
 	return { onassign };
 }
