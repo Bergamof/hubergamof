@@ -240,10 +240,13 @@ fn compose_args(
             }
         }
     }
-    if let Some(service) = scope.service() {
-        let service = service_argument(service)?;
+    let services = scope.services();
+    if !services.is_empty() {
         // Even a name that passed the check is never read as an option.
-        args.extend(["--".into(), service]);
+        args.push("--".into());
+        for service in services {
+            args.push(service_argument(service)?);
+        }
     }
     Ok(args)
 }
@@ -298,7 +301,7 @@ fn service_argument(service: &str) -> Result<OsString, DockerError> {
 
 /// Whether `name` is a service name compose allows (letters, digits, `.`,
 /// `_` and `-`, not starting with a symbol): never an option.
-fn is_service_name(name: &str) -> bool {
+pub(super) fn is_service_name(name: &str) -> bool {
     name.chars()
         .next()
         .is_some_and(|c| c.is_ascii_alphanumeric())
@@ -409,7 +412,7 @@ mod tests {
     }
 
     fn line_for(service: &str, action: ComposeAction) -> String {
-        let scope = ComposeScope::Service(service.into());
+        let scope = ComposeScope::of(Some(service));
         command_line(&compose_args(HOST, &running("shop"), &scope, action).unwrap())
     }
 
@@ -529,6 +532,31 @@ mod tests {
     }
 
     #[test]
+    fn several_services_share_one_separator_and_keep_their_order() {
+        let scope = ComposeScope::of_services(vec!["app2".into(), "app1".into()]);
+        let line =
+            |action| command_line(&compose_args(HOST, &running("shop"), &scope, action).unwrap());
+        assert!(line(ComposeAction::Up(UpVariant::Plain)).ends_with(" up --detach -- app2 app1"));
+        assert!(
+            line(ComposeAction::Down { volumes: true }).ends_with(" down --volumes -- app2 app1")
+        );
+    }
+
+    #[test]
+    fn one_invalid_service_among_several_refuses_the_whole_action() {
+        let scope = ComposeScope::of_services(vec!["app1".into(), "--rm".into(), "app2".into()]);
+        assert!(matches!(
+            compose_args(
+                HOST,
+                &running("shop"),
+                &scope,
+                ComposeAction::Up(UpVariant::Plain)
+            ),
+            Err(DockerError::InvalidTarget(_))
+        ));
+    }
+
+    #[test]
     fn a_service_name_is_never_taken_for_an_option() {
         for name in [
             "--rm",
@@ -539,7 +567,7 @@ mod tests {
             "../web",
             &"x".repeat(MAX_SERVICE_NAME_BYTES + 1),
         ] {
-            let scope = ComposeScope::Service(name.into());
+            let scope = ComposeScope::of(Some(name));
             assert!(
                 matches!(
                     compose_args(

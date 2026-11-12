@@ -119,10 +119,7 @@ impl Module for Inbox {
                     key: KeyContent::with_icon(&BELL, EMPTY_LABEL),
                 });
             }
-            PageContent {
-                title: NAME.into(),
-                items,
-            }
+            PageContent::new(NAME, items)
         })
     }
 

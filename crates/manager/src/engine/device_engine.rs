@@ -15,7 +15,10 @@ use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 
 use super::feedback::{Marks, Surface};
-use super::frame::{Frame, FrameKey, KeyFace, KeyTarget, NotificationFace, StripOverlay};
+use super::frame::{
+    ContextFace, ContextGesture, Frame, FrameKey, KeyFace, KeyTarget, NotificationFace,
+    StripOverlay,
+};
 use super::handle::{REQUEST_CAPACITY, Request};
 use super::instances::{Call, Instances, Outcome, RoutedEvent};
 use super::layout::KeyGrid;
@@ -86,6 +89,22 @@ impl HeldKey {
     }
 }
 
+/// The contextual dial held pressed on a page that declares a long press:
+/// its action waits for the hold to last, or for the release.
+struct HeldDial {
+    dial: u8,
+    /// What the dial acts on, as displayed when it was pressed.
+    context: ContextFace,
+    since: Instant,
+}
+
+impl HeldDial {
+    /// When the long press is due.
+    fn due(&self) -> Instant {
+        self.since + HOLD_THRESHOLD
+    }
+}
+
 /// Page shown on the keys, resolved against the live instances.
 enum PageModel {
     Home,
@@ -101,6 +120,7 @@ struct DisplayedPage {
     id: String,
     title: String,
     keys: Vec<FrameKey>,
+    context: Option<ContextFace>,
 }
 
 /// What woke the engine up.
@@ -114,6 +134,8 @@ enum Wake {
     NotificationStep,
     /// A key has been held long enough to show its label.
     HoldElapsed,
+    /// The contextual dial has been held long enough for a long press.
+    DialHoldElapsed,
     /// The device had time to settle: the strip is written again.
     StripSettled,
     /// The time shown on the strip changes.
@@ -140,6 +162,11 @@ pub struct DeviceEngine {
     marks: Marks,
     notifications: NotificationCenter,
     held: Option<HeldKey>,
+    /// The contextual dial being held, waiting for a long press or its release.
+    held_dial: Option<HeldDial>,
+    /// The key that held the cursor of the contextual dial when the page was
+    /// last composed: the page scrolls to it when it moves.
+    focus: Option<KeyTarget>,
     /// Brightness the device last accepted, `None` after a failure: applied
     /// again with the next configuration.
     applied_brightness: Option<u8>,
@@ -220,6 +247,8 @@ impl DeviceEngine {
             marks: Marks::default(),
             notifications,
             held: None,
+            held_dial: None,
+            focus: None,
             applied_brightness,
             last_frame: None,
             strip_settle: None,
@@ -292,6 +321,10 @@ impl DeviceEngine {
                     }
                     self.refresh_or_log().await;
                 }
+                Wake::DialHoldElapsed => {
+                    self.long_press_context().await;
+                    self.refresh_or_log().await;
+                }
                 Wake::FeedbackExpired => {
                     self.marks.expire(Instant::now());
                     self.refresh_or_log().await;
@@ -335,6 +368,9 @@ impl DeviceEngine {
                 () = sleep_until(self.notifications.next_step()) => Some(Wake::NotificationStep),
                 () = sleep_until(self.held.as_ref().and_then(HeldKey::label_due)) => {
                     Some(Wake::HoldElapsed)
+                }
+                () = sleep_until(self.held_dial.as_ref().map(HeldDial::due)) => {
+                    Some(Wake::DialHoldElapsed)
                 }
                 () = sleep_until(self.strip_settle) => Some(Wake::StripSettled),
                 () = sleep_until(clock_tick) => Some(Wake::ClockTick),
@@ -382,22 +418,25 @@ impl DeviceEngine {
             InputEvent::KeyDown(index) => self.hold_key(index),
             InputEvent::KeyUp(index) => self.release_key(index).await,
             InputEvent::DialRotate { index, ticks } => {
+                // Turning a dial held pressed is neither a press nor a long one.
+                self.held_dial.take_if(|held| held.dial == index);
                 self.dial_input(index, DialInput::Rotate(ticks)).await;
             }
-            InputEvent::DialDown(index) => self.dial_input(index, DialInput::Press).await,
+            InputEvent::DialDown(index) => self.dial_down(index).await,
+            InputEvent::DialUp(index) => self.release_dial(index).await,
             InputEvent::TouchTap { .. } => self.tap_strip(),
-            // Releases of dials act on nothing; swipes are not used yet.
-            InputEvent::DialUp(_) | InputEvent::TouchSwipe { .. } | InputEvent::Disconnected => {}
+            // Swipes are not used yet.
+            InputEvent::TouchSwipe { .. } | InputEvent::Disconnected => {}
         }
     }
 
     /// A simulated input of the web UI: a key press is complete (pressed
-    /// and released at once), as nothing holds a key there.
+    /// and released at once), as nothing holds a key or a dial there.
     async fn handle_simulated_input(&mut self, event: InputEvent) {
-        if let InputEvent::KeyDown(index) = event {
-            self.press_key(index).await;
-        } else {
-            self.handle_input(event).await;
+        match event {
+            InputEvent::KeyDown(index) => self.press_key(index).await,
+            InputEvent::DialDown(index) => self.dial_input(index, DialInput::Press).await,
+            _ => self.handle_input(event).await,
         }
     }
 
@@ -463,12 +502,7 @@ impl DeviceEngine {
     }
 
     async fn dial_input(&mut self, dial: u8, input: DialInput) {
-        let assignment = self
-            .config
-            .dials
-            .get(usize::from(dial))
-            .cloned()
-            .unwrap_or(DialAssignment::None);
+        let assignment = self.dial_assignment(dial);
         if self.notifications.shown().is_some() {
             // Under a notification only the navigation dial acts: its press
             // removes the notification, leaving it unread.
@@ -480,17 +514,101 @@ impl DeviceEngine {
         match assignment {
             DialAssignment::Navigation => self.navigate(input),
             DialAssignment::Module { instance, function } => {
-                let surfaces = if self.has_strip {
-                    vec![Surface::Dial(dial)]
-                } else {
-                    Vec::new()
-                };
+                let surfaces = self.pressed_dial_surfaces(dial);
                 self.run_handler(&instance, input.into_call(function), surfaces)
                     .await;
             }
-            // Contextual function: not defined yet, nothing to do.
-            DialAssignment::Contextual | DialAssignment::None => {}
+            DialAssignment::Contextual => self.context_input(dial, input).await,
+            DialAssignment::None => {}
         }
+    }
+
+    fn dial_assignment(&self, dial: u8) -> DialAssignment {
+        self.config
+            .dials
+            .get(usize::from(dial))
+            .cloned()
+            .unwrap_or(DialAssignment::None)
+    }
+
+    /// The reminder of `dial` shows the outcome of what it does.
+    fn pressed_dial_surfaces(&self, dial: u8) -> Vec<Surface> {
+        if self.has_strip {
+            vec![Surface::Dial(dial)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// A press of a dial of the device. The contextual dial starts holding
+    /// when the page displayed declares a long press, its press then waiting
+    /// for the release; otherwise the press acts at once.
+    async fn dial_down(&mut self, dial: u8) {
+        if let Some(held) = self.start_holding_dial(dial) {
+            self.held_dial = Some(held);
+            return;
+        }
+        self.dial_input(dial, DialInput::Press).await;
+    }
+
+    fn start_holding_dial(&self, dial: u8) -> Option<HeldDial> {
+        if self.dial_assignment(dial) != DialAssignment::Contextual
+            || self.notifications.shown().is_some()
+        {
+            return None;
+        }
+        let context = self.last_frame.as_ref()?.context.clone()?;
+        context.dial.reacts_to_long_press().then(|| HeldDial {
+            dial,
+            context,
+            since: Instant::now(),
+        })
+    }
+
+    /// The release of `dial`: a press, if it was held for less than a long
+    /// press.
+    async fn release_dial(&mut self, dial: u8) {
+        let Some(held) = self.held_dial.take_if(|held| held.dial == dial) else {
+            return;
+        };
+        if self.notifications.shown().is_none() {
+            self.run_context(dial, &held.context, ContextGesture::Press)
+                .await;
+        }
+    }
+
+    /// The long press of the contextual dial held until it is due.
+    async fn long_press_context(&mut self) {
+        let Some(held) = self.held_dial.take() else {
+            return;
+        };
+        if self.notifications.shown().is_some() {
+            return;
+        }
+        self.run_context(held.dial, &held.context, ContextGesture::LongPress)
+            .await;
+    }
+
+    /// A rotation or a press of the contextual dial: handled by the module
+    /// of the page displayed, if the page declares that it reacts.
+    async fn context_input(&mut self, dial: u8, input: DialInput) {
+        let Some(context) = self.last_frame.as_ref().and_then(|f| f.context.clone()) else {
+            return;
+        };
+        let gesture = match input {
+            DialInput::Rotate(ticks) => ContextGesture::Rotate(ticks),
+            DialInput::Press => ContextGesture::Press,
+        };
+        self.run_context(dial, &context, gesture).await;
+    }
+
+    /// Hands `gesture` to the module of `context`, if its page declares it.
+    async fn run_context(&mut self, dial: u8, context: &ContextFace, gesture: ContextGesture) {
+        let Some(call) = context.call(gesture) else {
+            return;
+        };
+        let surfaces = self.pressed_dial_surfaces(dial);
+        self.run_handler(&context.module, call, surfaces).await;
     }
 
     /// The navigation dial: turning scrolls the rows of the displayed page,
@@ -681,6 +799,8 @@ impl DeviceEngine {
         let info = self.deck.info().clone();
         let saved = spawn_blocking(move || store.save(&info, config)).await??;
         self.instances.sync(&saved.modules);
+        // A hold started under the previous configuration has no meaning.
+        self.held_dial = None;
         let refresh_changed =
             saved.strip.system_refresh_seconds != self.config.strip.system_refresh_seconds;
         self.config = saved.clone();
@@ -774,6 +894,7 @@ impl DeviceEngine {
         }
         loop {
             let page = self.displayed_page();
+            self.follow_focus(&page.keys);
             self.clamp_row(page.keys.len());
             let frame = self.compose(page);
             let failed = self.instances.take_failures();
@@ -801,6 +922,22 @@ impl DeviceEngine {
         )))
     }
 
+    /// Scrolls to the key holding the cursor of the contextual dial when it
+    /// moved, so that the user always sees it; a page the user scrolls
+    /// elsewhere is left alone until the cursor moves again.
+    fn follow_focus(&mut self, keys: &[FrameKey]) {
+        let focused = keys.iter().position(|key| key.face.focused);
+        let target = focused.and_then(|index| keys[index].target.clone());
+        if target == self.focus {
+            return;
+        }
+        if let Some(index) = focused {
+            let row = self.grid.reveal(self.nav.row(), index, keys.len());
+            self.nav.set_row(row);
+        }
+        self.focus = target;
+    }
+
     /// Keeps the visible row within the page, which may have shrunk since
     /// the last scroll.
     fn clamp_row(&mut self, item_count: usize) {
@@ -814,6 +951,7 @@ impl DeviceEngine {
                 id: HOME_PAGE_ID.to_owned(),
                 title: HOME_PAGE_TITLE.to_owned(),
                 keys: self.home_keys(),
+                context: None,
             },
             PageModel::Module {
                 module,
@@ -822,6 +960,11 @@ impl DeviceEngine {
             } => DisplayedPage {
                 id: format!("{module}/{page}"),
                 title: content.title,
+                context: Some(ContextFace {
+                    module: module.clone(),
+                    page: page.clone(),
+                    dial: content.context_dial,
+                }),
                 keys: content
                     .items
                     .into_iter()
@@ -854,9 +997,10 @@ impl DeviceEngine {
                     .unwrap_or_default()
             })
             .collect();
+        let positions = self.grid.max_row(page.keys.len()) + 1;
         let strip = self
             .has_strip
-            .then(|| self.strip_face(&page.title, row, self.grid.max_row(page.keys.len()) + 1));
+            .then(|| self.strip_face(&page.title, row, positions, page.context.as_ref()));
         Frame {
             strip,
             page: PageSummary {
@@ -867,6 +1011,7 @@ impl DeviceEngine {
             },
             keys,
             overlay: self.strip_overlay(),
+            context: page.context,
             theme: self.config.theme,
         }
     }

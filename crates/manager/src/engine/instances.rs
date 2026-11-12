@@ -66,6 +66,9 @@ pub(crate) enum Call {
     ItemPress(PageId, ItemId),
     DialRotate(DialFunctionId, i32),
     DialPress(DialFunctionId),
+    ContextRotate(PageId, i32),
+    ContextPress(PageId),
+    ContextLongPress(PageId),
     Event(ModuleEvent),
 }
 
@@ -429,6 +432,13 @@ fn invoke(module: &mut dyn Module, call: Call) -> HandlerFuture<'_> {
             Box::pin(async move { module.on_dial_rotate(&function, ticks).await })
         }
         Call::DialPress(function) => Box::pin(async move { module.on_dial_press(&function).await }),
+        Call::ContextRotate(page, ticks) => {
+            Box::pin(async move { module.on_context_rotate(&page, ticks).await })
+        }
+        Call::ContextPress(page) => Box::pin(async move { module.on_context_press(&page).await }),
+        Call::ContextLongPress(page) => {
+            Box::pin(async move { module.on_context_long_press(&page).await })
+        }
         Call::Event(event) => module.on_event(event),
     }
 }

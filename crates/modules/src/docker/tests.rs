@@ -1,8 +1,9 @@
 use hubergamof_module_api::testing::TestContext;
-use hubergamof_module_api::{ImageLibrary, TaskScope};
+use hubergamof_module_api::{ContextDial, ImageLibrary, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use super::pages::{CONTAINER_PREFIX, SERVICE_PREFIX};
 use super::render::{container_item, status_label};
 use super::*;
 
@@ -1113,4 +1114,649 @@ async fn services_of_projects_not_in_the_settings_are_read_when_the_project_is_o
         harness.item(MONITORING, MONITORING_PROMETHEUS).image,
         Some(icons::SERVICE_PLANNED.clone())
     );
+}
+
+// ---------------------------------------------------------------- Selection
+
+const API: &str = "container/boutique-api-1";
+const DB: &str = "container/boutique-db-1";
+const PROMETHEUS: &str = "container/supervision-prometheus-1";
+
+impl Harness {
+    async fn rotate(&mut self, page: &str, ticks: i32) {
+        self.module.on_context_rotate(&page.into(), ticks).await;
+    }
+
+    async fn tick(&mut self, page: &str) {
+        self.module.on_context_press(&page.into()).await;
+    }
+
+    async fn tick_all(&mut self, page: &str) {
+        self.module.on_context_long_press(&page.into()).await;
+    }
+
+    /// Moves the cursor of the shop page to `item` and presses the dial:
+    /// ticks the service, or unticks it.
+    async fn toggle_item(&mut self, item: &str) {
+        let entries = self
+            .keys_where(SHOP, |_| true)
+            .into_iter()
+            .filter(|id| !is_action(id))
+            .count();
+        // From wherever the cursor is, forward until it rests on `item`.
+        for _ in 0..entries {
+            if self.keys_where(SHOP, |key| key.focused) == [item] {
+                break;
+            }
+            self.rotate(SHOP, 1).await;
+        }
+        assert_eq!(self.keys_where(SHOP, |key| key.focused), [item]);
+        self.tick(SHOP).await;
+    }
+
+    fn dial(&self, page: &str) -> ContextDial {
+        self.page(page).unwrap().context_dial
+    }
+
+    /// The ids of the items of `page` whose key satisfies `matching`.
+    fn keys_where(&self, page: &str, matching: impl Fn(&KeyContent) -> bool) -> Vec<String> {
+        self.page(page)
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|item| matching(&item.key))
+            .map(|item| item.id.0)
+            .collect()
+    }
+
+    fn focused(&self, page: &str) -> Vec<String> {
+        self.keys_where(page, |key| key.focused)
+    }
+
+    fn ticked(&self, page: &str) -> Vec<String> {
+        self.keys_where(page, |key| key.checked)
+    }
+}
+
+fn is_action(item: &str) -> bool {
+    !item.starts_with(CONTAINER_PREFIX) && !item.starts_with(SERVICE_PREFIX)
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_the_page_of_a_project_declares_the_contextual_dial() {
+    let harness = Harness::start(&json!({})).await;
+    assert_eq!(
+        harness.dial(SHOP),
+        ContextDial::none()
+            .rotating("Choisir")
+            .long_pressing("Tout"),
+        "nothing to press until the cursor rests on an entry"
+    );
+    for page in [MAIN_PAGE, SHOP_UP, SHOP_DOWN, REDIS, WEB_UP] {
+        assert_eq!(harness.dial(page), ContextDial::none(), "{page}");
+    }
+    assert_eq!(harness.focused(SHOP), Vec::<String>::new());
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+}
+
+#[tokio::test(start_paused = true)]
+async fn turning_moves_the_cursor_over_the_entries_and_wraps_around() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.rotate(SHOP, 1).await;
+    assert_eq!(harness.focused(SHOP), [API]);
+    harness.rotate(SHOP, 1).await;
+    assert_eq!(harness.focused(SHOP), [DB]);
+    harness.rotate(SHOP, 2).await;
+    assert_eq!(harness.focused(SHOP), [API], "after the last, the first");
+    harness.rotate(SHOP, -1).await;
+    assert_eq!(harness.focused(SHOP), [WEB], "before the first, the last");
+
+    // The first step back with no cursor lands on the last entry.
+    let mut other = Harness::start(&json!({})).await;
+    other.rotate(SHOP, -1).await;
+    assert_eq!(other.focused(SHOP), [WEB]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn pressing_ticks_and_unticks_the_entry_under_the_cursor() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.tick(SHOP).await;
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new(), "no cursor yet");
+
+    harness.rotate(SHOP, 1).await;
+    assert_eq!(harness.dial(SHOP).hint.press.as_deref(), Some("Cocher"));
+    harness.tick(SHOP).await;
+    assert_eq!(harness.ticked(SHOP), [API]);
+    assert_eq!(harness.focused(SHOP), [API], "the cursor stays on it");
+    assert_eq!(harness.dial(SHOP).hint.press.as_deref(), Some("Décocher"));
+    assert_eq!(label(&harness.item(SHOP, "start-all")), "Démarrer (1)");
+    assert_eq!(label(&harness.item(SHOP, "stop-all")), "Arrêter (1)");
+
+    harness.tick(SHOP).await;
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+    assert_eq!(label(&harness.item(SHOP, "start-all")), "Tout démarrer");
+}
+
+#[tokio::test(start_paused = true)]
+async fn holding_ticks_every_entry_then_none() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    harness.tick_all(SHOP).await;
+    assert_eq!(harness.ticked(SHOP), [API, DB, WEB], "not all were ticked");
+    assert_eq!(harness.dial(SHOP).long_press.as_deref(), Some("Aucun"));
+    assert_eq!(label(&harness.item(SHOP, "start-all")), "Démarrer (3)");
+
+    harness.tick_all(SHOP).await;
+    assert_eq!(
+        harness.ticked(SHOP),
+        Vec::<String>::new(),
+        "all were ticked"
+    );
+    assert_eq!(harness.dial(SHOP).long_press.as_deref(), Some("Tout"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_up_works_on_the_ticked_services_only_and_spends_the_selection() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.press(MAIN_PAGE, SHOP).await;
+    harness.toggle_item(WEB).await;
+    harness.toggle_item(API).await;
+    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique (2)");
+
+    assert_eq!(
+        harness.press(SHOP_UP, "up-build").await,
+        [Command::BackTo(SHOP.into())]
+    );
+    // The selection is spent: nothing ticked, no cursor, whole-project labels.
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+    assert_eq!(harness.focused(SHOP), Vec::<String>::new());
+    assert_eq!(label(&harness.item(SHOP, "start-all")), "Tout démarrer");
+    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique");
+    // Only the services it works on show it; the outcome marks each of them.
+    assert_eq!(label(&harness.item(SHOP, API)), "api-1 Build…");
+    assert_eq!(label(&harness.item(SHOP, WEB)), "web-1 Build…");
+    assert_eq!(label(&harness.item(SHOP, DB)), "db-1");
+    assert_eq!(
+        harness.settle().await,
+        [
+            feedback(SHOP, API, Feedback::Ok),
+            feedback(SHOP, "service/boutique/api", Feedback::Ok),
+            feedback(SHOP, WEB, Feedback::Ok),
+            feedback(SHOP, "service/boutique/web", Feedback::Ok),
+        ]
+    );
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "up boutique --build api web"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn without_a_selection_an_up_is_the_plain_one() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.press(SHOP_UP, "up-plain").await;
+    harness.settle().await;
+    assert_eq!(harness.docker.actions().last().unwrap(), "up boutique");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_down_works_on_the_ticked_services_once_confirmed() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(DB).await;
+    assert_eq!(
+        harness.page(SHOP_DOWN).unwrap().title,
+        "Down · boutique (1)"
+    );
+    assert_eq!(harness.press(SHOP_DOWN, "down-keep").await, []);
+    assert_eq!(
+        harness.press(SHOP_DOWN, "down-keep").await,
+        [Command::BackTo(SHOP.into())]
+    );
+    harness.settle().await;
+    assert_eq!(harness.docker.actions().last().unwrap(), "down boutique db");
+    assert!(harness.status("boutique-db-1").is_none());
+    assert_eq!(
+        harness.status("boutique-api-1"),
+        Some(ContainerStatus::Running)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_pages_of_a_service_ignore_the_selection() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    harness.toggle_item(DB).await;
+    assert_eq!(harness.page(WEB_UP).unwrap().title, "Up · web");
+    harness.press(WEB_UP, "up-plain").await;
+    harness.settle().await;
+    assert_eq!(harness.docker.actions().last().unwrap(), "up boutique web");
+    assert_eq!(
+        harness.ticked(SHOP),
+        [API, DB],
+        "an action on one service leaves the selection alone"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_and_start_work_on_the_ticked_services_only() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    harness.toggle_item(WEB).await;
+    assert_eq!(harness.press(SHOP, "stop-all").await, []);
+    harness.settle().await;
+    assert_eq!(
+        harness.status("boutique-api-1"),
+        Some(ContainerStatus::Exited)
+    );
+    assert_eq!(
+        harness.status("boutique-web-1"),
+        Some(ContainerStatus::Exited)
+    );
+    assert_eq!(
+        harness.status("boutique-db-1"),
+        Some(ContainerStatus::Running),
+        "not ticked"
+    );
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new(), "spent");
+
+    harness.toggle_item(WEB).await;
+    harness.press(SHOP, "start-all").await;
+    harness.settle().await;
+    assert_eq!(
+        harness.status("boutique-web-1"),
+        Some(ContainerStatus::Running)
+    );
+    assert_eq!(
+        harness.status("boutique-api-1"),
+        Some(ContainerStatus::Exited)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_to_do_on_the_ticked_services_is_a_success_that_keeps_the_selection() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    // Already running: nothing to start.
+    assert_eq!(
+        harness.press(SHOP, "start-all").await,
+        [feedback(SHOP, "start-all", Feedback::Ok)]
+    );
+    assert_eq!(harness.ticked(SHOP), [API]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_selection_starts_over_with_the_project_page() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    // Opening the project again from the main page.
+    harness.press(MAIN_PAGE, SHOP).await;
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+    assert_eq!(harness.focused(SHOP), Vec::<String>::new());
+
+    // Another project takes the selection over: the first one's is gone.
+    harness.toggle_item(DB).await;
+    harness.press(MAIN_PAGE, MONITORING).await;
+    harness.rotate(MONITORING, 1).await;
+    harness.tick(MONITORING).await;
+    assert_eq!(harness.ticked(MONITORING).len(), 1);
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+    assert_eq!(label(&harness.item(SHOP, "start-all")), "Tout démarrer");
+}
+
+#[tokio::test(start_paused = true)]
+async fn entries_that_are_gone_leave_the_selection() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    harness.toggle_item(WEB).await;
+    harness.docker.change_externally(|containers| {
+        containers.retain(|c| c.name != "boutique-web-1");
+    });
+    harness.settle().await;
+    assert_eq!(harness.ticked(SHOP), [API]);
+    assert_eq!(
+        harness.focused(SHOP),
+        Vec::<String>::new(),
+        "the cursor was on web"
+    );
+    assert_eq!(label(&harness.item(SHOP, "stop-all")), "Arrêter (1)");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_services_of_a_stopped_project_are_ticked_too() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.press(MAIN_PAGE, MONITORING).await;
+    harness.rotate(MONITORING, 1).await;
+    harness.rotate(MONITORING, 1).await;
+    harness.tick(MONITORING).await;
+    assert_eq!(harness.ticked(MONITORING), [PROMETHEUS]);
+    harness.press(MONITORING, "start-all").await;
+    harness.settle().await;
+    assert_eq!(
+        harness.status("supervision-prometheus-1"),
+        Some(ContainerStatus::Running)
+    );
+    assert_eq!(
+        harness.status("supervision-grafana-1"),
+        Some(ContainerStatus::Exited),
+        "not ticked"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn services_without_container_are_ticked_and_brought_up_with_the_rest() {
+    let mut harness = shop_taken_down().await;
+    harness.press(MAIN_PAGE, SHOP).await;
+    harness.toggle_item("service/boutique/db").await;
+    harness.toggle_item("service/boutique/api").await;
+    assert_eq!(
+        harness.ticked(SHOP),
+        ["service/boutique/api", "service/boutique/db"]
+    );
+    harness.press(SHOP_UP, "up-plain").await;
+    harness.settle().await;
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "up boutique api db"
+    );
+    assert_eq!(
+        harness.status("boutique-api-1"),
+        Some(ContainerStatus::Running)
+    );
+    assert!(harness.status("boutique-web-1").is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_replicas_of_a_service_are_ticked_together() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.change_externally(|containers| {
+        let mut replica = containers
+            .iter()
+            .find(|c| c.name == "boutique-web-1")
+            .unwrap()
+            .clone();
+        replica.id = "web-2".into();
+        replica.name = "boutique-web-2".into();
+        containers.push(replica);
+    });
+    harness.settle().await;
+    harness.toggle_item("container/boutique-web-2").await;
+    assert_eq!(
+        harness.ticked(SHOP),
+        [WEB, "container/boutique-web-2"],
+        "both containers of the service"
+    );
+    assert_eq!(label(&harness.item(SHOP, "stop-all")), "Arrêter (1)");
+    assert_eq!(
+        harness.focused(SHOP),
+        ["container/boutique-web-2"],
+        "the cursor is on one of them"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_contextual_dial_does_nothing_off_the_page_of_a_project() {
+    let mut harness = Harness::start(&json!({})).await;
+    for page in [MAIN_PAGE, SHOP_UP, REDIS, "elsewhere"] {
+        harness.rotate(page, 1).await;
+        harness.tick(page).await;
+        harness.tick_all(page).await;
+    }
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+    assert_eq!(harness.focused(SHOP), Vec::<String>::new());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_confirmation_does_not_survive_a_change_of_selection() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(DB).await;
+    assert_eq!(harness.press(SHOP_DOWN, "down-keep").await, []);
+
+    // Back on the page of the project, another service is ticked.
+    harness.toggle_item(API).await;
+    assert_eq!(
+        harness.press(SHOP_DOWN, "down-keep").await,
+        [],
+        "what was confirmed is not what would go: confirm again"
+    );
+    harness.settle().await;
+    assert!(
+        harness
+            .docker
+            .actions()
+            .iter()
+            .all(|action| !action.starts_with("down")),
+        "nothing was taken down yet"
+    );
+    assert_eq!(
+        harness.press(SHOP_DOWN, "down-keep").await,
+        [Command::BackTo(SHOP.into())]
+    );
+    harness.settle().await;
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "down boutique api db"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_selection_emptied_by_vanished_services_refuses_instead_of_widening() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(WEB).await;
+    assert_eq!(harness.press(SHOP_DOWN, "down-keep").await, []);
+    harness.docker.change_externally(|containers| {
+        containers.retain(|c| c.name != "boutique-web-1");
+    });
+    harness.settle().await;
+
+    // The whole project is not what the user meant: nothing goes.
+    assert_eq!(
+        harness.press(SHOP_DOWN, "down-keep").await,
+        Command::alert()
+    );
+    assert_eq!(
+        harness.press(SHOP_DOWN, "down-keep").await,
+        Command::alert()
+    );
+    assert_eq!(harness.press(SHOP_UP, "up-plain").await, Command::alert());
+    assert_eq!(harness.press(SHOP, "stop-all").await, Command::alert());
+    assert_eq!(harness.press(SHOP, "start-all").await, Command::alert());
+    harness.settle().await;
+    assert_eq!(harness.docker.actions(), Vec::<String>::new());
+    assert_eq!(
+        harness.status("boutique-api-1"),
+        Some(ContainerStatus::Running)
+    );
+
+    // Ticking again starts over, on what is there.
+    harness.toggle_item(API).await;
+    harness.press(SHOP_UP, "up-plain").await;
+    harness.settle().await;
+    assert_eq!(harness.docker.actions().last().unwrap(), "up boutique api");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_selection_is_forgotten_when_the_project_is_opened_again() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(WEB).await;
+    harness.docker.change_externally(|containers| {
+        containers.retain(|c| c.name != "boutique-web-1");
+    });
+    harness.settle().await;
+    assert_eq!(harness.press(SHOP_UP, "up-plain").await, Command::alert());
+    harness.press(MAIN_PAGE, SHOP).await;
+    assert_eq!(
+        harness.press(SHOP_UP, "up-plain").await,
+        [Command::BackTo(SHOP.into())],
+        "a plain up of the project"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_service_with_an_odd_name_cannot_be_ticked() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.change_externally(|containers| {
+        let mut odd = containers
+            .iter()
+            .find(|c| c.name == "boutique-web-1")
+            .unwrap()
+            .clone();
+        odd.id = "odd".into();
+        odd.name = "boutique-odd-1".into();
+        odd.compose = odd.compose.map(|labels| {
+            ComposeLabels::new(labels.project, labels.working_dir, labels.config_files)
+                .with_service("--rm")
+        });
+        containers.push(odd);
+    });
+    harness.settle().await;
+    harness.tick_all(SHOP).await;
+    assert_eq!(harness.ticked(SHOP), [API, DB, WEB], "not the odd one");
+    harness.press(SHOP_UP, "up-plain").await;
+    harness.settle().await;
+    assert_eq!(
+        harness.docker.actions().last().unwrap(),
+        "up boutique api db web"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_project_with_nothing_to_tick_declares_nothing() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.change_externally(|containers| {
+        for container in containers
+            .iter_mut()
+            .filter(|c| c.name.starts_with("boutique-"))
+        {
+            container.compose = container
+                .compose
+                .take()
+                .map(|labels| ComposeLabels::new(labels.project, None, labels.config_files));
+        }
+    });
+    harness.settle().await;
+    assert_eq!(harness.dial(SHOP), ContextDial::none());
+    harness.rotate(SHOP, 1).await;
+    harness.tick_all(SHOP).await;
+    assert_eq!(harness.focused(SHOP), Vec::<String>::new());
+    assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_project_that_vanishes_takes_its_selection_along() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    harness.docker.change_externally(|containers| {
+        containers.retain(|c| !c.name.starts_with("boutique-"));
+    });
+    harness.settle().await;
+    assert!(harness.page(SHOP).is_none(), "back to the main page");
+    harness.rotate(SHOP, 1).await;
+    harness.tick(SHOP).await;
+    harness.tick_all(SHOP).await;
+    assert!(harness.page(SHOP).is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replica_that_goes_leaves_its_service_ticked_and_the_cursor_behind() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.change_externally(|containers| {
+        let mut replica = containers
+            .iter()
+            .find(|c| c.name == "boutique-web-1")
+            .unwrap()
+            .clone();
+        replica.id = "web-2".into();
+        replica.name = "boutique-web-2".into();
+        containers.push(replica);
+    });
+    harness.settle().await;
+    harness.toggle_item("container/boutique-web-2").await;
+    harness.docker.change_externally(|containers| {
+        containers.retain(|c| c.name != "boutique-web-2");
+    });
+    harness.settle().await;
+    assert_eq!(harness.ticked(SHOP), [WEB], "the other replica remains");
+    assert_eq!(harness.focused(SHOP), Vec::<String>::new());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_replicas_of_a_ticked_service_are_all_stopped() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.docker.change_externally(|containers| {
+        let mut replica = containers
+            .iter()
+            .find(|c| c.name == "boutique-web-1")
+            .unwrap()
+            .clone();
+        replica.id = "web-2".into();
+        replica.name = "boutique-web-2".into();
+        containers.push(replica);
+    });
+    harness.settle().await;
+    harness.toggle_item("container/boutique-web-2").await;
+    harness.press(SHOP, "stop-all").await;
+    harness.settle().await;
+    for name in ["boutique-web-1", "boutique-web-2"] {
+        assert_eq!(
+            harness.status(name),
+            Some(ContainerStatus::Exited),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        harness.status("boutique-api-1"),
+        Some(ContainerStatus::Running)
+    );
+    assert_eq!(
+        harness.status("boutique-db-1"),
+        Some(ContainerStatus::Running)
+    );
+
+    // A service named once in the command, whatever its replicas.
+    harness.toggle_item(WEB).await;
+    harness.press(SHOP_UP, "up-plain").await;
+    harness.settle().await;
+    assert_eq!(harness.docker.actions().last().unwrap(), "up boutique web");
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_operation_already_running_refuses_another_and_keeps_the_selection() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    assert_eq!(
+        harness.press(SHOP_UP, "up-plain").await,
+        [Command::BackTo(SHOP.into())]
+    );
+    harness.toggle_item(WEB).await;
+    assert_eq!(harness.press(SHOP_UP, "up-build").await, Command::alert());
+    assert_eq!(harness.ticked(SHOP), [WEB], "kept for the next try");
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_services_that_are_planned_are_a_success_that_keeps_the_selection() {
+    let mut harness = shop_taken_down().await;
+    harness.press(MAIN_PAGE, SHOP).await;
+    harness.toggle_item("service/boutique/api").await;
+    assert_eq!(
+        harness.press(SHOP, "stop-all").await,
+        [feedback(SHOP, "stop-all", Feedback::Ok)],
+        "no container to stop"
+    );
+    assert_eq!(harness.ticked(SHOP), ["service/boutique/api"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_selection_survives_a_visit_to_a_sub_page() {
+    let mut harness = Harness::start(&json!({})).await;
+    harness.toggle_item(API).await;
+    assert_eq!(
+        harness.press(SHOP, "up").await,
+        [Command::OpenPage(SHOP_UP.into())]
+    );
+    assert_eq!(
+        harness.press(SHOP, API).await,
+        [Command::OpenPage(API.into())]
+    );
+    assert_eq!(harness.ticked(SHOP), [API]);
+    assert_eq!(harness.dial(API), ContextDial::none());
 }

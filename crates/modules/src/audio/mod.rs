@@ -327,17 +327,14 @@ impl Audio {
             .and_then(|snapshot| snapshot.default_device(Direction::Input))
             .is_some_and(|device| device.muted);
         let microphone = if microphone_muted {
-            KeyContent {
-                image: Some(icons::MICROPHONE_MUTED.clone()),
-                label: Some(MICROPHONE_MUTED_LABEL.into()),
-                state: KeyState::Attention,
-            }
+            KeyContent::with_icon(&icons::MICROPHONE_MUTED, MICROPHONE_MUTED_LABEL)
+                .in_state(KeyState::Attention)
         } else {
             KeyContent::with_icon(&icons::MICROPHONE, MICROPHONE_LABEL)
         };
-        PageContent {
-            title: MODULE_LABEL.into(),
-            items: vec![
+        PageContent::new(
+            MODULE_LABEL,
+            vec![
                 item(MICROPHONE_ITEM, microphone),
                 item(
                     OUTPUTS_ITEM,
@@ -348,7 +345,7 @@ impl Audio {
                     KeyContent::with_icon(&icons::MICROPHONE, INPUTS_LABEL),
                 ),
             ],
-        }
+        )
     }
 
     fn devices_page(&self, direction: Direction) -> PageContent {
@@ -381,10 +378,7 @@ impl Audio {
                     .collect()
             })
             .unwrap_or_default();
-        PageContent {
-            title: title.into(),
-            items,
-        }
+        PageContent::new(title, items)
     }
 
     fn handle(&mut self, event: AudioEvent) -> Vec<Command> {

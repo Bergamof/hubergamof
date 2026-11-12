@@ -1,7 +1,8 @@
 //! What the pages and keys of the module show.
 
 use super::actions::{Action, CONTAINER_ACTIONS, PROJECT_ACTIONS};
-use super::pages::compose_service;
+use super::pages::{Page, compose_service};
+use super::selection::{selectables, with_count};
 use super::{
     CONFIRM_LABEL, Container, ContainerStatus, DOWN_ITEM, DOWN_LABEL, Docker, HashMap, Health,
     ImageData, ItemKey, KeyContent, KeyState, MODULE_LABEL, NOT_BUILT_LABEL, Operation, Overview,
@@ -9,15 +10,25 @@ use super::{
     icons, project_id, service_id,
 };
 
+/// An entry of a project page: a container, or a service that has none.
+pub(super) struct Entry {
+    /// What the entries are sorted by.
+    name: String,
+    /// The service it stands for, `None` for a container that records none.
+    pub(super) service: Option<String>,
+    pub(super) item: PageItem,
+}
+
 impl Docker {
     pub(super) fn action_key(&self, page: &PageId, action: Action) -> PageItem {
         let key = ItemKey::new(page, &action.item().into());
+        let ticked = Page::parse(&page.0).map_or(0, |page| self.ticked_on(page));
         let (label, state) = if self.busy.contains(&key) {
-            (action.busy_label(), KeyState::Normal)
+            (action.busy_label().to_owned(), KeyState::Normal)
         } else if self.is_confirming(&key) {
-            (CONFIRM_LABEL, KeyState::Attention)
+            (CONFIRM_LABEL.to_owned(), KeyState::Attention)
         } else {
-            (action.label(), KeyState::Normal)
+            (action.label_for(ticked), KeyState::Normal)
         };
         PageItem {
             id: key.item,
@@ -30,6 +41,18 @@ impl Docker {
             .iter()
             .map(|action| self.action_key(page, *action));
         let variants = [up_item(), down_item()];
+        let entries = self.project_entries(project);
+        let context_dial = self.context_dial(project, &selectables(&entries));
+        let entries = entries
+            .into_iter()
+            .map(|entry| self.mark_selection(&project.name, entry));
+        let items = actions.chain(variants).chain(entries).collect();
+        PageContent::new(project.shown_name(), items).with_context_dial(context_dial)
+    }
+
+    /// The containers of `project` and its services without container, sorted
+    /// by name, as the keys after its actions.
+    pub(super) fn project_entries(&self, project: &Project) -> Vec<Entry> {
         let prefix = format!("{}-", project.name);
         let built = project.containers.iter().map(|container| {
             let short = container
@@ -41,10 +64,11 @@ impl Docker {
                 .as_ref()
                 .and_then(|c| c.service.as_deref());
             let item = self.working(project, service, container_id(&container.name), short);
-            (
-                short,
-                item.unwrap_or_else(|| container_item(container, short)),
-            )
+            Entry {
+                name: short.to_owned(),
+                service: service.map(str::to_owned),
+                item: item.unwrap_or_else(|| container_item(container, short)),
+            }
         });
         let planned = project.planned.iter().map(|service| {
             let item = self.working(
@@ -53,19 +77,30 @@ impl Docker {
                 service_id(&project.name, service),
                 service,
             );
-            (
-                service.as_str(),
-                item.unwrap_or_else(|| planned_item(&project.name, service)),
-            )
+            Entry {
+                name: service.clone(),
+                service: Some(service.clone()),
+                item: item.unwrap_or_else(|| planned_item(&project.name, service)),
+            }
         });
-        let mut entries: Vec<(&str, PageItem)> = built.chain(planned).collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        PageContent {
-            title: project.shown_name().to_owned(),
-            items: actions
-                .chain(variants)
-                .chain(entries.into_iter().map(|(_, item)| item))
-                .collect(),
+        let mut entries: Vec<Entry> = built.chain(planned).collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries
+    }
+
+    /// The item of `entry` showing the cursor and the tick of the selection.
+    fn mark_selection(&self, project: &str, entry: Entry) -> PageItem {
+        let (Some(service), Some(selection)) = (entry.service, self.selection.of(project)) else {
+            return entry.item;
+        };
+        let focused = selection.cursor() == Some(entry.item.id.0.as_str());
+        PageItem {
+            id: entry.item.id,
+            key: entry
+                .item
+                .key
+                .checked(selection.is_ticked(&service))
+                .focused(focused),
         }
     }
 
@@ -95,13 +130,11 @@ impl Docker {
         title: String,
         actions: &[Action],
     ) -> PageContent {
-        PageContent {
-            title,
-            items: actions
-                .iter()
-                .map(|action| self.action_key(page, *action))
-                .collect(),
-        }
+        let items = actions
+            .iter()
+            .map(|action| self.action_key(page, *action))
+            .collect();
+        PageContent::new(title, items)
     }
 
     pub(super) fn container_page(
@@ -120,30 +153,25 @@ impl Docker {
             .map(|_| [up_item(), down_item()])
             .into_iter()
             .flatten();
-        PageContent {
-            title: format!(
-                "{}{TITLE_SEPARATOR}{}",
-                container.name,
-                status_label(container)
-            ),
-            items: actions.chain(scoped).collect(),
-        }
+        let title = format!(
+            "{}{TITLE_SEPARATOR}{}",
+            container.name,
+            status_label(container)
+        );
+        PageContent::new(title, actions.chain(scoped).collect())
     }
 
     /// The page of a service no container runs: it can only be brought up.
     pub(super) fn service_page(project: &Project, service: &str) -> Option<PageContent> {
-        project
-            .planned
-            .iter()
-            .any(|name| name == service)
-            .then(|| PageContent {
-                title: format!("{service}{TITLE_SEPARATOR}{NOT_BUILT_LABEL}"),
-                items: project
-                    .target
-                    .as_ref()
-                    .map(|_| vec![up_item()])
-                    .unwrap_or_default(),
-            })
+        project.planned.iter().any(|name| name == service).then(|| {
+            let items = project
+                .target
+                .as_ref()
+                .map(|_| vec![up_item()])
+                .unwrap_or_default();
+            let title = format!("{service}{TITLE_SEPARATOR}{NOT_BUILT_LABEL}");
+            PageContent::new(title, items)
+        })
     }
 }
 
@@ -210,18 +238,19 @@ pub(super) fn main_page(
         .isolated
         .iter()
         .map(|container| container_item(container, &container.name));
-    PageContent {
-        title: MODULE_LABEL.into(),
-        items: projects.chain(containers).collect(),
-    }
+    PageContent::new(MODULE_LABEL, projects.chain(containers).collect())
 }
 
-/// Title of an `up` or `down` page: `label` and what it is about.
-pub(super) fn variants_title(label: &str, project: &Project, service: Option<&str>) -> String {
-    format!(
-        "{label}{TITLE_SEPARATOR}{}",
-        service.unwrap_or_else(|| project.shown_name())
-    )
+/// Title of an `up` or `down` page: `label` and what it is about, with the
+/// number of services ticked when it works on them (`ticked` above zero).
+pub(super) fn variants_title(
+    label: &str,
+    project: &Project,
+    service: Option<&str>,
+    ticked: usize,
+) -> String {
+    let target = service.unwrap_or_else(|| project.shown_name());
+    with_count(&format!("{label}{TITLE_SEPARATOR}{target}"), ticked)
 }
 
 /// Key of a service of a project that has no container.

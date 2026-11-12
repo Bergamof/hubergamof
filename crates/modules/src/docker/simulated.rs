@@ -398,8 +398,10 @@ impl DockerBackend for SimulatedDocker {
 /// The services a compose action is narrowed to, as the end of its record.
 fn scope_suffix(scope: &ComposeScope) -> String {
     scope
-        .service()
-        .map_or_else(String::new, |service| format!(" {service}"))
+        .services()
+        .iter()
+        .flat_map(|service| [" ", service.as_str()])
+        .collect()
 }
 
 fn verb(action: ContainerAction) -> &'static str {

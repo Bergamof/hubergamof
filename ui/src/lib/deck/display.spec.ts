@@ -64,6 +64,7 @@ describe('dialSummary', () => {
 		});
 		expect(dialSummary({ kind: 'contextual' }, instances, moduleOf)).toMatchObject({
 			name: 'Fonction contextuelle',
+			rotate: 'Selon la page',
 			assigned: true
 		});
 	});

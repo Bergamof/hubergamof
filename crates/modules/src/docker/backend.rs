@@ -36,20 +36,34 @@ pub enum UpVariant {
     NoStart,
 }
 
-/// What a compose action is about: the whole project, or one service.
+/// What a compose action is about: the whole project, or some of its
+/// services.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComposeScope {
     /// Every service of the project.
     Project,
-    /// This service only.
-    Service(String),
+    /// These services only (never empty: see [`ComposeScope::of_services`]).
+    Services(Vec<String>),
 }
 
 impl ComposeScope {
     /// The scope of an action on `service` (`None`: the project).
     #[must_use]
     pub fn of(service: Option<&str>) -> Self {
-        service.map_or(Self::Project, |service| Self::Service(service.to_owned()))
+        service.map_or(Self::Project, |service| {
+            Self::Services(vec![service.to_owned()])
+        })
+    }
+
+    /// The scope of an action on `services`, in the order given (none: the
+    /// project).
+    #[must_use]
+    pub fn of_services(services: Vec<String>) -> Self {
+        if services.is_empty() {
+            Self::Project
+        } else {
+            Self::Services(services)
+        }
     }
 
     /// Whether an action of this scope works on `service` of the project
@@ -59,16 +73,18 @@ impl ComposeScope {
     pub fn covers(&self, service: Option<&str>) -> bool {
         match self {
             Self::Project => true,
-            Self::Service(scoped) => service == Some(scoped.as_str()),
+            Self::Services(scoped) => {
+                service.is_some_and(|service| scoped.iter().any(|name| name == service))
+            }
         }
     }
 
-    /// The service, if the scope is one.
+    /// The services the scope names; none for the whole project.
     #[must_use]
-    pub fn service(&self) -> Option<&str> {
+    pub fn services(&self) -> &[String] {
         match self {
-            Self::Project => None,
-            Self::Service(service) => Some(service),
+            Self::Project => &[],
+            Self::Services(services) => services,
         }
     }
 }
@@ -207,8 +223,18 @@ mod tests {
         assert!(!web.covers(Some("db")));
         assert!(!web.covers(None));
         assert_eq!(
-            (web.service(), ComposeScope::of(None)),
-            (Some("web"), ComposeScope::Project)
+            (web.services(), ComposeScope::of(None)),
+            (["web".to_owned()].as_slice(), ComposeScope::Project)
         );
+    }
+
+    #[test]
+    fn a_scope_of_several_services_covers_each_of_them() {
+        let scope = ComposeScope::of_services(vec!["web".into(), "db".into()]);
+        assert!(scope.covers(Some("web")) && scope.covers(Some("db")));
+        assert!(!scope.covers(Some("cache")) && !scope.covers(None));
+        assert_eq!(scope.services(), ["web", "db"]);
+        assert_eq!(ComposeScope::of_services(Vec::new()), ComposeScope::Project);
+        assert_eq!(ComposeScope::Project.services(), Vec::<String>::new());
     }
 }

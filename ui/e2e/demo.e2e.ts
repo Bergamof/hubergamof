@@ -4,7 +4,7 @@ import { DEMO_COMPOSE_FILE, expect, test } from './demo-manager.js';
 
 // Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
 // keys Audio, Docker, IntelliJ, Claude; dials Volume, Pomodoro (no key: it is driven by its dial),
-// Contexte, Navigation.
+// Contextuelle, Navigation.
 
 function key(page: Page, name: string | RegExp): Locator {
 	return page.getByRole('button', { name: typeof name === 'string' ? `Touche ${name}` : name });

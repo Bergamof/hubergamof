@@ -74,7 +74,8 @@ nothing, and the settings of the module of that function.
 	const HOST_DESCRIPTIONS: Readonly<Record<string, string>> = {
 		[NAVIGATION_OPTION]:
 			'Tourner fait défiler les lignes de la page affichée, appuyer revient à la page précédente.',
-		[CONTEXTUAL_OPTION]: 'Fonction qui dépend de ce qui est affiché. Elle n’est pas encore définie.'
+		[CONTEXTUAL_OPTION]:
+			'Dépend de la page affichée : c’est son module qui définit ce que font la rotation et l’appui. Sans module, elle ne fait rien. Dans un projet Docker, elle choisit les services sur lesquels agir.'
 	};
 
 	const uid = $props.id();
@@ -134,7 +135,7 @@ nothing, and the settings of the module of that function.
 			>
 				<option value={NO_DIAL_FUNCTION}>Rien</option>
 				<option value={NAVIGATION_OPTION}>Navigation</option>
-				<option value={CONTEXTUAL_OPTION}>Fonction contextuelle (pas encore définie)</option>
+				<option value={CONTEXTUAL_OPTION}>Fonction contextuelle</option>
 				{#if freeCandidates.length > 0}
 					<optgroup label="Fonctions des modules configurés">
 						{#each freeCandidates as candidate (candidate.instance.id)}
