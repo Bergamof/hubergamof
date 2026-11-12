@@ -38,7 +38,21 @@ impl Face for KeyFace {
     }
 
     fn same_base(&self, other: &Self) -> bool {
-        self.image == other.image && self.label == other.label && self.state == other.state
+        // Destructured without `..`: a field added to the face must be
+        // decided here, being part of the base or not, to compile.
+        let Self {
+            image,
+            label,
+            state,
+            focused,
+            checked,
+            feedback: _,
+        } = self;
+        *image == other.image
+            && *label == other.label
+            && *state == other.state
+            && *focused == other.focused
+            && *checked == other.checked
     }
 }
 
@@ -387,6 +401,8 @@ fn render_key(
         KeyRequest::new(size, image, label)
             .themed(theme)
             .in_state(face.state)
+            .focused(face.focused)
+            .checked(face.checked)
     };
     match renderer.render_key(&request(face.image.as_ref())) {
         Err(error) if face.image.is_some() => {

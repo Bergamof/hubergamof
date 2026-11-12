@@ -1,3 +1,4 @@
+mod context;
 mod modules;
 mod notifications;
 mod pages;

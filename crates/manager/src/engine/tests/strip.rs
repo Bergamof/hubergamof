@@ -58,7 +58,7 @@ async fn the_volume_reminder_follows_the_mute() {
 }
 
 #[tokio::test]
-async fn the_contextual_dial_and_empty_dials_do_nothing() {
+async fn empty_dials_and_the_contextual_dial_on_the_home_page_do_nothing() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     let mut config = fixture.config();
     config.dials = vec![
@@ -76,9 +76,10 @@ async fn the_contextual_dial_and_empty_dials_do_nothing() {
     }
     assert_eq!(fixture.live().page, before);
     assert!(fixture.strip().popup.is_none());
-    // Only the contextual dial says something, for now.
-    assert_eq!(fixture.hint(0).rotate.as_deref(), Some("Contexte"));
-    assert_eq!(fixture.hint(1).rotate, None);
+    // No module page is displayed: no dial says anything.
+    for dial in 0..4 {
+        assert_eq!(fixture.hint(dial).rotate, None);
+    }
 }
 
 #[tokio::test(start_paused = true)]

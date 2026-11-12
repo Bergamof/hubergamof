@@ -4,12 +4,13 @@
 use std::time::Duration;
 
 use hubergamof_module_api::{
-    Feedback, ImageData, ItemId, KeyContent, KeyState, ModuleInstanceId, PageId, Rgb,
+    ContextDial, Feedback, ImageData, ItemId, KeyContent, KeyState, ModuleInstanceId, PageId, Rgb,
     UnreadNotification,
 };
 
 use hubergamof_protocol::DeviceTheme;
 
+use super::instances::Call;
 use super::live::PageSummary;
 use crate::render::ImageSource;
 use crate::strip::StripFace;
@@ -20,6 +21,10 @@ pub(crate) struct KeyFace {
     pub(crate) image: Option<ImageSource>,
     pub(crate) label: Option<String>,
     pub(crate) state: KeyState,
+    /// Holds the cursor of the contextual dial.
+    pub(crate) focused: bool,
+    /// Ticked: a check mark is drawn on it.
+    pub(crate) checked: bool,
     /// Transient outcome mark drawn over the key.
     pub(crate) feedback: Option<Feedback>,
 }
@@ -30,6 +35,8 @@ impl KeyFace {
             image: content.image.map(image_source),
             label: content.label,
             state: content.state,
+            focused: content.focused,
+            checked: content.checked,
             feedback: None,
         }
     }
@@ -38,6 +45,8 @@ impl KeyFace {
         self.image.is_none()
             && self.label.is_none()
             && self.state == KeyState::Normal
+            && !self.focused
+            && !self.checked
             && self.feedback.is_none()
     }
 }
@@ -71,6 +80,42 @@ impl KeyTarget {
 pub(crate) struct FrameKey {
     pub(crate) face: KeyFace,
     pub(crate) target: Option<KeyTarget>,
+}
+
+/// What the contextual dial acts on: the module page displayed, which says
+/// what the dial does there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContextFace {
+    pub(crate) module: ModuleInstanceId,
+    pub(crate) page: PageId,
+    pub(crate) dial: ContextDial,
+}
+
+/// What is done with the contextual dial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextGesture {
+    Rotate(i32),
+    Press,
+    LongPress,
+}
+
+impl ContextFace {
+    /// The handler call for `gesture`, only if the page declares what the
+    /// gesture does: the one place of that rule.
+    pub(crate) fn call(&self, gesture: ContextGesture) -> Option<Call> {
+        let dial = &self.dial;
+        let page = self.page.clone();
+        match gesture {
+            ContextGesture::Rotate(ticks) if dial.reacts_to_rotation() => {
+                Some(Call::ContextRotate(page, ticks))
+            }
+            ContextGesture::Press if dial.reacts_to_press() => Some(Call::ContextPress(page)),
+            ContextGesture::LongPress if dial.reacts_to_long_press() => {
+                Some(Call::ContextLongPress(page))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// A notification over the whole touch strip.
@@ -118,6 +163,8 @@ pub(crate) struct Frame {
     /// The touch strip, `None` on a device without one.
     pub(crate) strip: Option<StripFace>,
     pub(crate) overlay: Option<StripOverlay>,
+    /// The contextual dial of the displayed page; `None` on the home page.
+    pub(crate) context: Option<ContextFace>,
     /// Colours of the surface the keys are drawn on.
     pub(crate) theme: DeviceTheme,
 }

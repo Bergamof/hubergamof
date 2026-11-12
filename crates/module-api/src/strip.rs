@@ -45,6 +45,78 @@ impl DialHint {
     }
 }
 
+/// What the contextual dial does on a page of a module, and the reminder
+/// shown under the strip for it. The page declares it with its content
+/// ([`crate::PageContent::context_dial`]); the host calls a handler only for
+/// the gestures whose text is set, so a module that reacts to a gesture
+/// always says what it does, and a gesture left out does nothing.
+///
+/// The long press has no room in the reminder: its text is declared for the
+/// sake of the rule above and kept for the interface. Built with
+/// [`ContextDial::none`] and its builders: fields may be added without
+/// breaking modules.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ContextDial {
+    /// What turning the dial does, and what pressing it does.
+    pub hint: DialHint,
+    /// What holding the dial pressed does.
+    pub long_press: Option<String>,
+}
+
+impl ContextDial {
+    /// A dial that does nothing.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The same dial, whose rotation does `rotate`.
+    #[must_use]
+    pub fn rotating(self, rotate: impl Into<String>) -> Self {
+        Self {
+            hint: self.hint.rotating(rotate),
+            ..self
+        }
+    }
+
+    /// The same dial, whose press does `press`.
+    #[must_use]
+    pub fn pressing(self, press: impl Into<String>) -> Self {
+        Self {
+            hint: self.hint.pressing(press),
+            ..self
+        }
+    }
+
+    /// The same dial, whose long press does `long_press`.
+    #[must_use]
+    pub fn long_pressing(self, long_press: impl Into<String>) -> Self {
+        Self {
+            long_press: Some(long_press.into()),
+            ..self
+        }
+    }
+
+    /// Whether turning the dial does something.
+    #[must_use]
+    pub fn reacts_to_rotation(&self) -> bool {
+        self.hint.rotate.is_some()
+    }
+
+    /// Whether pressing the dial does something.
+    #[must_use]
+    pub fn reacts_to_press(&self) -> bool {
+        self.hint.press.is_some()
+    }
+
+    /// Whether holding the dial pressed does something.
+    #[must_use]
+    pub fn reacts_to_long_press(&self) -> bool {
+        self.long_press.is_some()
+    }
+}
+
 /// What a module shows in its own place of the touch strip. The host
 /// decides where and how it is drawn, and keeps one place for each kind of
 /// widget it knows: when several instances show the same kind, the first one
@@ -214,6 +286,23 @@ mod tests {
         let hint = DialHint::none().rotating("Volume").pressing("Muet");
         assert_eq!(hint.rotate.as_deref(), Some("Volume"));
         assert_eq!(hint.press.as_deref(), Some("Muet"));
+    }
+
+    #[test]
+    fn the_contextual_dial_reacts_only_to_what_it_declares() {
+        let nothing = ContextDial::none();
+        assert!(!nothing.reacts_to_rotation());
+        assert!(!nothing.reacts_to_press());
+        assert!(!nothing.reacts_to_long_press());
+        let dial = ContextDial::none()
+            .rotating("Choisir")
+            .long_pressing("Tout");
+        assert!(dial.reacts_to_rotation());
+        assert!(!dial.reacts_to_press());
+        assert!(dial.reacts_to_long_press());
+        assert_eq!(dial.hint.rotate.as_deref(), Some("Choisir"));
+        assert_eq!(dial.long_press.as_deref(), Some("Tout"));
+        assert!(dial.pressing("Cocher").reacts_to_press());
     }
 
     #[test]

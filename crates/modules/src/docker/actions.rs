@@ -2,6 +2,8 @@
 
 use hubergamof_module_api::Command;
 
+use super::pages::compose_service;
+use super::selection::with_count;
 use super::{
     ComposeAction, ComposeScope, ContainerAction, DOWN_LABEL, Docker, DockerEvent, Feedback,
     ImageData, ItemKey, Operation, OperationKind, Page, Request, Scope, UP_LABEL, UpVariant, icons,
@@ -72,6 +74,16 @@ impl Action {
             Self::Up(UpVariant::NoStart) => "No start",
             Self::Down { volumes: false } => DOWN_LABEL,
             Self::Down { volumes: true } => "Avec volumes",
+        }
+    }
+
+    /// The label when `ticked` services are selected: the actions of a
+    /// project then say how many they work on.
+    pub(super) fn label_for(self, ticked: usize) -> String {
+        match self {
+            Self::StartAll if ticked > 0 => with_count(Self::Start.label(), ticked),
+            Self::StopAll if ticked > 0 => with_count(Self::Stop.label(), ticked),
+            _ => self.label().to_owned(),
         }
     }
 
@@ -173,20 +185,30 @@ impl Docker {
         });
         if started {
             self.busy.insert(key);
+            if let Page::Project(project) = page {
+                self.spend_selection(project);
+            }
             Vec::new()
         } else {
             Command::alert()
         }
     }
 
-    /// Starts an `up` or a `down`, and leaves its page for the one of the
-    /// project, where what it works on shows.
+    /// Starts the compose `request` of an `up` or a `down`, and leaves its
+    /// page for the one of the project, where what it works on shows.
     pub(super) fn start_operation(
         &mut self,
         scope: Scope<'_>,
         kind: OperationKind,
         request: Request,
     ) -> Vec<Command> {
+        let Request::Compose {
+            scope: worked_on, ..
+        } = &request
+        else {
+            return Command::alert();
+        };
+        let worked_on = worked_on.clone();
         if self.operations.iter().any(|op| op.project == scope.project) {
             return Command::alert();
         }
@@ -208,9 +230,13 @@ impl Docker {
         self.operations.push(Operation {
             id,
             project: scope.project.to_owned(),
-            scope: ComposeScope::of(scope.service),
+            scope: worked_on,
             kind,
         });
+        if scope.service.is_none() {
+            // What the page of the project had ticked has been used.
+            self.spend_selection(scope.project);
+        }
         vec![Command::BackTo(project_id(scope.project).into())]
     }
 
@@ -220,13 +246,22 @@ impl Docker {
             return Plan::Refused;
         };
         let compose = |scope: Scope<'_>, action| {
+            if scope.service.is_none() && self.selection.is_lost(scope.project) {
+                return Plan::Refused;
+            }
             let target = overview
                 .project(scope.project)
                 .and_then(|p| p.target.clone());
+            // The services ticked on the page of the project, unless the page
+            // is about one service.
+            let worked_on = match scope.service {
+                Some(service) => ComposeScope::of(Some(service)),
+                None => ComposeScope::of_services(self.ticked_services(scope.project)),
+            };
             target.map_or(Plan::Refused, |target| {
                 Plan::Run(Request::Compose {
                     target,
-                    scope: ComposeScope::of(scope.service),
+                    scope: worked_on,
                     action,
                 })
             })
@@ -236,10 +271,20 @@ impl Docker {
                 let Some(project) = overview.project(name) else {
                     return Plan::Refused;
                 };
+                if self.selection.is_lost(name) {
+                    return Plan::Refused;
+                }
                 let start = action == Action::StartAll;
+                let ticked = self.ticked_services(name);
                 let ids: Vec<String> = project
                     .containers
                     .iter()
+                    .filter(|c| {
+                        ticked.is_empty()
+                            || compose_service(c).is_some_and(|(_, service)| {
+                                ticked.iter().any(|name| name == service)
+                            })
+                    })
                     .filter(|c| c.is_running() != start)
                     .map(|c| c.id.clone())
                     .collect();

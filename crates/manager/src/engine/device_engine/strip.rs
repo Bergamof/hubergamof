@@ -10,6 +10,7 @@ use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 
 use super::DeviceEngine;
+use crate::engine::frame::ContextFace;
 use crate::strip::{
     ClockReading, HintFace, MeasureFace, PageFace, PomodoroFace, PopupFace, StripFace,
     SystemSample, delay_until_next_change,
@@ -18,8 +19,6 @@ use crate::strip::{
 /// Reminder of the navigation dial: what turning and pressing it do.
 const NAVIGATION_ROTATE_HINT: &str = "Navigation";
 const NAVIGATION_PRESS_HINT: &str = "Retour";
-/// Reminder of the contextual dial, whose function is not defined yet.
-const CONTEXTUAL_HINT: &str = "Contexte";
 /// Between the parent page and the displayed one in the path of the page.
 const TRAIL_SEPARATOR: &str = "›";
 
@@ -53,7 +52,13 @@ impl DeviceEngine {
 
     /// The strip to draw: `title` is the displayed page, at `row` of
     /// `positions` scroll positions.
-    pub(super) fn strip_face(&mut self, title: &str, row: u32, positions: u32) -> StripFace {
+    pub(super) fn strip_face(
+        &mut self,
+        title: &str,
+        row: u32,
+        positions: u32,
+        context: Option<&ContextFace>,
+    ) -> StripFace {
         let strip = self.config.strip;
         let (volume, pomodoro) = self.widgets();
         StripFace {
@@ -70,7 +75,7 @@ impl DeviceEngine {
                 widget,
                 show_progress: strip.show_pomodoro_progress,
             }),
-            hints: self.hints(),
+            hints: self.hints(context),
             popup: self.popup(),
         }
     }
@@ -135,8 +140,9 @@ impl DeviceEngine {
         ]
     }
 
-    /// One reminder per dial: what the function assigned to it does now.
-    fn hints(&mut self) -> Vec<HintFace> {
+    /// One reminder per dial: what the function assigned to it does now;
+    /// the contextual dial says what the page `context` makes it do.
+    fn hints(&mut self, context: Option<&ContextFace>) -> Vec<HintFace> {
         let dial_count = self.deck.info().capabilities.dial_count;
         let mut hints = Vec::with_capacity(usize::from(dial_count));
         for dial in 0..dial_count {
@@ -156,7 +162,14 @@ impl DeviceEngine {
                         .is_some()
                         .then(|| NAVIGATION_PRESS_HINT.to_owned()),
                 ),
-                DialAssignment::Contextual => (Some(CONTEXTUAL_HINT.to_owned()), None),
+                DialAssignment::Contextual => context
+                    .map(|context| {
+                        (
+                            context.dial.hint.rotate.clone(),
+                            context.dial.hint.press.clone(),
+                        )
+                    })
+                    .unwrap_or_default(),
                 DialAssignment::Module { instance, function } => self
                     .instances
                     .dial_hint(&instance, &function)

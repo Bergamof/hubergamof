@@ -83,6 +83,11 @@ pub(super) fn surface(theme: DeviceTheme) -> (Rgba<u8>, Rgba<u8>) {
     (palette.background, palette.ink)
 }
 
+/// Accent colour of `theme`: the one of what is selected.
+pub(super) fn accent(theme: DeviceTheme) -> Rgba<u8> {
+    Palette::of(theme).working
+}
+
 const WHITE: Rgba<u8> = rgb(0xff, 0xff, 0xff);
 
 impl Palette {

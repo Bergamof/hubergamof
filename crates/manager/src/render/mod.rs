@@ -9,6 +9,7 @@
 //! like those of a countdown, do not push out those that come back) and
 //! encoded to a PNG data URL only on demand.
 
+mod cursor;
 mod digest;
 mod notification;
 mod source;
@@ -77,6 +78,12 @@ pub const RENDER_PROBATION_CAPACITY: NonZeroUsize = match NonZeroUsize::new(32) 
 /// Size of a feedback mark, relative to the smaller side of the surface.
 const FEEDBACK_MARK_RATIO: f32 = 0.7;
 
+/// Size of the check mark of a ticked key, relative to the smaller side.
+const CHECK_BADGE_RATIO: f32 = 0.3;
+/// Distance of the check mark from the corner of the key, relative to the
+/// smaller side: clear of the frame of the cursor.
+const CHECK_BADGE_MARGIN_RATIO: f32 = 0.09;
+
 /// Green disc with a white check mark ([`Feedback::Ok`]).
 const OK_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="#2e9d4a"/><path d="M27 52 L44 69 L74 34" fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
 /// Red warning triangle with a white exclamation mark ([`Feedback::Alert`]).
@@ -140,9 +147,16 @@ pub struct KeyRequest<'a> {
     pub background: Rgba<u8>,
     /// Colour of the label, used when the state does not impose a background.
     pub text_color: Rgba<u8>,
-    /// Visual state: only [`KeyState::Attention`] is drawn (frame and
-    /// background).
+    /// Visual state: only [`KeyState::Attention`] is drawn (background).
     pub state: KeyState,
+    /// Whether the key holds the cursor of the contextual dial: a frame is
+    /// drawn around it.
+    pub focused: bool,
+    /// Colour of the frame of the cursor, used when the state does not impose
+    /// a background.
+    pub accent: Rgba<u8>,
+    /// Whether the key is ticked: a check mark is drawn in a corner.
+    pub checked: bool,
 }
 
 impl<'a> KeyRequest<'a> {
@@ -156,6 +170,9 @@ impl<'a> KeyRequest<'a> {
             background: DEFAULT_BACKGROUND,
             text_color: TEXT_COLOR,
             state: KeyState::Normal,
+            focused: false,
+            accent: strip::accent(DeviceTheme::Light),
+            checked: false,
         }
     }
 
@@ -167,6 +184,7 @@ impl<'a> KeyRequest<'a> {
         Self {
             background,
             text_color,
+            accent: strip::accent(theme),
             ..self
         }
     }
@@ -185,6 +203,19 @@ impl<'a> KeyRequest<'a> {
     #[must_use]
     pub fn in_state(self, state: KeyState) -> Self {
         Self { state, ..self }
+    }
+
+    /// The same request for a key holding the cursor of the contextual dial
+    /// (or not).
+    #[must_use]
+    pub fn focused(self, focused: bool) -> Self {
+        Self { focused, ..self }
+    }
+
+    /// The same request for a key that is ticked (or not).
+    #[must_use]
+    pub fn checked(self, checked: bool) -> Self {
+        Self { checked, ..self }
     }
 }
 
@@ -282,6 +313,9 @@ enum CacheKey {
         background: [u8; 4],
         text_color: [u8; 4],
         state: KeyState,
+        /// Colour of the frame of the cursor, if the key holds it.
+        frame: Option<[u8; 4]>,
+        checked: bool,
     },
 }
 
@@ -351,6 +385,15 @@ impl Renderer {
         } else {
             request.text_color
         };
+        // The label's white shows on the background a state imposes: so does
+        // the frame, the accent being too close to the orange.
+        let frame = request.focused.then(|| {
+            if imposed.is_some() {
+                TEXT_COLOR
+            } else {
+                request.accent
+            }
+        });
         let key = CacheKey::Key {
             source: digest.as_ref().map(|digest| digest.digest),
             size: (request.size.width, request.size.height),
@@ -358,6 +401,8 @@ impl Renderer {
             background: background.0,
             text_color: text_color.0,
             state: request.state,
+            frame: frame.map(|color| color.0),
+            checked: request.checked,
         };
         self.cached(key, || {
             // Read now if the digest was remembered without reading.
@@ -374,6 +419,12 @@ impl Renderer {
             let mut canvas = self.compose(bytes.as_deref(), request.size, icon_area, background)?;
             if let Some(label) = label {
                 self.draw_label(&mut canvas, label, text_color)?;
+            }
+            if let Some(color) = frame {
+                cursor::draw_frame(&mut canvas, color);
+            }
+            if request.checked {
+                self.draw_check(&mut canvas)?;
             }
             Ok(keep_opaque(canvas, background))
         })
@@ -495,6 +546,22 @@ impl Renderer {
         let y = i64::from((icon_area.height - foreground.height()) / 2);
         imageops::overlay(&mut canvas, &foreground, x, y);
         Ok(canvas)
+    }
+
+    /// Draws the check mark of a ticked key in its top right corner.
+    fn draw_check(&self, canvas: &mut RgbaImage) -> Result<(), RenderError> {
+        let (width, height) = canvas.dimensions();
+        let smaller = width.min(height);
+        let side = scaled_dimension(smaller, CHECK_BADGE_RATIO, smaller);
+        let margin = scaled_dimension(smaller, CHECK_BADGE_MARGIN_RATIO, smaller);
+        let badge = self.mark(Feedback::Ok, side)?;
+        imageops::overlay(
+            canvas,
+            badge.as_ref(),
+            i64::from(width.saturating_sub(side + margin)),
+            i64::from(margin),
+        );
+        Ok(())
     }
 
     /// Draws `label` on one line, shortened with an ellipsis if needed, at the

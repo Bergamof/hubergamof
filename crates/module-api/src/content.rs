@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ItemId;
+use crate::{ContextDial, ItemId};
 
 /// An encoded image supplied by a module: PNG, JPEG or SVG (uncompressed,
 /// without external resources). The host recognises the format from the
@@ -45,8 +45,11 @@ pub enum KeyState {
     Attention,
 }
 
-/// Content of one key.
+/// Content of one key. Built with [`KeyContent::with_label`] or
+/// [`KeyContent::with_icon`] and the builders that follow them: fields may be
+/// added without breaking modules.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct KeyContent {
     /// Image, scaled to fit the key.
     pub image: Option<ImageData>,
@@ -54,6 +57,12 @@ pub struct KeyContent {
     pub label: Option<String>,
     /// Visual state.
     pub state: KeyState,
+    /// The key holds the cursor of the contextual dial: the host draws a
+    /// frame around it.
+    pub focused: bool,
+    /// The key is ticked (a selection): the host draws a check mark in a
+    /// corner.
+    pub checked: bool,
 }
 
 impl KeyContent {
@@ -72,7 +81,7 @@ impl KeyContent {
         Self {
             image: Some(image.clone()),
             label: Some(label.into()),
-            state: KeyState::Normal,
+            ..Self::default()
         }
     }
 
@@ -80,6 +89,18 @@ impl KeyContent {
     #[must_use]
     pub fn in_state(self, state: KeyState) -> Self {
         Self { state, ..self }
+    }
+
+    /// The same key, holding the cursor of the contextual dial or not.
+    #[must_use]
+    pub fn focused(self, focused: bool) -> Self {
+        Self { focused, ..self }
+    }
+
+    /// The same key, ticked or not.
+    #[must_use]
+    pub fn checked(self, checked: bool) -> Self {
+        Self { checked, ..self }
     }
 }
 
@@ -95,13 +116,40 @@ pub struct PageItem {
 /// A page opened by a module with [`crate::Command::OpenPage`].
 ///
 /// Items fill the keys row by row; when they do not fit, the host lets the
-/// user scroll by rows ([`crate::Command::ScrollRows`]).
+/// user scroll by rows ([`crate::Command::ScrollRows`]). Built with
+/// [`PageContent::new`]: fields may be added without breaking modules.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PageContent {
     /// Title, shown in the UI and on the touch strip.
     pub title: String,
     /// Keys, in display order.
     pub items: Vec<PageItem>,
+    /// What the contextual dial does while this page is displayed; nothing
+    /// by default.
+    pub context_dial: ContextDial,
+}
+
+impl PageContent {
+    /// A page titled `title` showing `items`, whose contextual dial does
+    /// nothing.
+    #[must_use]
+    pub fn new(title: impl Into<String>, items: Vec<PageItem>) -> Self {
+        Self {
+            title: title.into(),
+            items,
+            context_dial: ContextDial::none(),
+        }
+    }
+
+    /// The same page, with `context_dial` for its contextual dial.
+    #[must_use]
+    pub fn with_context_dial(self, context_dial: ContextDial) -> Self {
+        Self {
+            context_dial,
+            ..self
+        }
+    }
 }
 
 #[cfg(test)]
@@ -119,5 +167,24 @@ mod tests {
             KeyContent::with_label("x").in_state(KeyState::Active).state,
             KeyState::Active
         );
+    }
+
+    #[test]
+    fn keys_take_a_cursor_and_a_tick() {
+        let plain = KeyContent::with_label("x");
+        assert!(!plain.focused && !plain.checked);
+        let key = plain.focused(true).checked(true);
+        assert!(key.focused && key.checked);
+        assert!(!key.clone().checked(false).checked);
+        assert!(!key.focused(false).focused);
+    }
+
+    #[test]
+    fn pages_start_with_an_inert_contextual_dial() {
+        let page = PageContent::new("Titre", Vec::new());
+        assert_eq!(page.title, "Titre");
+        assert_eq!(page.context_dial, ContextDial::none());
+        let dial = ContextDial::none().rotating("Choisir");
+        assert_eq!(page.with_context_dial(dial.clone()).context_dial, dial);
     }
 }

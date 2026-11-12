@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use hubergamof_module_api::{Command, Notification, NotificationId, Rgb};
+use hubergamof_module_api::{Command, ContextDial, Notification, NotificationId, Rgb};
+use hubergamof_protocol::DialAssignment;
 use image::Rgba;
 
 use super::support::*;
@@ -128,6 +129,32 @@ async fn under_a_notification_only_the_navigation_dial_press_acts() {
     assert_eq!(fixture.unread_messages(), ["Pause !"]);
     // The module was never told about the dial.
     assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 0"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_contextual_dial_does_nothing_under_a_notification() {
+    let fixture = plus_fixture().await;
+    let mut config = fixture.config();
+    config.dials[2] = DialAssignment::Contextual;
+    fixture.engine.apply_config(config).await.unwrap();
+    *fixture.probe.context_dial.lock().unwrap() = ContextDial::none()
+        .rotating("Choisir")
+        .pressing("Cocher")
+        .long_pressing("Tout");
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+
+    fixture.inject(InputEvent::DialRotate { index: 2, ticks: 1 });
+    fixture.inject(InputEvent::DialDown(2));
+    tokio::time::sleep(HOLD).await;
+    fixture.inject(InputEvent::DialUp(2));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fixture.strip_pixel(799, 0), BACKGROUND_PIXEL);
+    assert_eq!(
+        *fixture.probe.context_calls.lock().unwrap(),
+        Vec::<String>::new()
+    );
 }
 
 #[tokio::test]

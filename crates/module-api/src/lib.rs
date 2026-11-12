@@ -177,6 +177,6 @@ pub use notification::{
 };
 pub use paths::{expand_home, is_setting_path};
 pub use strip::{
-    DialHint, MAX_POPUP_ENTRIES, PomodoroState, PomodoroWidget, PopupEntry, PopupIcon, StripPopup,
-    StripWidget, VolumeWidget,
+    ContextDial, DialHint, MAX_POPUP_ENTRIES, PomodoroState, PomodoroWidget, PopupEntry, PopupIcon,
+    StripPopup, StripWidget, VolumeWidget,
 };

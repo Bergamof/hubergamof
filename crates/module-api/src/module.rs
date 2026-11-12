@@ -109,7 +109,8 @@ pub trait ModuleFactory: Send + Sync {
 ///
 /// # Getters
 ///
-/// `key`, `page`, `dial_hint`, `strip_widget` and `strip_popup` are called on every redraw and must be cheap and
+/// `key`, `page` (with its contextual dial), `dial_hint`, `strip_widget` and
+/// `strip_popup` are called on every redraw and must be cheap and
 /// side-effect free: they describe the current state, the host compares the
 /// result with what is displayed and only rewrites what changed.
 ///
@@ -173,6 +174,31 @@ pub trait Module: Send {
     /// instance.
     async fn on_dial_press(&mut self, function: &DialFunctionId) -> Vec<Command> {
         let _ = function;
+        Vec::new()
+    }
+
+    /// Handles a rotation, by `ticks` steps (positive clockwise), of the
+    /// contextual dial while the page `page` of this instance is displayed.
+    /// Called only when [`PageContent::context_dial`] of that page, as it was
+    /// displayed, declares what the rotation does.
+    async fn on_context_rotate(&mut self, page: &PageId, ticks: i32) -> Vec<Command> {
+        let _ = (page, ticks);
+        Vec::new()
+    }
+
+    /// Handles a press of the contextual dial while the page `page` is
+    /// displayed. Called only when the page declares what the press does.
+    async fn on_context_press(&mut self, page: &PageId) -> Vec<Command> {
+        let _ = page;
+        Vec::new()
+    }
+
+    /// Handles a press held on the contextual dial (the host acts once the
+    /// dial has been held long enough, without waiting for its release) while
+    /// the page `page` is displayed. Called only when the page declares what the long
+    /// press does; when it does, a shorter press is a plain press.
+    async fn on_context_long_press(&mut self, page: &PageId) -> Vec<Command> {
+        let _ = page;
         Vec::new()
     }
 

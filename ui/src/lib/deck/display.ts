@@ -56,7 +56,7 @@ export function dialSummary(
 		case 'contextual':
 			return {
 				name: 'Fonction contextuelle',
-				rotate: 'Contexte',
+				rotate: 'Selon la page',
 				press: null,
 				assigned: true,
 				missing: false

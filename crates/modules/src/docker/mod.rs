@@ -38,6 +38,7 @@ mod model;
 mod operation;
 mod pages;
 mod render;
+mod selection;
 mod settings;
 mod simulated;
 
@@ -71,6 +72,7 @@ use pages::{
     service_id,
 };
 use render::{main_page, variants_title};
+use selection::Selection;
 use settings::{COMPOSE_FILES_KEY, ParsedSettings};
 
 use crate::background::forward_states;
@@ -166,6 +168,7 @@ impl ModuleFactory for DockerFactory {
             services_requested: HashSet::new(),
             operations: Vec::new(),
             next_operation: 0,
+            selection: Selection::default(),
         };
         docker.load_missing_icons();
         Ok(Box::new(docker))
@@ -259,6 +262,8 @@ pub struct Docker {
     /// The `up` and `down` running, shown on the entries they work on.
     operations: Vec<Operation>,
     next_operation: u64,
+    /// The services ticked on the page of a project.
+    selection: Selection,
 }
 
 impl Docker {
@@ -283,6 +288,7 @@ impl Docker {
             },
         };
         self.forget_gone_projects();
+        self.prune_selection();
         self.request_declared_services();
     }
 
@@ -449,25 +455,30 @@ impl Docker {
     /// without one; the list of containers may not be up to date yet, so
     /// both are named, the one that is not shown is ignored).
     fn outcome_items(&self, operation: &Operation) -> Vec<String> {
-        let Some(service) = operation.scope.service() else {
+        let services = operation.scope.services();
+        if services.is_empty() {
             let key = match operation.kind {
                 OperationKind::Up(_) => UP_ITEM,
                 OperationKind::Down => DOWN_ITEM,
             };
             return vec![key.to_owned()];
-        };
-        let container = self
+        }
+        let containers = self
             .overview()
             .and_then(|overview| overview.project(&operation.project))
-            .and_then(|project| {
-                project.containers.iter().find(|c| {
+            .map_or(&[][..], |project| project.containers.as_slice());
+        services
+            .iter()
+            .flat_map(|service| {
+                let of_service = |c: &&Container| {
                     c.compose.as_ref().and_then(|l| l.service.as_deref()) == Some(service)
-                })
-            });
-        container
-            .map(|container| container_id(&container.name))
-            .into_iter()
-            .chain([service_id(&operation.project, service)])
+                };
+                containers
+                    .iter()
+                    .filter(of_service)
+                    .map(|container| container_id(&container.name))
+                    .chain([service_id(&operation.project, service)])
+            })
             .collect()
     }
 
@@ -530,10 +541,7 @@ impl Module for Docker {
                 View::Unavailable => UNAVAILABLE_TEXT,
                 View::Loading | View::Ready { .. } => MODULE_LABEL,
             };
-            return Some(PageContent {
-                title: title.into(),
-                items: Vec::new(),
-            });
+            return Some(PageContent::new(title, Vec::new()));
         };
         // A project or container gone (removed, taken down): back.
         match page {
@@ -542,11 +550,12 @@ impl Module for Docker {
                 .project(name)
                 .map(|project| self.project_page(page_id, project)),
             Page::Up(scope) => overview.project(scope.project).map(|project| {
-                let title = variants_title(UP_LABEL, project, scope.service);
+                let title = variants_title(UP_LABEL, project, scope.service, self.ticked_on(page));
                 self.variants_page(page_id, title, &UP_ACTIONS)
             }),
             Page::Down(scope) => overview.project(scope.project).map(|project| {
-                let title = variants_title(DOWN_LABEL, project, scope.service);
+                let title =
+                    variants_title(DOWN_LABEL, project, scope.service, self.ticked_on(page));
                 self.variants_page(page_id, title, Action::of_page(page))
             }),
             Page::Container(name) => overview
@@ -576,6 +585,7 @@ impl Module for Docker {
                 && let Some(project) = item.0.strip_prefix(PROJECT_PREFIX)
             {
                 self.refresh_services(project);
+                self.selection.enter(project);
             }
             return vec![Command::OpenPage(opened)];
         }
@@ -583,6 +593,27 @@ impl Module for Docker {
             Some(action) => self.perform(key, page, action),
             None => Vec::new(),
         }
+    }
+
+    async fn on_context_rotate(&mut self, page: &PageId, ticks: i32) -> Vec<Command> {
+        if let Some(Page::Project(project)) = Page::parse(&page.0) {
+            self.move_cursor(project, ticks);
+        }
+        Vec::new()
+    }
+
+    async fn on_context_press(&mut self, page: &PageId) -> Vec<Command> {
+        if let Some(Page::Project(project)) = Page::parse(&page.0) {
+            self.tick_cursor(project);
+        }
+        Vec::new()
+    }
+
+    async fn on_context_long_press(&mut self, page: &PageId) -> Vec<Command> {
+        if let Some(Page::Project(project)) = Page::parse(&page.0) {
+            self.tick_all(project);
+        }
+        Vec::new()
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {

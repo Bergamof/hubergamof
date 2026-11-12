@@ -37,6 +37,21 @@ impl KeyGrid {
         u32::try_from(clamped).unwrap_or(0)
     }
 
+    /// First visible row that shows item `index` of `items` items, moving
+    /// `row` as little as possible.
+    pub(crate) fn reveal(self, row: u32, index: usize, items: usize) -> u32 {
+        let item_row = u32::try_from(index).unwrap_or(u32::MAX) / self.columns;
+        let visible_rows = self.rows.max(1);
+        let target = if item_row < row {
+            item_row
+        } else if item_row >= row + visible_rows {
+            item_row + 1 - visible_rows
+        } else {
+            row
+        };
+        target.min(self.max_row(items))
+    }
+
     /// Index of the item shown on `key` when `row` is the first visible row
     /// (whether or not such an item exists).
     pub(crate) fn item_index(self, key: u8, row: u32) -> usize {
@@ -73,6 +88,18 @@ mod tests {
         assert_eq!(grid.row_count(4), 1);
         assert_eq!(grid.row_count(5), 2);
         assert_eq!(grid.row_count(9), 3);
+    }
+
+    #[test]
+    fn revealing_an_item_moves_the_rows_as_little_as_possible() {
+        let grid = grid(4, 2);
+        // 20 items: 5 rows, the first visible one is at most 3.
+        assert_eq!(grid.reveal(1, 5, 20), 1, "already visible");
+        assert_eq!(grid.reveal(1, 11, 20), 1, "last visible row");
+        assert_eq!(grid.reveal(1, 12, 20), 2, "just below");
+        assert_eq!(grid.reveal(0, 19, 20), 3, "clamped to the last row");
+        assert_eq!(grid.reveal(3, 0, 20), 0, "above");
+        assert_eq!(grid.reveal(2, 100, 8), 0, "beyond the page");
     }
 
     #[test]

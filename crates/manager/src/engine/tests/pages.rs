@@ -71,7 +71,9 @@ async fn default_configuration_shows_the_builtin_modules_and_the_strip() {
     assert_eq!(pomodoro.widget.label, "Focus 1/4 · prêt");
     assert_eq!(pomodoro.widget.time, "25:00");
     assert_eq!(fixture.hint(1).press.as_deref(), Some("Menu pomodoro"));
-    assert_eq!(fixture.hint(2).rotate.as_deref(), Some("Contexte"));
+    // Nothing is displayed by a module on the home page: the contextual
+    // dial has nothing to say.
+    assert_eq!(fixture.hint(2).rotate, None);
     let navigation = fixture.hint(3);
     assert_eq!(navigation.rotate.as_deref(), Some("Navigation"));
     // Nothing to go back to on the home page.

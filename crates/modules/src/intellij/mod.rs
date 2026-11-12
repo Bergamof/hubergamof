@@ -384,16 +384,16 @@ impl Module for Intellij {
     }
 
     fn page(&self, page: &PageId) -> Option<PageContent> {
-        (page.0 == MAIN_PAGE).then(|| PageContent {
-            title: MODULE_LABEL.into(),
-            items: self
+        (page.0 == MAIN_PAGE).then(|| {
+            let items = self
                 .entries()
                 .into_iter()
                 .map(|entry| PageItem {
                     id: entry.item(),
                     key: self.entry_key(entry),
                 })
-                .collect(),
+                .collect();
+            PageContent::new(MODULE_LABEL, items)
         })
     }
 

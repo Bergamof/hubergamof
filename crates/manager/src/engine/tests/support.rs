@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    ChoiceOption, Command, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, Feedback,
-    ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
-    ModuleError, ModuleEvent, ModuleFactory, PageContent, PageId, PageItem, RedrawHandle,
-    SettingField, SettingKind, StripWidget, UnreadNotifications, VolumeWidget, parse_settings,
+    ChoiceOption, Command, ContextDial, DialFunctionDescriptor, DialFunctionId, DialHint,
+    EventSender, Feedback, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
+    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, PageContent, PageId, PageItem,
+    RedrawHandle, SettingField, SettingKind, StripWidget, UnreadNotifications, VolumeWidget,
+    parse_settings,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{
@@ -81,6 +82,15 @@ pub(super) struct Probe {
     pub(super) fragile_events_handled: Arc<AtomicUsize>,
     /// Number of tasks spawned by an `abandon` fragile factory still alive.
     pub(super) abandoned_tasks: Arc<AtomicUsize>,
+    /// What the pages of the list instances declare for the contextual dial.
+    pub(super) context_dial: Arc<Mutex<ContextDial>>,
+    /// Calls of the contextual dial handlers of list instances, in order:
+    /// `rotate <page> <ticks>`, `press <page>`, `long <page>`.
+    pub(super) context_calls: Arc<Mutex<Vec<String>>>,
+    /// Index of the item of the list pages that holds the cursor.
+    pub(super) focus: Arc<Mutex<Option<usize>>>,
+    /// Indexes of the items of the list pages that are ticked.
+    pub(super) checked: Arc<Mutex<Vec<usize>>>,
 }
 
 /// Wall clock a test sets.
@@ -150,6 +160,13 @@ struct List {
     probe: Probe,
 }
 
+impl List {
+    fn record_context(&self, call: String) -> Vec<Command> {
+        self.probe.context_calls.lock().unwrap().push(call);
+        vec![Command::Feedback(Feedback::Ok)]
+    }
+}
+
 #[async_trait]
 impl Module for List {
     fn key(&self) -> KeyContent {
@@ -174,15 +191,32 @@ impl Module for List {
         let shift = self.probe.item_shift.load(Ordering::SeqCst);
         let gone = self.probe.gone_page.lock().unwrap().as_deref() == Some(page.0.as_str());
         let exists = (page.0 == LIST_PAGE || page.0 == "nested") && !gone;
-        exists.then(|| PageContent {
-            title: format!("{} ({page})", self.settings.label),
-            items: (0..self.settings.items)
+        let focus = *self.probe.focus.lock().unwrap();
+        let checked = self.probe.checked.lock().unwrap().clone();
+        exists.then(|| {
+            let items = (0..self.settings.items)
                 .map(|index| PageItem {
                     id: ItemId(format!("i{}", index + shift)),
-                    key: KeyContent::with_label(format!("item {index}")),
+                    key: KeyContent::with_label(format!("item {index}"))
+                        .focused(focus == Some(index))
+                        .checked(checked.contains(&index)),
                 })
-                .collect(),
+                .collect();
+            PageContent::new(format!("{} ({page})", self.settings.label), items)
+                .with_context_dial(self.probe.context_dial.lock().unwrap().clone())
         })
+    }
+
+    async fn on_context_rotate(&mut self, page: &PageId, ticks: i32) -> Vec<Command> {
+        self.record_context(format!("rotate {page} {ticks}"))
+    }
+
+    async fn on_context_press(&mut self, page: &PageId) -> Vec<Command> {
+        self.record_context(format!("press {page}"))
+    }
+
+    async fn on_context_long_press(&mut self, page: &PageId) -> Vec<Command> {
+        self.record_context(format!("long {page}"))
     }
 
     async fn on_item_press(&mut self, _page: &PageId, item: &ItemId) -> Vec<Command> {
@@ -344,12 +378,12 @@ impl Module for Fragile {
 
     fn page(&self, page: &PageId) -> Option<PageContent> {
         assert_ne!(self.failure, Failure::Page, "fragile page");
-        (page.0 == FRAGILE_PAGE).then(|| PageContent {
-            title: FRAGILE_KIND.into(),
-            items: vec![PageItem {
+        (page.0 == FRAGILE_PAGE).then(|| {
+            let item = PageItem {
                 id: "x".into(),
                 key: KeyContent::with_label("x"),
-            }],
+            };
+            PageContent::new(FRAGILE_KIND, vec![item])
         })
     }
 

@@ -537,3 +537,144 @@ fn scaling_does_not_darken_the_edges_of_a_transparent_image() {
         assert!(pixel.0[0] >= 250, "dark edge: {pixel:?}");
     }
 }
+
+const GREEN: Rgba<u8> = Rgba([0x2e, 0x9d, 0x4a, 255]);
+
+#[test]
+fn the_cursor_frames_the_key_in_the_accent_of_the_theme() {
+    let renderer = renderer();
+    let plain = KeyRequest::new(KEY, None, None).themed(DeviceTheme::Light);
+    let framed = renderer
+        .render_key(&plain.focused(true))
+        .unwrap()
+        .image()
+        .clone();
+    let accent = strip::accent(DeviceTheme::Light);
+    assert_eq!(*framed.get_pixel(60, 1), accent);
+    assert_eq!(*framed.get_pixel(1, 60), accent);
+    // The middle is the surface of the theme, untouched.
+    let surface = strip::surface(DeviceTheme::Light).0;
+    assert_eq!(*framed.get_pixel(60, 60), surface);
+
+    let dark = renderer
+        .render_key(
+            &KeyRequest::new(KEY, None, None)
+                .themed(DeviceTheme::Dark)
+                .focused(true),
+        )
+        .unwrap();
+    assert_eq!(
+        *dark.image().get_pixel(60, 1),
+        strip::accent(DeviceTheme::Dark)
+    );
+}
+
+#[test]
+fn the_frame_of_an_attention_key_is_white() {
+    let request = KeyRequest::new(KEY, None, None)
+        .in_state(KeyState::Attention)
+        .focused(true);
+    let rendered = renderer().render_key(&request).unwrap();
+    assert_eq!(*rendered.image().get_pixel(60, 1), TEXT_COLOR);
+    assert_eq!(*rendered.image().get_pixel(60, 60), ATTENTION_BACKGROUND);
+}
+
+#[test]
+fn a_ticked_key_carries_a_check_mark_in_its_top_right_corner() {
+    let renderer = renderer();
+    let ticked = renderer
+        .render_key(&KeyRequest::new(KEY, None, None).checked(true))
+        .unwrap();
+    // Left side of the green disc of the badge (36 px at 73, 11).
+    assert_eq!(*ticked.image().get_pixel(76, 29), GREEN);
+    // Nothing elsewhere: the rest is the background.
+    assert_eq!(*ticked.image().get_pixel(10, 100), DEFAULT_BACKGROUND);
+    let plain = renderer
+        .render_key(&KeyRequest::new(KEY, None, None))
+        .unwrap();
+    assert_eq!(*plain.image().get_pixel(76, 29), DEFAULT_BACKGROUND);
+}
+
+#[test]
+fn the_cursor_and_the_tick_cumulate_and_are_cached_apart() {
+    let renderer = renderer();
+    let request = KeyRequest::new(KEY, None, None).themed(DeviceTheme::Light);
+    let both = renderer
+        .render_key(&request.focused(true).checked(true))
+        .unwrap();
+    assert_eq!(
+        *both.image().get_pixel(60, 1),
+        strip::accent(DeviceTheme::Light)
+    );
+    assert_eq!(*both.image().get_pixel(76, 29), GREEN);
+
+    let plain = renderer.render_key(&request).unwrap();
+    let focused = renderer.render_key(&request.focused(true)).unwrap();
+    let checked = renderer.render_key(&request.checked(true)).unwrap();
+    for (one, other) in [(&plain, &focused), (&plain, &checked), (&focused, &checked)] {
+        assert_ne!(one.image(), other.image());
+    }
+    let again = renderer
+        .render_key(&request.focused(true).checked(true))
+        .unwrap();
+    assert!(
+        Arc::ptr_eq(&both, &again),
+        "the same request is served from the cache"
+    );
+}
+
+#[test]
+fn the_check_mark_sits_in_the_corner_of_keys_of_every_size() {
+    let drawer = renderer();
+    // Key side, then the badge (30 % of it) and its distance from the top and
+    // right edges (9 %), rounded.
+    for (side, badge, margin) in [
+        (72_u32, 22_u32, 6_u32),
+        (80, 24, 7),
+        (96, 29, 9),
+        (120, 36, 11),
+    ] {
+        let size = ImageSize {
+            width: side,
+            height: side,
+        };
+        let ticked = drawer
+            .render_key(&KeyRequest::new(size, None, None).checked(true))
+            .unwrap();
+        assert_eq!(ticked.image().dimensions(), (side, side));
+        // Inside the green disc, near its left edge, clear of the check.
+        let probe = (side - badge - margin + badge * 8 / 100, margin + badge / 2);
+        assert_eq!(*ticked.image().get_pixel(probe.0, probe.1), GREEN, "{side}");
+    }
+}
+
+#[test]
+fn the_frame_and_the_check_mark_are_drawn_over_an_image_and_its_label() {
+    let drawer = renderer();
+    let source = png(100, 100, RED);
+    let request = KeyRequest::new(KEY, Some(&source), Some("api"))
+        .themed(DeviceTheme::Light)
+        .focused(true)
+        .checked(true);
+    let drawn = drawer.render_key(&request).unwrap();
+    assert_eq!(
+        *drawn.image().get_pixel(60, 1),
+        strip::accent(DeviceTheme::Light)
+    );
+    assert_eq!(*drawn.image().get_pixel(76, 29), GREEN);
+    // Under the badge and the frame, the image is where it was.
+    let plain = drawer
+        .render_key(&KeyRequest::new(KEY, Some(&source), Some("api")).themed(DeviceTheme::Light))
+        .unwrap();
+    assert_eq!(
+        drawn.image().get_pixel(30, 60),
+        plain.image().get_pixel(30, 60)
+    );
+
+    // A feedback mark still goes over all of it.
+    let marked = drawer.with_feedback(&drawn, Feedback::Ok).unwrap();
+    assert_ne!(
+        marked.image().get_pixel(60, 60),
+        drawn.image().get_pixel(60, 60)
+    );
+}
