@@ -36,6 +36,9 @@ use crate::strip::SystemHistory;
 
 mod strip;
 
+/// Reminder of the navigation dial under a notification: its press hides it.
+const HIDE_NOTIFICATION: &str = "Masquer";
+
 /// Longest wait for the screens to be blanked when the engine stops.
 const BLANK_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -980,24 +983,29 @@ impl DeviceEngine {
             &shown.notification,
             shown.timeout,
             shown.elapsed(Instant::now()),
-            self.notification_action(&shown.notification),
+            self.notification_actions(&shown.notification),
         )))
     }
 
-    /// The reminder of the contextual dial under `notification`, if it
-    /// declares a press and a dial is assigned to the contextual function.
-    fn notification_action(&self, notification: &UnreadNotification) -> Option<NotificationAction> {
-        let text = notification.context_dial.hint.press.clone()?;
-        let dial = self
-            .config
+    /// The reminders of the dials that act under `notification`: the
+    /// contextual dial if the notification declares a press, and the
+    /// navigation dials, whose press hides it.
+    fn notification_actions(&self, notification: &UnreadNotification) -> Vec<NotificationAction> {
+        let dials = self.config.dials.len();
+        let contextual = notification.context_dial.hint.press.clone();
+        self.config
             .dials
             .iter()
-            .position(|assignment| *assignment == DialAssignment::Contextual)?;
-        Some(NotificationAction {
-            text,
-            dial,
-            dials: self.config.dials.len(),
-        })
+            .enumerate()
+            .filter_map(|(dial, assignment)| {
+                let text = match assignment {
+                    DialAssignment::Contextual => contextual.clone()?,
+                    DialAssignment::Navigation => HIDE_NOTIFICATION.to_owned(),
+                    _ => return None,
+                };
+                Some(NotificationAction { text, dial, dials })
+            })
+            .collect()
     }
 
     /// Scrolls to the key holding the cursor of the contextual dial when it

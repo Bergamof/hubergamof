@@ -483,3 +483,28 @@ async fn an_unread_notification_shown_again_keeps_its_action() {
     assert_eq!(fixture.notification_presses(), [id]);
     assert_eq!(fixture.unread_messages(), Vec::<String>::new());
 }
+
+impl Fixture {
+    /// Pixels of the bottom rows of the strip, between columns `from` and
+    /// `to`, that are not the notification background.
+    fn reminder_ink(&self, from: u32, to: u32) -> usize {
+        let strip = self.deck.inner.screen().strip.unwrap();
+        (from..to)
+            .flat_map(|x| (76..96).map(move |y| (x, y)))
+            .filter(|(x, y)| *strip.get_pixel(*x, *y) != BACKGROUND_PIXEL)
+            .count()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_navigation_dial_reminds_that_it_hides_the_notification() {
+    // Navigation on dial 1, nothing on the others: only its column is drawn.
+    let fixture = plus_fixture().await;
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert!(fixture.reminder_ink(200, 400) > 0);
+    assert_eq!(fixture.reminder_ink(0, 200), 0);
+    assert_eq!(fixture.reminder_ink(400, 800), 0);
+}

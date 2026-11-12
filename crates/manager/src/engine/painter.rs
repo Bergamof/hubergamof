@@ -425,16 +425,21 @@ fn render_overlay(
     match overlay {
         StripOverlay::HeldLabel(label) => Ok((renderer.render_strip_label(label, size)?, None)),
         StripOverlay::Notification(face) => {
+            let actions: Vec<_> = face
+                .actions
+                .iter()
+                .map(|action| NotificationActionLook {
+                    text: &action.text,
+                    dial: action.dial,
+                    dials: action.dials,
+                })
+                .collect();
             let look = NotificationLook {
                 size,
                 background: face.background,
                 icon: face.icon.as_ref(),
                 message: &face.message,
-                action: face.action.as_ref().map(|action| NotificationActionLook {
-                    text: &action.text,
-                    dial: action.dial,
-                    dials: action.dials,
-                }),
+                actions: &actions,
             };
             let drawn = renderer
                 .render_notification(&look, face.elapsed, face.timeout)

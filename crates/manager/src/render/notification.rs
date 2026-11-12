@@ -66,7 +66,7 @@ fn pixels(value: f32, max: u32) -> u32 {
 const LIGHT_BACKGROUND_LUMINANCE: f32 = 150.0;
 const DARK_TEXT: Rgba<u8> = Rgba([0x11, 0x11, 0x11, u8::MAX]);
 
-/// Reminder of what the contextual dial does, drawn at the bottom of the
+/// Reminder of what a dial does, drawn at the bottom of the
 /// notification above the dial.
 #[derive(Debug, Clone, Copy)]
 pub struct NotificationActionLook<'a> {
@@ -89,15 +89,15 @@ pub struct NotificationLook<'a> {
     pub icon: Option<&'a ImageSource>,
     /// Message.
     pub message: &'a str,
-    /// What the contextual dial does, if the notification says.
-    pub action: Option<NotificationActionLook<'a>>,
+    /// What the dials do, drawn at the bottom above them.
+    pub actions: &'a [NotificationActionLook<'a>],
 }
 
 impl NotificationLook<'_> {
     /// Whether the reminder of the contextual dial is drawn: it needs a dial
     /// to sit above.
     fn shows_action(&self) -> bool {
-        self.action.is_some_and(|action| action.dials > 0)
+        self.actions.iter().any(|action| action.dials > 0)
     }
 }
 
@@ -239,7 +239,7 @@ impl Renderer {
             );
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
-        if let Some(action) = look.action.as_ref().filter(|_| look.shows_action()) {
+        for action in look.actions {
             self.draw_action(&mut canvas, look, action)?;
         }
         if let Some(timeout) = timeout {
@@ -483,7 +483,7 @@ mod tests {
             background: [0xF0, 0x3E, 0x2F],
             icon: None,
             message,
-            action: None,
+            actions: &[],
         }
     }
 
@@ -603,11 +603,11 @@ mod tests {
             .render_notification(&look("Pause !"), Duration::ZERO, None)
             .unwrap();
         let with_action = NotificationLook {
-            action: Some(NotificationActionLook {
+            actions: &[NotificationActionLook {
                 text: "Démarrer la pause",
                 dial: 2,
                 dials: 4,
-            }),
+            }],
             ..look("Pause !")
         };
         let drawn = renderer
@@ -626,11 +626,11 @@ mod tests {
             .render_notification(&look("Pause !"), Duration::ZERO, None)
             .unwrap();
         let with_action = NotificationLook {
-            action: Some(NotificationActionLook {
+            actions: &[NotificationActionLook {
                 text: "Démarrer",
                 dial: 0,
                 dials: 0,
-            }),
+            }],
             ..look("Pause !")
         };
         let drawn = renderer
@@ -680,16 +680,49 @@ mod tests {
         };
         let bare = ink_rows(&look("Pause"));
         let raised = ink_rows(&NotificationLook {
-            action: Some(NotificationActionLook {
+            actions: &[NotificationActionLook {
                 text: "Démarrer",
                 dial: 2,
                 dials: 4,
-            }),
+            }],
             ..look("Pause")
         });
         assert!(
             raised.0 < bare.0 && raised.1 < bare.1,
             "{raised:?} {bare:?}"
         );
+    }
+
+    #[test]
+    fn every_reminder_is_drawn_in_its_own_column() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let reminders = [
+            NotificationActionLook {
+                text: "Démarrer la pause",
+                dial: 2,
+                dials: 4,
+            },
+            NotificationActionLook {
+                text: "Masquer",
+                dial: 3,
+                dials: 4,
+            },
+        ];
+        let drawn = renderer
+            .render_notification(
+                &NotificationLook {
+                    actions: &reminders,
+                    ..look("Pause !")
+                },
+                Duration::ZERO,
+                None,
+            )
+            .unwrap();
+        let (left, right) = changed_columns(&drawn.image, &bare.image, 75).unwrap();
+        assert!(left >= 400 && left < 600, "third column inked: {left}");
+        assert!(right >= 600 && right < 800, "fourth column inked: {right}");
     }
 }
