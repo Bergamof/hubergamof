@@ -9,7 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
-- Icône de la barre système : sous-menu « Thème » (Clair, Sombre) qui applique le thème à tous les appareils connectés ; le thème en cours porte une coche, suivie en direct (changement fait depuis l'interface compris), rien n'est coché si les appareils diffèrent.
+- Icône de la barre système : sous-menu « Thème » (Clair, Sombre) qui applique le thème à tous les appareils connectés ; le thème en cours est marqué par une entrée radio, suivie en direct (changement fait depuis l'interface compris), rien n'est coché si les appareils diffèrent.
 - Thème Clair/Sombre au niveau de l'appareil (`DeviceConfig::theme`, `DeviceTheme`) : les touches sont dessinées sur le même fond que la bande tactile (libellé à l'encre du thème), dans l'interface comme sur l'appareil. Contrat : schéma de configuration 3 ; les configurations de schéma 1 et 2 sont migrées (l'ancien thème de la bande devient celui de l'appareil). Le réglage quitte les options de la bande pour la carte de l'appareil.
 - Icônes embarquées sur fond transparent (découpes des badges et des traits barrés en masques SVG).
 - Images personnalisées : transparence respectée partout (touches, interface, icônes de notification) ; mise à l'échelle en alpha prémultiplié, sans liseré sombre. Les images servies à l'interface (`/api/devices/{serial}/images`, catalogue) gardent leur canal alpha.

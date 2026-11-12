@@ -1,8 +1,8 @@
 //! Tray menu model, independent of D-Bus: entries, stable ids, layout
 //! revision and the `com.canonical.dbusmenu` item properties.
 //!
-//! Entries: open the web UI, the theme submenu (light, dark: the current one
-//! carries a check mark), separator, the connected devices (informative,
+//! Entries: open the web UI, the theme submenu (light, dark: radio entries, the
+//! current one is selected), separator, the connected devices (informative,
 //! disabled), separator, quit.
 
 use hubergamof_protocol::DeviceTheme;
@@ -51,8 +51,6 @@ const THEME_CHOICE_IDS: [i32; 2] = [THEME_LIGHT_ID, THEME_DARK_ID];
 const OPEN_UI_ICON: &str = "internet-web-browser";
 const QUIT_ICON: &str = "application-exit";
 const THEME_ICON: &str = "preferences-desktop-theme";
-/// Marks the theme in use.
-const CURRENT_THEME_ICON: &str = "object-select-symbolic";
 
 /// Value of a dbusmenu item property (`a{sv}` entry).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +59,8 @@ pub enum PropertyValue {
     Text(String),
     /// A boolean (`b`).
     Flag(bool),
+    /// A signed integer (`i`).
+    Int(i32),
 }
 
 /// One property of a menu item: its dbusmenu name and value.
@@ -248,14 +248,17 @@ impl TrayMenu {
             THEME_DARK_ID => (THEME_DARK_LABEL, DeviceTheme::Dark),
             _ => return None,
         };
-        let mut properties = vec![
+        // A radio entry: the host draws the mark itself, whatever its icon
+        // theme (an icon name is not drawn by every host).
+        Some(vec![
             ("label", PropertyValue::Text(label.into())),
             ("enabled", PropertyValue::Flag(self.has_devices())),
-        ];
-        if self.theme == Some(theme) {
-            properties.push(("icon-name", PropertyValue::Text(CURRENT_THEME_ICON.into())));
-        }
-        Some(properties)
+            ("toggle-type", PropertyValue::Text("radio".into())),
+            (
+                "toggle-state",
+                PropertyValue::Int(i32::from(self.theme == Some(theme))),
+            ),
+        ])
     }
 
     fn has_devices(&self) -> bool {
@@ -453,7 +456,7 @@ mod tests {
             .map(|node| {
                 let marked = node
                     .properties
-                    .contains(&("icon-name", PropertyValue::Text(CURRENT_THEME_ICON.into())));
+                    .contains(&("toggle-state", PropertyValue::Int(1)));
                 (label(node).unwrap().to_owned(), marked, is_enabled(node))
             })
             .collect()

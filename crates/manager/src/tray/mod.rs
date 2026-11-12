@@ -466,7 +466,11 @@ mod tests {
         let marked = children
             .into_iter()
             .map(|child| WireLayout::try_from(Variant::from(child)).unwrap().1)
-            .find(|properties| properties.contains_key("icon-name"))
+            .find(|properties| {
+                properties
+                    .get("toggle-state")
+                    .is_some_and(|state| i32::try_from(state.clone()).is_ok_and(|state| state == 1))
+            })
             .map(|properties| label(&properties));
         (revision, marked)
     }
