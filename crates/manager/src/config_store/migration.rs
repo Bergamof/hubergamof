@@ -3,6 +3,7 @@
 //! Version 1 assigned a module instance to each dial and had a clock and a
 //! navigation module. Version 2 assigns functions, offered by modules or by
 //! the manager, and shows time and navigation on the touch strip itself.
+//! Version 3 moves the theme from the touch strip to the whole device.
 
 use hubergamof_modules::audio::{AUDIO_KIND, VOLUME_FUNCTION};
 use hubergamof_modules::pomodoro::{CONTROL_FUNCTION, POMODORO_KIND};
@@ -21,6 +22,8 @@ const LEGACY_NAVIGATION_KIND: &str = "navigation";
 
 /// Version of the first configurations.
 const FIRST_SCHEMA_VERSION: u64 = 1;
+/// Version whose theme belongs to the touch strip.
+const STRIP_THEME_SCHEMA_VERSION: u64 = 2;
 
 /// Parses a stored or imported configuration, upgrading it to the current
 /// schema version first when it is an older one.
@@ -34,6 +37,9 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DeviceConfig, serde_json::Err
         // Before anything walks them: validation comes after the upgrade.
         check_sizes(&value)?;
         upgrade_from_first(&mut value);
+    }
+    if schema_version(&value) == Some(STRIP_THEME_SCHEMA_VERSION) {
+        upgrade_from_second(&mut value);
     }
     serde_json::from_value(value)
 }
@@ -77,6 +83,21 @@ fn upgrade_from_first(config: &mut Value) {
     drop_legacy_instances(config);
     if let Some(dials) = dials {
         config.insert("dials".into(), Value::Array(dials));
+    }
+    config.insert("schemaVersion".into(), json!(STRIP_THEME_SCHEMA_VERSION));
+}
+
+/// The theme of the strip becomes the theme of the device.
+fn upgrade_from_second(config: &mut Value) {
+    let Some(config) = config.as_object_mut() else {
+        return;
+    };
+    let theme = config
+        .get_mut("strip")
+        .and_then(Value::as_object_mut)
+        .and_then(|strip| strip.remove("theme"));
+    if let Some(theme) = theme {
+        config.insert("theme".into(), theme);
     }
     config.insert("schemaVersion".into(), json!(CURRENT_SCHEMA_VERSION));
 }
@@ -138,7 +159,7 @@ fn drop_legacy_instances(config: &mut Map<String, Value>) {
 
 #[cfg(test)]
 mod tests {
-    use hubergamof_protocol::StripConfig;
+    use hubergamof_protocol::{DeviceTheme, StripConfig};
 
     use super::*;
 
@@ -225,10 +246,34 @@ mod tests {
     #[test]
     fn other_versions_are_not_upgraded() {
         // A future version is left for validation to refuse; nothing is guessed.
-        let future = FIRST_CONFIG.replace(r#""schemaVersion": 1"#, r#""schemaVersion": 3"#);
+        let future = FIRST_CONFIG.replace(r#""schemaVersion": 1"#, r#""schemaVersion": 4"#);
         assert!(parse_config(future.as_bytes()).is_err());
         let text = FIRST_CONFIG.replace(r#""schemaVersion": 1"#, r#""schemaVersion": "1""#);
         assert!(parse_config(text.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn the_theme_of_the_strip_becomes_the_theme_of_the_device() {
+        let second = r#"{
+            "schemaVersion": 2, "serial": "ABC", "model": "plus", "brightness": 50,
+            "home": [], "modules": [], "dials": [],
+            "strip": { "theme": "dark", "showSeconds": false },
+            "revision": 1
+        }"#;
+        let config = parse_config(second.as_bytes()).unwrap();
+        assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(config.theme, DeviceTheme::Dark);
+        assert!(!config.strip.show_seconds);
+    }
+
+    #[test]
+    fn a_second_configuration_without_theme_takes_the_default() {
+        let second = r#"{
+            "schemaVersion": 2, "serial": "ABC", "model": "plus", "brightness": 50,
+            "home": [], "modules": [], "dials": [], "revision": 1
+        }"#;
+        let config = parse_config(second.as_bytes()).unwrap();
+        assert_eq!(config.theme, DeviceTheme::default());
     }
 
     #[test]

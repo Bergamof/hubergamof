@@ -1,14 +1,26 @@
 //! Tray menu model, independent of D-Bus: entries, stable ids, layout
 //! revision and the `com.canonical.dbusmenu` item properties.
 //!
-//! Entries: open the web UI, separator, the connected devices (informative,
+//! Entries: open the web UI, the theme submenu (light, dark: radio entries, the
+//! current one is selected), separator, the connected devices (informative,
 //! disabled), separator, quit.
+
+use hubergamof_protocol::DeviceTheme;
 
 /// Menu entry opening the web UI.
 pub const OPEN_UI_LABEL: &str = "Ouvrir l'interface";
 
 /// Menu entry stopping the manager.
 pub const QUIT_LABEL: &str = "Quitter";
+
+/// Submenu choosing the theme of the devices.
+pub const THEME_LABEL: &str = "Thème";
+
+/// Theme entry of the light theme.
+pub const THEME_LIGHT_LABEL: &str = "Clair";
+
+/// Theme entry of the dark theme.
+pub const THEME_DARK_LABEL: &str = "Sombre";
 
 /// Shown in the menu when no device is connected.
 pub const NO_DEVICE_LABEL: &str = "Aucun appareil connecté";
@@ -23,12 +35,22 @@ const TOP_SEPARATOR_ID: i32 = 2;
 const BOTTOM_SEPARATOR_ID: i32 = 3;
 /// Id of « Quitter ».
 pub const QUIT_ID: i32 = 4;
+/// Id of the « Thème » submenu.
+pub const THEME_ID: i32 = 5;
+/// Id of « Clair », in the theme submenu.
+pub const THEME_LIGHT_ID: i32 = 6;
+/// Id of « Sombre », in the theme submenu.
+pub const THEME_DARK_ID: i32 = 7;
 /// Id of the first device line (or of the « no device » line); the next ones
 /// follow.
 pub const FIRST_DEVICE_ID: i32 = 100;
 
+/// The entries of the theme submenu.
+const THEME_CHOICE_IDS: [i32; 2] = [THEME_LIGHT_ID, THEME_DARK_ID];
+
 const OPEN_UI_ICON: &str = "internet-web-browser";
 const QUIT_ICON: &str = "application-exit";
+const THEME_ICON: &str = "preferences-desktop-theme";
 
 /// Value of a dbusmenu item property (`a{sv}` entry).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +59,8 @@ pub enum PropertyValue {
     Text(String),
     /// A boolean (`b`).
     Flag(bool),
+    /// A signed integer (`i`).
+    Int(i32),
 }
 
 /// One property of a menu item: its dbusmenu name and value.
@@ -58,6 +82,8 @@ pub struct LayoutNode {
 pub enum MenuAction {
     /// Opens the web UI.
     OpenUi,
+    /// Applies a theme to the connected devices.
+    SetTheme(DeviceTheme),
     /// Stops the manager.
     Quit,
 }
@@ -67,6 +93,9 @@ pub enum MenuAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrayMenu {
     devices: Vec<String>,
+    /// Theme shared by all the devices, `None` when they differ or none is
+    /// connected.
+    theme: Option<DeviceTheme>,
     revision: u32,
 }
 
@@ -76,6 +105,7 @@ impl TrayMenu {
     pub fn new(devices: Vec<String>) -> Self {
         Self {
             devices,
+            theme: None,
             revision: 1,
         }
     }
@@ -97,6 +127,17 @@ impl TrayMenu {
         true
     }
 
+    /// Sets the theme marked as current; returns `true` (and bumps the
+    /// revision) when it changed.
+    pub fn set_theme(&mut self, theme: Option<DeviceTheme>) -> bool {
+        if theme == self.theme {
+            return false;
+        }
+        self.theme = theme;
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
     /// Layout below `parent_id`, `depth` levels deep (`None`: unlimited),
     /// keeping only the properties named in `filter` (all when empty).
     /// `None` when `parent_id` is unknown.
@@ -107,22 +148,7 @@ impl TrayMenu {
         depth: Option<usize>,
         filter: &[String],
     ) -> Option<LayoutNode> {
-        if parent_id == ROOT_ID {
-            let children = if depth == Some(0) {
-                Vec::new()
-            } else {
-                self.child_ids()
-                    .into_iter()
-                    .filter_map(|id| self.leaf(id, filter))
-                    .collect()
-            };
-            return Some(LayoutNode {
-                id: ROOT_ID,
-                properties: filtered(root_properties(), filter),
-                children,
-            });
-        }
-        self.leaf(parent_id, filter)
+        self.node(parent_id, depth, filter)
     }
 
     /// Properties of item `id` filtered by `filter` (all when empty); `None`
@@ -142,11 +168,18 @@ impl TrayMenu {
     pub fn all_properties(&self, filter: &[String]) -> Vec<(i32, Vec<Property>)> {
         std::iter::once(ROOT_ID)
             .chain(self.child_ids())
+            .chain(THEME_CHOICE_IDS)
             .filter_map(|id| {
                 self.properties(id, filter)
                     .map(|properties| (id, properties))
             })
             .collect()
+    }
+
+    /// Ids of the entries choosing a theme.
+    #[must_use]
+    pub fn theme_entry_ids() -> Vec<i32> {
+        THEME_CHOICE_IDS.to_vec()
     }
 
     /// Whether item `id` exists.
@@ -161,6 +194,8 @@ impl TrayMenu {
     pub fn action(id: i32) -> Option<MenuAction> {
         match id {
             OPEN_UI_ID => Some(MenuAction::OpenUi),
+            THEME_LIGHT_ID => Some(MenuAction::SetTheme(DeviceTheme::Light)),
+            THEME_DARK_ID => Some(MenuAction::SetTheme(DeviceTheme::Dark)),
             QUIT_ID => Some(MenuAction::Quit),
             _ => None,
         }
@@ -179,24 +214,73 @@ impl TrayMenu {
     }
 
     fn child_ids(&self) -> Vec<i32> {
-        let mut ids = vec![OPEN_UI_ID, TOP_SEPARATOR_ID];
+        let mut ids = vec![OPEN_UI_ID, THEME_ID, TOP_SEPARATOR_ID];
         ids.extend(self.device_ids());
         ids.extend([BOTTOM_SEPARATOR_ID, QUIT_ID]);
         ids
     }
 
-    fn leaf(&self, id: i32, filter: &[String]) -> Option<LayoutNode> {
-        self.properties(id, filter).map(|properties| LayoutNode {
+    /// Items directly below `id`.
+    fn children_of(&self, id: i32) -> Vec<i32> {
+        match id {
+            ROOT_ID => self.child_ids(),
+            THEME_ID => THEME_CHOICE_IDS.to_vec(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Item `id` with its descendants, `depth` levels deep (`None`:
+    /// unlimited).
+    fn node(&self, id: i32, depth: Option<usize>, filter: &[String]) -> Option<LayoutNode> {
+        let properties = self.properties(id, filter)?;
+        let children = match depth {
+            Some(0) => Vec::new(),
+            _ => self
+                .children_of(id)
+                .into_iter()
+                .filter_map(|child| self.node(child, depth.map(|depth| depth - 1), filter))
+                .collect(),
+        };
+        Some(LayoutNode {
             id,
             properties,
-            children: Vec::new(),
+            children,
         })
+    }
+
+    fn theme_properties(&self, id: i32) -> Option<Vec<Property>> {
+        let (label, theme) = match id {
+            THEME_LIGHT_ID => (THEME_LIGHT_LABEL, DeviceTheme::Light),
+            THEME_DARK_ID => (THEME_DARK_LABEL, DeviceTheme::Dark),
+            _ => return None,
+        };
+        // Radio entries: the host draws the selection itself.
+        Some(vec![
+            ("label", PropertyValue::Text(label.into())),
+            ("enabled", PropertyValue::Flag(self.has_devices())),
+            ("toggle-type", PropertyValue::Text("radio".into())),
+            (
+                "toggle-state",
+                PropertyValue::Int(i32::from(self.theme == Some(theme))),
+            ),
+        ])
+    }
+
+    fn has_devices(&self) -> bool {
+        !self.devices.is_empty()
     }
 
     fn item_properties(&self, id: i32) -> Option<Vec<Property>> {
         match id {
             OPEN_UI_ID => Some(action_properties(OPEN_UI_LABEL, OPEN_UI_ICON)),
             QUIT_ID => Some(action_properties(QUIT_LABEL, QUIT_ICON)),
+            THEME_ID => {
+                let mut properties = action_properties(THEME_LABEL, THEME_ICON);
+                properties.push(("children-display", PropertyValue::Text("submenu".into())));
+                properties.push(("enabled", PropertyValue::Flag(self.has_devices())));
+                Some(properties)
+            }
+            THEME_LIGHT_ID | THEME_DARK_ID => self.theme_properties(id),
             TOP_SEPARATOR_ID | BOTTOM_SEPARATOR_ID => {
                 Some(vec![("type", PropertyValue::Text("separator".into()))])
             }
@@ -286,6 +370,7 @@ mod tests {
             summary(&menu),
             [
                 (OPEN_UI_ID, OPEN_UI_LABEL.into(), true),
+                (THEME_ID, THEME_LABEL.into(), true),
                 (TOP_SEPARATOR_ID, "-".into(), true),
                 (FIRST_DEVICE_ID, "Deck (A1)".into(), false),
                 (FIRST_DEVICE_ID + 1, "Deck (B2)".into(), false),
@@ -299,7 +384,7 @@ mod tests {
     fn layout_without_device_shows_a_disabled_placeholder() {
         let menu = TrayMenu::new(Vec::new());
         assert_eq!(
-            summary(&menu)[2],
+            summary(&menu)[3],
             (FIRST_DEVICE_ID, NO_DEVICE_LABEL.into(), false)
         );
     }
@@ -315,7 +400,7 @@ mod tests {
         assert_eq!(root.children, []);
         assert_eq!(
             menu.layout(ROOT_ID, Some(1), &[]).unwrap().children.len(),
-            5
+            6
         );
     }
 
@@ -344,10 +429,13 @@ mod tests {
             [
                 ROOT_ID,
                 OPEN_UI_ID,
+                THEME_ID,
                 TOP_SEPARATOR_ID,
                 FIRST_DEVICE_ID,
                 BOTTOM_SEPARATOR_ID,
-                QUIT_ID
+                QUIT_ID,
+                THEME_LIGHT_ID,
+                THEME_DARK_ID
             ]
         );
     }
@@ -365,6 +453,103 @@ mod tests {
         assert_eq!(TrayMenu::action(ROOT_ID), None);
     }
 
+    fn theme_entries(menu: &TrayMenu) -> Vec<(String, bool, bool)> {
+        let submenu = menu.layout(THEME_ID, None, &[]).unwrap();
+        submenu
+            .children
+            .iter()
+            .map(|node| {
+                let selected = node
+                    .properties
+                    .contains(&("toggle-state", PropertyValue::Int(1)));
+                (label(node).unwrap().to_owned(), selected, is_enabled(node))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_theme_submenu_offers_both_themes() {
+        let menu = TrayMenu::new(vec!["A".into()]);
+        let submenu = menu.layout(THEME_ID, None, &[]).unwrap();
+        assert!(
+            submenu
+                .properties
+                .contains(&("children-display", PropertyValue::Text("submenu".into())))
+        );
+        assert_eq!(
+            submenu
+                .children
+                .iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            [THEME_LIGHT_ID, THEME_DARK_ID]
+        );
+        assert_eq!(menu.layout(THEME_ID, Some(0), &[]).unwrap().children, []);
+        assert_eq!(
+            TrayMenu::action(THEME_LIGHT_ID),
+            Some(MenuAction::SetTheme(DeviceTheme::Light))
+        );
+        assert_eq!(
+            TrayMenu::action(THEME_DARK_ID),
+            Some(MenuAction::SetTheme(DeviceTheme::Dark))
+        );
+        assert_eq!(TrayMenu::action(THEME_ID), None);
+        assert!(menu.contains(THEME_DARK_ID));
+    }
+
+    #[test]
+    fn the_theme_in_use_carries_a_check_mark() {
+        let mut menu = TrayMenu::new(vec!["A".into()]);
+        let entry = |label: &str, marked| (label.to_owned(), marked, true);
+        assert_eq!(
+            theme_entries(&menu),
+            [
+                entry(THEME_LIGHT_LABEL, false),
+                entry(THEME_DARK_LABEL, false)
+            ]
+        );
+        assert!(menu.set_theme(Some(DeviceTheme::Dark)));
+        assert_eq!(
+            theme_entries(&menu),
+            [
+                entry(THEME_LIGHT_LABEL, false),
+                entry(THEME_DARK_LABEL, true)
+            ]
+        );
+        assert!(menu.set_theme(Some(DeviceTheme::Light)));
+        assert_eq!(
+            theme_entries(&menu),
+            [
+                entry(THEME_LIGHT_LABEL, true),
+                entry(THEME_DARK_LABEL, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn setting_the_same_theme_keeps_the_revision() {
+        let mut menu = TrayMenu::new(vec!["A".into()]);
+        assert!(menu.set_theme(Some(DeviceTheme::Light)));
+        let revision = menu.revision();
+        assert!(!menu.set_theme(Some(DeviceTheme::Light)));
+        assert_eq!(menu.revision(), revision);
+        assert!(menu.set_theme(None));
+        assert_eq!(menu.revision(), revision + 1);
+    }
+
+    #[test]
+    fn the_theme_cannot_be_chosen_without_a_device() {
+        let menu = TrayMenu::new(Vec::new());
+        assert!(!is_enabled(&menu.layout(THEME_ID, Some(0), &[]).unwrap()));
+        assert_eq!(
+            theme_entries(&menu),
+            [
+                (THEME_LIGHT_LABEL.to_owned(), false, false),
+                (THEME_DARK_LABEL.to_owned(), false, false)
+            ]
+        );
+    }
+
     #[test]
     fn revision_increments_only_on_change() {
         let mut menu = TrayMenu::new(vec!["A".into()]);
@@ -378,6 +563,6 @@ mod tests {
     #[test]
     fn device_labels_escape_access_key_markers() {
         let menu = TrayMenu::new(vec!["Deck (AB_12)".into()]);
-        assert_eq!(summary(&menu)[2].1, "Deck (AB__12)");
+        assert_eq!(summary(&menu)[3].1, "Deck (AB__12)");
     }
 }

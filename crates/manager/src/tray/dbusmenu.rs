@@ -69,6 +69,7 @@ fn wire_value(value: PropertyValue) -> OwnedVariant {
     match value {
         PropertyValue::Text(text) => OwnedVariant::from(zbus::Str::from(text)),
         PropertyValue::Flag(flag) => OwnedVariant::from(flag),
+        PropertyValue::Int(number) => OwnedVariant::from(number),
     }
 }
 
@@ -103,6 +104,19 @@ impl DbusMenu {
     /// Current layout revision.
     pub fn revision(&self) -> u32 {
         self.menu.revision()
+    }
+
+    /// Properties of the theme entries, as `ItemsPropertiesUpdated` sends
+    /// them.
+    pub fn theme_entries(&self) -> Vec<(i32, HashMap<String, OwnedVariant>)> {
+        TrayMenu::theme_entry_ids()
+            .into_iter()
+            .filter_map(|id| {
+                self.menu
+                    .properties(id, &[])
+                    .map(|properties| (id, wire_properties(properties)))
+            })
+            .collect()
     }
 
     /// Handles one event; `false` when the item is unknown.
@@ -208,7 +222,9 @@ impl DbusMenu {
         Ok(unknown)
     }
 
-    /// The menu is built ahead: never needs an update before showing.
+    /// The menu is built ahead: never needs an update before showing. (A
+    /// host told otherwise rebuilds the menu while opening it, which closes
+    /// it at once: changes are announced with `LayoutUpdated` instead.)
     fn about_to_show(&self, id: i32) -> fdo::Result<bool> {
         if self.menu.contains(id) {
             Ok(false)
@@ -251,7 +267,9 @@ impl DbusMenu {
         Vec::new()
     }
 
-    /// Item properties changed (unused: every change is a layout change).
+    /// Properties of some items changed: hosts update them without asking
+    /// for the layout again (used for the theme marks, the other changes
+    /// are layout changes).
     #[zbus(signal)]
     pub async fn items_properties_updated(
         emitter: &SignalEmitter<'_>,
@@ -273,7 +291,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::tray::menu::{FIRST_DEVICE_ID, OPEN_UI_ID, QUIT_ID, ROOT_ID};
+    use crate::tray::menu::{FIRST_DEVICE_ID, OPEN_UI_ID, QUIT_ID, ROOT_ID, THEME_ID};
 
     #[derive(Default)]
     struct Recorder(Mutex<Vec<MenuAction>>);
@@ -327,8 +345,8 @@ mod tests {
         let (revision, layout) = menu.get_layout(ROOT_ID, -1, Vec::new()).unwrap();
         assert_eq!(revision, 1);
         assert_eq!(WireLayout::SIGNATURE.to_string(), "(ia{sv}av)");
-        assert_eq!(layout.children.len(), 5);
-        let quit = Variant::from(layout.children[4].clone());
+        assert_eq!(layout.children.len(), 6);
+        let quit = Variant::from(layout.children[5].clone());
         let Variant::Structure(quit) = quit else {
             panic!("children are structures");
         };
@@ -359,9 +377,10 @@ mod tests {
     fn about_to_show_never_requests_an_update() {
         let (menu, _) = menu();
         assert!(!menu.about_to_show(ROOT_ID).unwrap());
+        assert!(!menu.about_to_show(THEME_ID).unwrap());
         assert!(menu.about_to_show(42).is_err());
         assert_eq!(
-            menu.about_to_show_group(vec![ROOT_ID, 42]),
+            menu.about_to_show_group(vec![ROOT_ID, THEME_ID, 42]),
             (Vec::new(), vec![42])
         );
     }

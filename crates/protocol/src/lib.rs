@@ -20,10 +20,10 @@ mod messages;
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
 pub use catalog::CatalogModule;
 pub use config::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DialAssignment, LOAD_ALERT_RANGE,
-    MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH, MAX_LABEL_CHARS, MAX_MODULES,
-    MAX_SETTINGS_BYTES, ModuleInstance, SYSTEM_REFRESH_CHOICES, StripConfig, StripTheme,
-    is_identifier,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceTheme, DialAssignment,
+    LOAD_ALERT_RANGE, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH,
+    MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance, SYSTEM_REFRESH_CHOICES,
+    StripConfig, is_identifier,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{KeyView, LiveState, PageView};

@@ -1,5 +1,7 @@
 use std::io::Cursor;
 
+use hubergamof_protocol::DeviceTheme;
+
 use super::*;
 
 const KEY: ImageSize = ImageSize {
@@ -424,4 +426,114 @@ fn checked_images_are_drawn_but_not_remembered() {
         renderer.check_image(b"plain text", size),
         Err(RenderError::UnsupportedFormat)
     ));
+}
+
+fn themed_background(theme: DeviceTheme) -> Rgba<u8> {
+    KeyRequest::new(KEY, None, None).themed(theme).background
+}
+
+#[test]
+fn keys_are_drawn_on_the_background_of_the_strip_in_both_themes() {
+    for theme in [DeviceTheme::Light, DeviceTheme::Dark] {
+        let rendered = renderer()
+            .render_key(&KeyRequest::new(KEY, None, None).themed(theme))
+            .unwrap();
+        let (background, _) = strip::surface(theme);
+        assert!(rendered.image().pixels().all(|pixel| *pixel == background));
+    }
+    assert_ne!(
+        themed_background(DeviceTheme::Light),
+        themed_background(DeviceTheme::Dark)
+    );
+}
+
+#[test]
+fn a_transparent_image_shows_the_background_of_the_theme() {
+    let source = png(40, 40, Rgba([255, 0, 0, 0]));
+    for theme in [DeviceTheme::Light, DeviceTheme::Dark] {
+        let rendered = renderer()
+            .render_key(&KeyRequest::new(KEY, Some(&source), None).themed(theme))
+            .unwrap();
+        assert_eq!(
+            *rendered.image().get_pixel(60, 60),
+            themed_background(theme)
+        );
+    }
+}
+
+#[test]
+fn a_translucent_image_blends_with_the_background() {
+    let source = png(40, 40, Rgba([255, 0, 0, 128]));
+    let rendered = renderer()
+        .render_key(&KeyRequest::new(KEY, Some(&source), None).themed(DeviceTheme::Dark))
+        .unwrap();
+    let Rgba([red, green, blue, alpha]) = *rendered.image().get_pixel(60, 60);
+    let Rgba([_, background_green, background_blue, _]) = themed_background(DeviceTheme::Dark);
+    assert_eq!(alpha, u8::MAX);
+    assert!(red > 120 && red < 255, "{red}");
+    assert!(green < background_green && blue < background_blue);
+}
+
+#[test]
+fn labels_are_dark_on_the_light_theme_and_light_on_the_dark_one() {
+    let luminance = |theme| {
+        let rendered = renderer()
+            .render_key(&KeyRequest::new(KEY, None, Some("Docker")).themed(theme))
+            .unwrap();
+        let background = themed_background(theme);
+        rendered
+            .image()
+            .pixels()
+            .filter(|pixel| **pixel != background)
+            .map(|pixel| u32::from(pixel.0[0]))
+            .max_by_key(|value| value.abs_diff(u32::from(background.0[0])))
+            .unwrap()
+    };
+    assert!(luminance(DeviceTheme::Light) < 0x60);
+    assert!(luminance(DeviceTheme::Dark) > 0xa0);
+}
+
+#[test]
+fn attention_keeps_its_background_and_white_label_in_every_theme() {
+    for theme in [DeviceTheme::Light, DeviceTheme::Dark] {
+        let rendered = renderer()
+            .render_key(
+                &KeyRequest::new(KEY, None, Some("Docker"))
+                    .themed(theme)
+                    .in_state(KeyState::Attention),
+            )
+            .unwrap();
+        assert_eq!(*rendered.image().get_pixel(0, 0), ATTENTION_BACKGROUND);
+        assert!(rendered.image().pixels().any(|pixel| *pixel == TEXT_COLOR));
+    }
+}
+
+#[test]
+fn images_for_the_ui_keep_their_transparency() {
+    let source = svg(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="20" fill="#f00"/></svg>"##,
+    );
+    let rendered = renderer().render_image(KEY, &source).unwrap();
+    assert_eq!(rendered.image().get_pixel(0, 0).0[3], 0);
+    assert_eq!(*rendered.image().get_pixel(60, 60), RED);
+    let png = image::load_from_memory(&rendered.png().unwrap())
+        .unwrap()
+        .to_rgba8();
+    assert_eq!(png.get_pixel(0, 0).0[3], 0);
+}
+
+#[test]
+fn scaling_does_not_darken_the_edges_of_a_transparent_image() {
+    // A red square with a transparent, black-coloured margin.
+    let mut source = RgbaImage::from_pixel(64, 64, Rgba([0, 0, 0, 0]));
+    for x in 16..48 {
+        for y in 16..48 {
+            source.put_pixel(x, y, RED);
+        }
+    }
+    let scaled = contain(&source, KEY);
+    for pixel in scaled.pixels().filter(|pixel| pixel.0[3] > 0) {
+        assert_eq!(pixel.0[1], 0);
+        assert!(pixel.0[0] >= 250, "dark edge: {pixel:?}");
+    }
 }

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use hubergamof_module_api::Feedback;
-use hubergamof_protocol::ImageSize;
+use hubergamof_protocol::{DeviceTheme, ImageSize};
 use image::RgbaImage;
 use image::imageops::crop_imm;
 use tokio::task::spawn_blocking;
@@ -126,6 +126,8 @@ pub(crate) struct Painter {
     /// Whether the notification last drawn scrolls, until the engine took it.
     measured_scrolls: Option<bool>,
     keys: Vec<Option<Painted<KeyFace>>>,
+    /// Theme the keys were drawn with, `None` before the first drawing.
+    key_theme: Option<DeviceTheme>,
     strip: Option<PaintedStrip>,
 }
 
@@ -141,6 +143,7 @@ impl Painter {
             keys: std::iter::repeat_with(|| None)
                 .take(capabilities.key_count())
                 .collect(),
+            key_theme: None,
             strip: None,
         }
     }
@@ -153,6 +156,11 @@ impl Painter {
         renderer: &Arc<Renderer>,
         frame: &Frame,
     ) -> Result<usize, EngineError> {
+        if self.key_theme != Some(frame.theme) {
+            // Every key sits on the surface of the theme: all are drawn again.
+            self.keys.fill_with(|| None);
+            self.key_theme = Some(frame.theme);
+        }
         let keys = changes(frame.keys.iter().map(|key| &key.face), &self.keys);
         let strip = self.strip_to_paint(frame);
         // An overlay hides the strip drawn before: nothing of it can be reused.
@@ -163,8 +171,9 @@ impl Painter {
         }
         let written = keys.len() + usize::from(strip.is_some()) + usize::from(overlay_changed);
         let key_size = self.key_size;
+        let theme = frame.theme;
         let keys = render(renderer, keys, move |renderer, face| {
-            render_key(renderer, key_size, face)
+            render_key(renderer, key_size, theme, face)
         })
         .await?;
         for (job, images) in keys {
@@ -370,10 +379,15 @@ async fn render<F: Face>(
 fn render_key(
     renderer: &Renderer,
     size: ImageSize,
+    theme: DeviceTheme,
     face: &KeyFace,
 ) -> Result<Arc<Rendered>, RenderError> {
     let label = face.label.as_deref();
-    let request = |image| KeyRequest::new(size, image, label).in_state(face.state);
+    let request = |image| {
+        KeyRequest::new(size, image, label)
+            .themed(theme)
+            .in_state(face.state)
+    };
     match renderer.render_key(&request(face.image.as_ref())) {
         Err(error) if face.image.is_some() => {
             tracing::warn!(%error, "cannot draw key image, showing the label only");

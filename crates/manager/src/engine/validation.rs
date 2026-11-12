@@ -167,7 +167,7 @@ mod tests {
         let mut registry = builtin_registry();
         registry.register(Arc::new(Panicking));
         let mut config: DeviceConfig = serde_json::from_value(json!({
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "serial": "S",
             "model": "plus",
             "brightness": 50,

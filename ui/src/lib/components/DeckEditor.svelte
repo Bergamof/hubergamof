@@ -20,6 +20,7 @@ selected key or dial.
 		setBrightness,
 		setKeyImage,
 		setStrip,
+		setTheme,
 		updateInstance,
 		type DialChoice,
 		type InstanceChanges
@@ -35,6 +36,7 @@ selected key or dial.
 	import KeyDetails from './KeyDetails.svelte';
 	import KeyGrid from './KeyGrid.svelte';
 	import ModulePicker from './ModulePicker.svelte';
+	import ThemeControl from './ThemeControl.svelte';
 	import StripDetails from './StripDetails.svelte';
 	import StripPreview from './StripPreview.svelte';
 
@@ -201,7 +203,7 @@ selected key or dial.
 	}
 </script>
 
-<div class="flex flex-col gap-6">
+<div class="flex flex-col gap-6" data-device-theme={config.theme}>
 	<p role="status" class="sr-only">{announcement}</p>
 
 	<div class="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -241,6 +243,7 @@ selected key or dial.
 						</h2>
 						<StripPreview
 							strip={config.strip}
+							theme={config.theme}
 							{dials}
 							selected={selected?.surface === 'strip'}
 							onselect={selectStrip}
@@ -254,6 +257,7 @@ selected key or dial.
 				{/if}
 			</div>
 
+			<ThemeControl theme={config.theme} onchange={(theme) => deck.edit(setTheme(theme))} />
 			<BrightnessControl
 				brightness={config.brightness}
 				onchange={(brightness) => deck.edit(setBrightness(brightness))}

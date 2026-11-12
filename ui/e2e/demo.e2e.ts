@@ -272,13 +272,21 @@ test('change la fonction d’une molette seulement sur « Affecter »', async ({
 
 test('règle la bande tactile, avec un aperçu qui suit', async ({ page, context }) => {
 	await open(page);
-	await page.getByRole('button', { name: /^Bande tactile/ }).click();
-	await expect(page.getByRole('heading', { name: 'Bande tactile' })).toBeVisible();
+	// The theme is the one of the device: the strip preview and the keys follow it.
 	const preview = page.locator('svg[data-theme-preview]');
+	const surface = () =>
+		page
+			.locator('[data-device-theme]')
+			.first()
+			.evaluate((element) => getComputedStyle(element).getPropertyValue('--screen').trim());
 	await expect(preview).toHaveAttribute('data-theme-preview', 'light');
-
+	const lightSurface = await surface();
 	await page.getByRole('radio', { name: 'Sombre' }).check();
 	await expect(preview).toHaveAttribute('data-theme-preview', 'dark');
+	expect(await surface()).not.toBe(lightSurface);
+
+	await page.getByRole('button', { name: /^Bande tactile/ }).click();
+	await expect(page.getByRole('heading', { name: 'Bande tactile' })).toBeVisible();
 	await page.getByLabel('Afficher les secondes').uncheck();
 	await expect(preview.getByText('42', { exact: true })).toHaveCount(0);
 	await page.getByLabel(/Actualisation des mesures/).selectOption('5');

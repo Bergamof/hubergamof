@@ -11,6 +11,7 @@ import {
 	setBrightness,
 	setKeyImage,
 	setStrip,
+	setTheme,
 	updateInstance
 } from './config-edits.js';
 
@@ -20,7 +21,7 @@ function instance(id: string, kind = id): ModuleInstance {
 
 function config(overrides: Partial<DeviceConfig> = {}): DeviceConfig {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		serial: 'DEMO',
 		model: 'plus',
 		brightness: 50,
@@ -33,13 +34,13 @@ function config(overrides: Partial<DeviceConfig> = {}): DeviceConfig {
 			{ kind: 'none' }
 		],
 		strip: {
-			theme: 'light',
 			showSeconds: true,
 			showPomodoroProgress: true,
 			systemRefreshSeconds: 2,
 			showHistory: true,
 			loadAlertPercent: 85
 		},
+		theme: 'light',
 		revision: 7,
 		...overrides
 	};
@@ -160,12 +161,18 @@ describe('edits', () => {
 	});
 
 	it('change some options of the strip and keep the others', () => {
-		const edited = setStrip({ theme: 'dark', showSeconds: false })(config());
+		const edited = setStrip({ showSeconds: false })(config());
 		expect(edited.strip).toEqual({
 			...config().strip,
-			theme: 'dark',
 			showSeconds: false
 		});
+		expect(edited.revision).toBe(7);
+	});
+
+	it('set the theme of the device and keep the strip options', () => {
+		const edited = setTheme('dark')(config());
+		expect(edited.theme).toBe('dark');
+		expect(edited.strip).toEqual(config().strip);
 		expect(edited.revision).toBe(7);
 	});
 

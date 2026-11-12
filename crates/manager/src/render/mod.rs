@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use hubergamof_module_api::{Feedback, KeyState};
-use hubergamof_protocol::ImageSize;
+use hubergamof_protocol::{DeviceTheme, ImageSize};
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
 use resvg::usvg;
@@ -46,6 +46,9 @@ pub const DEFAULT_BACKGROUND: Rgba<u8> = Rgba([0, 0, 0, u8::MAX]);
 
 /// Colour of label text.
 pub const TEXT_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
+
+/// Background of a fully transparent image, to draw one over another surface.
+pub const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
 /// Background of a [`KeyState::Attention`] key (dark orange), visible around
 /// and behind a transparent image.
@@ -135,6 +138,8 @@ pub struct KeyRequest<'a> {
     pub label: Option<&'a str>,
     /// Background colour, used when the state does not impose one.
     pub background: Rgba<u8>,
+    /// Colour of the label, used when the state does not impose a background.
+    pub text_color: Rgba<u8>,
     /// Visual state: only [`KeyState::Attention`] is drawn (frame and
     /// background).
     pub state: KeyState,
@@ -149,7 +154,30 @@ impl<'a> KeyRequest<'a> {
             size,
             label,
             background: DEFAULT_BACKGROUND,
+            text_color: TEXT_COLOR,
             state: KeyState::Normal,
+        }
+    }
+
+    /// The same request on the surface of `theme`: the background of the
+    /// touch strip, with its ink for the label.
+    #[must_use]
+    pub fn themed(self, theme: DeviceTheme) -> Self {
+        let (background, text_color) = strip::surface(theme);
+        Self {
+            background,
+            text_color,
+            ..self
+        }
+    }
+
+    /// The same request on a transparent background, for an image drawn
+    /// over another surface (the page of the UI, a notification).
+    #[must_use]
+    pub fn transparent(self) -> Self {
+        Self {
+            background: TRANSPARENT,
+            ..self
         }
     }
 
@@ -252,6 +280,7 @@ enum CacheKey {
         size: (u32, u32),
         label: Option<String>,
         background: [u8; 4],
+        text_color: [u8; 4],
         state: KeyState,
     },
 }
@@ -314,12 +343,20 @@ impl Renderer {
             .source
             .map(|source| self.digests.digest(source))
             .transpose()?;
-        let background = state_background(request.state).unwrap_or(request.background);
+        let imposed = state_background(request.state);
+        let background = imposed.unwrap_or(request.background);
+        // The label stays white on the background a state imposes.
+        let text_color = if imposed.is_some() {
+            TEXT_COLOR
+        } else {
+            request.text_color
+        };
         let key = CacheKey::Key {
             source: digest.as_ref().map(|digest| digest.digest),
             size: (request.size.width, request.size.height),
             label: request.label.map(str::to_owned),
             background: background.0,
+            text_color: text_color.0,
             state: request.state,
         };
         self.cached(key, || {
@@ -336,14 +373,14 @@ impl Renderer {
             let icon_area = icon_area(request.size, label.is_some());
             let mut canvas = self.compose(bytes.as_deref(), request.size, icon_area, background)?;
             if let Some(label) = label {
-                self.draw_label(&mut canvas, label)?;
+                self.draw_label(&mut canvas, label, text_color)?;
             }
             Ok(keep_opaque(canvas, background))
         })
     }
 
-    /// Renders `source` scaled to fit `size` on the default background (an
-    /// icon of the catalog). CPU-bound: call it from a blocking context.
+    /// Renders `source` scaled to fit `size` on a transparent background (an
+    /// image shown by the UI, which brings its own surface). CPU-bound: call it from a blocking context.
     ///
     /// # Errors
     ///
@@ -353,7 +390,7 @@ impl Renderer {
         size: ImageSize,
         source: &ImageSource,
     ) -> Result<Arc<Rendered>, RenderError> {
-        self.render_key(&KeyRequest::new(size, Some(source), None))
+        self.render_key(&KeyRequest::new(size, Some(source), None).transparent())
     }
 
     /// Checks that `bytes` are an image the renderer can draw at `size`
@@ -462,7 +499,12 @@ impl Renderer {
 
     /// Draws `label` on one line, shortened with an ellipsis if needed, at the
     /// bottom of `canvas`.
-    fn draw_label(&self, canvas: &mut RgbaImage, label: &str) -> Result<(), RenderError> {
+    fn draw_label(
+        &self,
+        canvas: &mut RgbaImage,
+        label: &str,
+        color: Rgba<u8>,
+    ) -> Result<(), RenderError> {
         let width = f32_from(canvas.width());
         let height = f32_from(canvas.height());
         let size = height * LABEL_FONT_RATIO;
@@ -471,7 +513,7 @@ impl Renderer {
             height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
         let line = self.text.fitted_line(
             label,
-            semibold(size, TEXT_COLOR),
+            semibold(size, color),
             width / 2.0,
             text_top + TextRenderer::ascent(size),
             max_width,
@@ -503,8 +545,44 @@ fn contain(image: &RgbaImage, size: ImageSize) -> RgbaImage {
     if (width, height) == image.dimensions() {
         image.clone()
     } else {
-        imageops::resize(image, width, height, FilterType::Lanczos3)
+        // Resized premultiplied: the colour of transparent pixels must not
+        // bleed into the edges of the image.
+        let mut scaled = image.clone();
+        premultiply(&mut scaled);
+        let mut scaled = imageops::resize(&scaled, width, height, FilterType::Lanczos3);
+        unpremultiply(&mut scaled);
+        scaled
     }
+}
+
+/// Multiplies the colour channels of `image` by its opacity, in place.
+fn premultiply(image: &mut RgbaImage) {
+    for pixel in image.pixels_mut() {
+        let alpha = u16::from(pixel.0[3]);
+        for channel in &mut pixel.0[..3] {
+            *channel = scale_channel(u16::from(*channel), alpha, u16::from(u8::MAX));
+        }
+    }
+}
+
+/// Undoes [`premultiply`], in place.
+fn unpremultiply(image: &mut RgbaImage) {
+    for pixel in image.pixels_mut() {
+        let alpha = u16::from(pixel.0[3]);
+        if alpha == 0 {
+            continue;
+        }
+        for channel in &mut pixel.0[..3] {
+            *channel = scale_channel(u16::from(*channel), u16::from(u8::MAX), alpha);
+        }
+    }
+}
+
+/// `value × numerator / denominator`, rounded, clamped to a channel.
+fn scale_channel(value: u16, numerator: u16, denominator: u16) -> u8 {
+    let scaled = (u32::from(value) * u32::from(numerator) + u32::from(denominator) / 2)
+        / u32::from(denominator);
+    u8::try_from(scaled).unwrap_or(u8::MAX)
 }
 
 /// `dimension × scale`, rounded, within `1..=max`.

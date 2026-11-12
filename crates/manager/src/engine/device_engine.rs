@@ -858,6 +858,7 @@ impl DeviceEngine {
             },
             keys,
             overlay: self.strip_overlay(),
+            theme: self.config.theme,
         }
     }
 

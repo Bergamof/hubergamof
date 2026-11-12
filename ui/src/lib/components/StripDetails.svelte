@@ -1,9 +1,9 @@
 <!--
 @component
-Options of the touch strip: its colours and what it shows. Every change is applied at once.
+Options of the touch strip: what it shows (its colours are the theme of the device). Every change is applied at once.
 -->
 <script lang="ts">
-	import type { StripConfig, StripTheme } from '#lib/generated/index.js';
+	import type { StripConfig } from '#lib/generated/index.js';
 
 	interface Props {
 		strip: StripConfig;
@@ -16,10 +16,6 @@ Options of the touch strip: its colours and what it shows. Every change is appli
 
 	const uid = $props.id();
 
-	const THEMES: readonly { value: StripTheme; label: string }[] = [
-		{ value: 'light', label: 'Clair' },
-		{ value: 'dark', label: 'Sombre' }
-	];
 	/** Periods of the system measures, in seconds: `SYSTEM_REFRESH_CHOICES` of `hubergamof_protocol`. */
 	const REFRESH_SECONDS = [1, 2, 5, 10] as const;
 	/** Range of the alert load, in percent: `LOAD_ALERT_RANGE` of `hubergamof_protocol`. */
@@ -51,25 +47,6 @@ Options of the touch strip: its colours and what it shows. Every change is appli
 		La bande affiche l’heure, la charge du système, la page, le volume et le pomodoro. Les valeurs
 		de l’aperçu sont des exemples.
 	</p>
-
-	<fieldset class="flex flex-col gap-2">
-		<legend class="font-medium">Thème</legend>
-		<div class="flex flex-wrap gap-4">
-			{#each THEMES as theme (theme.value)}
-				<label class="flex items-center gap-2">
-					<input
-						type="radio"
-						name="{uid}-theme"
-						value={theme.value}
-						class="size-5 accent-ring focus-ring"
-						checked={strip.theme === theme.value}
-						onchange={() => onchange({ theme: theme.value })}
-					/>
-					{theme.label}
-				</label>
-			{/each}
-		</div>
-	</fieldset>
 
 	<label class="flex items-center gap-2">
 		<input

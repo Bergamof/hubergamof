@@ -3,7 +3,7 @@
 use hubergamof_module_api::ModuleDescriptor;
 use hubergamof_modules::{DefaultDial, ModuleRegistry};
 use hubergamof_protocol::{
-    CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, DialAssignment, ModuleInstance,
+    CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, DeviceTheme, DialAssignment, ModuleInstance,
     ModuleInstanceId, ModuleKind, StripConfig,
 };
 use serde_json::Value;
@@ -92,6 +92,7 @@ pub fn default_config(device: &DeviceInfo, defaults: &dyn ConfigDefaults) -> Dev
         modules,
         dials: dials.into_iter().map(assignment).collect(),
         strip: StripConfig::default(),
+        theme: DeviceTheme::default(),
         revision: 0,
     }
 }

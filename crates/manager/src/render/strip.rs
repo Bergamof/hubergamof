@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use hubergamof_module_api::{Feedback, PomodoroState, PopupIcon, VolumeWidget};
-use hubergamof_protocol::{ImageSize, StripTheme};
+use hubergamof_protocol::{DeviceTheme, ImageSize};
 use image::{Rgba, RgbaImage};
 
 use super::source::{f32_from, svg_color};
@@ -76,13 +76,20 @@ const DARK: Palette = Palette {
     ok: rgb(0x3f, 0xbf, 0x62),
 };
 
+/// Background and ink of the surface of `theme`: the keys are drawn on the
+/// background of the touch strip.
+pub(super) fn surface(theme: DeviceTheme) -> (Rgba<u8>, Rgba<u8>) {
+    let palette = Palette::of(theme);
+    (palette.background, palette.ink)
+}
+
 const WHITE: Rgba<u8> = rgb(0xff, 0xff, 0xff);
 
 impl Palette {
-    fn of(theme: StripTheme) -> &'static Self {
+    fn of(theme: DeviceTheme) -> &'static Self {
         match theme {
-            StripTheme::Light => &LIGHT,
-            StripTheme::Dark => &DARK,
+            DeviceTheme::Light => &LIGHT,
+            DeviceTheme::Dark => &DARK,
         }
     }
 
@@ -939,7 +946,7 @@ mod tests {
 
     fn face() -> StripFace {
         StripFace {
-            theme: StripTheme::Light,
+            theme: DeviceTheme::Light,
             clock: ClockReading {
                 time: "14:37".into(),
                 seconds: Some(42),
@@ -1007,7 +1014,7 @@ mod tests {
     #[test]
     fn the_themes_have_their_own_background() {
         let mut dark = face();
-        dark.theme = StripTheme::Dark;
+        dark.theme = DeviceTheme::Dark;
         assert_eq!(*render(&dark).image().get_pixel(0, 0), DARK.background);
         assert_ne!(DARK.background, LIGHT.background);
     }

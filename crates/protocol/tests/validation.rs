@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use hubergamof_protocol::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, DialAssignment,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, DeviceTheme, DialAssignment,
     LOAD_ALERT_RANGE, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH,
     MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance,
     ModuleInstanceId, SYSTEM_REFRESH_CHOICES, StripConfig, is_identifier, is_safe_image_name,
@@ -38,6 +38,7 @@ fn valid_config() -> DeviceConfig {
             DialAssignment::None,
         ],
         strip: StripConfig::default(),
+        theme: DeviceTheme::default(),
         revision: 0,
     }
 }

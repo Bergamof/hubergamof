@@ -1,7 +1,7 @@
 //! Pages, navigation, configuration and drawing.
 
 use hubergamof_module_api::{KeyState, VolumeWidget};
-use hubergamof_protocol::ErrorCode;
+use hubergamof_protocol::{DeviceTheme, ErrorCode};
 use image::RgbaImage;
 use serde_json::json;
 
@@ -9,8 +9,19 @@ use super::support::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
 use crate::device::{DeckBackend, InputEvent};
 use crate::engine::*;
-use crate::render::ImageKind;
+use crate::render::{ImageKind, KeyRequest};
 use crate::strip::HintFace;
+
+/// Background of the keys in the default (light) theme.
+fn light_surface() -> image::Rgba<u8> {
+    let size = hubergamof_protocol::ImageSize {
+        width: 1,
+        height: 1,
+    };
+    KeyRequest::new(size, None, None)
+        .themed(DeviceTheme::Light)
+        .background
+}
 
 #[tokio::test]
 async fn default_configuration_shows_the_builtin_modules_and_the_strip() {
@@ -121,7 +132,7 @@ async fn overflowing_pages_scroll_by_rows_within_bounds() {
             .key_image(7)
             .unwrap()
             .pixels()
-            .all(|p| p.0 == [0, 0, 0, 255])
+            .all(|p| *p == light_surface())
     );
 
     fixture.engine.rotate_dial(0, -9).await.unwrap();

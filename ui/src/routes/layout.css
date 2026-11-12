@@ -55,6 +55,9 @@
 	--device-fg: #e8efec;
 	--device-ring: #5cd6cc;
 	--device-muted: #9db5b1;
+	/* Écran de l'appareil (touches, bande) : le thème de l'appareil, pas celui du système. */
+	--screen: #e7ebf1;
+	--screen-ink: #13213b;
 	--shadow: 0 1px 2px rgb(17 32 31 / 0.06), 0 8px 24px rgb(17 32 31 / 0.08);
 }
 
@@ -101,6 +104,8 @@
 	--color-device-fg: var(--device-fg);
 	--color-device-ring: var(--device-ring);
 	--color-device-muted: var(--device-muted);
+	--color-screen: var(--screen);
+	--color-screen-ink: var(--screen-ink);
 	--shadow-card: var(--shadow);
 	--font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
 	--font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
@@ -153,4 +158,10 @@
    accent, on the device's dark body. */
 @utility surface-button {
 	@apply flex w-full flex-col items-center gap-1.5 rounded-2xl p-1.5 text-center text-xs font-medium text-device-fg hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring aria-current:bg-device-key aria-current:ring-2 aria-current:ring-accent;
+}
+
+/* Thème de l'appareil : mêmes fonds et encres que la bande tactile dessinée par le gestionnaire. */
+[data-device-theme='dark'] {
+	--screen: #151a23;
+	--screen-ink: #eef2f8;
 }
