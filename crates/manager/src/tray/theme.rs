@@ -7,7 +7,7 @@ use tokio::task::JoinSet;
 use zbus::Connection;
 
 use super::dbusmenu::{DbusMenu, MENU_PATH};
-use super::menu::ROOT_ID;
+use super::menu::THEME_ID;
 use crate::config_store::ConfigStoreError;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry};
 
@@ -60,7 +60,9 @@ pub(super) async fn follow_theme(connection: Connection, engines: EngineRegistry
     let mut registry = engines.changes();
     loop {
         let (themes, configurations) = current_themes(&engines);
-        if let Err(error) = publish_theme(&connection, shared_theme(themes)).await {
+        let shared = shared_theme(themes.iter().copied());
+        tracing::debug!(?themes, ?shared, "theme shown in the system tray menu");
+        if let Err(error) = publish_theme(&connection, shared).await {
             tracing::warn!(%error, "cannot update the theme in the system tray menu");
         }
         let mut changes = JoinSet::new();
@@ -113,7 +115,10 @@ pub(super) async fn publish_theme(
         }
         menu.revision()
     };
-    DbusMenu::layout_updated(menu.signal_emitter(), revision, ROOT_ID).await
+    // The entries of the submenu changed, not the layout of the root: hosts
+    // that reload only the first level below the announced parent would
+    // keep the old marks.
+    DbusMenu::layout_updated(menu.signal_emitter(), revision, THEME_ID).await
 }
 
 #[cfg(test)]

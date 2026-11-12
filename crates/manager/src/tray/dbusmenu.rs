@@ -208,23 +208,26 @@ impl DbusMenu {
         Ok(unknown)
     }
 
-    /// The menu is built ahead: never needs an update before showing.
+    /// The menu is built ahead, except the submenu marking the theme in use:
+    /// a host showing it asks for its entries again.
     fn about_to_show(&self, id: i32) -> fdo::Result<bool> {
         if self.menu.contains(id) {
-            Ok(false)
+            Ok(TrayMenu::changes_while_open(id))
         } else {
             Err(unknown_id(id))
         }
     }
 
-    /// Group form of `AboutToShow`: nothing to update, unknown ids reported.
+    /// Group form of `AboutToShow`: the ids to update, then the unknown ones.
     #[zbus(out_args("updatesNeeded", "idErrors"))]
     fn about_to_show_group(&self, ids: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
-        let unknown = ids
+        let (known, unknown): (Vec<i32>, Vec<i32>) =
+            ids.into_iter().partition(|id| self.menu.contains(*id));
+        let updates = known
             .into_iter()
-            .filter(|id| !self.menu.contains(*id))
+            .filter(|id| TrayMenu::changes_while_open(*id))
             .collect();
-        (Vec::new(), unknown)
+        (updates, unknown)
     }
 
     /// Protocol version.
@@ -273,7 +276,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::tray::menu::{FIRST_DEVICE_ID, OPEN_UI_ID, QUIT_ID, ROOT_ID};
+    use crate::tray::menu::{FIRST_DEVICE_ID, OPEN_UI_ID, QUIT_ID, ROOT_ID, THEME_ID};
 
     #[derive(Default)]
     struct Recorder(Mutex<Vec<MenuAction>>);
@@ -356,13 +359,14 @@ mod tests {
     }
 
     #[test]
-    fn about_to_show_never_requests_an_update() {
+    fn about_to_show_requests_an_update_of_the_theme_submenu_only() {
         let (menu, _) = menu();
         assert!(!menu.about_to_show(ROOT_ID).unwrap());
+        assert!(menu.about_to_show(THEME_ID).unwrap());
         assert!(menu.about_to_show(42).is_err());
         assert_eq!(
-            menu.about_to_show_group(vec![ROOT_ID, 42]),
-            (Vec::new(), vec![42])
+            menu.about_to_show_group(vec![ROOT_ID, THEME_ID, 42]),
+            (vec![THEME_ID], vec![42])
         );
     }
 }

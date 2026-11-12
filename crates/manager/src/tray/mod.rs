@@ -556,4 +556,29 @@ mod tests {
         stop_tasks(vec![follower]).await;
         rig.stop().await;
     }
+
+    #[tokio::test]
+    async fn a_theme_change_announces_an_update_of_the_theme_submenu() {
+        use futures_util::StreamExt as _;
+        use hubergamof_protocol::DeviceTheme::Dark;
+        let (tray, host) = connected_pair(&[], EngineRegistry::default(), Arc::new(|| {})).await;
+        let mut messages = zbus::MessageStream::from(&host);
+
+        theme::publish_theme(&tray, Some(Dark)).await.unwrap();
+        let (revision, parent) = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let message = messages.next().await.unwrap().unwrap();
+                if message
+                    .header()
+                    .member()
+                    .is_some_and(|member| member == "LayoutUpdated")
+                {
+                    break message.body().deserialize::<(u32, i32)>().unwrap();
+                }
+            }
+        })
+        .await
+        .expect("the host is told");
+        assert_eq!((revision, parent), (2, menu::THEME_ID));
+    }
 }

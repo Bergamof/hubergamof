@@ -185,6 +185,13 @@ impl TrayMenu {
         id == ROOT_ID || self.item_properties(id).is_some()
     }
 
+    /// Whether the children of `id` change while the menu lives, so that a
+    /// host showing it must ask for them again.
+    #[must_use]
+    pub fn changes_while_open(id: i32) -> bool {
+        id == THEME_ID
+    }
+
     /// Action run by a click on `id`; `None` for the root, separators and the
     /// (disabled) device lines.
     #[must_use]
