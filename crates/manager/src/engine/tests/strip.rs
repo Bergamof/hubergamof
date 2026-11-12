@@ -6,6 +6,7 @@ use hubergamof_protocol::DialAssignment;
 
 use super::support::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
+use crate::device::{InputEvent, TouchPoint};
 
 /// The pomodoro dial of the default layout.
 const POMODORO_DIAL: u8 = 1;
@@ -143,4 +144,61 @@ async fn a_load_over_the_threshold_raises_the_alert() {
         .map(|measure| (measure.label, measure.alert))
         .collect();
     assert_eq!(alerts, [("CPU", false), ("RAM", true), ("SWAP", false)]);
+}
+
+/// Over the system measures, between the two rules of the strip.
+const ON_MEASURES: u16 = 400;
+const ON_CLOCK: u16 = 100;
+const ON_COLUMN: u16 = 700;
+
+fn tap(x: u16, long: bool) -> InputEvent {
+    InputEvent::TouchTap {
+        point: TouchPoint { x, y: 50 },
+        long,
+    }
+}
+
+impl Fixture {
+    fn show_history(&self) -> bool {
+        self.config().strip.show_history
+    }
+
+    fn inject_tap(&self, x: u16, long: bool) {
+        self.deck.inner.inject(tap(x, long)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn tapping_the_measures_swaps_history_and_current_values() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    assert!(fixture.show_history());
+
+    fixture.inject_tap(ON_MEASURES, false);
+    fixture
+        .wait_for(|f| f.strip().measures[0].history.is_empty())
+        .await;
+    assert!(!fixture.show_history());
+    // Saved, not only displayed: the web UI reads the same setting.
+    let saved = fixture.store.load(&virtual_plus_info(DEMO_SERIAL)).unwrap();
+    assert!(!saved.config.strip.show_history);
+
+    fixture.inject_tap(ON_MEASURES, false);
+    fixture
+        .wait_for(|f| !f.strip().measures[0].history.is_empty())
+        .await;
+    assert!(fixture.show_history());
+}
+
+#[tokio::test]
+async fn a_tap_beside_the_measures_or_a_long_one_keeps_the_history() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture.inject_tap(ON_CLOCK, false);
+    fixture.inject_tap(ON_COLUMN, false);
+    fixture.inject_tap(ON_MEASURES, true);
+    // Events of one source are handled in order: this one swaps once.
+    fixture.inject_tap(ON_MEASURES, false);
+    fixture
+        .wait_for(|f| f.strip().measures[0].history.is_empty())
+        .await;
+    assert!(!fixture.show_history());
 }

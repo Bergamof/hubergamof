@@ -132,6 +132,13 @@ const DATE_BASELINE: f32 = 71.0;
 /// Vertical rules between the groups.
 const CLOCK_RULE_X: f32 = 224.0;
 const SYSTEM_RULE_X: f32 = 528.0;
+
+/// Whether a touch at horizontal position `x` lands on the system measures,
+/// the group between the two vertical rules.
+#[must_use]
+pub fn is_system_panel(x: u16) -> bool {
+    (CLOCK_RULE_X..SYSTEM_RULE_X).contains(&f32::from(x))
+}
 const RULE_TOP: f32 = 12.0;
 const RULE_HEIGHT: f32 = 58.0;
 
@@ -939,6 +946,14 @@ fn draw_mark(canvas: &mut Canvas, feedback: Feedback, left: f32, palette: &Palet
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_system_panel_lies_between_the_two_rules() {
+        assert!(!is_system_panel(223));
+        assert!(is_system_panel(224));
+        assert!(is_system_panel(527));
+        assert!(!is_system_panel(528));
+    }
+
     use hubergamof_module_api::{PomodoroWidget, PopupEntry};
 
     use super::*;

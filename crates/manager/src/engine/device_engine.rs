@@ -30,8 +30,8 @@ use super::placement_notice;
 use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
 use crate::config_store::{LoadOutcome, check_config};
-use crate::device::{self, DeckBackend, InputEvent, StripLayout};
-use crate::render::ImageSource;
+use crate::device::{self, DeckBackend, InputEvent, StripLayout, TouchPoint};
+use crate::render::{ImageSource, is_system_panel};
 use crate::strip::SystemHistory;
 
 mod strip;
@@ -424,7 +424,7 @@ impl DeviceEngine {
             }
             InputEvent::DialDown(index) => self.dial_down(index).await,
             InputEvent::DialUp(index) => self.release_dial(index).await,
-            InputEvent::TouchTap { .. } => self.tap_strip(),
+            InputEvent::TouchTap { point, long } => self.tap_strip(point, long).await,
             // Swipes are not used yet.
             InputEvent::TouchSwipe { .. } | InputEvent::Disconnected => {}
         }
@@ -627,14 +627,29 @@ impl DeviceEngine {
     }
 
     /// A tap on the strip reads the notification on it, unless the label of a
-    /// held key covers it: it is not what the user sees.
-    fn tap_strip(&mut self) {
+    /// held key covers it: it is not what the user sees. With nothing on the
+    /// strip, a tap on the system measures swaps their history for the
+    /// current values, as the setting of the web UI does.
+    async fn tap_strip(&mut self, point: TouchPoint, long: bool) {
         let covered = self
             .held
             .as_ref()
             .is_some_and(|held| held.shown_label().is_some());
-        if !covered {
+        if covered {
+            return;
+        }
+        if self.notifications.shown().is_some() {
             self.notifications.read(Instant::now());
+        } else if !long && is_system_panel(point.x) {
+            self.toggle_history().await;
+        }
+    }
+
+    async fn toggle_history(&mut self) {
+        let mut config = self.config.clone();
+        config.strip.show_history = !config.strip.show_history;
+        if let Err(error) = self.apply_config(config).await {
+            tracing::warn!(serial = %self.serial(), %error, "history toggle refused");
         }
     }
 

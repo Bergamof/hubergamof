@@ -95,8 +95,9 @@ async fn a_notification_covers_the_strip_until_it_is_touched() {
 
     fixture.tap_strip();
     fixture.wait_for_notification(false).await;
-    // Touched: read.
+    // Touched: read, and the tap, on the measures, only did that.
     assert_eq!(fixture.unread_messages(), Vec::<String>::new());
+    assert!(fixture.config().strip.show_history);
 }
 
 #[tokio::test]
