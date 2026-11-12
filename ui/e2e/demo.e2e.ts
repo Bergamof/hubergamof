@@ -270,7 +270,7 @@ test('change la fonction d’une molette seulement sur « Affecter »', async ({
 	await expect(dial(page, '3 : Rien')).toBeVisible();
 });
 
-test('règle la bande tactile, avec un aperçu qui suit', async ({ page }) => {
+test('règle la bande tactile, avec un aperçu qui suit', async ({ page, context }) => {
 	await open(page);
 	await page.getByRole('button', { name: /^Bande tactile/ }).click();
 	await expect(page.getByRole('heading', { name: 'Bande tactile' })).toBeVisible();
@@ -282,6 +282,13 @@ test('règle la bande tactile, avec un aperçu qui suit', async ({ page }) => {
 	await page.getByLabel('Afficher les secondes').uncheck();
 	await expect(preview.getByText('42', { exact: true })).toHaveCount(0);
 	await page.getByLabel(/Actualisation des mesures/).selectOption('5');
+
+	// The edits are sent one after the other: a second tab shows the last one once saved.
+	const other = await context.newPage();
+	await open(other);
+	await other.getByRole('button', { name: /^Bande tactile/ }).click();
+	await expect(other.getByLabel(/Actualisation des mesures/)).toHaveValue('5');
+	await other.close();
 
 	// Kept by the manager.
 	await page.reload();
@@ -382,7 +389,7 @@ test('refuse un fichier qui n’est pas une image lisible', async ({ page }) => 
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
 });
 
-test('exporte la configuration puis la réimporte après confirmation', async ({ page }) => {
+test('exporte la configuration puis la réimporte après confirmation', async ({ page, context }) => {
 	await open(page);
 	await key(page, '1 : Audio').click();
 	await keyImageInput(page).setInputFiles({
@@ -401,6 +408,11 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await key(page, /^Touche 5 : Claude/).click();
 	await removeSelectedKey(page);
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	// Importing while the removal is still being saved would race with it: wait until saved.
+	const other = await context.newPage();
+	await open(other);
+	await expect(other.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	await other.close();
 
 	const importInput = page.locator('input[type="file"][accept*=".zip"]');
 	await importInput.setInputFiles(archive);
