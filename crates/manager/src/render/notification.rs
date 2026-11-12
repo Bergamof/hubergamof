@@ -8,10 +8,12 @@ use hubergamof_protocol::ImageSize;
 use image::{Rgba, RgbaImage, imageops};
 
 use super::source::f32_from;
+use super::strip::HINT_RULE_Y;
 use super::{
     FontWeight, ImageSource, KeyRequest, LineStyle, RenderError, Renderer, TEXT_COLOR,
     TextRenderer, check_size, keep_opaque,
 };
+use crate::strip::HintFace;
 
 /// Icon side, relative to the strip height.
 const ICON_RATIO: f32 = 0.72;
@@ -23,6 +25,8 @@ const ICON_GAP_RATIO: f32 = 0.20;
 const MESSAGE_FONT_RATIO: f32 = 0.40;
 /// Label font size, relative to the strip height.
 const LABEL_FONT_RATIO: f32 = 0.34;
+/// Icon side when reminders are drawn, relative to the room above them.
+const ACTION_ICON_SHARE: f32 = 0.8;
 /// Height of the remaining-time bar, relative to the strip height.
 const BAR_RATIO: f32 = 0.06;
 /// Opacity of the remaining-time bar.
@@ -54,6 +58,18 @@ fn pixels(value: f32, max: u32) -> u32 {
 const LIGHT_BACKGROUND_LUMINANCE: f32 = 150.0;
 const DARK_TEXT: Rgba<u8> = Rgba([0x11, 0x11, 0x11, u8::MAX]);
 
+/// Reminder of what a dial does, drawn at the bottom of the
+/// notification above the dial.
+#[derive(Debug, Clone, Copy)]
+pub struct NotificationActionLook<'a> {
+    /// Text of the reminder.
+    pub text: &'a str,
+    /// Index of the dial among `dials`.
+    pub dial: usize,
+    /// Number of dials, which split the strip into as many columns.
+    pub dials: usize,
+}
+
 /// What a notification looks like, apart from time.
 #[derive(Debug, Clone, Copy)]
 pub struct NotificationLook<'a> {
@@ -65,6 +81,16 @@ pub struct NotificationLook<'a> {
     pub icon: Option<&'a ImageSource>,
     /// Message.
     pub message: &'a str,
+    /// What the dials do, drawn at the bottom above them.
+    pub actions: &'a [NotificationActionLook<'a>],
+}
+
+impl NotificationLook<'_> {
+    /// Whether the reminder of the contextual dial is drawn: it needs a dial
+    /// to sit above.
+    fn shows_action(&self) -> bool {
+        self.actions.iter().any(|action| action.dials > 0)
+    }
 }
 
 /// A drawn notification, and whether its message is too wide to stand still
@@ -85,6 +111,20 @@ pub(super) struct TextLayer {
     /// Width of the message, measured when the layer was drawn.
     text_width: f32,
 }
+
+/// The reminders of the dials under a notification, drawn once on a
+/// transparent layer: rasterising them costs far more than the 15 images
+/// per second a moving notification needs.
+pub(super) struct ReminderLayer {
+    key: ReminderKey,
+    /// The rows of the strip from `top` down, where the reminders are.
+    image: Arc<RgbaImage>,
+    top: u32,
+}
+
+/// What the reminders look like: size of the strip, reminders, text and
+/// background colours.
+type ReminderKey = (ImageSize, Vec<HintFace>, Rgba<u8>, Rgba<u8>);
 
 /// Geometry of a notification on a strip of a given size.
 #[derive(Debug, Clone, Copy)]
@@ -111,6 +151,34 @@ impl Metrics {
             text_left,
             visible: size.width.saturating_sub(text_left + edge),
         }
+    }
+
+    /// Side, left and top of the icon. With an action reminder at the bottom
+    /// the icon is smaller and sits higher, centred in the room it keeps, so
+    /// that it does not touch the reminder; the message follows it
+    /// ([`Self::message_rise`]).
+    fn icon_placement(&self, with_action: bool) -> (u32, u32, u32) {
+        if !with_action {
+            return (self.icon, self.edge, self.edge);
+        }
+        let room = HINT_RULE_Y.min(f32_from(self.height));
+        let side = pixels(room * ACTION_ICON_SHARE, self.icon);
+        let left = self.edge + (self.icon - side) / 2;
+        (
+            side,
+            left,
+            pixels((room - f32_from(side)) / 2.0, self.height),
+        )
+    }
+
+    /// How far the message moves up, in pixels: with a reminder at the
+    /// bottom, its line is centred on the raised icon.
+    fn message_rise(&self, with_action: bool) -> u32 {
+        if !with_action {
+            return 0;
+        }
+        let (side, _, top) = self.icon_placement(true);
+        (self.height / 2).saturating_sub(top + side / 2)
     }
 
     fn loop_length(&self, text_width: f32) -> f32 {
@@ -162,20 +230,25 @@ impl Renderer {
         let background = Rgba([red, green, blue, u8::MAX]);
         let mut canvas = RgbaImage::from_pixel(look.size.width, look.size.height, background);
         if let Some(icon) = look.icon {
-            let side = ImageSize {
-                width: metrics.icon,
-                height: metrics.icon,
+            let (side, left, top) = metrics.icon_placement(look.shows_action());
+            let side_size = ImageSize {
+                width: side,
+                height: side,
             };
             let rendered =
-                self.render_key(&KeyRequest::new(side, Some(icon), None).transparent())?;
+                self.render_key(&KeyRequest::new(side_size, Some(icon), None).transparent())?;
             imageops::overlay(
                 &mut canvas,
                 rendered.image().as_ref(),
-                i64::from(metrics.edge),
-                i64::from(metrics.edge),
+                i64::from(left),
+                i64::from(top),
             );
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
+        if look.shows_action() {
+            let (layer, top) = self.reminder_layer(look, background)?;
+            imageops::overlay(&mut canvas, layer.as_ref(), 0, i64::from(top));
+        }
         if let Some(timeout) = timeout {
             draw_time_bar(&mut canvas, look.background, elapsed, timeout);
         }
@@ -250,8 +323,43 @@ impl Renderer {
             // still: the fade on the left grows as the text moves away.
             fade_ends(&mut window, fade.min(offset), fade);
         }
-        imageops::overlay(canvas, &window, i64::from(metrics.text_left), 0);
+        let rise = metrics.message_rise(look.shows_action());
+        imageops::overlay(
+            canvas,
+            &window,
+            i64::from(metrics.text_left),
+            -i64::from(rise),
+        );
         Ok(scrolls)
+    }
+
+    /// The layer of the reminders of `look` and the row it starts at, drawn
+    /// again only when the reminders, the size or the colours changed.
+    fn reminder_layer(
+        &self,
+        look: &NotificationLook<'_>,
+        background: Rgba<u8>,
+    ) -> Result<(Arc<RgbaImage>, u32), RenderError> {
+        let ink = readable_text_color(look.background);
+        let key = (look.size, reminder_hints(look.actions), ink, background);
+        let mut cached = self
+            .notification_reminders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(layer) = cached.as_ref().filter(|layer| layer.key == key) {
+            return Ok((Arc::clone(&layer.image), layer.top));
+        }
+        let mut full = RgbaImage::new(look.size.width, look.size.height);
+        self.draw_dial_reminders(&mut full, &key.1, (ink, background))?;
+        let top = pixels(HINT_RULE_Y, look.size.height);
+        let rows = look.size.height - top;
+        let image = Arc::new(imageops::crop_imm(&full, 0, top, look.size.width, rows).to_image());
+        *cached = Some(ReminderLayer {
+            key,
+            image: Arc::clone(&image),
+            top,
+        });
+        Ok((image, top))
     }
 
     /// The text layer of `look` and the width of its message, drawn again
@@ -314,6 +422,19 @@ impl Renderer {
         });
         Ok((image, text_width))
     }
+}
+
+/// The reminders as the strip draws them: a press under each dial that
+/// does something, nothing under the others.
+fn reminder_hints(actions: &[NotificationActionLook<'_>]) -> Vec<HintFace> {
+    let dials = actions.iter().map(|action| action.dials).max().unwrap_or(0);
+    let mut hints = vec![HintFace::default(); dials];
+    for action in actions {
+        if let Some(hint) = hints.get_mut(action.dial) {
+            hint.press = Some(action.text.to_owned());
+        }
+    }
+    hints
 }
 
 /// Fades the first `left` and the last `right` columns of `window` to
@@ -382,6 +503,7 @@ mod tests {
             background: [0xF0, 0x3E, 0x2F],
             icon: None,
             message,
+            actions: &[],
         }
     }
 
@@ -481,5 +603,210 @@ mod tests {
         assert_eq!(image.dimensions(), (800, 100));
         assert_eq!(*image.get_pixel(0, 0), Rgba([0, 0, 0, 255]));
         assert!(image.pixels().any(|pixel| pixel.0[0] > 200));
+    }
+
+    /// Pixels of `image` that differ from `other`, as `(min_x, max_x)`
+    /// within the rows from `from_y`.
+    fn changed_columns(image: &RgbaImage, other: &RgbaImage, from_y: u32) -> Option<(u32, u32)> {
+        let changed: Vec<u32> = image
+            .enumerate_pixels()
+            .filter(|(x, y, pixel)| *y >= from_y && other.get_pixel(*x, *y) != *pixel)
+            .map(|(x, _, _)| x)
+            .collect();
+        Some((*changed.iter().min()?, *changed.iter().max()?))
+    }
+
+    #[test]
+    fn the_action_is_drawn_at_the_bottom_above_its_dial() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let with_action = NotificationLook {
+            actions: &[NotificationActionLook {
+                text: "Démarrer la pause",
+                dial: 2,
+                dials: 4,
+            }],
+            ..look("Pause !")
+        };
+        let drawn = renderer
+            .render_notification(&with_action, Duration::ZERO, None)
+            .unwrap();
+        // Under the rule, only the third column changes.
+        let (left, right) = changed_columns(&drawn.image, &bare.image, 86).unwrap();
+        assert!(left >= 400 && right < 600, "{left}..{right}");
+        assert!(!drawn.scrolls);
+    }
+
+    #[test]
+    fn an_action_on_a_device_without_dials_is_not_drawn() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let with_action = NotificationLook {
+            actions: &[NotificationActionLook {
+                text: "Démarrer",
+                dial: 0,
+                dials: 0,
+            }],
+            ..look("Pause !")
+        };
+        let drawn = renderer
+            .render_notification(&with_action, Duration::ZERO, None)
+            .unwrap();
+        assert_eq!(drawn.image, bare.image);
+    }
+
+    #[test]
+    fn the_icon_rises_and_shrinks_when_an_action_is_shown() {
+        let metrics = Metrics::of(STRIP);
+        let (side, left, top) = metrics.icon_placement(true);
+        let (full, full_left, full_top) = metrics.icon_placement(false);
+        assert!(side < full && top < full_top && left >= full_left);
+        // Still centred on the same column and clear of the reminder line.
+        assert_eq!(left * 2 + side, full_left * 2 + full);
+        assert!(f32_from(top + side) < HINT_RULE_Y, "{}", top + side);
+    }
+
+    #[test]
+    fn the_message_is_centred_on_the_raised_icon() {
+        let metrics = Metrics::of(STRIP);
+        assert_eq!(metrics.message_rise(false), 0);
+        let (side, _, top) = metrics.icon_placement(true);
+        assert_eq!(
+            metrics.height / 2 - metrics.message_rise(true),
+            top + side / 2
+        );
+    }
+
+    #[test]
+    fn the_message_rises_with_the_action_line() {
+        let renderer = Renderer::new().unwrap();
+        let ink_rows = |look: &NotificationLook<'_>| {
+            let image = renderer
+                .render_notification(look, Duration::ZERO, None)
+                .unwrap()
+                .image;
+            let rows: Vec<u32> = image
+                .enumerate_pixels()
+                .filter(|(x, y, pixel)| {
+                    *x >= 200 && *x < 400 && *y < 75 && pixel.0[..3] != look.background
+                })
+                .map(|(_, y, _)| y)
+                .collect();
+            (*rows.iter().min().unwrap(), *rows.iter().max().unwrap())
+        };
+        let bare = ink_rows(&look("Pause"));
+        let raised = ink_rows(&NotificationLook {
+            actions: &[NotificationActionLook {
+                text: "Démarrer",
+                dial: 2,
+                dials: 4,
+            }],
+            ..look("Pause")
+        });
+        assert!(
+            raised.0 < bare.0 && raised.1 < bare.1,
+            "{raised:?} {bare:?}"
+        );
+    }
+
+    #[test]
+    fn every_reminder_is_drawn_in_its_own_column() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let reminders = [
+            NotificationActionLook {
+                text: "Démarrer la pause",
+                dial: 2,
+                dials: 4,
+            },
+            NotificationActionLook {
+                text: "Masquer",
+                dial: 3,
+                dials: 4,
+            },
+        ];
+        let drawn = renderer
+            .render_notification(
+                &NotificationLook {
+                    actions: &reminders,
+                    ..look("Pause !")
+                },
+                Duration::ZERO,
+                None,
+            )
+            .unwrap();
+        let (left, right) = changed_columns(&drawn.image, &bare.image, 86).unwrap();
+        assert!((400..600).contains(&left), "third column inked: {left}");
+        assert!((600..800).contains(&right), "fourth column inked: {right}");
+    }
+
+    #[test]
+    fn the_reminders_sit_under_a_rule_like_on_the_strip() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let drawn = renderer
+            .render_notification(
+                &NotificationLook {
+                    actions: &[NotificationActionLook {
+                        text: "Masquer",
+                        dial: 1,
+                        dials: 4,
+                    }],
+                    ..look("Pause !")
+                },
+                Duration::ZERO,
+                None,
+            )
+            .unwrap();
+        let rule_row = 83;
+        let (left, right) = changed_columns(&drawn.image, &bare.image, rule_row).unwrap();
+        assert_eq!((left, right), (16, 783), "rule from margin to margin");
+        let rule_pixels = (0..STRIP.width)
+            .filter(|x| drawn.image.get_pixel(*x, rule_row) != bare.image.get_pixel(*x, rule_row))
+            .count();
+        assert_eq!(rule_pixels, 768);
+    }
+
+    #[test]
+    fn the_reminders_are_drawn_once_while_they_do_not_change() {
+        let renderer = Renderer::new().unwrap();
+        let reminders = |text| {
+            [NotificationActionLook {
+                text,
+                dial: 1,
+                dials: 4,
+            }]
+        };
+        let layer = || {
+            let cached = renderer.notification_reminders.lock().unwrap();
+            Arc::clone(&cached.as_ref().unwrap().image)
+        };
+        let draw = |text, elapsed| {
+            let actions = reminders(text);
+            renderer
+                .render_notification(
+                    &NotificationLook {
+                        actions: &actions,
+                        ..look("Pause !")
+                    },
+                    elapsed,
+                    None,
+                )
+                .unwrap();
+        };
+        draw("Masquer", Duration::ZERO);
+        let first = layer();
+        draw("Masquer", Duration::from_secs(1));
+        assert!(Arc::ptr_eq(&first, &layer()), "same reminders, same layer");
+        draw("Fermer", Duration::from_secs(1));
+        assert!(!Arc::ptr_eq(&first, &layer()), "new text, new layer");
     }
 }

@@ -118,6 +118,15 @@ impl ContextFace {
     }
 }
 
+/// What a dial does under a notification, and where it sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NotificationAction {
+    pub(crate) text: String,
+    /// Index of the dial among the `dials` of the device.
+    pub(crate) dial: usize,
+    pub(crate) dials: usize,
+}
+
 /// A notification over the whole touch strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NotificationFace {
@@ -127,6 +136,8 @@ pub(crate) struct NotificationFace {
     pub(crate) timeout: Option<Duration>,
     /// Time since it appeared, in animation steps (zero when nothing moves).
     pub(crate) elapsed: Duration,
+    /// What the dials do under it, as reminders drawn at the bottom.
+    pub(crate) actions: Vec<NotificationAction>,
 }
 
 impl NotificationFace {
@@ -134,6 +145,7 @@ impl NotificationFace {
         notification: &UnreadNotification,
         timeout: Option<Duration>,
         elapsed: Duration,
+        actions: Vec<NotificationAction>,
     ) -> Self {
         let Rgb(red, green, blue) = notification.background;
         Self {
@@ -142,6 +154,7 @@ impl NotificationFace {
             icon: notification.icon.clone().map(image_source),
             timeout,
             elapsed,
+            actions,
         }
     }
 }

@@ -16,7 +16,8 @@ use futures_util::FutureExt as _;
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId,
     KeyContent, Module, ModuleContext, ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind,
-    PageContent, PageId, RedrawHandle, StripPopup, StripWidget, TaskScope, UnreadNotifications,
+    NotificationId, PageContent, PageId, RedrawHandle, StripPopup, StripWidget, TaskScope,
+    UnreadNotifications,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -69,6 +70,7 @@ pub(crate) enum Call {
     ContextRotate(PageId, i32),
     ContextPress(PageId),
     ContextLongPress(PageId),
+    NotificationPress(NotificationId),
     Event(ModuleEvent),
 }
 
@@ -438,6 +440,9 @@ fn invoke(module: &mut dyn Module, call: Call) -> HandlerFuture<'_> {
         Call::ContextPress(page) => Box::pin(async move { module.on_context_press(&page).await }),
         Call::ContextLongPress(page) => {
             Box::pin(async move { module.on_context_long_press(&page).await })
+        }
+        Call::NotificationPress(id) => {
+            Box::pin(async move { module.on_notification_press(id).await })
         }
         Call::Event(event) => module.on_event(event),
     }

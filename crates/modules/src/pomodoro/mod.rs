@@ -24,10 +24,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, ImageData, KeyContent,
-    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, Notification as StripNotification, PomodoroState, PomodoroWidget,
-    PopupEntry, PopupIcon, Rgb, StripPopup, StripWidget,
+    Command, ContextDial, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, ImageData,
+    KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    ModuleEvent, ModuleFactory, Notification as StripNotification, NotificationId, PomodoroState,
+    PomodoroWidget, PopupEntry, PopupIcon, Rgb, StripPopup, StripWidget,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -203,7 +203,7 @@ impl Pomodoro {
             if self.strip_notice.enabled {
                 commands.push(Command::Notify(strip_notification(
                     &notification,
-                    end.next,
+                    &end,
                     self.strip_notice.timeout,
                 )));
             }
@@ -321,6 +321,15 @@ impl Module for Pomodoro {
 
     async fn on_key_press(&mut self) -> Vec<Command> {
         self.toggle();
+        Vec::new()
+    }
+
+    /// Starts the step the notification announced, unless it was started in
+    /// the meantime (key, menu): the notification is then only read.
+    async fn on_notification_press(&mut self, _id: NotificationId) -> Vec<Command> {
+        if self.timer.is_awaiting_start() {
+            self.toggle();
+        }
         Vec::new()
     }
 
@@ -509,20 +518,37 @@ const WORK_BACKGROUND: Rgb = Rgb(0xF0, 0x3E, 0x2F);
 /// Background of the strip notification when a break starts.
 const BREAK_BACKGROUND: Rgb = Rgb(0x16, 0xA0, 0x6E);
 
+/// Reminder of the contextual dial under a notification that ended a step
+/// when a break is next.
+const START_BREAK: &str = "Démarrer la pause";
+/// Same, when work is next.
+const START_WORK: &str = "Démarrer le travail";
+
 /// The touch strip notification for the desktop `notification`: its title
 /// and text on one line, red when work comes next and green for a break.
+/// Unless the next step started by itself (`autoStart`), pressing the
+/// contextual dial starts it.
 fn strip_notification(
     notification: &Notification,
-    next: Phase,
+    end: &StepEnd,
     timeout: Option<Duration>,
 ) -> StripNotification {
+    let next = end.next;
     let background = if next.is_break() {
         BREAK_BACKGROUND
     } else {
         WORK_BACKGROUND
     };
     let message = format!("{} {}", notification.summary, notification.body);
-    let notification = StripNotification::new(message, background);
+    let mut notification = StripNotification::new(message, background);
+    if !end.started {
+        let text = if next.is_break() {
+            START_BREAK
+        } else {
+            START_WORK
+        };
+        notification = notification.with_context_dial(ContextDial::none().pressing(text));
+    }
     match timeout {
         Some(timeout) => notification.with_timeout(timeout),
         None => notification,

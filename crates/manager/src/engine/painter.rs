@@ -13,7 +13,9 @@ use super::EngineError;
 use super::frame::{Frame, KeyFace, StripOverlay};
 use super::live::{LiveKey, LiveSnapshot, LiveStrip};
 use crate::device::{DeckBackend, StripLayout};
-use crate::render::{KeyRequest, NotificationLook, RenderError, Rendered, Renderer};
+use crate::render::{
+    KeyRequest, NotificationActionLook, NotificationLook, RenderError, Rendered, Renderer,
+};
 use crate::strip::StripFace;
 
 /// What was written to a key: its face, the image without the
@@ -228,9 +230,20 @@ impl Painter {
         let Some(size) = self.strip_size else {
             return Ok(());
         };
-        let renderer = Arc::clone(renderer);
-        let shown = face.clone();
-        let image = spawn_blocking(move || renderer.render_strip(&shown, size)).await??;
+        // The strip an overlay covered is drawn again as it was: the picture
+        // kept is written back without rendering it.
+        let kept = self
+            .strip
+            .as_ref()
+            .filter(|painted| painted.face == face)
+            .map(|painted| Arc::clone(&painted.rendered));
+        let image = if let Some(image) = kept {
+            image
+        } else {
+            let renderer = Arc::clone(renderer);
+            let shown = face.clone();
+            spawn_blocking(move || renderer.render_strip(&shown, size)).await??
+        };
         // Writing the columns that changed only keeps a dial turned in a menu
         // fast: the device takes less to receive and show a narrow region.
         let before = self
@@ -423,11 +436,21 @@ fn render_overlay(
     match overlay {
         StripOverlay::HeldLabel(label) => Ok((renderer.render_strip_label(label, size)?, None)),
         StripOverlay::Notification(face) => {
+            let actions: Vec<_> = face
+                .actions
+                .iter()
+                .map(|action| NotificationActionLook {
+                    text: &action.text,
+                    dial: action.dial,
+                    dials: action.dials,
+                })
+                .collect();
             let look = NotificationLook {
                 size,
                 background: face.background,
                 icon: face.icon.as_ref(),
                 message: &face.message,
+                actions: &actions,
             };
             let drawn = renderer
                 .render_notification(&look, face.elapsed, face.timeout)

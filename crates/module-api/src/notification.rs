@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{ImageData, ModuleInstanceId};
+use crate::{ContextDial, ImageData, ModuleInstanceId};
 
 /// Longest message, in characters; a longer one is cut with an ellipsis.
 pub const MAX_NOTIFICATION_CHARS: usize = 200;
@@ -23,6 +23,10 @@ pub struct Rgb(pub u8, pub u8, pub u8);
 /// or is dismissed with the navigation dial, stays *unread* and can be shown
 /// again from the notifications module. A message too long for the strip
 /// scrolls.
+///
+/// A notification may give the contextual dial something to do while it is
+/// shown ([`Notification::with_context_dial`]): pressing the dial then calls
+/// [`crate::Module::on_notification_press`] and reads the notification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Notification {
@@ -32,6 +36,9 @@ pub struct Notification {
     pub background: Rgb,
     /// How long it stays; `None` keeps it until the user dismisses it.
     pub timeout: Option<Duration>,
+    /// What the contextual dial does while the notification is shown; only
+    /// its press is used. Nothing by default.
+    pub context_dial: ContextDial,
 }
 
 impl Notification {
@@ -42,6 +49,18 @@ impl Notification {
             message: truncated(message.into()),
             background,
             timeout: None,
+            context_dial: ContextDial::none(),
+        }
+    }
+
+    /// The same notification, with `context_dial` for the contextual dial.
+    /// The host calls the module only if the press has a text, which it
+    /// shows on the strip under the notification.
+    #[must_use]
+    pub fn with_context_dial(self, context_dial: ContextDial) -> Self {
+        Self {
+            context_dial,
+            ..self
         }
     }
 
@@ -87,6 +106,8 @@ pub struct UnreadNotification {
     pub message: String,
     /// Background colour.
     pub background: Rgb,
+    /// What the contextual dial does while it is shown.
+    pub context_dial: ContextDial,
 }
 
 impl UnreadNotification {
@@ -104,6 +125,7 @@ impl UnreadNotification {
             icon,
             message: notification.message.clone(),
             background: notification.background,
+            context_dial: notification.context_dial.clone(),
         }
     }
 }
@@ -185,6 +207,17 @@ mod tests {
             Some(Duration::from_secs(3))
         );
         assert_eq!(notification.with_timeout(Duration::ZERO).timeout, None);
+    }
+
+    #[test]
+    fn a_notification_carries_the_contextual_dial_to_the_unread_list() {
+        let plain = Notification::new("x", Rgb(0, 0, 0));
+        assert_eq!(plain.context_dial, ContextDial::none());
+        let dial = ContextDial::none().pressing("Démarrer");
+        let notification = plain.with_context_dial(dial.clone());
+        assert_eq!(notification.context_dial, dial);
+        let unread = UnreadNotification::new(NotificationId(1), "p".into(), None, &notification);
+        assert_eq!(unread.context_dial, dial);
     }
 
     #[test]

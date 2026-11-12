@@ -32,7 +32,7 @@ use image::{ImageFormat, Rgba, RgbaImage};
 use resvg::usvg;
 use thiserror::Error;
 
-pub use notification::{NotificationImage, NotificationLook};
+pub use notification::{NotificationActionLook, NotificationImage, NotificationLook};
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
@@ -329,6 +329,8 @@ pub struct Renderer {
     marks: Mutex<HashMap<(Feedback, u32), Arc<RgbaImage>>>,
     /// Text of the notification last drawn (see `notification`).
     notification_text: Mutex<Option<notification::TextLayer>>,
+    /// Reminders of the dials drawn under the notification last drawn.
+    notification_reminders: Mutex<Option<notification::ReminderLayer>>,
 }
 
 impl Renderer {
@@ -358,6 +360,7 @@ impl Renderer {
             digests: DigestMemo::new(reused.saturating_add(probation.get())),
             marks: Mutex::new(HashMap::new()),
             notification_text: Mutex::new(None),
+            notification_reminders: Mutex::new(None),
         })
     }
 

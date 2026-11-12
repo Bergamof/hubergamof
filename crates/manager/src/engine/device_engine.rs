@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, Feedback, ModuleInstanceId, ModuleSurface, PageContent, PageId,
-    RedrawHandle,
+    RedrawHandle, UnreadNotification,
 };
 use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -16,8 +16,8 @@ use tokio::time::Instant;
 
 use super::feedback::{Marks, Surface};
 use super::frame::{
-    ContextFace, ContextGesture, Frame, FrameKey, KeyFace, KeyTarget, NotificationFace,
-    StripOverlay,
+    ContextFace, ContextGesture, Frame, FrameKey, KeyFace, KeyTarget, NotificationAction,
+    NotificationFace, StripOverlay,
 };
 use super::handle::{REQUEST_CAPACITY, Request};
 use super::instances::{Call, Instances, Outcome, RoutedEvent};
@@ -35,6 +35,9 @@ use crate::render::{ImageSource, is_system_panel};
 use crate::strip::SystemHistory;
 
 mod strip;
+
+/// Reminder of the navigation dial under a notification: its press hides it.
+const HIDE_NOTIFICATION: &str = "Masquer";
 
 /// Longest wait for the screens to be blanked when the engine stops.
 const BLANK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -504,11 +507,8 @@ impl DeviceEngine {
     async fn dial_input(&mut self, dial: u8, input: DialInput) {
         let assignment = self.dial_assignment(dial);
         if self.notifications.shown().is_some() {
-            // Under a notification only the navigation dial acts: its press
-            // removes the notification, leaving it unread.
-            if matches!(input, DialInput::Press) && assignment == DialAssignment::Navigation {
-                self.notifications.dismiss(Instant::now());
-            }
+            self.dial_input_under_notification(&assignment, &input)
+                .await;
             return;
         }
         match assignment {
@@ -520,6 +520,55 @@ impl DeviceEngine {
             }
             DialAssignment::Contextual => self.context_input(dial, input).await,
             DialAssignment::None => {}
+        }
+    }
+
+    /// Under a notification only two dials act: the navigation dial, whose
+    /// press removes the notification leaving it unread, and the contextual
+    /// dial, whose press does what the notification declares and reads it.
+    async fn dial_input_under_notification(
+        &mut self,
+        assignment: &DialAssignment,
+        input: &DialInput,
+    ) {
+        if !matches!(input, DialInput::Press) {
+            return;
+        }
+        match assignment {
+            DialAssignment::Navigation => self.notifications.dismiss(Instant::now()),
+            DialAssignment::Contextual => self.press_notification_action().await,
+            _ => {}
+        }
+    }
+
+    /// Hands the press to the module that sent the notification shown, if it
+    /// declares what the press does, then reads the notification; a failed
+    /// handler leaves it unread (the module shows the alert).
+    async fn press_notification_action(&mut self) {
+        let Some(shown) = self.notifications.shown() else {
+            return;
+        };
+        if !shown.notification.context_dial.reacts_to_press() {
+            return;
+        }
+        let (id, source) = (shown.notification.id, shown.notification.source.clone());
+        let surfaces = self.failure_surfaces(&source);
+        let Some(outcome) = self
+            .instances
+            .call(&source, Call::NotificationPress(id))
+            .await
+        else {
+            return;
+        };
+        let done = matches!(outcome, Outcome::Done(_));
+        self.conclude(&source, &surfaces, outcome);
+        if done
+            && self
+                .notifications
+                .shown()
+                .is_some_and(|s| s.notification.id == id)
+        {
+            self.notifications.read(Instant::now());
         }
     }
 
@@ -934,7 +983,29 @@ impl DeviceEngine {
             &shown.notification,
             shown.timeout,
             shown.elapsed(Instant::now()),
+            self.notification_actions(&shown.notification),
         )))
+    }
+
+    /// The reminders of the dials that act under `notification`: the
+    /// contextual dial if the notification declares a press, and the
+    /// navigation dials, whose press hides it.
+    fn notification_actions(&self, notification: &UnreadNotification) -> Vec<NotificationAction> {
+        let dials = self.config.dials.len();
+        let contextual = notification.context_dial.hint.press.clone();
+        self.config
+            .dials
+            .iter()
+            .enumerate()
+            .filter_map(|(dial, assignment)| {
+                let text = match assignment {
+                    DialAssignment::Contextual => contextual.clone()?,
+                    DialAssignment::Navigation => HIDE_NOTIFICATION.to_owned(),
+                    _ => return None,
+                };
+                Some(NotificationAction { text, dial, dials })
+            })
+            .collect()
     }
 
     /// Scrolls to the key holding the cursor of the contextual dial when it
