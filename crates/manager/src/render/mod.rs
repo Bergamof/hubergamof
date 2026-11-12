@@ -1,10 +1,10 @@
-//! Image rendering for keys and touch strip zones.
+//! Image rendering for keys and the touch strip.
 //!
 //! [`Renderer`] turns an optional source image (PNG, JPEG, SVG) plus an
 //! optional label into an RGBA image of the target size, scaled to fit
 //! ("contain") and centred on a background colour, with the frame of an
-//! attention [`KeyState`]; it also renders strip zones from text lines, a gauge (bar, arc or
-//! ring), a clock face, a page title or an image, and the transient [`Feedback`] mark drawn over a surface. Results are cached by
+//! attention [`KeyState`]; it also renders the whole touch strip (module `strip`),
+//! full-strip notifications and the transient [`Feedback`] mark drawn over a key. Key images are cached by
 //! content (bounded segmented LRU, module `cache`: images used once,
 //! like those of a countdown, do not push out those that come back) and
 //! encoded to a PNG data URL only on demand.
@@ -44,7 +44,7 @@ use source::{Decoded, f32_from};
 /// Background used when none is configured.
 pub const DEFAULT_BACKGROUND: Rgba<u8> = Rgba([0, 0, 0, u8::MAX]);
 
-/// Colour of label and zone text.
+/// Colour of label text.
 pub const TEXT_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
 
 /// Background of a [`KeyState::Attention`] key (dark orange), visible around
@@ -57,8 +57,8 @@ pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
 /// Number of reused rendered images kept in the cache (see
 /// module `cache`): the faces of a few pages of the largest device (32 keys)
 /// on several devices. Bounded in number, the images of one surface being
-/// alike: at most ~20 MB with the largest touch zones (pixels of these and
-/// of the probation images, and their PNG).
+/// alike (counting the pixels of these and of the probation images, and
+/// their PNG).
 pub const RENDER_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(192) {
     Some(capacity) => capacity,
     None => NonZeroUsize::MIN,
@@ -256,7 +256,7 @@ enum CacheKey {
     },
 }
 
-/// Renders key and strip zone images; shareable between threads.
+/// Renders key and strip images; shareable between threads.
 pub struct Renderer {
     text: TextRenderer,
     cache: Mutex<SegmentedLru<CacheKey, Arc<Rendered>>>,
@@ -342,8 +342,8 @@ impl Renderer {
         })
     }
 
-    /// Renders `source` scaled to fit `size` on the default background (a
-    /// touch strip zone image). CPU-bound: call it from a blocking context.
+    /// Renders `source` scaled to fit `size` on the default background (an
+    /// icon of the catalog). CPU-bound: call it from a blocking context.
     ///
     /// # Errors
     ///

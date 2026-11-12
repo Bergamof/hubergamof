@@ -105,7 +105,8 @@ impl DeviceEngine {
                 Some(StripWidget::Pomodoro(widget)) if pomodoro.is_none() => {
                     pomodoro = Some(widget);
                 }
-                _ => {}
+                Some(_) => tracing::debug!(module = %id, "widget ignored, its place is taken"),
+                None => {}
             }
         }
         (volume, pomodoro)

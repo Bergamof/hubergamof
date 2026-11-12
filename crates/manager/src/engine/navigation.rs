@@ -26,8 +26,8 @@ impl Navigation {
         self.stack.last()
     }
 
-    /// Remembers the title of the displayed module page, for the zones that
-    /// name the page the navigation leads back to.
+    /// Remembers the title of the displayed module page, for the path of the
+    /// page shown on the strip.
     pub(crate) fn set_current_title(&mut self, title: &str) {
         if let Some(current) = self.stack.last_mut()
             && current.title != title

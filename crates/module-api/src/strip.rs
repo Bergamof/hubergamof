@@ -46,7 +46,10 @@ impl DialHint {
 }
 
 /// What a module shows in its own place of the touch strip. The host
-/// decides where and how it is drawn.
+/// decides where and how it is drawn, and keeps one place for each kind of
+/// widget it knows: when several instances show the same kind, the first one
+/// (in the order of the configuration) is shown. A new kind of widget is a
+/// new variant, drawn by the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StripWidget {

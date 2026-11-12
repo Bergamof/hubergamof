@@ -360,11 +360,12 @@ impl Canvas {
     fn text_with(&mut self, label: &Label<'_>, suffix: &str) {
         push_svg!(
             self.svg,
-            r#"<text x="{}" y="{}" font-family="{}" font-size="{}" font-weight="600" fill="{}" text-anchor="{}" letter-spacing="{}">"#,
+            r#"<text x="{}" y="{}" font-family="{}" font-size="{}" font-weight="{}" fill="{}" text-anchor="{}" letter-spacing="{}">"#,
             label.x,
             label.baseline,
             super::FONT_FAMILY,
             label.size,
+            FontWeight::SemiBold.css(),
             svg_color(label.color),
             label.anchor.attribute(),
             label.spacing
@@ -608,36 +609,42 @@ impl Renderer {
                 draw_mark(canvas, feedback, left, palette);
                 continue;
             }
+            // Each part takes at most half of the cell: a long text is
+            // shortened, never drawn over the next dial.
+            let room =
+                (cell - 2.0 * HINT_MARGIN - HINT_PART_GAP) / 2.0 - HINT_ICON_SIZE - HINT_ICON_GAP;
             let mut x = left;
             if let Some(rotate) = &hint.rotate {
-                x = self.draw_hint_part(canvas, Glyph::Rotate, rotate, x, palette)?;
+                x = self.draw_hint_part(canvas, Glyph::Rotate, rotate, (x, room), palette)?;
             }
             if let Some(press) = &hint.press {
-                self.draw_hint_part(canvas, Glyph::Press, press, x, palette)?;
+                self.draw_hint_part(canvas, Glyph::Press, press, (x, room), palette)?;
             }
         }
         Ok(())
     }
 
-    /// An icon followed by its text, from `x`; the position after them.
+    /// An icon followed by its text (shortened to `room`), from `x`; the
+    /// position after them.
     fn draw_hint_part(
         &self,
         canvas: &mut Canvas,
         glyph: Glyph,
         text: &str,
-        x: f32,
+        (x, room): (f32, f32),
         palette: &Palette,
     ) -> Result<f32, RenderError> {
         canvas.glyph(glyph, (x, HINT_ICON_Y), HINT_ICON_SIZE, palette.muted);
         let text_x = x + HINT_ICON_SIZE + HINT_ICON_GAP;
+        let text = self.text.fit(text, HINT_SIZE, FontWeight::SemiBold, room)?;
         canvas.text(&Label::new(
-            text,
+            &text,
             text_x,
             HINT_BASELINE,
             HINT_SIZE,
             palette.muted,
         ));
-        let width = self.text.width(text, HINT_SIZE, FontWeight::SemiBold)?;
+        let width = self.text.width(&text, HINT_SIZE, FontWeight::SemiBold)?;
         Ok(text_x + width + HINT_PART_GAP)
     }
 
@@ -1087,6 +1094,28 @@ mod tests {
         let mut page = face();
         page.page.row_count = 1;
         page
+    }
+
+    #[test]
+    fn a_long_reminder_stays_in_the_cell_of_its_dial() {
+        let mut long = face();
+        long.hints[0].rotate = Some("Un rappel vraiment beaucoup trop long".into());
+        long.hints[0].press = Some("et un clic encore bien plus long que cela".into());
+        let image = render(&long);
+        // Nothing of the first dial's reminder reaches the second one (216 px).
+        assert_eq!(
+            drawn_in(image.image(), LIGHT.background, (212, 86, 4, 12)),
+            0
+        );
+    }
+
+    #[test]
+    fn a_path_with_control_characters_still_draws_the_strip() {
+        let mut polluted = face();
+        polluted.page.trail = "Do\u{1}cker\u{0}".into();
+        polluted.hints[0].rotate = Some("\u{1b}Vol".into());
+        let image = render(&polluted);
+        assert!(drawn_in(image.image(), LIGHT.background, (540, 10, 250, 16)) > 0);
     }
 
     #[test]

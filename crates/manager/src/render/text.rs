@@ -1,4 +1,4 @@
-//! Text drawing with the embedded font (Noto Sans `SemiBold` and `Light`, SIL
+//! Text drawing with the embedded font (Noto Sans `SemiBold`, SIL
 //! OFL 1.1, see `assets/fonts/OFL.txt`), shaped and rasterised by
 //! `usvg`/`resvg`.
 //!
@@ -15,11 +15,8 @@ use super::source;
 /// Embedded `SemiBold` font file, the default weight.
 const SEMIBOLD_FONT_DATA: &[u8] = include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf");
 
-/// Embedded `Light` font file.
-const LIGHT_FONT_DATA: &[u8] = include_bytes!("../../assets/fonts/NotoSans-Light.ttf");
-
 /// Embedded font files, all of the family [`FONT_FAMILY`].
-pub const FONT_DATA: [&[u8]; 2] = [SEMIBOLD_FONT_DATA, LIGHT_FONT_DATA];
+pub const FONT_DATA: [&[u8]; 1] = [SEMIBOLD_FONT_DATA];
 
 /// Family name of [`FONT_DATA`], also the default font of SVG sources.
 pub const FONT_FAMILY: &str = "Noto Sans";
@@ -29,16 +26,13 @@ pub const FONT_FAMILY: &str = "Noto Sans";
 pub enum FontWeight {
     /// `SemiBold` (CSS weight 600), used almost everywhere.
     SemiBold,
-    /// `Light` (CSS weight 300), for large figures.
-    Light,
 }
 
 impl FontWeight {
     /// CSS `font-weight` value of the weight.
-    const fn css(self) -> u16 {
+    pub(super) const fn css(self) -> u16 {
         match self {
             Self::SemiBold => 600,
-            Self::Light => 300,
         }
     }
 }
@@ -79,15 +73,10 @@ pub struct TextLine {
     pub weight: FontWeight,
 }
 
-/// Measures and draws text; also holds the SVG options (font databases) used
+/// Measures and draws text; also holds the SVG options (font database) used
 /// for SVG sources and for the text it draws.
 pub struct TextRenderer {
-    /// Options for SVG sources: `SemiBold` only, so that the text of an icon
-    /// without `font-weight` keeps the look it always had instead of
-    /// matching `Light`.
-    source_options: usvg::Options<'static>,
-    /// Options for the text drawn by the renderer: every weight.
-    text_options: usvg::Options<'static>,
+    options: usvg::Options<'static>,
 }
 
 impl TextRenderer {
@@ -97,21 +86,17 @@ impl TextRenderer {
     ///
     /// [`RenderError::Font`] if the embedded font cannot be loaded.
     pub fn new() -> Result<Self, RenderError> {
-        let source_options = source::svg_options(&[SEMIBOLD_FONT_DATA], FONT_FAMILY);
-        let text_options = source::svg_options(&FONT_DATA, FONT_FAMILY);
-        if source_options.fontdb.is_empty() || text_options.fontdb.len() < FONT_DATA.len() {
+        let options = source::svg_options(&FONT_DATA, FONT_FAMILY);
+        if options.fontdb.len() < FONT_DATA.len() {
             return Err(RenderError::Font);
         }
-        Ok(Self {
-            source_options,
-            text_options,
-        })
+        Ok(Self { options })
     }
 
-    /// Options for parsing untrusted SVG sources: the `SemiBold` font only.
+    /// Options for parsing untrusted SVG sources: the embedded font only.
     #[must_use]
     pub fn source_svg_options(&self) -> &usvg::Options<'static> {
-        &self.source_options
+        &self.options
     }
 
     /// A line of `text` as it is, in `style`, centred on `center_x`.
@@ -169,7 +154,7 @@ impl TextRenderer {
         let mut svg = String::from(r#"<svg xmlns="http://www.w3.org/2000/svg">"#);
         push_text(&mut svg, text, size, weight, 0.0, size, None);
         svg.push_str("</svg>");
-        let tree = usvg::Tree::from_str(&svg, &self.text_options).map_err(RenderError::Svg)?;
+        let tree = usvg::Tree::from_str(&svg, &self.options).map_err(RenderError::Svg)?;
         Ok(tree.root().abs_bounding_box().width())
     }
 
@@ -235,7 +220,7 @@ impl TextRenderer {
         let svg = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{body}</svg>"#
         );
-        let tree = usvg::Tree::from_str(&svg, &self.text_options).map_err(RenderError::Svg)?;
+        let tree = usvg::Tree::from_str(&svg, &self.options).map_err(RenderError::Svg)?;
         let layer = source::rasterize_svg(&tree, width, height)?;
         imageops::overlay(canvas, &layer, 0, 0);
         Ok(())
@@ -280,7 +265,7 @@ fn push_text(
 }
 
 pub(super) fn escape_xml(svg: &mut String, text: &str) {
-    for character in text.chars() {
+    for character in text.chars().filter(|character| is_xml_char(*character)) {
         match character {
             '&' => svg.push_str("&amp;"),
             '<' => svg.push_str("&lt;"),
@@ -290,6 +275,13 @@ pub(super) fn escape_xml(svg: &mut String, text: &str) {
             other => svg.push(other),
         }
     }
+}
+
+/// Whether XML 1.0 allows `character`: a text with another one (a control
+/// character) is not a document, and would stop the whole drawing.
+fn is_xml_char(character: char) -> bool {
+    matches!(character,
+        '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
 }
 
 #[cfg(test)]
@@ -328,14 +320,6 @@ mod tests {
         assert!(text.width(&fitted, SIZE, FontWeight::SemiBold).unwrap() <= 60.0);
     }
 
-    #[test]
-    fn light_text_is_narrower_than_semibold_text() {
-        let text = text();
-        let light = text.width("00:00", SIZE, FontWeight::Light).unwrap();
-        let semibold = text.width("00:00", SIZE, FontWeight::SemiBold).unwrap();
-        assert!(light > 0.0 && light < semibold, "{light} vs {semibold}");
-    }
-
     /// Width of `text` drawn by a SVG source, which is parsed with the
     /// options of untrusted SVG.
     fn source_text_width(text: &TextRenderer, attributes: &str) -> f32 {
@@ -347,17 +331,29 @@ mod tests {
     }
 
     #[test]
-    fn svg_sources_only_see_the_semibold_font() {
+    fn svg_sources_see_the_embedded_font_whatever_weight_they_ask() {
         let text = text();
-        assert_eq!(text.source_svg_options().fontdb.len(), 1);
+        assert_eq!(text.source_svg_options().fontdb.len(), FONT_DATA.len());
         let semibold = text.width("00:00", SIZE, FontWeight::SemiBold).unwrap();
-        let light = text.width("00:00", SIZE, FontWeight::Light).unwrap();
-        assert!((semibold - light).abs() > 0.5, "{semibold} vs {light}");
-        // Without a weight (400) or asking for `Light` (300): SemiBold anyway.
+        // Without a weight (400) or asking for another one: SemiBold anyway.
         for attributes in ["", r#"font-weight="300""#, r#"font-weight="100""#] {
             let width = source_text_width(&text, attributes);
             assert!((width - semibold).abs() < 0.01, "{attributes}: {width}");
         }
+    }
+
+    #[test]
+    fn control_characters_are_dropped_so_that_the_text_stays_drawable() {
+        let text = text();
+        let plain = text.width("ab", SIZE, FontWeight::SemiBold).unwrap();
+        let polluted = text
+            .width("a\u{1}\u{0}b\u{FFFE}", SIZE, FontWeight::SemiBold)
+            .unwrap();
+        assert!(
+            (plain - polluted).abs() < f32::EPSILON,
+            "{plain} {polluted}"
+        );
+        assert!(is_xml_char('\n') && is_xml_char('é') && !is_xml_char('\u{1}'));
     }
 
     #[test]

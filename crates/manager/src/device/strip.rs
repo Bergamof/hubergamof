@@ -1,83 +1,30 @@
-//! Touch strip geometry: one zone of equal width above each dial.
+//! Touch strip geometry.
 
 use hubergamof_protocol::{DeviceInfo, ImageSize};
 use image::RgbaImage;
 
 use super::DeviceError;
 
-/// Split of a touch strip into one zone per dial.
+/// The touch strip of a device: it is drawn as a whole.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StripLayout {
     strip: ImageSize,
-    zone_count: u8,
 }
 
 impl StripLayout {
     /// Layout of the device touch strip, `None` when the device has no strip
-    /// or no dial to split it by.
+    /// or no dial to remind under it.
     #[must_use]
     pub fn for_device(info: &DeviceInfo) -> Option<Self> {
         let capabilities = &info.capabilities;
         let strip = capabilities.touch_strip?;
-        (capabilities.dial_count > 0).then_some(Self {
-            strip,
-            zone_count: capabilities.dial_count,
-        })
+        (capabilities.dial_count > 0).then_some(Self { strip })
     }
 
     /// Size of the whole strip.
     #[must_use]
     pub fn strip_size(&self) -> ImageSize {
         self.strip
-    }
-
-    /// Number of zones.
-    #[must_use]
-    pub fn zone_count(&self) -> u8 {
-        self.zone_count
-    }
-
-    /// Size of one zone (the remainder of an uneven split is left unused).
-    #[must_use]
-    pub fn zone_size(&self) -> ImageSize {
-        ImageSize {
-            width: self.strip.width / u32::from(self.zone_count),
-            height: self.strip.height,
-        }
-    }
-
-    /// Left edge of `zone`.
-    ///
-    /// # Errors
-    ///
-    /// [`DeviceError::InvalidZone`] when the zone does not exist.
-    pub fn zone_x(&self, zone: u8) -> Result<u32, DeviceError> {
-        if zone < self.zone_count {
-            Ok(u32::from(zone) * self.zone_size().width)
-        } else {
-            Err(DeviceError::InvalidZone {
-                index: zone,
-                count: self.zone_count,
-            })
-        }
-    }
-
-    /// Zone containing horizontal strip position `x`, if any.
-    #[must_use]
-    pub fn zone_at(&self, x: u16) -> Option<u8> {
-        let zone = u32::from(x) / self.zone_size().width;
-        u8::try_from(zone)
-            .ok()
-            .filter(|zone| *zone < self.zone_count)
-    }
-
-    /// Checks that `image` has the size of a zone.
-    ///
-    /// # Errors
-    ///
-    /// [`DeviceError::ImageSizeMismatch`] otherwise.
-    pub fn check_zone_image(&self, image: &RgbaImage) -> Result<(), DeviceError> {
-        check_image_size(image, self.zone_size())
     }
 }
 
@@ -158,31 +105,9 @@ mod tests {
     };
 
     #[test]
-    fn plus_strip_has_four_zones_of_200_by_100() {
+    fn plus_strip_is_800_by_100() {
         let layout = StripLayout::for_device(&info(4, Some(PLUS_STRIP))).unwrap();
-        assert_eq!(layout.zone_count(), 4);
-        assert_eq!(
-            layout.zone_size(),
-            ImageSize {
-                width: 200,
-                height: 100
-            }
-        );
-        assert_eq!(layout.zone_x(3).unwrap(), 600);
-        assert!(matches!(
-            layout.zone_x(4),
-            Err(DeviceError::InvalidZone { index: 4, count: 4 })
-        ));
-    }
-
-    #[test]
-    fn zone_at_maps_positions_to_zones() {
-        let layout = StripLayout::for_device(&info(4, Some(PLUS_STRIP))).unwrap();
-        assert_eq!(layout.zone_at(0), Some(0));
-        assert_eq!(layout.zone_at(199), Some(0));
-        assert_eq!(layout.zone_at(200), Some(1));
-        assert_eq!(layout.zone_at(799), Some(3));
-        assert_eq!(layout.zone_at(800), None);
+        assert_eq!(layout.strip_size(), PLUS_STRIP);
     }
 
     #[test]

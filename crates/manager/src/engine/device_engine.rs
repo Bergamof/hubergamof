@@ -25,6 +25,7 @@ use super::notifications::NotificationCenter;
 use super::painter::Painter;
 use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
+use crate::config_store::check_config;
 use crate::device::{self, DeckBackend, InputEvent, StripLayout};
 use crate::render::ImageSource;
 use crate::strip::SystemHistory;
@@ -568,9 +569,7 @@ impl DeviceEngine {
             .dials
             .iter()
             .zip(0_u8..)
-            .filter(|(assigned, _)| {
-                matches!(assigned, DialAssignment::Module { instance, .. } if instance == module)
-            })
+            .filter(|(assigned, _)| assigned.instance() == Some(module))
             .map(|(_, dial)| Surface::Dial(dial))
             .collect()
     }
@@ -666,6 +665,8 @@ impl DeviceEngine {
     /// saved, the configuration is always adopted; a brightness the device
     /// refuses is only logged, and tried again with the next configuration.
     async fn apply_config(&mut self, config: DeviceConfig) -> Result<DeviceConfig, EngineError> {
+        // Bounds first: the modules are checked on lists of a known size.
+        check_config(&config, self.deck.info())?;
         check_modules(&self.services.registry, &config)?;
         let store = self.services.store.clone();
         let info = self.deck.info().clone();

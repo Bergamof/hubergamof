@@ -619,10 +619,7 @@ pub fn fit_to_device(mut config: DeviceConfig, device: &DeviceInfo, revision: u6
     let used: HashSet<_> = config
         .home
         .iter()
-        .chain(config.dials.iter().filter_map(|dial| match dial {
-            DialAssignment::Module { instance, .. } => Some(instance),
-            DialAssignment::None | DialAssignment::Navigation | DialAssignment::Contextual => None,
-        }))
+        .chain(config.dials.iter().filter_map(DialAssignment::instance))
         .cloned()
         .collect();
     config.modules.retain(|module| used.contains(&module.id));

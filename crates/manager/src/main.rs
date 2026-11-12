@@ -93,7 +93,11 @@ async fn main() -> Result<()> {
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let (shutdown, stopping) = watch::channel(false);
 
-    let services = services(&cli.config_dir, builtin_services(cli.demo), cli.demo)?;
+    let services = services(
+        &cli.config_dir,
+        builtin_services(cli.demo),
+        system_probe(cli.demo),
+    )?;
     let catalog = catalog_of(&services).await?;
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
@@ -247,7 +251,7 @@ async fn catalog_of(services: &EngineServices) -> Result<Arc<[CatalogModule]>> {
 fn services(
     config_dir: &std::path::Path,
     builtins: BuiltinServices,
-    demo: bool,
+    system: Arc<dyn SystemProbe>,
 ) -> Result<EngineServices> {
     let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
@@ -255,7 +259,7 @@ fn services(
         renderer: Arc::new(Renderer::new().context("cannot initialise the renderer")?),
         registry,
         wall_clock: Arc::new(SystemClock),
-        system: system_probe(demo),
+        system,
     })
 }
 
@@ -380,7 +384,7 @@ mod tests {
         let discovery = DeviceDiscovery::new();
         let supervisor = Supervisor::start(
             &discovery,
-            services(dir.path(), builtin_services(true), true).unwrap(),
+            services(dir.path(), builtin_services(true), system_probe(true)).unwrap(),
         );
         let devices = VirtualDevices::new(discovery.clone());
         let engines = supervisor.engines();

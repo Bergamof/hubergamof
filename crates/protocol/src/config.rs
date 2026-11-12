@@ -95,6 +95,18 @@ pub enum DialAssignment {
     },
 }
 
+impl DialAssignment {
+    /// The module instance the dial function belongs to, if it is one of a
+    /// module.
+    #[must_use]
+    pub fn instance(&self) -> Option<&ModuleInstanceId> {
+        match self {
+            Self::Module { instance, .. } => Some(instance),
+            Self::None | Self::Navigation | Self::Contextual => None,
+        }
+    }
+}
+
 /// Colours of the touch strip.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

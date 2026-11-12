@@ -2,6 +2,7 @@
 @component
 Preview of the touch strip, with sample figures (not the live strip): it follows the theme and the
 options of the strip, and shows under it what each dial does. Selecting it opens the options.
+The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: change both together.
 -->
 <script lang="ts">
 	import type { StripConfig } from '#lib/generated/index.js';

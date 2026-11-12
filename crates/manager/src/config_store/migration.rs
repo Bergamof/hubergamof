@@ -6,7 +6,12 @@
 
 use hubergamof_modules::audio::{AUDIO_KIND, VOLUME_FUNCTION};
 use hubergamof_modules::pomodoro::{CONTROL_FUNCTION, POMODORO_KIND};
-use hubergamof_protocol::{CURRENT_SCHEMA_VERSION, DeviceConfig, DialAssignment, StripConfig};
+use std::collections::{HashMap, HashSet};
+
+use hubergamof_protocol::{
+    CURRENT_SCHEMA_VERSION, DeviceConfig, DialAssignment, MAX_DIALS, MAX_HOME_KEYS, MAX_MODULES,
+};
+use serde::de::Error as _;
 use serde_json::{Map, Value, json};
 
 /// Kind of the clock module of version 1, now part of the touch strip.
@@ -26,9 +31,32 @@ const FIRST_SCHEMA_VERSION: u64 = 1;
 pub(super) fn parse_config(bytes: &[u8]) -> Result<DeviceConfig, serde_json::Error> {
     let mut value: Value = serde_json::from_slice(bytes)?;
     if schema_version(&value) == Some(FIRST_SCHEMA_VERSION) {
+        // Before anything walks them: validation comes after the upgrade.
+        check_sizes(&value)?;
         upgrade_from_first(&mut value);
     }
     serde_json::from_value(value)
+}
+
+/// Refuses a configuration of the first version whose lists are longer than
+/// a configuration may hold: the upgrade would walk them for nothing.
+fn check_sizes(config: &Value) -> Result<(), serde_json::Error> {
+    for (key, max) in [
+        ("modules", MAX_MODULES),
+        ("home", MAX_HOME_KEYS),
+        ("dials", MAX_DIALS),
+    ] {
+        let length = config
+            .get(key)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        if length > max {
+            return Err(serde_json::Error::custom(format!(
+                "too many `{key}`: {length} (at most {max})"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn schema_version(config: &Value) -> Option<u64> {
@@ -50,16 +78,11 @@ fn upgrade_from_first(config: &mut Value) {
     if let Some(dials) = dials {
         config.insert("dials".into(), Value::Array(dials));
     }
-    // The defaults are built from the contract itself: nothing to keep in
-    // step by hand.
-    if let Ok(strip) = serde_json::to_value(StripConfig::default()) {
-        config.insert("strip".into(), strip);
-    }
     config.insert("schemaVersion".into(), json!(CURRENT_SCHEMA_VERSION));
 }
 
-/// `(id, kind)` of every module instance.
-fn instance_kinds(config: &Map<String, Value>) -> Vec<(String, String)> {
+/// Kind of every module instance, by id.
+fn instance_kinds(config: &Map<String, Value>) -> HashMap<String, String> {
     let text =
         |instance: &Value, key: &str| instance.get(key).and_then(Value::as_str).map(str::to_owned);
     config
@@ -72,16 +95,16 @@ fn instance_kinds(config: &Map<String, Value>) -> Vec<(String, String)> {
 }
 
 /// What a dial of version 1 (a module instance id, or `null`) does now.
-fn upgraded_dial(dial: &Value, kinds: &[(String, String)]) -> Value {
-    let assignment = dial
-        .as_str()
-        .and_then(|id| kinds.iter().find(|(known, _)| known == id))
-        .map_or(DialAssignment::None, |(id, kind)| match kind.as_str() {
+fn upgraded_dial(dial: &Value, kinds: &HashMap<String, String>) -> Value {
+    let assignment = dial.as_str().and_then(|id| kinds.get_key_value(id)).map_or(
+        DialAssignment::None,
+        |(id, kind)| match kind.as_str() {
             AUDIO_KIND => module_function(id, VOLUME_FUNCTION),
             POMODORO_KIND => module_function(id, CONTROL_FUNCTION),
             LEGACY_NAVIGATION_KIND => DialAssignment::Navigation,
             _ => DialAssignment::None,
-        });
+        },
+    );
     serde_json::to_value(assignment).unwrap_or(Value::Null)
 }
 
@@ -94,7 +117,7 @@ fn module_function(instance: &str, function: &str) -> DialAssignment {
 
 /// Removes the instances of the clock and navigation modules, and their keys.
 fn drop_legacy_instances(config: &mut Map<String, Value>) {
-    let legacy: Vec<String> = instance_kinds(config)
+    let legacy: HashSet<String> = instance_kinds(config)
         .into_iter()
         .filter(|(_, kind)| kind == LEGACY_CLOCK_KIND || kind == LEGACY_NAVIGATION_KIND)
         .map(|(id, _)| id)
@@ -102,7 +125,7 @@ fn drop_legacy_instances(config: &mut Map<String, Value>) {
     if let Some(modules) = config.get_mut("modules").and_then(Value::as_array_mut) {
         modules.retain(|instance| {
             let id = instance.get("id").and_then(Value::as_str);
-            !id.is_some_and(|id| legacy.iter().any(|legacy| legacy == id))
+            !id.is_some_and(|id| legacy.contains(id))
         });
     }
     if let Some(home) = config.get_mut("home").and_then(Value::as_array_mut) {
@@ -115,6 +138,8 @@ fn drop_legacy_instances(config: &mut Map<String, Value>) {
 
 #[cfg(test)]
 mod tests {
+    use hubergamof_protocol::StripConfig;
+
     use super::*;
 
     const FIRST_CONFIG: &str = r#"{
@@ -204,6 +229,25 @@ mod tests {
         assert!(parse_config(future.as_bytes()).is_err());
         let text = FIRST_CONFIG.replace(r#""schemaVersion": 1"#, r#""schemaVersion": "1""#);
         assert!(parse_config(text.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn an_oversized_configuration_is_refused_before_it_is_walked() {
+        let instances: Vec<Value> = (0..=MAX_MODULES)
+            .map(|index| json!({ "id": format!("m{index}"), "kind": "clock" }))
+            .collect();
+        let oversized =
+            json!({ "schemaVersion": 1, "modules": instances, "home": [], "dials": [] });
+        let error = parse_config(oversized.to_string().as_bytes()).unwrap_err();
+        assert!(error.to_string().contains("too many `modules`"), "{error}");
+        for (key, max) in [("home", MAX_HOME_KEYS), ("dials", MAX_DIALS)] {
+            let list = vec![Value::Null; max + 1];
+            let config = json!({ "schemaVersion": 1, "modules": [], key: list });
+            assert!(
+                parse_config(config.to_string().as_bytes()).is_err(),
+                "{key}"
+            );
+        }
     }
 
     #[test]

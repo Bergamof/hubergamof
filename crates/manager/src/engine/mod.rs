@@ -106,11 +106,9 @@ impl EngineError {
     pub fn error_code(&self) -> ErrorCode {
         match self {
             Self::Stopped => ErrorCode::UnknownDevice,
-            Self::Device(
-                DeviceError::InvalidKey { .. }
-                | DeviceError::InvalidDial { .. }
-                | DeviceError::InvalidZone { .. },
-            ) => ErrorCode::InvalidInput,
+            Self::Device(DeviceError::InvalidKey { .. } | DeviceError::InvalidDial { .. }) => {
+                ErrorCode::InvalidInput
+            }
             Self::InvalidConfig { .. } => ErrorCode::InvalidConfig,
             Self::Config(error) => error.error_code(),
             Self::Device(_) | Self::Render(_) | Self::Task(_) => ErrorCode::Internal,

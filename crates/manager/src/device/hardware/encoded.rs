@@ -25,6 +25,14 @@ pub(super) const ENCODED_PROBATION_CAPACITY: NonZeroUsize = match NonZeroUsize::
     None => NonZeroUsize::MIN,
 };
 
+/// Encodings of strip images kept, whatever their use: the strip changes
+/// every second, so one image is rarely written twice; two are enough for
+/// the one shown again when a notification goes away.
+pub(super) const ENCODED_STRIP_CAPACITY: NonZeroUsize = match NonZeroUsize::new(2) {
+    Some(capacity) => capacity,
+    None => NonZeroUsize::MIN,
+};
+
 /// Address of a source image.
 type Identity = usize;
 
