@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Lanceur de bureau « HuBergamof » avec son icône (paquets et `make install`) : il relance le service utilisateur quand le gestionnaire a été fermé (quitté, arrêté, abandonné par systemd après des échecs), puis ouvre l'interface. Nouvelle sous-commande `hubergamof open` (démarrage par D-Bus, sans shell).
 - Release : workflow manuel `release.yml` (depuis `main` seulement, CI verte exigée sur le commit, attente d'un run en cours). Version déduite des Conventional Commits depuis le dernier tag (1.0.0 au début, forçage d'un patch possible), release GitHub avec note, `SHA256SUMS` et tag `vX.Y.Z`.
 - Paquets `.deb` (Ubuntu 24.04+, Debian 12+) et pacman (Manjaro, Arch) : dépendances obligatoires dont `pactl` et un serveur de son, optionnelles pour Docker, portail de fichiers et extension de tray ; règle udev, service utilisateur activé pour tous et démarré dans les sessions graphiques ouvertes. Cibles `make package*`, job CI `package` (lintian, installation en conteneurs Ubuntu et Arch).
 - API des modules : `Command::BackTo(PageId)` revient à une page du module en fermant celles qui sont ouvertes au-dessus.
