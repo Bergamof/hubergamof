@@ -258,13 +258,15 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
 
 #[cfg(test)]
 mod tests {
-    use hubergamof_protocol::{DeviceModel, DialAssignment, StripConfig};
+    use hubergamof_protocol::{
+        CURRENT_SCHEMA_VERSION, DeviceModel, DeviceTheme, DialAssignment, StripConfig,
+    };
 
     use super::*;
 
     fn config() -> DeviceConfig {
         DeviceConfig {
-            schema_version: 2,
+            schema_version: CURRENT_SCHEMA_VERSION,
             serial: "ABC".into(),
             model: DeviceModel::Plus,
             brightness: 40,
@@ -272,6 +274,7 @@ mod tests {
             modules: Vec::new(),
             dials: vec![DialAssignment::None; 4],
             strip: StripConfig::default(),
+            theme: DeviceTheme::default(),
             revision: 3,
         }
     }

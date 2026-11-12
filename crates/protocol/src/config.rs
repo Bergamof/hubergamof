@@ -9,7 +9,7 @@ use ts_rs::TS;
 use crate::{DeviceModel, DialFunctionId, ModuleInstanceId, ModuleKind, is_safe_image_name};
 
 /// Configuration schema version produced and understood by this crate.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Highest accepted brightness, in percent.
 pub const MAX_BRIGHTNESS: u8 = 100;
@@ -64,6 +64,9 @@ pub struct DeviceConfig {
     /// Look and measures of the touch strip.
     #[serde(default)]
     pub strip: StripConfig,
+    /// Colours of the whole device: keys and touch strip.
+    #[serde(default)]
+    pub theme: DeviceTheme,
     /// Revision counter, incremented on every accepted update; an update
     /// carrying an outdated revision is rejected.
     pub revision: u64,
@@ -107,11 +110,11 @@ impl DialAssignment {
     }
 }
 
-/// Colours of the touch strip.
+/// Colours of a device: its keys and its touch strip share one background.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub enum StripTheme {
+pub enum DeviceTheme {
     /// Dark text on a light background.
     #[default]
     Light,
@@ -128,8 +131,6 @@ pub enum StripTheme {
     reason = "independent display options mirrored as-is in the JSON contract"
 )]
 pub struct StripConfig {
-    /// Colours of the strip.
-    pub theme: StripTheme,
     /// Whether the time shows its seconds.
     pub show_seconds: bool,
     /// Whether the pomodoro draws its progress along the strip.
@@ -146,7 +147,6 @@ pub struct StripConfig {
 impl Default for StripConfig {
     fn default() -> Self {
         Self {
-            theme: StripTheme::default(),
             show_seconds: true,
             show_pomodoro_progress: true,
             system_refresh_seconds: 2,

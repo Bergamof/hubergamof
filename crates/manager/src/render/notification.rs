@@ -166,7 +166,8 @@ impl Renderer {
                 width: metrics.icon,
                 height: metrics.icon,
             };
-            let rendered = self.render_key(&KeyRequest::new(side, Some(icon), None))?;
+            let rendered =
+                self.render_key(&KeyRequest::new(side, Some(icon), None).transparent())?;
             imageops::overlay(
                 &mut canvas,
                 rendered.image().as_ref(),

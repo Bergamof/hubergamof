@@ -65,7 +65,7 @@ function device(serial: string): DeviceInfo {
 
 function config(serial: string, revision: number, brightness = 50): DeviceConfig {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		serial,
 		model: 'plus',
 		brightness,
@@ -73,13 +73,13 @@ function config(serial: string, revision: number, brightness = 50): DeviceConfig
 		modules: [],
 		dials: [{ kind: 'none' }, { kind: 'none' }, { kind: 'none' }, { kind: 'none' }],
 		strip: {
-			theme: 'light',
 			showSeconds: true,
 			showPomodoroProgress: true,
 			systemRefreshSeconds: 2,
 			showHistory: true,
 			loadAlertPercent: 85
 		},
+		theme: 'light',
 		revision
 	};
 }

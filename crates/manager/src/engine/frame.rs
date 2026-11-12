@@ -8,6 +8,8 @@ use hubergamof_module_api::{
     UnreadNotification,
 };
 
+use hubergamof_protocol::DeviceTheme;
+
 use super::live::PageSummary;
 use crate::render::ImageSource;
 use crate::strip::StripFace;
@@ -116,6 +118,8 @@ pub(crate) struct Frame {
     /// The touch strip, `None` on a device without one.
     pub(crate) strip: Option<StripFace>,
     pub(crate) overlay: Option<StripOverlay>,
+    /// Colours of the surface the keys are drawn on.
+    pub(crate) theme: DeviceTheme,
 }
 
 impl Frame {

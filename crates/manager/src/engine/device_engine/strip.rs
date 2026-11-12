@@ -57,7 +57,7 @@ impl DeviceEngine {
         let strip = self.config.strip;
         let (volume, pomodoro) = self.widgets();
         StripFace {
-            theme: strip.theme,
+            theme: self.config.theme,
             clock: ClockReading::at(self.services.wall_clock.now(), strip.show_seconds),
             measures: self.measures(),
             page: PageFace {

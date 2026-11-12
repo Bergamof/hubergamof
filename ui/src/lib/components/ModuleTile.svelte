@@ -1,7 +1,7 @@
 <!--
 @component
-Square standing for a module, drawn like a device key: its icon on a dark background (the
-icons are designed for the device screen), or its name when it has none. Decorative: the
+Square standing for a module, drawn like a device key: its icon on the screen of the
+device (the background of its theme, the icons being transparent), or its name when it has none. Decorative: the
 surrounding control carries the accessible name.
 -->
 <script lang="ts">
@@ -20,7 +20,7 @@ surrounding control carries the accessible name.
 <span
 	aria-hidden="true"
 	class={[
-		'flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-device-key text-center text-xs font-medium text-device-fg',
+		'flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-screen text-center text-xs font-medium text-screen-ink',
 		unavailable ? 'border-2 border-dashed border-device-muted' : 'ring-1 ring-device-line'
 	]}
 >

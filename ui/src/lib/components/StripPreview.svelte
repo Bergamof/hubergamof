@@ -1,22 +1,23 @@
 <!--
 @component
-Preview of the touch strip, with sample figures (not the live strip): it follows the theme and the
-options of the strip, and shows under it what each dial does. Selecting it opens the options.
+Preview of the touch strip, with sample figures (not the live strip): it follows the theme of the
+device and the options of the strip, and shows under it what each dial does. Selecting it opens the options.
 The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: change both together.
 -->
 <script lang="ts">
-	import type { StripConfig } from '#lib/generated/index.js';
+	import type { DeviceTheme, StripConfig } from '#lib/generated/index.js';
 	import type { DialSummary } from '#lib/deck/display.js';
 
 	interface Props {
 		strip: StripConfig;
+		theme: DeviceTheme;
 		/** The dials, left to right: the reminders under the strip. */
 		dials: readonly DialSummary[];
 		selected: boolean;
 		onselect: () => void;
 	}
 
-	let { strip, dials, selected, onselect }: Props = $props();
+	let { strip, theme, dials, selected, onselect }: Props = $props();
 
 	/** Colours of each theme, as the manager draws the strip. */
 	const PALETTES = {
@@ -69,7 +70,7 @@ The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: 
 		{ label: 'SWAP', value: 8, color: 'swap', history: [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8] }
 	] as const;
 
-	const palette = $derived(PALETTES[strip.theme]);
+	const palette = $derived(PALETTES[theme]);
 
 	function baseline(row: number): number {
 		return 26 + row * 20;
@@ -116,7 +117,7 @@ The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: 
 	<svg
 		viewBox="0 0 {WIDTH} 100"
 		aria-hidden="true"
-		data-theme-preview={strip.theme}
+		data-theme-preview={theme}
 		class="block w-full rounded-lg"
 		font-family="inherit"
 		font-weight="600"

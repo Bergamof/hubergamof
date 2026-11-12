@@ -4,9 +4,9 @@
 
 use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
-    DeviceModel, DialAssignment, DialFunctionDescriptor, ErrorCode, ImageSize, KeyState, KeyView,
-    LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView, ServerMessage,
-    SettingField, SettingKind, StripConfig, StripTheme,
+    DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode, ImageSize,
+    KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView,
+    ServerMessage, SettingField, SettingKind, StripConfig,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -24,7 +24,7 @@ where
 
 fn sample_config() -> DeviceConfig {
     DeviceConfig {
-        schema_version: 2,
+        schema_version: 3,
         serial: "ABC123".into(),
         model: DeviceModel::Plus,
         brightness: 60,
@@ -46,20 +46,20 @@ fn sample_config() -> DeviceConfig {
             DialAssignment::None,
         ],
         strip: StripConfig {
-            theme: StripTheme::Dark,
             show_seconds: false,
             show_pomodoro_progress: true,
             system_refresh_seconds: 5,
             show_history: false,
             load_alert_percent: 90,
         },
+        theme: DeviceTheme::Dark,
         revision: 7,
     }
 }
 
 fn sample_config_json() -> Value {
     json!({
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "serial": "ABC123",
         "model": "plus",
         "brightness": 60,
@@ -78,13 +78,13 @@ fn sample_config_json() -> Value {
             { "kind": "none" }
         ],
         "strip": {
-            "theme": "dark",
             "showSeconds": false,
             "showPomodoroProgress": true,
             "systemRefreshSeconds": 5,
             "showHistory": false,
             "loadAlertPercent": 90
         },
+        "theme": "dark",
         "revision": 7
     })
 }

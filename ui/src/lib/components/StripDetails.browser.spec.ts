@@ -5,7 +5,6 @@ import type { StripConfig } from '#lib/generated/index.js';
 import StripDetails from './StripDetails.svelte';
 
 const STRIP: StripConfig = {
-	theme: 'light',
 	showSeconds: true,
 	showPomodoroProgress: true,
 	systemRefreshSeconds: 2,
@@ -21,10 +20,8 @@ async function show(strip: Partial<StripConfig> = {}) {
 
 describe('StripDetails', () => {
 	it('shows the options of the strip as they are', async () => {
-		await show({ theme: 'dark', showSeconds: false, systemRefreshSeconds: 5 });
+		await show({ showSeconds: false, systemRefreshSeconds: 5 });
 		await expect.element(page.getByRole('heading', { name: 'Bande tactile' })).toBeVisible();
-		await expect.element(page.getByRole('radio', { name: 'Sombre' })).toBeChecked();
-		await expect.element(page.getByRole('radio', { name: 'Clair' })).not.toBeChecked();
 		await expect.element(page.getByLabelText('Afficher les secondes')).not.toBeChecked();
 		await expect.element(page.getByLabelText(/barre de progression du pomodoro/)).toBeChecked();
 		await expect.element(page.getByLabelText(/historique des mesures/)).toBeChecked();
@@ -36,8 +33,6 @@ describe('StripDetails', () => {
 
 	it('reports each change at once', async () => {
 		const { onchange } = await show();
-		await page.getByRole('radio', { name: 'Sombre' }).click();
-		expect(onchange).toHaveBeenLastCalledWith({ theme: 'dark' });
 		await page.getByLabelText('Afficher les secondes').click();
 		expect(onchange).toHaveBeenLastCalledWith({ showSeconds: false });
 		await page.getByLabelText(/barre de progression du pomodoro/).click();

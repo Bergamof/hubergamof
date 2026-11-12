@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "serial": "EXAMPLE0000001",
   "model": "plus",
   "brightness": 70,
@@ -78,8 +78,8 @@
       "kind": "navigation"
     }
   ],
+  "theme": "light",
   "strip": {
-    "theme": "light",
     "showSeconds": true,
     "showPomodoroProgress": true,
     "systemRefreshSeconds": 2,

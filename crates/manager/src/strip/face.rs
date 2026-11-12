@@ -2,7 +2,7 @@
 //! drawn the same, so the painter only writes the strip when it changed.
 
 use hubergamof_module_api::{Feedback, PomodoroWidget, PopupEntry, VolumeWidget};
-use hubergamof_protocol::StripTheme;
+use hubergamof_protocol::DeviceTheme;
 
 use super::clock::ClockReading;
 
@@ -65,7 +65,7 @@ pub struct PopupFace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StripFace {
     /// Colours.
-    pub theme: StripTheme,
+    pub theme: DeviceTheme,
     /// Time, seconds and date.
     pub clock: ClockReading,
     /// CPU, memory and swap.

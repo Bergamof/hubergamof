@@ -1,6 +1,7 @@
 import type {
 	CatalogModule,
 	DeviceConfig,
+	DeviceTheme,
 	DialAssignment,
 	DialFunctionId,
 	JsonValue,
@@ -82,6 +83,11 @@ export function removedInstance(
 export function setBrightness(brightness: number): ConfigEdit {
 	const clamped = Math.min(MAX_BRIGHTNESS, Math.max(0, Math.round(brightness)));
 	return (config) => ({ ...config, brightness: clamped });
+}
+
+/** Sets the theme of the device: keys and touch strip. */
+export function setTheme(theme: DeviceTheme): ConfigEdit {
+	return (config) => ({ ...config, theme });
 }
 
 /** Adds a key with a new instance of `module` at the end of the home page. */

@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import type { StripConfig } from '#lib/generated/index.js';
+import type { DeviceTheme, StripConfig } from '#lib/generated/index.js';
 import type { DialSummary } from '#lib/deck/display.js';
 import StripPreview from './StripPreview.svelte';
 
 const STRIP: StripConfig = {
-	theme: 'light',
 	showSeconds: true,
 	showPomodoroProgress: true,
 	systemRefreshSeconds: 2,
@@ -19,10 +18,15 @@ const DIALS: readonly DialSummary[] = [
 	{ name: 'Rien', rotate: null, press: null, assigned: false, missing: false }
 ];
 
-async function renderStrip(strip: Partial<StripConfig> = {}, selected = false) {
+async function renderStrip(
+	options: { strip?: Partial<StripConfig>; theme?: DeviceTheme } = {},
+	selected = false
+) {
+	const { strip = {}, theme = 'light' } = options;
 	const onselect = vi.fn();
 	const { container } = await render(StripPreview, {
 		strip: { ...STRIP, ...strip },
+		theme,
 		dials: DIALS,
 		selected,
 		onselect
@@ -86,9 +90,7 @@ describe('StripPreview', () => {
 		const rects = full.svg.querySelectorAll('rect').length;
 
 		const bare = await renderStrip({
-			showSeconds: false,
-			showPomodoroProgress: false,
-			showHistory: false
+			strip: { showSeconds: false, showPomodoroProgress: false, showHistory: false }
 		});
 		expect(drawn(bare.svg, '42')).toBe(false);
 		expect(bare.svg.querySelectorAll('polyline')).toHaveLength(0);
