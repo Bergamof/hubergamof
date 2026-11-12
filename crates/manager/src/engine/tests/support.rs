@@ -585,17 +585,18 @@ pub(super) async fn start(info: DeviceInfo) -> Fixture {
     start_with(info, false).await
 }
 
-/// Starts an engine and waits for its strip to be written again once the device settled, so that
-/// tests counting writes do not meet that late rewrite on a slow machine.
+/// Starts an engine and waits until the strip has been written again once the device settled, so
+/// that tests counting writes do not meet that late rewrite on a slow machine. The wait is the
+/// settle delay itself (the first samples and draws may already have written the strip more than
+/// once, so counting writes does not say when it is over), then a round trip through the engine
+/// loop makes sure the rewrite has been handled.
 pub(super) async fn start_settled(info: DeviceInfo) -> Fixture {
     let fixture = start(info).await;
-    tokio::time::timeout(WAIT, async {
-        while fixture.deck.strip_writes.load(Ordering::SeqCst) < 2 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the strip is written again once the device settled");
+    tokio::time::sleep(
+        super::super::device_engine::STRIP_SETTLE_DELAY + Duration::from_millis(250),
+    )
+    .await;
+    fixture.engine.press_key(7).await.unwrap();
     let _ = fixture.deck.writes();
     let _ = fixture.deck.flushes();
     fixture

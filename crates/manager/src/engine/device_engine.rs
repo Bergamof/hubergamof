@@ -50,7 +50,7 @@ pub(crate) const HOLD_THRESHOLD: Duration = Duration::from_millis(400);
 /// How long after the first drawing the whole touch strip is written once
 /// more: a device just connected may lose the images written while it
 /// starts.
-const STRIP_SETTLE_DELAY: Duration = Duration::from_millis(400);
+pub(super) const STRIP_SETTLE_DELAY: Duration = Duration::from_millis(400);
 
 /// A key being held down, and what releasing it does.
 struct HeldKey {
