@@ -59,11 +59,12 @@ async fn default_configuration_shows_the_builtin_modules_and_the_strip() {
     let pomodoro = strip.pomodoro.expect("the pomodoro is configured");
     assert_eq!(pomodoro.widget.label, "Focus 1/4 · prêt");
     assert_eq!(pomodoro.widget.time, "25:00");
-    assert_eq!(fixture.hint(1).press.as_deref(), Some("Menu"));
+    assert_eq!(fixture.hint(1).press.as_deref(), Some("Menu pomodoro"));
     assert_eq!(fixture.hint(2).rotate.as_deref(), Some("Contexte"));
     let navigation = fixture.hint(3);
     assert_eq!(navigation.rotate.as_deref(), Some("Navigation"));
-    assert_eq!(navigation.press.as_deref(), Some("Retour"));
+    // Nothing to go back to on the home page.
+    assert_eq!(navigation.press, None);
     // The (simulated) audio module shows its volume once it read the state.
     fixture
         .wait_for(|f| f.strip().volume == Some(VolumeWidget::new(40, false)))
@@ -91,7 +92,9 @@ async fn overflowing_pages_scroll_by_rows_within_bounds() {
     assert_eq!(fixture.labels()[7].as_deref(), Some("item 7"));
     let page = fixture.strip().page;
     assert_eq!(page.trail, "Accueil › list (list)");
-    assert_eq!((page.row, page.row_count), (0, 3));
+    // Three rows, two of them visible: two scroll positions.
+    assert_eq!((page.row, page.positions), (0, 2));
+    assert_eq!(fixture.hint(0).press.as_deref(), Some("Retour"));
 
     fixture.engine.rotate_dial(0, 5).await.unwrap();
     assert_eq!(fixture.page().row, 1);
@@ -438,7 +441,8 @@ async fn the_dials_remind_what_their_functions_do() {
         .await;
     let navigation = fixture.hint(0);
     assert_eq!(navigation.rotate.as_deref(), Some("Navigation"));
-    assert_eq!(navigation.press.as_deref(), Some("Retour"));
+    // On the home page there is nothing to go back to.
+    assert_eq!(navigation.press, None);
     assert_eq!(fixture.hint(1), HintFace::default());
     assert_eq!(fixture.strip().hints.len(), 4);
 }

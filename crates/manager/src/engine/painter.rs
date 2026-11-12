@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use hubergamof_module_api::Feedback;
 use hubergamof_protocol::ImageSize;
+use image::RgbaImage;
+use image::imageops::crop_imm;
 use tokio::task::spawn_blocking;
 
 use super::EngineError;
@@ -54,6 +56,61 @@ struct Images {
     rendered: Arc<Rendered>,
 }
 
+const BYTES_PER_PIXEL: usize = 4;
+
+/// What differs between two images of the strip.
+#[derive(Debug, PartialEq, Eq)]
+enum Changed {
+    /// No previous image to compare with, or of another size.
+    Whole,
+    /// The columns from `x`, over the full height.
+    Columns {
+        x: u32,
+        width: u32,
+    },
+    Nothing,
+}
+
+/// The columns of `after` that differ from `before`.
+fn changed_columns(before: Option<&RgbaImage>, after: &RgbaImage) -> Changed {
+    let Some(before) = before.filter(|before| before.dimensions() == after.dimensions()) else {
+        return Changed::Whole;
+    };
+    let width = after.width() as usize;
+    let row_bytes = width * BYTES_PER_PIXEL;
+    let (mut first, mut last) = (width, 0);
+    for (old, new) in before
+        .as_raw()
+        .chunks_exact(row_bytes)
+        .zip(after.as_raw().chunks_exact(row_bytes))
+    {
+        if old == new {
+            continue;
+        }
+        let (old, _) = old.as_chunks::<BYTES_PER_PIXEL>();
+        let (new, _) = new.as_chunks::<BYTES_PER_PIXEL>();
+        let differing = old
+            .iter()
+            .zip(new)
+            .enumerate()
+            .filter(|(_, (old, new))| old != new)
+            .map(|(column, _)| column);
+        for column in differing {
+            first = first.min(column);
+            last = last.max(column);
+        }
+    }
+    if first > last {
+        return Changed::Nothing;
+    }
+    let x = u32::try_from(first).unwrap_or(0);
+    let right = u32::try_from(last + 1).unwrap_or(after.width());
+    Changed::Columns {
+        x,
+        width: right - x,
+    }
+}
+
 /// What was last written to the touch strip.
 struct PaintedStrip {
     face: StripFace,
@@ -98,6 +155,8 @@ impl Painter {
     ) -> Result<usize, EngineError> {
         let keys = changes(frame.keys.iter().map(|key| &key.face), &self.keys);
         let strip = self.strip_to_paint(frame);
+        // An overlay hides the strip drawn before: nothing of it can be reused.
+        let covered = self.overlay.is_some();
         let overlay_changed = self.strip_size.is_some() && frame.overlay != self.overlay;
         if keys.is_empty() && strip.is_none() && !overlay_changed {
             return Ok(0);
@@ -118,7 +177,7 @@ impl Painter {
                 .await?;
         }
         if let Some(face) = strip {
-            self.paint_strip(deck, renderer, face).await?;
+            self.paint_strip(deck, renderer, face, covered).await?;
         }
         deck.flush().await?;
         Ok(written)
@@ -141,6 +200,7 @@ impl Painter {
         deck: &dyn DeckBackend,
         renderer: &Arc<Renderer>,
         face: StripFace,
+        covered: bool,
     ) -> Result<(), EngineError> {
         let Some(size) = self.strip_size else {
             return Ok(());
@@ -148,7 +208,22 @@ impl Painter {
         let renderer = Arc::clone(renderer);
         let shown = face.clone();
         let image = spawn_blocking(move || renderer.render_strip(&shown, size)).await??;
-        deck.set_strip_region(0, Arc::clone(image.image())).await?;
+        // Writing the columns that changed only keeps a dial turned in a menu
+        // fast: the device takes less to receive and show a narrow region.
+        let before = self
+            .strip
+            .as_ref()
+            .filter(|_| !covered)
+            .map(|painted| painted.rendered.image());
+        match changed_columns(before.map(AsRef::as_ref), image.image()) {
+            Changed::Whole => deck.set_strip_region(0, Arc::clone(image.image())).await?,
+            Changed::Columns { x, width } => {
+                let region = crop_imm(image.image().as_ref(), x, 0, width, size.height);
+                deck.set_strip_region(x, Arc::new(region.to_image()))
+                    .await?;
+            }
+            Changed::Nothing => {}
+        }
         self.strip = Some(PaintedStrip {
             face,
             rendered: image,
@@ -334,5 +409,48 @@ fn render_overlay(
                 })?;
             Ok((drawn.image, Some(drawn.scrolls)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use image::Rgba;
+
+    use super::*;
+
+    fn blank() -> RgbaImage {
+        RgbaImage::from_pixel(20, 4, Rgba([9, 9, 9, 255]))
+    }
+
+    #[test]
+    fn without_a_comparable_image_the_whole_strip_is_written() {
+        let image = blank();
+        assert_eq!(changed_columns(None, &image), Changed::Whole);
+        let other_size = RgbaImage::new(10, 4);
+        assert_eq!(changed_columns(Some(&other_size), &image), Changed::Whole);
+    }
+
+    #[test]
+    fn identical_images_write_nothing() {
+        assert_eq!(changed_columns(Some(&blank()), &blank()), Changed::Nothing);
+    }
+
+    #[test]
+    fn only_the_columns_that_differ_are_written() {
+        let before = blank();
+        let mut after = blank();
+        after.put_pixel(5, 0, Rgba([1, 2, 3, 255]));
+        after.put_pixel(12, 3, Rgba([1, 2, 3, 255]));
+        assert_eq!(
+            changed_columns(Some(&before), &after),
+            Changed::Columns { x: 5, width: 8 }
+        );
+        let mut edge = blank();
+        edge.put_pixel(0, 1, Rgba([1, 2, 3, 255]));
+        edge.put_pixel(19, 1, Rgba([1, 2, 3, 255]));
+        assert_eq!(
+            changed_columns(Some(&before), &edge),
+            Changed::Columns { x: 0, width: 20 }
+        );
     }
 }

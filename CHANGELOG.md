@@ -28,6 +28,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Bande tactile : les points de navigation n'apparaissent que si des lignes sont cachées, un par position de défilement (le dernier point est donc atteignable) ; le rappel « Retour » de la molette Navigation disparaît sur l'accueil ; le menu du pomodoro se rafraîchit plus vite (seules les colonnes modifiées de la bande sont écrites, ombre du menu moins coûteuse) et son rappel devient « Menu pomodoro ».
+- Interface : les touches sont centrées au-dessus des molettes.
 - Module Docker : le ✓/⚠ d'un `up`/`down` sur un service s'affiche sur son entrée (conteneur ou service sans conteneur) et non sur la touche du projet.
 
 - `make dev` : le sélecteur de fichier compose ouvre maintenant la vraie boîte du bureau. `--demo` le remplaçait par une réponse fixe ; cette réponse est devenue l'option `--file-chooser-answer <fichier>`, que seuls les tests e2e passent.

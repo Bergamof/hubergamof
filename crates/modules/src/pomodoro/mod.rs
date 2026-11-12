@@ -61,7 +61,7 @@ const WORK_NAME: &str = "Focus";
 const READY_SUFFIX: &str = "prêt";
 const PAUSED_SUFFIX: &str = "pause";
 
-const MENU_HINT: &str = "Menu";
+const MENU_HINT: &str = "Menu pomodoro";
 const CHOOSE_HINT: &str = "Choisir";
 const VALIDATE_HINT: &str = "Valider";
 

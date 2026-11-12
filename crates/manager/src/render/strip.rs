@@ -144,7 +144,7 @@ const PAGE_DOT_Y: f32 = 17.0;
 const PAGE_DOT_RADIUS: f32 = 3.2;
 const PAGE_DOT_PITCH: f32 = 12.0;
 const PAGE_GAP: f32 = 10.0;
-/// Most rows drawn as dots; beyond, the position is written.
+/// Most scroll positions drawn as dots; beyond, the position is written.
 const MAX_PAGE_DOTS: u32 = 8;
 const VOLUME_ICON_Y: f32 = 30.0;
 const VOLUME_ICON_SIZE: f32 = 12.0;
@@ -190,6 +190,12 @@ const POPUP_LABEL_SIZE: f32 = 11.5;
 const POPUP_LABEL_MARGIN: f32 = 8.0;
 const POPUP_POINTER_HALF: f32 = 8.0;
 const POPUP_POINTER_HEIGHT: f32 = 8.0;
+/// Layers of the shadow under the menu, how far each reaches further, its offset and opacity.
+const POPUP_SHADOW_LAYERS: u32 = 4;
+const POPUP_SHADOW_STEP: f32 = 2.0;
+const POPUP_SHADOW_OFFSET: f32 = 3.0;
+const POPUP_SHADOW_OPACITY: f32 = 0.07;
+const POPUP_RADIUS: f32 = 14.0;
 /// Space kept between the popup and the ends of the strip.
 const POPUP_EDGE: f32 = 8.0;
 
@@ -539,8 +545,8 @@ impl Renderer {
         page: &PageFace,
         palette: &Palette,
     ) -> Result<(), RenderError> {
-        let dots_width = if (2..=MAX_PAGE_DOTS).contains(&page.row_count) {
-            f32_from(page.row_count) * PAGE_DOT_PITCH
+        let dots_width = if (2..=MAX_PAGE_DOTS).contains(&page.positions) {
+            f32_from(page.positions) * PAGE_DOT_PITCH
         } else {
             0.0
         };
@@ -555,9 +561,9 @@ impl Renderer {
             PAGE_SIZE,
             palette.ink,
         ));
-        if (2..=MAX_PAGE_DOTS).contains(&page.row_count) {
-            for row in 0..page.row_count {
-                let from_right = f32_from(page.row_count - 1 - row);
+        if (2..=MAX_PAGE_DOTS).contains(&page.positions) {
+            for row in 0..page.positions {
+                let from_right = f32_from(page.positions - 1 - row);
                 let x = COLUMN_RIGHT - PAGE_DOT_RADIUS - from_right * PAGE_DOT_PITCH;
                 let fill = if row == page.row {
                     palette.ink
@@ -566,8 +572,8 @@ impl Renderer {
                 };
                 canvas.circle((x, PAGE_DOT_Y), PAGE_DOT_RADIUS, fill);
             }
-        } else if page.row_count > MAX_PAGE_DOTS {
-            let position = format!("{}/{}", page.row + 1, page.row_count);
+        } else if page.positions > MAX_PAGE_DOTS {
+            let position = format!("{}/{}", page.row + 1, page.positions);
             canvas.text(
                 &Label::new(
                     &position,
@@ -679,9 +685,23 @@ impl Renderer {
             r#"<rect width="{strip_width}" height="{POPUP_DIMMED_HEIGHT}" fill="{}" fill-opacity="{POPUP_DIM_OPACITY}"/>"#,
             svg_color(palette.background)
         );
+        // A few translucent layers fake the shadow: a blur filter costs more than
+        // the rest of the strip together, and the menu is redrawn at each notch.
+        for layer in 1..=POPUP_SHADOW_LAYERS {
+            let spread = f32_from(layer) * POPUP_SHADOW_STEP;
+            push_svg!(
+                canvas.svg,
+                r#"<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="{radius}" fill="black" fill-opacity="{POPUP_SHADOW_OPACITY}"/>"#,
+                x = left - spread,
+                y = POPUP_TOP - spread + POPUP_SHADOW_OFFSET,
+                width = card_width + 2.0 * spread,
+                height = POPUP_HEIGHT + 2.0 * spread,
+                radius = POPUP_RADIUS + spread,
+            );
+        }
         push_svg!(
             canvas.svg,
-            r#"<defs><filter id="shadow" x="-10%" y="-20%" width="120%" height="150%"><feDropShadow dx="0" dy="3" stdDeviation="5" flood-opacity="0.35"/></filter></defs><g filter="url(#shadow)"><rect x="{left}" y="{POPUP_TOP}" width="{card_width}" height="{POPUP_HEIGHT}" rx="14" fill="{card}"/><path d="M{a} {y} L{pointer_x} {tip} L{b} {y} Z" fill="{card}"/></g>"#,
+            r#"<rect x="{left}" y="{POPUP_TOP}" width="{card_width}" height="{POPUP_HEIGHT}" rx="{POPUP_RADIUS}" fill="{card}"/><path d="M{a} {y} L{pointer_x} {tip} L{b} {y} Z" fill="{card}"/>"#,
             card = svg_color(palette.card),
             a = pointer_x - POPUP_POINTER_HALF,
             b = pointer_x + POPUP_POINTER_HALF,
@@ -931,7 +951,7 @@ mod tests {
             page: PageFace {
                 trail: "Docker › api-server".into(),
                 row: 1,
-                row_count: 3,
+                positions: 3,
             },
             volume: Some(VolumeWidget::new(62, false)),
             pomodoro: Some(PomodoroFace {
@@ -1072,12 +1092,12 @@ mod tests {
     }
 
     #[test]
-    fn the_page_shows_dots_for_a_few_rows_and_a_position_for_many() {
+    fn the_page_shows_dots_for_a_few_positions_and_a_position_for_many() {
         let background = LIGHT.background;
         let dots = (700, 12, 90, 10);
-        let drawn = |row_count| {
+        let drawn = |positions| {
             let mut page = face();
-            page.page.row_count = row_count;
+            page.page.positions = positions;
             drawn_in(render(&page).image(), background, dots)
         };
         assert_eq!(
@@ -1092,7 +1112,7 @@ mod tests {
 
     fn face_without_page_dots() -> StripFace {
         let mut page = face();
-        page.page.row_count = 1;
+        page.page.positions = 1;
         page
     }
 

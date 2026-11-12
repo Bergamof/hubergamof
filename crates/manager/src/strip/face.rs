@@ -24,10 +24,10 @@ pub struct MeasureFace {
 pub struct PageFace {
     /// Path of the displayed page (`Docker › api-server`).
     pub trail: String,
-    /// First visible row of the page.
+    /// Scroll position of the page: its first visible row.
     pub row: u32,
-    /// Rows of the page (at least 1).
-    pub row_count: u32,
+    /// Scroll positions of the page (at least 1): more than one when rows are hidden.
+    pub positions: u32,
 }
 
 /// The pomodoro widget and how it is drawn.

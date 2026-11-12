@@ -52,8 +52,8 @@ impl DeviceEngine {
     }
 
     /// The strip to draw: `title` is the displayed page, at `row` of
-    /// `row_count`.
-    pub(super) fn strip_face(&mut self, title: &str, row: u32, row_count: u32) -> StripFace {
+    /// `positions` scroll positions.
+    pub(super) fn strip_face(&mut self, title: &str, row: u32, positions: u32) -> StripFace {
         let strip = self.config.strip;
         let (volume, pomodoro) = self.widgets();
         StripFace {
@@ -63,7 +63,7 @@ impl DeviceEngine {
             page: PageFace {
                 trail: self.trail(title),
                 row,
-                row_count,
+                positions,
             },
             volume,
             pomodoro: pomodoro.map(|widget| PomodoroFace {
@@ -150,7 +150,11 @@ impl DeviceEngine {
                 DialAssignment::None => (None, None),
                 DialAssignment::Navigation => (
                     Some(NAVIGATION_ROTATE_HINT.to_owned()),
-                    Some(NAVIGATION_PRESS_HINT.to_owned()),
+                    // The home page has nothing to go back to.
+                    self.nav
+                        .current()
+                        .is_some()
+                        .then(|| NAVIGATION_PRESS_HINT.to_owned()),
                 ),
                 DialAssignment::Contextual => (Some(CONTEXTUAL_HINT.to_owned()), None),
                 DialAssignment::Module { instance, function } => self

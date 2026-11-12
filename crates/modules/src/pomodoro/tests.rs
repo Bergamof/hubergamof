@@ -304,7 +304,7 @@ async fn the_first_menu_entry_follows_the_state_of_the_time() {
 async fn the_hint_follows_the_menu() {
     let mut pomodoro = Harness::new(&json!({}));
     let hint = |pomodoro: &Harness| pomodoro.module.dial_hint(&Harness::control());
-    assert_eq!(hint(&pomodoro), DialHint::none().pressing("Menu"));
+    assert_eq!(hint(&pomodoro), DialHint::none().pressing("Menu pomodoro"));
     pomodoro.press_dial().await;
     assert_eq!(
         hint(&pomodoro),

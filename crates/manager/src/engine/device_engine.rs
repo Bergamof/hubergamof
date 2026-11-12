@@ -847,7 +847,7 @@ impl DeviceEngine {
             .collect();
         let strip = self
             .has_strip
-            .then(|| self.strip_face(&page.title, row, row_count));
+            .then(|| self.strip_face(&page.title, row, self.grid.max_row(page.keys.len()) + 1));
         Frame {
             strip,
             page: PageSummary {

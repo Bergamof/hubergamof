@@ -40,7 +40,7 @@ async fn the_pomodoro_menu_is_a_popup_over_its_dial() {
     assert_eq!(pomodoro.widget.label, "Pause · prêt");
     assert_eq!(
         fixture.hint(usize::from(POMODORO_DIAL)).press.as_deref(),
-        Some("Menu")
+        Some("Menu pomodoro")
     );
 }
 
