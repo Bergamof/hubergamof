@@ -722,7 +722,7 @@ mod tests {
             )
             .unwrap();
         let (left, right) = changed_columns(&drawn.image, &bare.image, 75).unwrap();
-        assert!(left >= 400 && left < 600, "third column inked: {left}");
-        assert!(right >= 600 && right < 800, "fourth column inked: {right}");
+        assert!((400..600).contains(&left), "third column inked: {left}");
+        assert!((600..800).contains(&right), "fourth column inked: {right}");
     }
 }
