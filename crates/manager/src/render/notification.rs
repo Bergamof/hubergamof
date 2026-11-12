@@ -93,6 +93,14 @@ pub struct NotificationLook<'a> {
     pub action: Option<NotificationActionLook<'a>>,
 }
 
+impl NotificationLook<'_> {
+    /// Whether the reminder of the contextual dial is drawn: it needs a dial
+    /// to sit above.
+    fn shows_action(&self) -> bool {
+        self.action.is_some_and(|action| action.dials > 0)
+    }
+}
+
 /// A drawn notification, and whether its message is too wide to stand still
 /// (it then scrolls, and the host keeps drawing it).
 #[derive(Debug)]
@@ -141,7 +149,8 @@ impl Metrics {
 
     /// Side, left and top of the icon. With an action reminder at the bottom
     /// the icon is smaller and sits higher, centred in the room it keeps, so
-    /// that it does not touch the reminder; the message does not move.
+    /// that it does not touch the reminder; the message follows it
+    /// ([`Self::message_rise`]).
     fn icon_placement(&self, with_action: bool) -> (u32, u32, u32) {
         if !with_action {
             return (self.icon, self.edge, self.edge);
@@ -154,6 +163,16 @@ impl Metrics {
             left,
             pixels(height * ACTION_ICON_TOP_RATIO, self.height),
         )
+    }
+
+    /// How far the message moves up, in pixels: with a reminder at the
+    /// bottom, its line is centred on the raised icon.
+    fn message_rise(&self, with_action: bool) -> u32 {
+        if !with_action {
+            return 0;
+        }
+        let (side, _, top) = self.icon_placement(true);
+        (self.height / 2).saturating_sub(top + side / 2)
     }
 
     fn loop_length(&self, text_width: f32) -> f32 {
@@ -205,7 +224,7 @@ impl Renderer {
         let background = Rgba([red, green, blue, u8::MAX]);
         let mut canvas = RgbaImage::from_pixel(look.size.width, look.size.height, background);
         if let Some(icon) = look.icon {
-            let (side, left, top) = metrics.icon_placement(look.action.is_some());
+            let (side, left, top) = metrics.icon_placement(look.shows_action());
             let side_size = ImageSize {
                 width: side,
                 height: side,
@@ -220,7 +239,7 @@ impl Renderer {
             );
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
-        if let Some(action) = &look.action {
+        if let Some(action) = look.action.as_ref().filter(|_| look.shows_action()) {
             self.draw_action(&mut canvas, look, action)?;
         }
         if let Some(timeout) = timeout {
@@ -326,7 +345,13 @@ impl Renderer {
             // still: the fade on the left grows as the text moves away.
             fade_ends(&mut window, fade.min(offset), fade);
         }
-        imageops::overlay(canvas, &window, i64::from(metrics.text_left), 0);
+        let rise = metrics.message_rise(look.shows_action());
+        imageops::overlay(
+            canvas,
+            &window,
+            i64::from(metrics.text_left),
+            -i64::from(rise),
+        );
         Ok(scrolls)
     }
 
@@ -588,13 +613,9 @@ mod tests {
         let drawn = renderer
             .render_notification(&with_action, Duration::ZERO, None)
             .unwrap();
-        // Only the bottom quarter changes, within the third column.
+        // Below the message, only the third column changes.
         let (left, right) = changed_columns(&drawn.image, &bare.image, 75).unwrap();
         assert!(left >= 400 && right < 600, "{left}..{right}");
-        assert_eq!(
-            changed_columns(&drawn.image, &bare.image, 0).unwrap().0,
-            left
-        );
         assert!(!drawn.scrolls);
     }
 
@@ -627,5 +648,48 @@ mod tests {
         // Still centred on the same column and clear of the reminder line.
         assert_eq!(left * 2 + side, full_left * 2 + full);
         assert!(top + side < 76, "{}", top + side);
+    }
+
+    #[test]
+    fn the_message_is_centred_on_the_raised_icon() {
+        let metrics = Metrics::of(STRIP);
+        assert_eq!(metrics.message_rise(false), 0);
+        let (side, _, top) = metrics.icon_placement(true);
+        assert_eq!(
+            metrics.height / 2 - metrics.message_rise(true),
+            top + side / 2
+        );
+    }
+
+    #[test]
+    fn the_message_rises_with_the_action_line() {
+        let renderer = Renderer::new().unwrap();
+        let ink_rows = |look: &NotificationLook<'_>| {
+            let image = renderer
+                .render_notification(look, Duration::ZERO, None)
+                .unwrap()
+                .image;
+            let rows: Vec<u32> = image
+                .enumerate_pixels()
+                .filter(|(x, y, pixel)| {
+                    *x >= 200 && *x < 400 && *y < 75 && pixel.0[..3] != look.background
+                })
+                .map(|(_, y, _)| y)
+                .collect();
+            (*rows.iter().min().unwrap(), *rows.iter().max().unwrap())
+        };
+        let bare = ink_rows(&look("Pause"));
+        let raised = ink_rows(&NotificationLook {
+            action: Some(NotificationActionLook {
+                text: "Démarrer",
+                dial: 2,
+                dials: 4,
+            }),
+            ..look("Pause")
+        });
+        assert!(
+            raised.0 < bare.0 && raised.1 < bare.1,
+            "{raised:?} {bare:?}"
+        );
     }
 }
