@@ -8,8 +8,9 @@ pkgdesc='Stream Deck manager with a local web interface'
 arch=('x86_64')
 url='https://github.com/Bergamof/hubergamof'
 license=('GPL-3.0-or-later')
-# libpulse apporte pactl (module Audio) ; pulse-native-provider = pipewire-pulse ou pulseaudio.
-depends=('systemd-libs' 'libpulse' 'pulse-native-provider' 'xdg-utils')
+# libpulse apporte pactl (module Audio) ; pulse-native-provider = pipewire-pulse ou pulseaudio ;
+# hicolor-icon-theme : thème des icônes du lanceur de bureau (exigé par namcap).
+depends=('systemd-libs' 'libpulse' 'pulse-native-provider' 'xdg-utils' 'hicolor-icon-theme')
 optdepends=(
 	'docker: module Docker (groupe docker requis)'
 	'xdg-desktop-portal: sélecteur de fichier natif'
