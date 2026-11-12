@@ -10,6 +10,7 @@ import {
 	removedInstance,
 	setBrightness,
 	setKeyImage,
+	setStrip,
 	updateInstance
 } from './config-edits.js';
 
@@ -19,13 +20,26 @@ function instance(id: string, kind = id): ModuleInstance {
 
 function config(overrides: Partial<DeviceConfig> = {}): DeviceConfig {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		serial: 'DEMO',
 		model: 'plus',
 		brightness: 50,
 		home: ['audio', 'pomodoro', 'docker'],
-		modules: [instance('audio'), instance('pomodoro'), instance('docker'), instance('clock')],
-		dials: ['clock', 'pomodoro', null, null],
+		modules: [instance('audio'), instance('pomodoro'), instance('docker'), instance('extra')],
+		dials: [
+			{ kind: 'module', instance: 'extra', function: 'turn' },
+			{ kind: 'module', instance: 'pomodoro', function: 'control' },
+			{ kind: 'navigation' },
+			{ kind: 'none' }
+		],
+		strip: {
+			theme: 'light',
+			showSeconds: true,
+			showPomodoroProgress: true,
+			systemRefreshSeconds: 2,
+			showHistory: true,
+			loadAlertPercent: 85
+		},
 		revision: 7,
 		...overrides
 	};
@@ -35,7 +49,8 @@ const pomodoro: CatalogModule = {
 	kind: 'pomodoro',
 	name: 'Pomodoro',
 	description: '',
-	capabilities: { key: true, dial: true, touchZone: true },
+	capabilities: { key: true },
+	dialFunctions: [],
 	icon: null,
 	settingIcons: {},
 	defaultSettings: { workMinutes: 25, autoStart: false, computed: 'by the module' },
@@ -52,7 +67,7 @@ const pomodoro: CatalogModule = {
 
 describe('newInstanceId', () => {
 	it('uses the kind while free, then numbers the next instances', () => {
-		expect(newInstanceId(config(), 'navigation')).toBe('navigation');
+		expect(newInstanceId(config(), 'claude')).toBe('claude');
 		expect(newInstanceId(config(), 'audio')).toBe('audio-2');
 		const withSecond = config({ modules: [instance('audio'), instance('audio-2', 'audio')] });
 		expect(newInstanceId(withSecond, 'audio')).toBe('audio-3');
@@ -100,7 +115,7 @@ describe('edits', () => {
 		expect(withoutAudio.modules.map((module) => module.id)).toEqual([
 			'pomodoro',
 			'docker',
-			'clock'
+			'extra'
 		]);
 
 		const withoutPomodoroKey = removeKey(1)(config());
@@ -116,21 +131,42 @@ describe('edits', () => {
 		expect(moveKey(-1, 0)(original)).toBe(original);
 	});
 
-	it('assign a dial to an existing instance, a new one or nothing', () => {
-		const existing = assignDial(2, { type: 'existing', id: 'audio' })(config());
-		expect(existing.dials).toEqual(['clock', 'pomodoro', 'audio', null]);
+	it('assign a dial a function of the manager, of an existing instance or of a new one', () => {
+		const navigation = assignDial(3, { type: 'navigation' })(config());
+		expect(navigation.dials[3]).toEqual({ kind: 'navigation' });
+		const contextual = assignDial(3, { type: 'contextual' })(config());
+		expect(contextual.dials[3]).toEqual({ kind: 'contextual' });
+
+		const existing = assignDial(3, { type: 'existing', instance: 'audio', function: 'volume' })(
+			config()
+		);
+		expect(existing.dials[3]).toEqual({ kind: 'module', instance: 'audio', function: 'volume' });
 		expect(existing.modules).toHaveLength(4);
 
-		const added = assignDial(3, { type: 'new', module: pomodoro })(config());
-		expect(added.dials[3]).toBe('pomodoro-2');
+		const added = assignDial(3, { type: 'new', module: pomodoro, function: 'control' })(config());
+		expect(added.dials[3]).toEqual({
+			kind: 'module',
+			instance: 'pomodoro-2',
+			function: 'control'
+		});
 		expect(added.modules.map((module) => module.id)).toContain('pomodoro-2');
 
 		const cleared = assignDial(0, { type: 'none' })(config());
-		expect(cleared.dials[0]).toBeNull();
-		expect(cleared.modules.map((module) => module.id)).not.toContain('clock');
+		expect(cleared.dials[0]).toEqual({ kind: 'none' });
+		expect(cleared.modules.map((module) => module.id)).not.toContain('extra');
 
 		const original = config();
-		expect(assignDial(4, { type: 'existing', id: 'audio' })(original)).toBe(original);
+		expect(assignDial(4, { type: 'navigation' })(original)).toBe(original);
+	});
+
+	it('change some options of the strip and keep the others', () => {
+		const edited = setStrip({ theme: 'dark', showSeconds: false })(config());
+		expect(edited.strip).toEqual({
+			...config().strip,
+			theme: 'dark',
+			showSeconds: false
+		});
+		expect(edited.revision).toBe(7);
 	});
 
 	it('replace the label and settings of one instance', () => {
@@ -146,8 +182,9 @@ describe('edits', () => {
 
 describe('removedInstance', () => {
 	it('names the instance a change would delete, if any', () => {
-		expect(removedInstance(config(), assignDial(0, { type: 'none' }))?.id).toBe('clock');
+		expect(removedInstance(config(), assignDial(0, { type: 'none' }))?.id).toBe('extra');
 		expect(removedInstance(config(), assignDial(1, { type: 'none' }))).toBeUndefined();
+		expect(removedInstance(config(), assignDial(2, { type: 'none' }))).toBeUndefined();
 		expect(removedInstance(config(), removeKey(0))?.id).toBe('audio');
 		expect(removedInstance(config(), setBrightness(10))).toBeUndefined();
 	});

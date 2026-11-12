@@ -19,22 +19,24 @@ selected key or dial.
 		removedInstance,
 		setBrightness,
 		setKeyImage,
+		setStrip,
 		updateInstance,
 		type DialChoice,
 		type InstanceChanges
 	} from '#lib/deck/config-edits.js';
 	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import type { DeckState, EditOutcome } from '#lib/deck/deck-state.svelte.js';
-	import { instanceName, keyImage } from '#lib/deck/display.js';
+	import { dialSummary, instanceName, keyImage } from '#lib/deck/display.js';
 	import BrightnessControl from './BrightnessControl.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DialDetails from './DialDetails.svelte';
 	import DialRow from './DialRow.svelte';
-	import DialStrip from './DialStrip.svelte';
 	import ExportImport from './ExportImport.svelte';
 	import KeyDetails from './KeyDetails.svelte';
 	import KeyGrid from './KeyGrid.svelte';
 	import ModulePicker from './ModulePicker.svelte';
+	import StripDetails from './StripDetails.svelte';
+	import StripPreview from './StripPreview.svelte';
 
 	interface Props {
 		deck: DeckState;
@@ -49,7 +51,8 @@ selected key or dial.
 	/** A key is identified by its position and instance: a change elsewhere drops the selection. */
 	type Selection =
 		| { surface: 'key'; position: number; id: string | undefined }
-		| { surface: 'dial'; index: number };
+		| { surface: 'dial'; index: number }
+		| { surface: 'strip' };
 
 	const uid = $props.id();
 	const detailsHeadingId = `${uid}-details`;
@@ -63,13 +66,13 @@ selected key or dial.
 	const instancesById = $derived(new Map(config.modules.map((module) => [module.id, module])));
 	const keys = $derived(config.home.map((id) => instancesById.get(id)));
 	const dials = $derived(
-		config.dials.map((id) => (id === null ? null : (instancesById.get(id) ?? null)))
+		config.dials.map((assignment) => dialSummary(assignment, instancesById, moduleOf))
 	);
 	const keyModules = $derived(deck.catalog.filter((module) => module.capabilities.key));
-	const dialModules = $derived(deck.catalog.filter((module) => module.capabilities.dial));
+	const dialModules = $derived(deck.catalog.filter((module) => module.dialFunctions.length > 0));
 	const dialCandidates = $derived(
 		config.modules
-			.filter((instance) => moduleOf(instance.kind)?.capabilities.dial)
+			.filter((instance) => (moduleOf(instance.kind)?.dialFunctions.length ?? 0) > 0)
 			.map((instance) => ({ instance, place: placeOf(instance.id) }))
 	);
 
@@ -78,13 +81,17 @@ selected key or dial.
 			return selection;
 		}
 		if (selection?.surface === 'dial' && selection.index < dials.length) return selection;
+		if (selection?.surface === 'strip' && dials.length > 0) return selection;
 		return undefined;
 	});
 
 	function placeOf(id: string): string {
 		const key = config.home.indexOf(id);
 		if (key >= 0) return `touche ${key + 1}`;
-		return `molette ${config.dials.indexOf(id) + 1}`;
+		const dial = config.dials.findIndex(
+			(assignment) => assignment.kind === 'module' && assignment.instance === id
+		);
+		return `molette ${dial + 1}`;
 	}
 
 	function keyButtonId(position: number): string {
@@ -112,6 +119,11 @@ selected key or dial.
 
 	function selectDial(index: number) {
 		selection = { surface: 'dial', index };
+		void revealDetails();
+	}
+
+	function selectStrip() {
+		selection = { surface: 'strip' };
 		void revealDetails();
 	}
 
@@ -184,7 +196,7 @@ selected key or dial.
 
 	<div class="flex flex-col gap-6 lg:flex-row lg:items-start">
 		<div class="flex min-w-0 flex-col gap-6 card lg:shrink-0">
-			<!-- Corps de l'appareil : touches, bande tactile (module de chaque molette), molettes. -->
+			<!-- Corps de l'appareil : touches, bande tactile (aperçu), molettes. -->
 			<div
 				class="flex w-fit max-w-full flex-col gap-4 rounded-3xl border border-device-line bg-device p-5"
 			>
@@ -217,10 +229,14 @@ selected key or dial.
 						>
 							Molettes
 						</h2>
-						<DialStrip {dials} {moduleOf} />
+						<StripPreview
+							strip={config.strip}
+							{dials}
+							selected={selected?.surface === 'strip'}
+							onselect={selectStrip}
+						/>
 						<DialRow
 							{dials}
-							{moduleOf}
 							selected={selected?.surface === 'dial' ? selected.index : undefined}
 							onselect={selectDial}
 						/>
@@ -252,15 +268,24 @@ selected key or dial.
 					onapply={(changes) => apply(instance, changes)}
 					onimage={(image) => setImage(instance, image)}
 				/>
+			{:else if selected?.surface === 'strip'}
+				<StripDetails
+					strip={config.strip}
+					headingId={detailsHeadingId}
+					onchange={(changes) => void deck.edit(setStrip(changes))}
+				/>
 			{:else if selected?.surface === 'dial'}
-				{@const instance = dials[selected.index]}
 				{@const index = selected.index}
+				{@const assignment = config.dials[index]}
+				{@const assigned = assignment.kind === 'module' ? assignment.instance : undefined}
+				{@const instance = assigned ? (instancesById.get(assigned) ?? null) : null}
 				{#key index}
 					<DialDetails
 						{index}
 						{config}
 						serial={device.serial}
 						{api}
+						{assignment}
 						{instance}
 						candidates={dialCandidates}
 						modules={dialModules}
@@ -271,7 +296,9 @@ selected key or dial.
 					/>
 				{/key}
 			{:else}
-				<p class="text-muted">Sélectionnez une touche ou une molette pour la configurer.</p>
+				<p class="text-muted">
+					Sélectionnez une touche, la bande tactile ou une molette pour la configurer.
+				</p>
 			{/if}
 		</div>
 	</div>

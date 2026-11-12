@@ -65,13 +65,21 @@ function device(serial: string): DeviceInfo {
 
 function config(serial: string, revision: number, brightness = 50): DeviceConfig {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		serial,
 		model: 'plus',
 		brightness,
 		home: [],
 		modules: [],
-		dials: [null, null, null, null],
+		dials: [{ kind: 'none' }, { kind: 'none' }, { kind: 'none' }, { kind: 'none' }],
+		strip: {
+			theme: 'light',
+			showSeconds: true,
+			showPomodoroProgress: true,
+			systemRefreshSeconds: 2,
+			showHistory: true,
+			loadAlertPercent: 85
+		},
 		revision
 	};
 }
@@ -152,18 +160,19 @@ describe('device selection', () => {
 
 	it('stores the catalog and stops listening when asked', () => {
 		const { connection, state, stop } = setup();
-		const clock = {
-			kind: 'clock',
-			name: 'Horloge',
+		const audio = {
+			kind: 'audio',
+			name: 'Audio',
 			description: '',
-			capabilities: { key: false, dial: true, touchZone: true },
+			capabilities: { key: false },
+			dialFunctions: [],
 			settings: [],
 			icon: null,
 			settingIcons: {},
 			defaultSettings: {}
 		};
-		connection.receive({ type: 'moduleCatalog', modules: [clock] });
-		expect(state.moduleOf('clock')).toEqual(clock);
+		connection.receive({ type: 'moduleCatalog', modules: [audio] });
+		expect(state.moduleOf('audio')).toEqual(audio);
 		expect(state.moduleOf('intellij')).toBeUndefined();
 		stop();
 		connection.receive({ type: 'devices', devices: [device('A')] });
@@ -214,7 +223,8 @@ describe('configuration updates', () => {
 			kind: 'clock',
 			name: 'Horloge',
 			description: '',
-			capabilities: { key: true, dial: true, touchZone: true },
+			capabilities: { key: true },
+			dialFunctions: [],
 			settings: [],
 			icon: null,
 			settingIcons: {},
