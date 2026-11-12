@@ -8,9 +8,9 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     ChoiceOption, Command, ContextDial, DialFunctionDescriptor, DialFunctionId, DialHint,
     EventSender, Feedback, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
-    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, PageContent, PageId, PageItem,
-    RedrawHandle, SettingField, SettingKind, StripWidget, UnreadNotifications, VolumeWidget,
-    parse_settings,
+    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, NotificationId, PageContent, PageId,
+    PageItem, RedrawHandle, SettingField, SettingKind, StripWidget, UnreadNotifications,
+    VolumeWidget, parse_settings,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{
@@ -87,6 +87,8 @@ pub(super) struct Probe {
     /// Calls of the contextual dial handlers of list instances, in order:
     /// `rotate <page> <ticks>`, `press <page>`, `long <page>`.
     pub(super) context_calls: Arc<Mutex<Vec<String>>>,
+    /// Notifications whose press reached a fragile instance, in order.
+    pub(super) notification_presses: Arc<Mutex<Vec<NotificationId>>>,
     /// Index of the item of the list pages that holds the cursor.
     pub(super) focus: Arc<Mutex<Option<usize>>>,
     /// Indexes of the items of the list pages that are ticked.
@@ -401,6 +403,12 @@ impl Module for Fragile {
     async fn on_dial_press(&mut self, _function: &DialFunctionId) -> Vec<Command> {
         self.misbehave().await;
         vec![Command::Feedback(Feedback::Ok)]
+    }
+
+    async fn on_notification_press(&mut self, id: NotificationId) -> Vec<Command> {
+        self.misbehave().await;
+        self.probe.notification_presses.lock().unwrap().push(id);
+        Vec::new()
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {

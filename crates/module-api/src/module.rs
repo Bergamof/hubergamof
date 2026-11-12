@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     Command, DialFunctionId, DialHint, ImageData, ItemId, KeyContent, ModuleContext,
-    ModuleDescriptor, ModuleEvent, PageContent, PageId, StripPopup, StripWidget,
+    ModuleDescriptor, ModuleEvent, NotificationId, PageContent, PageId, StripPopup, StripWidget,
 };
 
 /// Longest time the host lets a handler run (see [`Module`]) before
@@ -199,6 +199,15 @@ pub trait Module: Send {
     /// press does; when it does, a shorter press is a plain press.
     async fn on_context_long_press(&mut self, page: &PageId) -> Vec<Command> {
         let _ = page;
+        Vec::new()
+    }
+
+    /// Handles a press of the contextual dial while the notification `id`,
+    /// sent by this instance, is shown on the strip. Called only when the
+    /// notification declares what the press does; the host then reads the
+    /// notification, unless the handler failed.
+    async fn on_notification_press(&mut self, id: NotificationId) -> Vec<Command> {
+        let _ = id;
         Vec::new()
     }
 

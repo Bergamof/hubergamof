@@ -384,3 +384,101 @@ async fn a_configuration_brought_back_to_the_rules_is_explained_on_the_strip() {
     .await
     .unwrap();
 }
+
+/// The contextual dial on dial 2, the one that reacts under a notification.
+async fn contextual_fixture() -> Fixture {
+    let fixture = plus_fixture().await;
+    let mut config = fixture.config();
+    config.dials[2] = DialAssignment::Contextual;
+    fixture.engine.apply_config(config).await.unwrap();
+    fixture
+}
+
+fn with_action(message: &str, press: &str) -> Notification {
+    permanent(message).with_context_dial(ContextDial::none().pressing(press))
+}
+
+impl Fixture {
+    async fn press_dial(&self, index: u8) {
+        self.inject(InputEvent::DialDown(index));
+        self.inject(InputEvent::DialUp(index));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    fn notification_presses(&self) -> Vec<NotificationId> {
+        self.probe.notification_presses.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_contextual_dial_press_runs_the_notification_action_and_reads_it() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(with_action("Pause !", "Démarrer la pause"));
+    fixture.wait_for_notification(true).await;
+    let id = fixture.unread_ids()[0];
+
+    fixture.press_dial(2).await;
+
+    assert_eq!(fixture.notification_presses(), [id]);
+    assert_eq!(fixture.unread_messages(), Vec::<String>::new());
+    fixture.wait_for_notification(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_notification_without_action_ignores_the_contextual_dial() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(permanent("Pause !"));
+    fixture.wait_for_notification(true).await;
+
+    fixture.press_dial(2).await;
+
+    assert_eq!(fixture.notification_presses(), []);
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+    assert_eq!(fixture.strip_pixel(799, 0), BACKGROUND_PIXEL);
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_the_press_of_the_contextual_dial_acts_on_the_notification() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(with_action("Pause !", "Démarrer la pause"));
+    fixture.wait_for_notification(true).await;
+
+    fixture.inject(InputEvent::DialRotate { index: 2, ticks: 1 });
+    fixture.press_dial(3).await;
+
+    assert_eq!(fixture.notification_presses(), []);
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_action_leaves_the_notification_unread() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(with_action("Pause !", "Démarrer la pause"));
+    fixture.wait_for_notification(true).await;
+    let mut config = fixture.config();
+    config.modules[1] = fragile("press");
+    fixture.engine.apply_config(config).await.unwrap();
+
+    fixture.press_dial(2).await;
+
+    assert_eq!(fixture.notification_presses(), []);
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unread_notification_shown_again_keeps_its_action() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(
+        with_action("Pause !", "Démarrer la pause").with_timeout(Duration::from_millis(200)),
+    );
+    fixture.wait_for_notification(true).await;
+    fixture.wait_for_notification(false).await;
+    let id = fixture.unread_ids()[0];
+    fixture.send_commands(vec![Command::ShowNotification(id)]);
+    fixture.wait_for_notification(true).await;
+
+    fixture.press_dial(2).await;
+
+    assert_eq!(fixture.notification_presses(), [id]);
+    assert_eq!(fixture.unread_messages(), Vec::<String>::new());
+}

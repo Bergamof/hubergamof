@@ -13,7 +13,9 @@ use super::EngineError;
 use super::frame::{Frame, KeyFace, StripOverlay};
 use super::live::{LiveKey, LiveSnapshot, LiveStrip};
 use crate::device::{DeckBackend, StripLayout};
-use crate::render::{KeyRequest, NotificationLook, RenderError, Rendered, Renderer};
+use crate::render::{
+    KeyRequest, NotificationActionLook, NotificationLook, RenderError, Rendered, Renderer,
+};
 use crate::strip::StripFace;
 
 /// What was written to a key: its face, the image without the
@@ -428,6 +430,11 @@ fn render_overlay(
                 background: face.background,
                 icon: face.icon.as_ref(),
                 message: &face.message,
+                action: face.action.as_ref().map(|action| NotificationActionLook {
+                    text: &action.text,
+                    dial: action.dial,
+                    dials: action.dials,
+                }),
             };
             let drawn = renderer
                 .render_notification(&look, face.elapsed, face.timeout)

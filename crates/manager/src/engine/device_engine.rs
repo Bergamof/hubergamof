@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, Feedback, ModuleInstanceId, ModuleSurface, PageContent, PageId,
-    RedrawHandle,
+    RedrawHandle, UnreadNotification,
 };
 use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -16,8 +16,8 @@ use tokio::time::Instant;
 
 use super::feedback::{Marks, Surface};
 use super::frame::{
-    ContextFace, ContextGesture, Frame, FrameKey, KeyFace, KeyTarget, NotificationFace,
-    StripOverlay,
+    ContextFace, ContextGesture, Frame, FrameKey, KeyFace, KeyTarget, NotificationAction,
+    NotificationFace, StripOverlay,
 };
 use super::handle::{REQUEST_CAPACITY, Request};
 use super::instances::{Call, Instances, Outcome, RoutedEvent};
@@ -504,11 +504,8 @@ impl DeviceEngine {
     async fn dial_input(&mut self, dial: u8, input: DialInput) {
         let assignment = self.dial_assignment(dial);
         if self.notifications.shown().is_some() {
-            // Under a notification only the navigation dial acts: its press
-            // removes the notification, leaving it unread.
-            if matches!(input, DialInput::Press) && assignment == DialAssignment::Navigation {
-                self.notifications.dismiss(Instant::now());
-            }
+            self.dial_input_under_notification(&assignment, &input)
+                .await;
             return;
         }
         match assignment {
@@ -520,6 +517,55 @@ impl DeviceEngine {
             }
             DialAssignment::Contextual => self.context_input(dial, input).await,
             DialAssignment::None => {}
+        }
+    }
+
+    /// Under a notification only two dials act: the navigation dial, whose
+    /// press removes the notification leaving it unread, and the contextual
+    /// dial, whose press does what the notification declares and reads it.
+    async fn dial_input_under_notification(
+        &mut self,
+        assignment: &DialAssignment,
+        input: &DialInput,
+    ) {
+        if !matches!(input, DialInput::Press) {
+            return;
+        }
+        match assignment {
+            DialAssignment::Navigation => self.notifications.dismiss(Instant::now()),
+            DialAssignment::Contextual => self.press_notification_action().await,
+            _ => {}
+        }
+    }
+
+    /// Hands the press to the module that sent the notification shown, if it
+    /// declares what the press does, then reads the notification; a failed
+    /// handler leaves it unread (the module shows the alert).
+    async fn press_notification_action(&mut self) {
+        let Some(shown) = self.notifications.shown() else {
+            return;
+        };
+        if !shown.notification.context_dial.reacts_to_press() {
+            return;
+        }
+        let (id, source) = (shown.notification.id, shown.notification.source.clone());
+        let surfaces = self.failure_surfaces(&source);
+        let Some(outcome) = self
+            .instances
+            .call(&source, Call::NotificationPress(id))
+            .await
+        else {
+            return;
+        };
+        let done = matches!(outcome, Outcome::Done(_));
+        self.conclude(&source, &surfaces, outcome);
+        if done
+            && self
+                .notifications
+                .shown()
+                .is_some_and(|s| s.notification.id == id)
+        {
+            self.notifications.read(Instant::now());
         }
     }
 
@@ -919,7 +965,24 @@ impl DeviceEngine {
             &shown.notification,
             shown.timeout,
             shown.elapsed(Instant::now()),
+            self.notification_action(&shown.notification),
         )))
+    }
+
+    /// The reminder of the contextual dial under `notification`, if it
+    /// declares a press and a dial is assigned to the contextual function.
+    fn notification_action(&self, notification: &UnreadNotification) -> Option<NotificationAction> {
+        let text = notification.context_dial.hint.press.clone()?;
+        let dial = self
+            .config
+            .dials
+            .iter()
+            .position(|assignment| *assignment == DialAssignment::Contextual)?;
+        Some(NotificationAction {
+            text,
+            dial,
+            dials: self.config.dials.len(),
+        })
     }
 
     /// Scrolls to the key holding the cursor of the contextual dial when it

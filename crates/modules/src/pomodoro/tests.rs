@@ -721,3 +721,63 @@ fn assert_ready(widget: &PomodoroWidget, label: &str, time: &str) {
     assert_eq!((widget.label.as_str(), widget.time.as_str()), (label, time));
     assert_eq!(widget.progress(), 0);
 }
+
+fn press_text(notification: &StripNotification) -> Option<&str> {
+    notification.context_dial.hint.press.as_deref()
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_notification_offers_to_start_the_next_step() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "shortBreakMinutes": 1 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    let texts: Vec<_> = strip_notifications(&pomodoro)
+        .iter()
+        .map(|notification| press_text(notification).map(str::to_owned))
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            Some("Démarrer la pause".to_owned()),
+            Some("Démarrer le travail".to_owned())
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_offered_when_the_next_step_starts_by_itself() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "autoStart": true }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    let notifications = strip_notifications(&pomodoro);
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(press_text(&notifications[0]), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn pressing_the_notification_starts_the_awaited_step() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(pomodoro.module.key().state, KeyState::Attention);
+    pomodoro
+        .module
+        .on_notification_press(NotificationId(0))
+        .await;
+    assert_eq!(pomodoro.module.key().state, KeyState::Active);
+}
+
+#[tokio::test(start_paused = true)]
+async fn pressing_the_notification_after_a_manual_start_does_not_pause() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    pomodoro.module.on_key_press().await;
+    pomodoro
+        .module
+        .on_notification_press(NotificationId(0))
+        .await;
+    assert_eq!(pomodoro.module.key().state, KeyState::Active);
+}

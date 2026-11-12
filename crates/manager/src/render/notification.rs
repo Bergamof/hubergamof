@@ -23,6 +23,13 @@ const ICON_GAP_RATIO: f32 = 0.20;
 const MESSAGE_FONT_RATIO: f32 = 0.40;
 /// Label font size, relative to the strip height.
 const LABEL_FONT_RATIO: f32 = 0.34;
+/// Action reminder font size, relative to the strip height.
+const ACTION_FONT_RATIO: f32 = 0.15;
+/// Distance between the reminder baseline and the strip bottom, relative to
+/// the strip height (above the time bar).
+const ACTION_BASELINE_RATIO: f32 = 0.10;
+/// Share of the dial column the reminder may fill.
+const ACTION_WIDTH_SHARE: f32 = 0.92;
 /// Height of the remaining-time bar, relative to the strip height.
 const BAR_RATIO: f32 = 0.06;
 /// Opacity of the remaining-time bar.
@@ -54,6 +61,18 @@ fn pixels(value: f32, max: u32) -> u32 {
 const LIGHT_BACKGROUND_LUMINANCE: f32 = 150.0;
 const DARK_TEXT: Rgba<u8> = Rgba([0x11, 0x11, 0x11, u8::MAX]);
 
+/// Reminder of what the contextual dial does, drawn at the bottom of the
+/// notification above the dial.
+#[derive(Debug, Clone, Copy)]
+pub struct NotificationActionLook<'a> {
+    /// Text of the reminder.
+    pub text: &'a str,
+    /// Index of the dial among `dials`.
+    pub dial: usize,
+    /// Number of dials, which split the strip into as many columns.
+    pub dials: usize,
+}
+
 /// What a notification looks like, apart from time.
 #[derive(Debug, Clone, Copy)]
 pub struct NotificationLook<'a> {
@@ -65,6 +84,8 @@ pub struct NotificationLook<'a> {
     pub icon: Option<&'a ImageSource>,
     /// Message.
     pub message: &'a str,
+    /// What the contextual dial does, if the notification says.
+    pub action: Option<NotificationActionLook<'a>>,
 }
 
 /// A drawn notification, and whether its message is too wide to stand still
@@ -176,6 +197,9 @@ impl Renderer {
             );
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
+        if let Some(action) = &look.action {
+            self.draw_action(&mut canvas, look, action)?;
+        }
         if let Some(timeout) = timeout {
             draw_time_bar(&mut canvas, look.background, elapsed, timeout);
         }
@@ -217,6 +241,35 @@ impl Renderer {
         let mut canvas = RgbaImage::from_pixel(size.width, size.height, Rgba([0, 0, 0, u8::MAX]));
         self.text.draw(&mut canvas, &[line])?;
         Ok(Arc::new(canvas))
+    }
+
+    /// The reminder of the contextual dial, centred above its column.
+    fn draw_action(
+        &self,
+        canvas: &mut RgbaImage,
+        look: &NotificationLook<'_>,
+        action: &NotificationActionLook<'_>,
+    ) -> Result<(), RenderError> {
+        let Some(dials) = u16::try_from(action.dials).ok().filter(|dials| *dials > 0) else {
+            return Ok(());
+        };
+        let height = f32_from(look.size.height);
+        let column = f32_from(look.size.width) / f32::from(dials);
+        let centre = (f32::from(u16::try_from(action.dial).unwrap_or(0)) + 0.5) * column;
+        let style = LineStyle {
+            size: height * ACTION_FONT_RATIO,
+            weight: FontWeight::SemiBold,
+            color: readable_text_color(look.background),
+        };
+        let baseline = height * (1.0 - ACTION_BASELINE_RATIO);
+        let line = self.text.fitted_line(
+            action.text.trim(),
+            style,
+            centre,
+            baseline,
+            column * ACTION_WIDTH_SHARE,
+        )?;
+        self.text.draw(canvas, &[line])
     }
 
     fn draw_message(
@@ -382,6 +435,7 @@ mod tests {
             background: [0xF0, 0x3E, 0x2F],
             icon: None,
             message,
+            action: None,
         }
     }
 
@@ -481,5 +535,63 @@ mod tests {
         assert_eq!(image.dimensions(), (800, 100));
         assert_eq!(*image.get_pixel(0, 0), Rgba([0, 0, 0, 255]));
         assert!(image.pixels().any(|pixel| pixel.0[0] > 200));
+    }
+
+    /// Pixels of `image` that differ from `other`, as `(min_x, max_x)`
+    /// within the rows from `from_y`.
+    fn changed_columns(image: &RgbaImage, other: &RgbaImage, from_y: u32) -> Option<(u32, u32)> {
+        let changed: Vec<u32> = image
+            .enumerate_pixels()
+            .filter(|(x, y, pixel)| *y >= from_y && other.get_pixel(*x, *y) != *pixel)
+            .map(|(x, _, _)| x)
+            .collect();
+        Some((*changed.iter().min()?, *changed.iter().max()?))
+    }
+
+    #[test]
+    fn the_action_is_drawn_at_the_bottom_above_its_dial() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let with_action = NotificationLook {
+            action: Some(NotificationActionLook {
+                text: "Démarrer la pause",
+                dial: 2,
+                dials: 4,
+            }),
+            ..look("Pause !")
+        };
+        let drawn = renderer
+            .render_notification(&with_action, Duration::ZERO, None)
+            .unwrap();
+        // Only the bottom quarter changes, within the third column.
+        let (left, right) = changed_columns(&drawn.image, &bare.image, 75).unwrap();
+        assert!(left >= 400 && right < 600, "{left}..{right}");
+        assert_eq!(
+            changed_columns(&drawn.image, &bare.image, 0).unwrap().0,
+            left
+        );
+        assert!(!drawn.scrolls);
+    }
+
+    #[test]
+    fn an_action_on_a_device_without_dials_is_not_drawn() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let with_action = NotificationLook {
+            action: Some(NotificationActionLook {
+                text: "Démarrer",
+                dial: 0,
+                dials: 0,
+            }),
+            ..look("Pause !")
+        };
+        let drawn = renderer
+            .render_notification(&with_action, Duration::ZERO, None)
+            .unwrap();
+        assert_eq!(drawn.image, bare.image);
     }
 }

@@ -32,7 +32,7 @@ use image::{ImageFormat, Rgba, RgbaImage};
 use resvg::usvg;
 use thiserror::Error;
 
-pub use notification::{NotificationImage, NotificationLook};
+pub use notification::{NotificationActionLook, NotificationImage, NotificationLook};
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
