@@ -36,9 +36,9 @@ const URL_OPENER: &str = "xdg-open";
 /// Why the interface could not be opened.
 #[derive(Debug, thiserror::Error)]
 pub enum LauncherError {
-    /// The user's systemd manager is unreachable or refused the start.
+    /// The service manager is unreachable or refused the start.
     #[error("cannot start {SERVICE_UNIT}: {0}")]
-    Service(#[from] zbus::Error),
+    Service(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// The service was started but nothing listens on its address.
     #[error(
         "{SERVICE_UNIT} does not answer on {address} after {timeout:?} \
@@ -56,6 +56,12 @@ pub enum LauncherError {
     /// The browser opener reported a failure.
     #[error("{URL_OPENER} failed ({0})")]
     OpenerFailed(ExitStatus),
+}
+
+impl From<zbus::Error> for LauncherError {
+    fn from(error: zbus::Error) -> Self {
+        Self::Service(Box::new(error))
+    }
 }
 
 /// Starts the manager's service.

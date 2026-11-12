@@ -20,11 +20,12 @@ dist="$3"
 readonly BINARY=/usr/bin/hubergamof
 readonly UNIT=/usr/lib/systemd/user/hubergamof.service
 readonly UDEV_RULE=/usr/lib/udev/rules.d/70-hubergamof.rules
-readonly DESKTOP_ENTRY=/usr/share/applications/hubergamof.desktop
-readonly ICONS=(
-	/usr/share/icons/hicolor/scalable/apps/hubergamof.svg
-	/usr/share/icons/hicolor/{22x22,32x32,48x48,64x64}/apps/hubergamof.png
-)
+# shellcheck source=packaging/desktop/install-desktop.sh
+source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/desktop/install-desktop.sh"
+readonly DESKTOP_ENTRY="/usr/share/$DESKTOP_ENTRY_TARGET"
+# Lanceur et icônes, tels que stage.sh les pose.
+mapfile -t DESKTOP_FILES < <(desktop_entry_files | sed 's|^|/usr/share/|')
+readonly DESKTOP_FILES
 readonly EXPECTED_DESKTOP_EXEC='Exec="/usr/bin/hubergamof" open'
 readonly EXPECTED_EXEC_START='ExecStart=/usr/bin/hubergamof --config-dir "%E/hubergamof"'
 readonly PACTL_MIN_MAJOR=16
@@ -56,7 +57,7 @@ remove_package() {
 
 check_files() {
 	local path
-	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "$DESKTOP_ENTRY" "${ICONS[@]}"; do
+	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "${DESKTOP_FILES[@]}"; do
 		[[ -e "$path" ]] || fail "fichier absent : $path"
 	done
 	[[ "$(stat -c %a "$BINARY")" == 755 ]] || fail "$BINARY n'est pas en 0755"
@@ -117,7 +118,7 @@ check_arch_lint() {
 
 check_removed() {
 	local path
-	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "$DESKTOP_ENTRY" "${ICONS[@]}"; do
+	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "${DESKTOP_FILES[@]}"; do
 		[[ ! -e "$path" ]] || fail "fichier resté après désinstallation : $path"
 	done
 }

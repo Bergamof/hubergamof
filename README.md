@@ -94,7 +94,7 @@ La configuration des appareils est, pour l'instant, stockée dans le dépôt : `
 
 Interface : <http://127.0.0.1:7878> (ou via l'icône de la barre système).
 
-Le lanceur de bureau **HuBergamof** (menu des applications, posé par le paquet ou par `make install`) ouvre l'interface et, si le gestionnaire ne tourne plus (quitté depuis la barre système, service arrêté ou abandonné par systemd après des échecs répétés), relance d'abord le service. En ligne de commande : `hubergamof open` (`--port` si le port a été changé).
+Le lanceur de bureau **HuBergamof** (menu des applications, posé par le paquet ou par `make install`) ouvre l'interface et, si le gestionnaire ne tourne plus (quitté depuis la barre système, service arrêté ou abandonné par systemd après des échecs répétés), relance d'abord le service. En ligne de commande : `hubergamof open` (`hubergamof open --port <port>` si le port a été changé).
 
 ## Vie privée
 

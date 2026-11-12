@@ -1,6 +1,6 @@
 # HuBergamof — lanceur de bureau (gabarit).
-# packaging/install.sh et packaging/package/stage.sh remplacent @BINARY@ par le
-# chemin du binaire (échappé pour une clé Exec). `hubergamof open` démarre le
+# packaging/install.sh et packaging/package/stage.sh remplacent le jeton de la
+# clé Exec par le chemin du binaire (échappé pour une clé Exec). `hubergamof open` démarre le
 # service utilisateur s'il ne tourne pas, puis ouvre l'interface web.
 [Desktop Entry]
 Type=Application

@@ -1,5 +1,5 @@
 use std::os::unix::net::UnixStream;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tokio::net::TcpListener;
 use zbus::connection::Builder;
@@ -10,27 +10,32 @@ use super::*;
 /// Short enough for a test, long enough for a loaded machine.
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A service that starts listening on `address` when asked, unless told to fail.
+/// A service that starts listening on `address` `startup` after being asked
+/// (never when `None`).
 struct FakeService {
     address: SocketAddr,
-    listens_once_started: bool,
+    startup: Option<Duration>,
     starts: Mutex<u32>,
-    listener: Mutex<Option<std::net::TcpListener>>,
+    listener: Arc<Mutex<Option<std::net::TcpListener>>>,
 }
 
 impl FakeService {
     fn at(address: SocketAddr) -> Self {
+        Self::listening_after(address, Duration::ZERO)
+    }
+
+    fn listening_after(address: SocketAddr, startup: Duration) -> Self {
         Self {
             address,
-            listens_once_started: true,
+            startup: Some(startup),
             starts: Mutex::new(0),
-            listener: Mutex::new(None),
+            listener: Arc::default(),
         }
     }
 
     fn silent(address: SocketAddr) -> Self {
         Self {
-            listens_once_started: false,
+            startup: None,
             ..Self::at(address)
         }
     }
@@ -44,9 +49,12 @@ impl FakeService {
 impl ServiceControl for FakeService {
     async fn start(&self) -> Result<(), LauncherError> {
         *self.starts.lock().unwrap() += 1;
-        if self.listens_once_started {
-            *self.listener.lock().unwrap() =
-                Some(std::net::TcpListener::bind(self.address).unwrap());
+        if let Some(startup) = self.startup {
+            let (address, listener) = (self.address, Arc::clone(&self.listener));
+            tokio::spawn(async move {
+                tokio::time::sleep(startup).await;
+                *listener.lock().unwrap() = Some(std::net::TcpListener::bind(address).unwrap());
+            });
         }
         Ok(())
     }
@@ -58,7 +66,9 @@ struct MissingService;
 #[async_trait]
 impl ServiceControl for MissingService {
     async fn start(&self) -> Result<(), LauncherError> {
-        Err(zbus::Error::Failure("Unit hubergamof.service not found.".into()).into())
+        Err(LauncherError::Service(
+            "Unit hubergamof.service not found.".into(),
+        ))
     }
 }
 
@@ -81,7 +91,8 @@ impl UrlOpener for RecordingOpener {
     }
 }
 
-/// A loopback address nothing listens on.
+/// A loopback address nothing listens on. Another process could take the port
+/// back before the test uses it: unlikely enough for the ephemeral range.
 fn free_address() -> SocketAddr {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.local_addr().unwrap()
@@ -118,6 +129,22 @@ async fn a_stopped_manager_is_started_then_opened() {
     assert_eq!(opener.urls(), [ui_url(address)]);
 }
 
+/// Simulated time: only the delays between probes advance it, the loopback
+/// probes themselves answer at once.
+#[tokio::test(start_paused = true)]
+async fn a_slow_service_is_waited_for() {
+    let address = free_address();
+    let service = FakeService::listening_after(address, Duration::from_secs(3));
+    let opener = RecordingOpener::default();
+
+    let outcome = open_ui(address, &service, &opener, START_TIMEOUT)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome, Outcome::Started);
+    assert_eq!(opener.urls(), [ui_url(address)]);
+}
+
 #[tokio::test]
 async fn a_refused_start_opens_nothing() {
     let opener = RecordingOpener::default();
@@ -131,12 +158,12 @@ async fn a_refused_start_opens_nothing() {
     assert_eq!(opener.urls(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_service_that_never_listens_times_out_with_a_hint() {
     let address = free_address();
     let service = FakeService::silent(address);
     let opener = RecordingOpener::default();
-    let timeout = Duration::from_millis(300);
+    let timeout = START_TIMEOUT;
 
     let error = open_ui(address, &service, &opener, timeout)
         .await

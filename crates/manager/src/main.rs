@@ -46,7 +46,9 @@ const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Command-line options.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+// The manager's options make no sense with a command and are refused before
+// it; the global `--port` goes after it (`hubergamof open --port 9000`).
+#[command(version, about, args_conflicts_with_subcommands = true)]
 struct Cli {
     /// Use a simulated device instead of real hardware.
     #[arg(long)]
@@ -98,13 +100,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing();
     match cli.command {
-        Some(Command::Open) => open_ui(cli.port).await,
+        Some(Command::Open) => run_open(cli.port).await,
         None => run_manager(cli).await,
     }
 }
 
 /// Opens the web interface, bringing the service back first if needed.
-async fn open_ui(port: u16) -> Result<()> {
+async fn run_open(port: u16) -> Result<()> {
     let outcome = launcher::open_ui(
         local_address(port),
         &SystemdUserService,
@@ -393,11 +395,22 @@ mod tests {
         let cli = Cli::try_parse_from(["hubergamof", "open"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Open)));
         assert_eq!(cli.port, DEFAULT_PORT);
-        for args in [
-            ["hubergamof", "--port", "9000", "open"],
-            ["hubergamof", "open", "--port", "9000"],
+        let cli = Cli::try_parse_from(["hubergamof", "open", "--port", "9000"]).unwrap();
+        assert_eq!(cli.port, 9000);
+    }
+
+    #[test]
+    fn open_refuses_the_options_of_the_manager() {
+        for option in [
+            &["--demo"][..],
+            &["--no-tray"],
+            &["--config-dir", "/tmp/deck"],
+            &["--dev-origin", "http://localhost:5173"],
+            &["--file-chooser-answer", "/srv/a.yaml"],
+            &["--port", "9000"],
         ] {
-            assert_eq!(Cli::try_parse_from(args).unwrap().port, 9000, "{args:?}");
+            let args = [&["hubergamof"][..], option, &["open"]].concat();
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
     }
 
