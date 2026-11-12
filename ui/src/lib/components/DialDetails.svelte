@@ -13,6 +13,7 @@ nothing, and the settings of the module of that function.
 	} from '#lib/generated/index.js';
 	import {
 		assignDial,
+		kindOnOtherDial,
 		removedInstance,
 		type DialChoice,
 		type InstanceChanges
@@ -79,6 +80,11 @@ nothing, and the settings of the module of that function.
 	const uid = $props.id();
 	const current = $derived(assignmentOption(assignment));
 	let chosen: string | undefined = $state();
+	/** A module has one dial at most: what another dial already offers is not proposed. */
+	const freeCandidates = $derived(
+		candidates.filter(({ instance }) => !kindOnOtherDial(config, instance.kind, index))
+	);
+	const freeModules = $derived(modules.filter(({ kind }) => !kindOnOtherDial(config, kind, index)));
 	const pending = $derived(chosen ?? current);
 	const choice = $derived(choiceOf(pending, modules));
 	const lost = $derived(
@@ -129,9 +135,9 @@ nothing, and the settings of the module of that function.
 				<option value={NO_DIAL_FUNCTION}>Rien</option>
 				<option value={NAVIGATION_OPTION}>Navigation</option>
 				<option value={CONTEXTUAL_OPTION}>Fonction contextuelle (pas encore définie)</option>
-				{#if candidates.length > 0}
+				{#if freeCandidates.length > 0}
 					<optgroup label="Fonctions des modules configurés">
-						{#each candidates as candidate (candidate.instance.id)}
+						{#each freeCandidates as candidate (candidate.instance.id)}
 							{@const kind = moduleOf(candidate.instance.kind)}
 							{#each kind?.dialFunctions ?? [] as fn (fn.id)}
 								<option value={existingOption(candidate.instance.id, fn.id)}>
@@ -141,9 +147,9 @@ nothing, and the settings of the module of that function.
 						{/each}
 					</optgroup>
 				{/if}
-				{#if modules.length > 0}
+				{#if freeModules.length > 0}
 					<optgroup label="Nouveau module">
-						{#each modules as candidate (candidate.kind)}
+						{#each freeModules as candidate (candidate.kind)}
 							{#each candidate.dialFunctions as fn (fn.id)}
 								<option value={newOption(candidate, fn)}>
 									{fn.name} ({candidate.name}, nouveau)
@@ -166,7 +172,8 @@ nothing, and the settings of the module of that function.
 			<p id="{uid}-description" class="text-sm text-muted">{description}</p>
 		{/if}
 		<p id="{uid}-hint" class="text-sm text-muted">
-			Un module déjà configuré garde ses réglages, partagés avec ses autres emplacements.
+			Un module déjà configuré garde ses réglages, partagés avec ses autres emplacements. Un module
+			n’occupe qu’une seule molette.
 		</p>
 		{#if lost}
 			<p id="{uid}-lost" class="text-sm font-medium text-warning">

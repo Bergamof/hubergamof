@@ -267,24 +267,15 @@ test('change la fonction d’une molette seulement sur « Affecter »', async ({
 	await page.getByRole('button', { name: 'Affecter' }).click();
 	await expect(dial(page, '3 : Navigation')).toBeVisible();
 
-	// A module that exists once is shared, never offered as new while it is configured.
-	await fonction.selectOption({ label: 'Contrôle du pomodoro (Pomodoro, molette 2)' });
-	await expect(page.getByRole('option', { name: /Pomodoro, nouveau/ })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Affecter' }).click();
-	await expect(dial(page, '3 : Contrôle du pomodoro')).toBeVisible();
-	// Dial 2 still uses it: giving it up deletes nothing.
-	await fonction.selectOption({ label: 'Rien' });
-	// (The closed confirmation dialog holds the same sentence, hidden.)
-	await expect(page.getByText(/n’est placé nulle part ailleurs/)).toBeHidden();
-	await page.getByRole('button', { name: 'Affecter' }).click();
-	await expect(dial(page, '3 : Rien')).toBeVisible();
+	// A module has one dial at most: what dials 1 and 2 already offer is not proposed.
+	await expect(page.getByRole('option', { name: /Pomodoro|Audio/ })).toHaveCount(0);
 
-	// Once nothing uses it, the module is deleted with its settings, and a new one can be created.
+	// Once its dial lets it go, the module is deleted with its settings, and a new one can be created.
 	await dial(page, '2 : Contrôle du pomodoro').click();
 	await fonction.selectOption({ label: 'Rien' });
 	await expect(page.getByText(/« Pomodoro » n’est placé nulle part ailleurs/)).toBeVisible();
 	await page.getByRole('button', { name: 'Affecter' }).click();
-	await dial(page, '3 : Rien').click();
+	await dial(page, '3 : Navigation').click();
 	await fonction.selectOption({ label: 'Contrôle du pomodoro (Pomodoro, nouveau)' });
 	await page.getByRole('button', { name: 'Affecter' }).click();
 	await expect(dial(page, '3 : Contrôle du pomodoro')).toBeVisible();

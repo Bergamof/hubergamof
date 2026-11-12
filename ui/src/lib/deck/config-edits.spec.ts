@@ -3,6 +3,7 @@ import type { CatalogModule, DeviceConfig, ModuleInstance } from '#lib/generated
 import {
 	addKey,
 	canAddKey,
+	kindOnOtherDial,
 	canCreateInstance,
 	assignDial,
 	createInstance,
@@ -165,6 +166,29 @@ describe('edits', () => {
 		expect(edited.modules.filter((module) => module.kind === 'audio')).toHaveLength(1);
 	});
 
+	it('refuse a second dial for a module, whatever its instances', () => {
+		const original = config({
+			home: ['audio-2'],
+			modules: [instance('audio'), instance('audio-2', 'audio'), instance('pomodoro')]
+		});
+		const withVolume = assignDial(0, { type: 'existing', instance: 'audio', function: 'volume' })(
+			original
+		);
+		expect(kindOnOtherDial(withVolume, 'audio', 3)).toBe(true);
+		expect(kindOnOtherDial(withVolume, 'audio', 0)).toBe(false);
+		const existing = assignDial(3, { type: 'existing', instance: 'audio-2', function: 'volume' })(
+			withVolume
+		);
+		expect(existing).toBe(withVolume);
+		const created = assignDial(3, { type: 'new', module: audio, function: 'volume' })(withVolume);
+		expect(created).toBe(withVolume);
+		// The same dial can be given the module again.
+		const again = assignDial(0, { type: 'existing', instance: 'audio', function: 'volume' })(
+			withVolume
+		);
+		expect(again.dials[0]).toEqual(withVolume.dials[0]);
+	});
+
 	it('remove a key and its instance unless a dial still uses it', () => {
 		const withoutAudio = removeKey(0)(config());
 		expect(withoutAudio.home).toEqual(['pomodoro', 'docker']);
@@ -199,13 +223,9 @@ describe('edits', () => {
 		expect(existing.dials[3]).toEqual({ kind: 'module', instance: 'audio', function: 'volume' });
 		expect(existing.modules).toHaveLength(4);
 
-		const added = assignDial(3, { type: 'new', module: pomodoro, function: 'control' })(config());
-		expect(added.dials[3]).toEqual({
-			kind: 'module',
-			instance: 'pomodoro-2',
-			function: 'control'
-		});
-		expect(added.modules.map((module) => module.id)).toContain('pomodoro-2');
+		const added = assignDial(3, { type: 'new', module: dialOnly, function: 'volume' })(config());
+		expect(added.dials[3]).toEqual({ kind: 'module', instance: 'timer', function: 'volume' });
+		expect(added.modules.map((module) => module.id)).toContain('timer');
 
 		const cleared = assignDial(0, { type: 'none' })(config());
 		expect(cleared.dials[0]).toEqual({ kind: 'none' });

@@ -36,6 +36,18 @@ describe('ModulePicker', () => {
 		expect(document.querySelectorAll('dialog li')).toHaveLength(2);
 	});
 
+	it('says why there is nothing to pick', async () => {
+		await render(ModulePicker, {
+			open: true,
+			title: 'Ajouter une touche',
+			modules: [],
+			empty: 'Tout est déjà placé.',
+			onpick: vi.fn(),
+			onclose: vi.fn()
+		});
+		await expect.element(page.getByText('Tout est déjà placé.')).toBeVisible();
+	});
+
 	it('picks the module clicked', async () => {
 		const onpick = vi.fn();
 		await render(ModulePicker, {

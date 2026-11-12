@@ -358,6 +358,7 @@ selected key or dial.
 	open={pickerOpen}
 	title="Ajouter une touche"
 	modules={keyModules}
+	empty="Tous les modules qui peuvent se placer sur une touche y sont déjà : un module à instance unique n’a qu’une touche."
 	notice={(module) =>
 		sharedInstance(config, module)
 			? 'Déjà configuré pour une molette : la touche en partagera les réglages.'

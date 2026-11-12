@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use hubergamof_module_api::{ModuleInstanceId, Notification, Rgb};
 
-use crate::config_store::PlacementChange;
+use crate::placement::PlacementChange;
 
 /// Source of the notification: the manager, not a module instance.
-pub(super) const SOURCE: &str = "hubergamof";
+const SOURCE: &str = "hubergamof";
 
 /// How long the notice stays on the strip; it remains among the unread ones.
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -37,6 +37,12 @@ fn describe(change: &PlacementChange) -> String {
         }
         PlacementChange::MergedInstances { module } => {
             format!("{module} n'existe qu'une fois, réglages partagés")
+        }
+        PlacementChange::RemovedDuplicateDial { module } => {
+            format!("{module} n'a qu'une molette, doublon retiré")
+        }
+        PlacementChange::RemovedDuplicateKey { module } => {
+            format!("{module} n'a qu'une touche, doublon retiré")
         }
     }
 }

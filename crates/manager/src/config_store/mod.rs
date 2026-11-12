@@ -17,7 +17,6 @@
 mod archive;
 mod defaults;
 mod migration;
-mod placement;
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
@@ -30,9 +29,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode, ModuleInstance,
-    is_safe_image_name,
+    ModuleInstanceId, is_safe_image_name,
 };
-use placement::normalize_placement;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -43,10 +41,10 @@ pub use archive::{
     read_archive, write_archive,
 };
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};
-pub use placement::PlacementChange;
 
 use tokio::io::AsyncReadExt as _;
 
+use crate::placement::{PlacementChange, normalize};
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};
 
 /// Directory holding one sub-directory per device serial.
@@ -255,17 +253,15 @@ impl ConfigStore {
         let path = self.config_path(&device.serial)?;
         self.make_device_private(&device.serial)?;
         let outcome = match read_config(&path) {
-            Ok(Some(mut config)) => {
-                let changes = normalize_placement(&mut config, self.descriptors.as_ref());
-                match check_config(&config, device) {
-                    Ok(()) => {
-                        let outcome = Self::keep_normalized(&path, &mut config, changes)?;
-                        self.prune_images(&device.serial, &config);
-                        return Ok(LoadedConfig { config, outcome });
-                    }
-                    Err(error) => set_invalid_aside(&path, &error)?,
+            Ok(Some(mut config)) => match check_config(&config, device) {
+                Ok(()) => {
+                    let changes = normalize(&mut config, self.descriptors.as_ref());
+                    let outcome = keep_normalized(&path, &mut config, changes);
+                    self.prune_images(&device.serial, &config);
+                    return Ok(LoadedConfig { config, outcome });
                 }
-            }
+                Err(error) => set_invalid_aside(&path, &error)?,
+            },
             Ok(None) => LoadOutcome::CreatedDefault,
             Err(error @ ConfigStoreError::Json { .. }) => set_invalid_aside(&path, &error)?,
             Err(error) => return Err(error),
@@ -274,22 +270,6 @@ impl ConfigStore {
         write_atomically(&path, &config)?;
         tracing::info!(serial = %device.serial, path = %path.display(), "default configuration written");
         Ok(LoadedConfig { config, outcome })
-    }
-
-    /// Writes `config` again when `changes` normalized it; the revision goes
-    /// up so that clients holding the previous one refresh.
-    fn keep_normalized(
-        path: &Path,
-        config: &mut DeviceConfig,
-        changes: Vec<PlacementChange>,
-    ) -> Result<LoadOutcome, ConfigStoreError> {
-        if changes.is_empty() {
-            return Ok(LoadOutcome::Loaded);
-        }
-        config.revision += 1;
-        write_atomically(path, config)?;
-        tracing::info!(serial = %config.serial, ?changes, "configuration brought back to the placement rules");
-        Ok(LoadOutcome::Normalized { changes })
     }
 
     /// Saves `config` for `device` if it is valid and based on the current
@@ -499,7 +479,7 @@ impl ConfigStore {
     ) -> Result<PreparedImport, ConfigStoreError> {
         let Archive { config, images } = read_archive(bytes)?;
         let mut config = fit_to_device(config, device, revision);
-        let changes = normalize_placement(&mut config, self.descriptors.as_ref());
+        let changes = normalize(&mut config, self.descriptors.as_ref());
         if !changes.is_empty() {
             tracing::info!(
                 ?changes,
@@ -649,14 +629,43 @@ pub fn fit_to_device(mut config: DeviceConfig, device: &DeviceInfo, revision: u6
         usize::from(device.capabilities.dial_count),
         DialAssignment::None,
     );
-    let used: HashSet<_> = config
+    let used = used_instances(&config);
+    config.modules.retain(|module| used.contains(&module.id));
+    config
+}
+
+/// Instances placed on a key or given to a dial.
+pub(crate) fn used_instances(config: &DeviceConfig) -> HashSet<ModuleInstanceId> {
+    config
         .home
         .iter()
         .chain(config.dials.iter().filter_map(DialAssignment::instance))
         .cloned()
-        .collect();
-    config.modules.retain(|module| used.contains(&module.id));
-    config
+        .collect()
+}
+
+/// Writes `config` again when `changes` normalized it, with a revision one
+/// higher so that clients holding the previous one refresh. A write that
+/// fails is only logged: the device starts with the normalized configuration
+/// and the file is rewritten by the next save.
+fn keep_normalized(
+    path: &Path,
+    config: &mut DeviceConfig,
+    changes: Vec<PlacementChange>,
+) -> LoadOutcome {
+    if changes.is_empty() {
+        return LoadOutcome::Loaded;
+    }
+    let mut rewritten = config.clone();
+    rewritten.revision += 1;
+    match write_atomically(path, &rewritten) {
+        Ok(()) => *config = rewritten,
+        Err(error) => {
+            tracing::warn!(%error, "normalized configuration not written");
+        }
+    }
+    tracing::info!(serial = %config.serial, ?changes, "configuration brought back to the placement rules");
+    LoadOutcome::Normalized { changes }
 }
 
 /// Name of an image in the `images/` directory: from its content, so that

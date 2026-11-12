@@ -75,6 +75,16 @@ export function canCreateInstance(config: DeviceConfig, module: CatalogModule): 
 	return sharedInstance(config, module) === undefined;
 }
 
+/** Whether a dial other than `dial` has a function of a module of `kind`: a module has one dial at most. */
+export function kindOnOtherDial(config: DeviceConfig, kind: string, dial: number): boolean {
+	return config.dials.some(
+		(assignment, index) =>
+			index !== dial &&
+			assignment.kind === 'module' &&
+			config.modules.find((module) => module.id === assignment.instance)?.kind === kind
+	);
+}
+
 /** The instance a dial function belongs to, if the dial has a function of a module. */
 export function dialInstance(assignment: DialAssignment): ModuleInstanceId | undefined {
 	return assignment.kind === 'module' ? assignment.instance : undefined;
@@ -170,6 +180,13 @@ export type DialChoice =
 export function assignDial(dial: number, choice: DialChoice): ConfigEdit {
 	return (config) => {
 		if (dial < 0 || dial >= config.dials.length) return config;
+		const kind =
+			choice.type === 'new'
+				? choice.module.kind
+				: choice.type === 'existing'
+					? config.modules.find((module) => module.id === choice.instance)?.kind
+					: undefined;
+		if (kind !== undefined && kindOnOtherDial(config, kind, dial)) return config;
 		const shared = choice.type === 'new' ? sharedInstance(config, choice.module) : undefined;
 		const added =
 			choice.type === 'new' && !shared ? createInstance(config, choice.module) : undefined;
