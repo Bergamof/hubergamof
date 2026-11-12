@@ -124,6 +124,15 @@ selected key or dial.
 			: NOTHING_TO_SAVE;
 	}
 
+	/** The settings editor of `instance` went away with refused fields: they are lost. */
+	function discarded(instance: ModuleInstance | null | undefined, fields: string[]) {
+		const name = instance ? instanceName(instance, moduleOf(instance.kind)) : 'ce module';
+		deck.report({
+			text: `Réglages de « ${name} » non enregistrés, valeur invalide : ${fields.join(', ')}.`,
+			detail: null
+		});
+	}
+
 	function setImage(instance: ModuleInstance | undefined, image: string | null) {
 		return instance
 			? deck.edit(setKeyImage(instance.id, image), { notify: false })
@@ -250,6 +259,7 @@ selected key or dial.
 					onmove={(to) => move(position, to)}
 					onremove={() => requestRemove(position)}
 					onapply={(changes) => apply(instance, changes)}
+					ondiscard={(fields) => discarded(instance, fields)}
 					onimage={(image) => setImage(instance, image)}
 				/>
 			{:else if selected?.surface === 'dial'}
@@ -268,6 +278,7 @@ selected key or dial.
 						headingId={detailsHeadingId}
 						onassign={(choice) => assign(index, choice)}
 						onapply={(changes) => apply(instance, changes)}
+						ondiscard={(fields) => discarded(instance, fields)}
 					/>
 				{/key}
 			{:else}

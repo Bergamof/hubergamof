@@ -36,9 +36,11 @@ one being changed keeps what is typed, saved over the other change once finished
 		serial: string;
 		api: ManagerApi;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
+		/** Called when the editor goes away with refused fields, lost: their labels. */
+		ondiscard: (fields: string[]) => void;
 	}
 
-	let { instance, module, serial, api, onapply }: Props = $props();
+	let { instance, module, serial, api, onapply, ondiscard }: Props = $props();
 
 	/** Longest label: it is drawn at the bottom of a key, where little more fits. */
 	const MAX_LABEL_LENGTH = 40;
@@ -86,15 +88,22 @@ one being changed keeps what is typed, saved over the other change once finished
 		if (changedElsewhere) untrack(rebase);
 	});
 
-	// A text typed just before leaving (another key selected, tab closed) is still saved.
+	// A text typed just before leaving (another key selected, tab closed) is still saved; a
+	// refused one cannot be, and is reported once the editor is gone.
 	$effect(() => {
 		const leave = () => saveAfterPause.flushPending();
 		window.addEventListener('pagehide', leave);
 		return () => {
 			window.removeEventListener('pagehide', leave);
 			leave();
+			untrack(reportDiscarded);
 		};
 	});
+
+	function reportDiscarded() {
+		const lost = fields.filter((field) => parsed.errors[field.key] !== undefined);
+		if (lost.length > 0) ondiscard(lost.map((field) => field.label));
+	}
 
 	function labelOf(source: ModuleInstance): string {
 		return source.label ?? '';

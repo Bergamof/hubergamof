@@ -24,6 +24,8 @@ removal, key image and module settings.
 		onmove: (to: number) => void;
 		onremove: () => void;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
+		/** Called when the settings editor goes away with refused fields (see `InstanceEditor`). */
+		ondiscard: (fields: string[]) => void;
 		onimage: (image: string | null) => Promise<EditOutcome>;
 	}
 
@@ -38,6 +40,7 @@ removal, key image and module settings.
 		onmove,
 		onremove,
 		onapply,
+		ondiscard,
 		onimage
 	}: Props = $props();
 
@@ -73,7 +76,7 @@ removal, key image and module settings.
 		<!-- A new form for another instance, or once its module is known (catalog arriving late). -->
 		{#key `${instance.id}/${module?.kind ?? ''}`}
 			<KeyImagePicker {serial} {instance} {module} {api} onchange={onimage} />
-			<InstanceEditor {instance} {module} {serial} {api} {onapply} />
+			<InstanceEditor {instance} {module} {serial} {api} {onapply} {ondiscard} />
 		{/key}
 	{:else}
 		<p class="text-muted">Le module de cette touche est introuvable.</p>

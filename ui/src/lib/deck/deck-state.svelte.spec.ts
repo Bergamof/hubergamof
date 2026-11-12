@@ -286,6 +286,18 @@ describe('configuration updates', () => {
 		expect(connection.sent).toHaveLength(2);
 	});
 
+	it('keep a reported warning until dismissed', () => {
+		const { state } = following();
+		state.report({ text: 'Réglage perdu.', detail: null });
+		state.report({ text: 'Autre réglage perdu.', detail: null });
+		expect(state.notices.map((notice) => notice.text)).toEqual([
+			'Réglage perdu.',
+			'Autre réglage perdu.'
+		]);
+		state.dismiss(state.notices[0].id);
+		expect(state.notices.map((notice) => notice.text)).toEqual(['Autre réglage perdu.']);
+	});
+
 	it('never give up an update once saved', async () => {
 		vi.useFakeTimers();
 		const { connection, state } = following();

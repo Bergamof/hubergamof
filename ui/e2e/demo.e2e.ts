@@ -116,6 +116,18 @@ test('refuse un réglage invalide, puis enregistre sans bouton un réglage valid
 	await expect(page.getByLabel('Durée du travail')).toHaveValue('30');
 });
 
+test('avertit qu’une valeur invalide est perdue quand on change de touche', async ({ page }) => {
+	await open(page);
+	await key(page, '2 : Pomodoro').click();
+	await page.getByLabel('Durée du travail').fill('0');
+	await key(page, '1 : Audio').click();
+	await expect(page.getByRole('alert')).toContainText(
+		'Réglages de « Pomodoro » non enregistrés, valeur invalide : Durée du travail.'
+	);
+	await key(page, '2 : Pomodoro').click();
+	await expect(page.getByLabel('Durée du travail')).toHaveValue('25');
+});
+
 /** A 1×1 PNG, enough for the manager to accept an icon. */
 const PIXEL_PNG = Buffer.from(
 	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',

@@ -80,6 +80,7 @@ async function show(
 ) {
 	let current = options.instance ?? INSTANCE;
 	let mounted = true;
+	const ondiscard = vi.fn<(fields: string[]) => void>();
 	const onapply = vi.fn<Apply>(async (changes) => {
 		const outcome: EditOutcome = options.apply ? await options.apply(changes) : { saved: true };
 		if (outcome.saved && mounted) {
@@ -93,13 +94,14 @@ async function show(
 		module: options.module === null ? undefined : (options.module ?? POMODORO),
 		serial: 'DECK',
 		api: {} as ManagerApi,
-		onapply
+		onapply,
+		ondiscard
 	});
 	const unmount = async () => {
 		mounted = false;
 		await screen.unmount();
 	};
-	return { onapply, screen, unmount };
+	return { onapply, ondiscard, screen, unmount };
 }
 
 const labelField = () => page.getByLabelText('Libellé');
@@ -175,6 +177,25 @@ describe('InstanceEditor', () => {
 			label: 'Focus',
 			settings: INSTANCE.settings
 		});
+	});
+
+	it('reports the refused fields lost when the editor goes away', async () => {
+		const { onapply, ondiscard, unmount } = await show();
+		await userEvent.type(workField(), '{Backspace}{Backspace}0');
+		await userEvent.type(labelField(), 'Focus');
+		await unmount();
+		expect(onapply).toHaveBeenCalledExactlyOnceWith({
+			label: 'Focus',
+			settings: INSTANCE.settings
+		});
+		expect(ondiscard).toHaveBeenCalledExactlyOnceWith(['Durée du travail']);
+	});
+
+	it('reports nothing lost when every field is valid', async () => {
+		const { ondiscard, unmount } = await show();
+		await userEvent.type(labelField(), 'Focus');
+		await unmount();
+		expect(ondiscard).not.toHaveBeenCalled();
 	});
 
 	it('saves a text still being typed when the page is left', async () => {

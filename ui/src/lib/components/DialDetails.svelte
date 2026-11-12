@@ -32,6 +32,8 @@ none), applied with a button so that browsing the list changes nothing, and its 
 		headingId: string;
 		onassign: (choice: DialChoice) => void;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
+		/** Called when the settings editor goes away with refused fields (see `InstanceEditor`). */
+		ondiscard: (fields: string[]) => void;
 	}
 
 	let {
@@ -45,7 +47,8 @@ none), applied with a button so that browsing the list changes nothing, and its 
 		moduleOf,
 		headingId,
 		onassign,
-		onapply
+		onapply,
+		ondiscard
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -114,7 +117,7 @@ none), applied with a button so that browsing the list changes nothing, and its 
 	</form>
 	{#if instance}
 		{#key `${instance.id}/${module?.kind ?? ''}`}
-			<InstanceEditor {instance} {module} {serial} {api} {onapply} />
+			<InstanceEditor {instance} {module} {serial} {api} {onapply} {ondiscard} />
 		{/key}
 	{/if}
 </section>

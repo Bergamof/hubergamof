@@ -220,7 +220,7 @@ export class DeckState {
 
 	#receiveError(problem: Problem): void {
 		if (this.#inFlight) this.#dropPending(problem);
-		else this.#notify(problem);
+		else this.report(problem);
 	}
 
 	#sendQueued(base: DeviceConfig): void {
@@ -253,10 +253,11 @@ export class DeckState {
 	/** Settles the waiters as failed, with one notice if any of them wants it. */
 	#fail(waiters: readonly Waiter[], problem: Problem): void {
 		for (const waiter of waiters) waiter.settle({ saved: false, problem });
-		if (waiters.some((waiter) => waiter.notify)) this.#notify(problem);
+		if (waiters.some((waiter) => waiter.notify)) this.report(problem);
 	}
 
-	#notify(problem: Problem): void {
+	/** Shows `problem` until dismissed: a failure, or a warning of the editor. */
+	report(problem: Problem): void {
 		this.notices = [...this.notices, { id: this.#nextNoticeId, ...problem }];
 		this.#nextNoticeId += 1;
 	}

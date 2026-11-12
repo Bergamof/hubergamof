@@ -1,6 +1,6 @@
 <!--
 @component
-Errors reported by the manager, kept until dismissed. Dismissing one moves the focus to the
+Errors and warnings (from the manager or the editor), kept until dismissed. Dismissing one moves the focus to the
 next message, or to a fallback element, rather than losing it.
 -->
 <script lang="ts">
