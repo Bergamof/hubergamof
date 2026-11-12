@@ -1,8 +1,8 @@
 //! Tray menu model, independent of D-Bus: entries, stable ids, layout
 //! revision and the `com.canonical.dbusmenu` item properties.
 //!
-//! Entries: open the web UI, the theme submenu (light, dark: radio entries, the
-//! current one is selected), separator, the connected devices (informative,
+//! Entries: open the web UI, the theme submenu (light, dark: the current one is
+//! marked in its label), separator, the connected devices (informative,
 //! disabled), separator, quit.
 
 use hubergamof_protocol::DeviceTheme;
@@ -48,6 +48,11 @@ pub const FIRST_DEVICE_ID: i32 = 100;
 /// The entries of the theme submenu.
 const THEME_CHOICE_IDS: [i32; 2] = [THEME_LIGHT_ID, THEME_DARK_ID];
 
+/// Before the label of the theme in use.
+pub const SELECTED_MARK: &str = "●";
+/// Before the label of the other theme.
+pub const UNSELECTED_MARK: &str = "○";
+
 const OPEN_UI_ICON: &str = "internet-web-browser";
 const QUIT_ICON: &str = "application-exit";
 const THEME_ICON: &str = "preferences-desktop-theme";
@@ -59,8 +64,6 @@ pub enum PropertyValue {
     Text(String),
     /// A boolean (`b`).
     Flag(bool),
-    /// A signed integer (`i`).
-    Int(i32),
 }
 
 /// One property of a menu item: its dbusmenu name and value.
@@ -248,16 +251,16 @@ impl TrayMenu {
             THEME_DARK_ID => (THEME_DARK_LABEL, DeviceTheme::Dark),
             _ => return None,
         };
-        // A radio entry: the host draws the mark itself, whatever its icon
-        // theme (an icon name is not drawn by every host).
+        let mark = if self.theme == Some(theme) {
+            SELECTED_MARK
+        } else {
+            UNSELECTED_MARK
+        };
+        // The mark is part of the label: neither an icon name nor a radio
+        // toggle is drawn by every tray host.
         Some(vec![
-            ("label", PropertyValue::Text(label.into())),
+            ("label", PropertyValue::Text(format!("{mark} {label}"))),
             ("enabled", PropertyValue::Flag(self.has_devices())),
-            ("toggle-type", PropertyValue::Text("radio".into())),
-            (
-                "toggle-state",
-                PropertyValue::Int(i32::from(self.theme == Some(theme))),
-            ),
         ])
     }
 
@@ -454,10 +457,8 @@ mod tests {
             .children
             .iter()
             .map(|node| {
-                let marked = node
-                    .properties
-                    .contains(&("toggle-state", PropertyValue::Int(1)));
-                (label(node).unwrap().to_owned(), marked, is_enabled(node))
+                let (mark, name) = label(node).unwrap().split_once(' ').unwrap();
+                (name.to_owned(), mark == SELECTED_MARK, is_enabled(node))
             })
             .collect()
     }
