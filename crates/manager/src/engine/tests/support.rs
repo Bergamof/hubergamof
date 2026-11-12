@@ -585,6 +585,22 @@ pub(super) async fn start(info: DeviceInfo) -> Fixture {
     start_with(info, false).await
 }
 
+/// Starts an engine and waits for its strip to be written again once the device settled, so that
+/// tests counting writes do not meet that late rewrite on a slow machine.
+pub(super) async fn start_settled(info: DeviceInfo) -> Fixture {
+    let fixture = start(info).await;
+    tokio::time::timeout(WAIT, async {
+        while fixture.deck.strip_writes.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the strip is written again once the device settled");
+    let _ = fixture.deck.writes();
+    let _ = fixture.deck.flushes();
+    fixture
+}
+
 /// Starts an engine on a deck whose brightness fails if `fail_brightness`.
 pub(super) async fn start_with(info: DeviceInfo, fail_brightness: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();

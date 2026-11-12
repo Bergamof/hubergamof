@@ -372,7 +372,7 @@ async fn presses_act_on_the_item_displayed() {
 
 #[tokio::test]
 async fn queued_hardware_inputs_cost_one_redraw() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
             vec![fragile("none")],

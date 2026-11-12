@@ -298,7 +298,7 @@ async fn stale_revisions_are_rejected_without_change() {
 
 #[tokio::test]
 async fn only_changed_keys_are_rewritten() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(vec![list(0)], &["list"], &[None; 4])
         .await;
@@ -348,7 +348,7 @@ async fn the_strip_shows_the_path_of_the_displayed_page() {
 
 #[tokio::test]
 async fn the_strip_is_rewritten_only_when_it_changes() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
             vec![list(0), fragile("none")],
@@ -392,7 +392,7 @@ async fn the_strip_is_rewritten_only_when_it_changes() {
 
 #[tokio::test]
 async fn the_strip_follows_the_clock() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
     let redraw = {
         fixture
             .configure(vec![list(0)], &["list"], &[None; 4])
