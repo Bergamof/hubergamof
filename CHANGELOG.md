@@ -17,6 +17,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Notifications : moins de latence à l'interaction (rappels des molettes dessinés une fois et réutilisés à chaque image de l'animation, bande réécrite sans re-rendu quand la notification disparaît).
 - Notifications et molette contextuelle : une notification peut déclarer ce que fait l'appui de la molette contextuelle (`Notification::with_context_dial`, `Module::on_notification_press`) ; le rappel est dessiné en bas de la bande, la notification est lue après l'action ; une molette de navigation y rappelle aussi son rôle (« Masquer »). Pomodoro propose ainsi « Démarrer la pause » / « Démarrer le travail » à la fin d'une étape, sauf avec le démarrage automatique ; l'appui ne fait rien de plus si l'étape a déjà été lancée.
 - Bande tactile : un tap sur le panneau des mesures (CPU, RAM, SWAP) alterne entre historique et valeurs instantanées, comme le réglage de l'interface (enregistré et diffusé). Une notification affichée garde la main : le tap la lit.
 - Molette contextuelle : elle suit la page affichée. Le module de la page déclare (`PageContent::context_dial`) ce que font la rotation, l'appui et l'appui long et le texte du rappel de la bande ; rien de déclaré, rien d'affiché et aucune action. API des modules : `ContextDial`, `Module::on_context_rotate/press/long_press`, `KeyContent::focused` (cadre du curseur) et `checked` (pastille ✓), dessinés par l'hôte ; la page défile jusqu'au curseur.

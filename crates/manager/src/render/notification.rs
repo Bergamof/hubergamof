@@ -112,6 +112,20 @@ pub(super) struct TextLayer {
     text_width: f32,
 }
 
+/// The reminders of the dials under a notification, drawn once on a
+/// transparent layer: rasterising them costs far more than the 15 images
+/// per second a moving notification needs.
+pub(super) struct ReminderLayer {
+    key: ReminderKey,
+    /// The rows of the strip from `top` down, where the reminders are.
+    image: Arc<RgbaImage>,
+    top: u32,
+}
+
+/// What the reminders look like: size of the strip, reminders, text and
+/// background colours.
+type ReminderKey = (ImageSize, Vec<HintFace>, Rgba<u8>, Rgba<u8>);
+
 /// Geometry of a notification on a strip of a given size.
 #[derive(Debug, Clone, Copy)]
 struct Metrics {
@@ -232,12 +246,8 @@ impl Renderer {
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
         if look.shows_action() {
-            let ink = readable_text_color(look.background);
-            self.draw_dial_reminders(
-                &mut canvas,
-                &reminder_hints(look.actions),
-                (ink, background),
-            )?;
+            let (layer, top) = self.reminder_layer(look, background)?;
+            imageops::overlay(&mut canvas, layer.as_ref(), 0, i64::from(top));
         }
         if let Some(timeout) = timeout {
             draw_time_bar(&mut canvas, look.background, elapsed, timeout);
@@ -321,6 +331,35 @@ impl Renderer {
             -i64::from(rise),
         );
         Ok(scrolls)
+    }
+
+    /// The layer of the reminders of `look` and the row it starts at, drawn
+    /// again only when the reminders, the size or the colours changed.
+    fn reminder_layer(
+        &self,
+        look: &NotificationLook<'_>,
+        background: Rgba<u8>,
+    ) -> Result<(Arc<RgbaImage>, u32), RenderError> {
+        let ink = readable_text_color(look.background);
+        let key = (look.size, reminder_hints(look.actions), ink, background);
+        let mut cached = self
+            .notification_reminders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(layer) = cached.as_ref().filter(|layer| layer.key == key) {
+            return Ok((Arc::clone(&layer.image), layer.top));
+        }
+        let mut full = RgbaImage::new(look.size.width, look.size.height);
+        self.draw_dial_reminders(&mut full, &key.1, (ink, background))?;
+        let top = pixels(HINT_RULE_Y, look.size.height);
+        let rows = look.size.height - top;
+        let image = Arc::new(imageops::crop_imm(&full, 0, top, look.size.width, rows).to_image());
+        *cached = Some(ReminderLayer {
+            key,
+            image: Arc::clone(&image),
+            top,
+        });
+        Ok((image, top))
     }
 
     /// The text layer of `look` and the width of its message, drawn again
@@ -734,5 +773,40 @@ mod tests {
             .filter(|x| drawn.image.get_pixel(*x, rule_row) != bare.image.get_pixel(*x, rule_row))
             .count();
         assert_eq!(rule_pixels, 768);
+    }
+
+    #[test]
+    fn the_reminders_are_drawn_once_while_they_do_not_change() {
+        let renderer = Renderer::new().unwrap();
+        let reminders = |text| {
+            [NotificationActionLook {
+                text,
+                dial: 1,
+                dials: 4,
+            }]
+        };
+        let layer = || {
+            let cached = renderer.notification_reminders.lock().unwrap();
+            Arc::clone(&cached.as_ref().unwrap().image)
+        };
+        let draw = |text, elapsed| {
+            let actions = reminders(text);
+            renderer
+                .render_notification(
+                    &NotificationLook {
+                        actions: &actions,
+                        ..look("Pause !")
+                    },
+                    elapsed,
+                    None,
+                )
+                .unwrap();
+        };
+        draw("Masquer", Duration::ZERO);
+        let first = layer();
+        draw("Masquer", Duration::from_secs(1));
+        assert!(Arc::ptr_eq(&first, &layer()), "same reminders, same layer");
+        draw("Fermer", Duration::from_secs(1));
+        assert!(!Arc::ptr_eq(&first, &layer()), "new text, new layer");
     }
 }

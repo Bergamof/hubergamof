@@ -230,9 +230,20 @@ impl Painter {
         let Some(size) = self.strip_size else {
             return Ok(());
         };
-        let renderer = Arc::clone(renderer);
-        let shown = face.clone();
-        let image = spawn_blocking(move || renderer.render_strip(&shown, size)).await??;
+        // The strip an overlay covered is drawn again as it was: the picture
+        // kept is written back without rendering it.
+        let kept = self
+            .strip
+            .as_ref()
+            .filter(|painted| painted.face == face)
+            .map(|painted| Arc::clone(&painted.rendered));
+        let image = if let Some(image) = kept {
+            image
+        } else {
+            let renderer = Arc::clone(renderer);
+            let shown = face.clone();
+            spawn_blocking(move || renderer.render_strip(&shown, size)).await??
+        };
         // Writing the columns that changed only keeps a dial turned in a menu
         // fast: the device takes less to receive and show a narrow region.
         let before = self

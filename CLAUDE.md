@@ -137,6 +137,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Proxies zbus vers KDE : membres en lowerCamelCase → `#[zbus(name = "…")]` (zbus dérive en PascalCase) ; builders zbus 6 sans `Result` (erreur au `build()`).
 - Applications lancées par le gestionnaire : toujours via `desktop::Launch` (scope systemd), sinon elles meurent avec le service ; contraintes sur les valeurs lancées dans `docs/integrations-desktop.md`.
 - Attentes des streams du bureau (`WindowChanges`/`NotificationStream::next`) : sûres à l'annulation (lues dans un `select!`) ; tout travail lent va dans une tâche dédiée.
+- Notification animée (≈ 15 images/s) : tout ce qui coûte (SVG des rappels des molettes → couche mise en cache dans `Renderer::notification_reminders`, texte → `notification_text`) est dessiné une fois et seulement composité à chaque pas ; la bande couverte puis découverte est réécrite depuis l'image gardée (`PaintedStrip`) sans re-rendu si son contenu n'a pas changé. Ne jamais rasteriser de SVG à chaque pas.
 - Les tests de panique des modules écrivent le message du panic hook sur stderr (`fragile …`) : attendu.
 
 ## État du projet
