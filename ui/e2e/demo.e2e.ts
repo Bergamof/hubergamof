@@ -427,11 +427,11 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 
 	await key(page, /^Touche 4 : Claude/).click();
 	await removeSelectedKey(page);
-	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
 	// Importing while the removal is still being saved would race with it: wait until saved.
 	const other = await context.newPage();
 	await open(other);
-	await expect(other.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	await expect(other.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
 	await other.close();
 
 	const importInput = page.locator('input[type="file"][accept*=".zip"]');
@@ -442,7 +442,7 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await page.keyboard.press('Escape');
 	await expect(confirm).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Importer une configuration…' })).toBeFocused();
-	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
 
 	await importInput.setInputFiles(archive);
 	await confirm.getByRole('button', { name: 'Remplacer' }).click();
