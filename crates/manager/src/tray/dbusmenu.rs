@@ -327,8 +327,8 @@ mod tests {
         let (revision, layout) = menu.get_layout(ROOT_ID, -1, Vec::new()).unwrap();
         assert_eq!(revision, 1);
         assert_eq!(WireLayout::SIGNATURE.to_string(), "(ia{sv}av)");
-        assert_eq!(layout.children.len(), 5);
-        let quit = Variant::from(layout.children[4].clone());
+        assert_eq!(layout.children.len(), 6);
+        let quit = Variant::from(layout.children[5].clone());
         let Variant::Structure(quit) = quit else {
             panic!("children are structures");
         };

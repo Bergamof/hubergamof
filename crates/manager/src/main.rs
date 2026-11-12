@@ -183,7 +183,13 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let tray = if cli.no_tray {
         None
     } else {
-        TrayIcon::start(url, &discovery, quit_on(shutdown.clone())).await
+        TrayIcon::start(
+            url,
+            &discovery,
+            supervisor.engines(),
+            quit_on(shutdown.clone()),
+        )
+        .await
     };
 
     let outcome = tokio::select! {

@@ -1,8 +1,8 @@
 //! System tray icon: freedesktop `StatusNotifierItem` and its
 //! `com.canonical.dbusmenu` menu, served with `zbus`.
 //!
-//! Menu: open the web UI, the connected devices (informative, updated live),
-//! quit. Without a session bus the manager runs without the icon; without a
+//! Menu: open the web UI, the theme of the devices (submenu marking the theme
+//! in use), the connected devices (informative, updated live), quit. Without a session bus the manager runs without the icon; without a
 //! `StatusNotifierWatcher` (headless session, GNOME without the
 //! `AppIndicator` extension, Plasma not started yet) the item waits for one
 //! and registers as soon as it appears, and again after each restart of it.
@@ -11,6 +11,7 @@ mod dbusmenu;
 mod icon;
 mod item;
 mod menu;
+mod theme;
 mod watcher;
 
 use hubergamof_modules::desktop::{Launch, scoped_command};
@@ -30,8 +31,10 @@ pub use menu::{NO_DEVICE_LABEL, OPEN_UI_LABEL, QUIT_LABEL};
 use dbusmenu::{DbusMenu, MENU_PATH, MenuHandler};
 use item::{ITEM_PATH, StatusNotifierItem};
 use menu::{MenuAction, TrayMenu};
+use theme::{apply_theme, follow_theme};
 
 use crate::device::{DeviceDiscovery, DiscoveryEvent};
+use crate::engine::EngineRegistry;
 use watcher::{Registrar, item_bus_name};
 
 /// Longest wait for the session bus connection and the first registration.
@@ -40,9 +43,11 @@ const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(5);
 /// Program opening a URL in the user's browser.
 const URL_OPENER: &str = "xdg-open";
 
-/// Runs the menu actions: opens `url`, or calls `quit`.
+/// Runs the menu actions: opens `url`, changes the theme of the devices of
+/// `engines`, or calls `quit`.
 struct UiActions {
     url: String,
+    engines: EngineRegistry,
     quit: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -50,6 +55,10 @@ impl MenuHandler for UiActions {
     fn run(&self, action: MenuAction) {
         match action {
             MenuAction::OpenUi => open_url(&self.url),
+            MenuAction::SetTheme(theme) => {
+                let engines = self.engines.clone();
+                tokio::spawn(async move { apply_theme(&engines, theme).await });
+            }
             MenuAction::Quit => (self.quit)(),
         }
     }
@@ -112,10 +121,15 @@ impl TrayIcon {
     pub async fn start(
         url: String,
         discovery: &DeviceDiscovery,
+        engines: EngineRegistry,
         quit: Arc<dyn Fn() + Send + Sync>,
     ) -> Option<Self> {
         let (devices, events) = discovery.subscribe();
-        let handler: Arc<dyn MenuHandler> = Arc::new(UiActions { url, quit });
+        let handler: Arc<dyn MenuHandler> = Arc::new(UiActions {
+            url,
+            engines: engines.clone(),
+            quit,
+        });
         let started = tokio::time::timeout(
             REGISTRATION_TIMEOUT,
             connect(&device_labels(&devices), &handler),
@@ -139,6 +153,7 @@ impl TrayIcon {
                 discovery.clone(),
                 events,
             )),
+            tokio::spawn(follow_theme(connection.clone(), engines)),
         ];
         Some(Self { connection, tasks })
     }
@@ -290,6 +305,7 @@ mod tests {
         let (shutdown, stopping) = watch::channel(false);
         let actions = UiActions {
             url: String::new(),
+            engines: EngineRegistry::default(),
             quit: quit_on(shutdown),
         };
         actions.run(MenuAction::Quit);
@@ -300,11 +316,13 @@ mod tests {
     /// objects, the host side calls them as a tray host would.
     async fn connected_pair(
         devices: &[String],
+        engines: EngineRegistry,
         quit: Arc<dyn Fn() + Send + Sync>,
     ) -> (Connection, Connection) {
         let (tray_socket, host_socket) = UnixStream::pair().unwrap();
         let handler: Arc<dyn MenuHandler> = Arc::new(UiActions {
             url: String::new(),
+            engines,
             quit,
         });
         let tray = serve(Builder::unix_stream(tray_socket), devices, &handler)
@@ -351,7 +369,8 @@ mod tests {
     #[tokio::test]
     async fn host_reads_the_item_and_the_menu_over_dbus() {
         let devices = ["Deck (A1)".to_owned()];
-        let (_tray, host) = connected_pair(&devices, Arc::new(|| {})).await;
+        let (_tray, host) =
+            connected_pair(&devices, EngineRegistry::default(), Arc::new(|| {})).await;
 
         let menu_path = property(&host, ITEM_PATH, ITEM_INTERFACE, "Menu").await;
         assert_eq!(
@@ -385,19 +404,20 @@ mod tests {
             .into_iter()
             .map(|child| WireLayout::try_from(Variant::from(child)).unwrap())
             .collect();
-        assert_eq!(children.len(), 5);
+        assert_eq!(children.len(), 6);
         assert_eq!(label(&children[0].1), OPEN_UI_LABEL);
-        assert_eq!(children[2].0, FIRST_DEVICE_ID);
-        assert_eq!(label(&children[2].1), "Deck (A1)");
-        assert!(!bool::try_from(children[2].1["enabled"].clone()).unwrap());
-        assert_eq!(children[4].0, QUIT_ID);
-        assert_eq!(label(&children[4].1), QUIT_LABEL);
+        assert_eq!(label(&children[1].1), menu::THEME_LABEL);
+        assert_eq!(children[3].0, FIRST_DEVICE_ID);
+        assert_eq!(label(&children[3].1), "Deck (A1)");
+        assert!(!bool::try_from(children[3].1["enabled"].clone()).unwrap());
+        assert_eq!(children[5].0, QUIT_ID);
+        assert_eq!(label(&children[5].1), QUIT_LABEL);
     }
 
     #[tokio::test]
     async fn clicking_quit_over_dbus_requests_shutdown() {
         let (shutdown, stopping) = watch::channel(false);
-        let (_tray, host) = connected_pair(&[], quit_on(shutdown)).await;
+        let (_tray, host) = connected_pair(&[], EngineRegistry::default(), quit_on(shutdown)).await;
         let () = call(
             &host,
             MENU_PATH,
@@ -411,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn device_changes_bump_the_layout_revision() {
-        let (tray, host) = connected_pair(&[], Arc::new(|| {})).await;
+        let (tray, host) = connected_pair(&[], EngineRegistry::default(), Arc::new(|| {})).await;
         publish_devices(&tray, vec!["Deck (B2)".into()])
             .await
             .unwrap();
@@ -427,8 +447,110 @@ mod tests {
         )
         .await;
         assert_eq!(revision, 2);
-        let device = WireLayout::try_from(Variant::from(children[2].clone())).unwrap();
+        let device = WireLayout::try_from(Variant::from(children[3].clone())).unwrap();
         assert_eq!(label(&device.1), "Deck (B2)");
         assert!(!device.1.contains_key("enabled"));
+    }
+
+    /// Layout revision and the theme entry marked as current, as a host
+    /// reads them.
+    async fn marked_theme(host: &Connection) -> (u32, Option<String>) {
+        let (revision, (_, _, children)): (u32, WireLayout) = call(
+            host,
+            MENU_PATH,
+            MENU_INTERFACE,
+            "GetLayout",
+            &(menu::THEME_ID, -1_i32, Vec::<String>::new()),
+        )
+        .await;
+        let marked = children
+            .into_iter()
+            .map(|child| WireLayout::try_from(Variant::from(child)).unwrap().1)
+            .find(|properties| properties.contains_key("icon-name"))
+            .map(|properties| label(&properties));
+        (revision, marked)
+    }
+
+    /// Waits until the menu marks `expected`.
+    async fn wait_for_mark(host: &Connection, expected: Option<&str>) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if marked_theme(host).await.1.as_deref() == expected {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the menu shows the theme");
+    }
+
+    #[tokio::test]
+    async fn clicking_a_theme_over_dbus_applies_it() {
+        let rig = theme::tests::Rig::start(&["A1"]).await;
+        let (_tray, host) = connected_pair(
+            &["Deck (A1)".to_owned()],
+            rig.engines.clone(),
+            Arc::new(|| {}),
+        )
+        .await;
+        let () = call(
+            &host,
+            MENU_PATH,
+            MENU_INTERFACE,
+            "Event",
+            &(menu::THEME_DARK_ID, "clicked", Variant::from(""), 0_u32),
+        )
+        .await;
+        rig.wait_for_theme("A1", hubergamof_protocol::DeviceTheme::Dark)
+            .await;
+        rig.stop().await;
+    }
+
+    #[tokio::test]
+    async fn the_menu_marks_the_theme_of_the_devices_and_follows_changes() {
+        use hubergamof_protocol::DeviceTheme::{Dark, Light};
+        let rig = theme::tests::Rig::start(&["A1"]).await;
+        let (tray, host) = connected_pair(
+            &["Deck (A1)".to_owned()],
+            rig.engines.clone(),
+            Arc::new(|| {}),
+        )
+        .await;
+        let follower = tokio::spawn(follow_theme(tray.clone(), rig.engines.clone()));
+
+        wait_for_mark(&host, Some(menu::THEME_LIGHT_LABEL)).await;
+        theme::apply_theme(&rig.engines, Dark).await;
+        wait_for_mark(&host, Some(menu::THEME_DARK_LABEL)).await;
+        let (revision, _) = marked_theme(&host).await;
+        theme::apply_theme(&rig.engines, Light).await;
+        wait_for_mark(&host, Some(menu::THEME_LIGHT_LABEL)).await;
+        assert!(marked_theme(&host).await.0 > revision);
+
+        stop_tasks(vec![follower]).await;
+        rig.stop().await;
+    }
+
+    #[tokio::test]
+    async fn the_menu_marks_nothing_when_the_devices_differ() {
+        use hubergamof_protocol::DeviceTheme::Dark;
+        let rig = theme::tests::Rig::start(&["A1", "B2"]).await;
+        let (tray, host) = connected_pair(
+            &["Deck (A1)".to_owned()],
+            rig.engines.clone(),
+            Arc::new(|| {}),
+        )
+        .await;
+        let follower = tokio::spawn(follow_theme(tray.clone(), rig.engines.clone()));
+        wait_for_mark(&host, Some(menu::THEME_LIGHT_LABEL)).await;
+
+        let one = rig.engines.get("A1").unwrap();
+        let mut config = one.config().borrow().clone();
+        config.theme = Dark;
+        one.apply_config(config).await.unwrap();
+        wait_for_mark(&host, None).await;
+
+        stop_tasks(vec![follower]).await;
+        rig.stop().await;
     }
 }
