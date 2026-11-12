@@ -45,6 +45,7 @@ impl Navigation {
     }
 
     /// Number of pages above the home page.
+    #[cfg(test)]
     pub(crate) fn depth(&self) -> usize {
         self.stack.len()
     }

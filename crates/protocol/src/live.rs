@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{KeyState, ModuleInstanceId};
+use crate::KeyState;
 
 /// What a device currently shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -14,8 +14,9 @@ pub struct LiveState {
     pub serial: String,
     /// Page currently displayed on the keys.
     pub page: PageView,
-    /// State of each dial, by dial index.
-    pub dials: Vec<DialView>,
+    /// The whole touch strip as a PNG data URL; `null` on a device without
+    /// a strip.
+    pub strip: Option<String>,
 }
 
 /// A page as currently displayed on the keys.
@@ -48,29 +49,4 @@ pub struct KeyView {
     pub image: Option<String>,
     /// Visual state reported by the module.
     pub state: KeyState,
-}
-
-/// A dial and its touch strip zone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct DialView {
-    /// Dial index on the device.
-    pub index: u32,
-    /// Module instance assigned to the dial.
-    pub module_id: Option<ModuleInstanceId>,
-    /// Touch strip zone above the dial, if the device has a strip.
-    pub zone: Option<ZoneView>,
-}
-
-/// A touch strip zone as currently displayed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ZoneView {
-    /// Text shown in the zone: its lines, or the title and value of a gauge;
-    /// empty for an image or a blank zone.
-    pub lines: Vec<String>,
-    /// Rendered zone image as a data URL.
-    pub image: Option<String>,
 }

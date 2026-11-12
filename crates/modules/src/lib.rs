@@ -2,9 +2,10 @@
 //! from.
 //!
 //! Each module implements [`hubergamof_module_api::Module`] exactly like an
-//! external module would: [`audio`], [`claude`], [`clock`], [`docker`],
-//! [`intellij`], [`navigation`] and [`pomodoro`] (the manager shows a
-//! placeholder key for kinds missing from the registry).
+//! external module would: [`audio`], [`claude`], [`docker`], [`intellij`]
+//! and [`pomodoro`] (the manager shows a placeholder key for kinds missing
+//! from the registry). Time, date, system load and navigation belong to the
+//! touch strip of the host, not to a module.
 //!
 //! Modules acting on the desktop (audio server, notifications, Docker…)
 //! run against the [`BuiltinServices`] given to
@@ -15,13 +16,11 @@
 pub mod audio;
 mod background;
 pub mod claude;
-pub mod clock;
 pub mod desktop;
 pub mod docker;
 mod icons;
 pub mod inbox;
 pub mod intellij;
-pub mod navigation;
 pub mod notifications;
 mod paths;
 pub mod pomodoro;
@@ -33,32 +32,64 @@ mod trust;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hubergamof_module_api::{ModuleFactory, ModuleKind};
+use hubergamof_module_api::{DialFunctionId, ModuleFactory, ModuleKind};
 use serde_json::{Map, Value};
 
 /// Built-in modules shown on the home page of a new device, in key order.
 pub const DEFAULT_HOME_MODULES: [&str; 5] = ["audio", "pomodoro", "docker", "intellij", "claude"];
 
-/// Built-in modules assigned to the dials of a new device, from left to
-/// right; a device with fewer dials takes the first ones.
-pub const DEFAULT_DIAL_MODULES: [&str; 4] = ["clock", "audio", "pomodoro", "navigation"];
+/// What a dial of a new device is assigned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultDial {
+    /// A function of a module, whose instance is created with the device.
+    Function {
+        /// Kind of the module.
+        kind: ModuleKind,
+        /// Function of that module.
+        function: DialFunctionId,
+    },
+    /// Navigation between the pages (host function).
+    Navigation,
+    /// Contextual function (host function).
+    Contextual,
+    /// Nothing.
+    Nothing,
+}
+
+impl DefaultDial {
+    /// The function `function` of the module `kind`.
+    #[must_use]
+    pub fn function(kind: &str, function: &str) -> Self {
+        Self::Function {
+            kind: kind.into(),
+            function: function.into(),
+        }
+    }
+}
 
 /// Modules placed on a device seen for the first time.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultLayout {
     /// Kinds shown on the home page, in key order.
     pub home: Vec<ModuleKind>,
-    /// Kinds assigned to the dials, from left to right.
-    pub dials: Vec<ModuleKind>,
+    /// What the dials are assigned, from left to right; a device with fewer
+    /// dials takes the first ones.
+    pub dials: Vec<DefaultDial>,
 }
 
 impl DefaultLayout {
-    /// Layout of the built-in modules.
+    /// Layout of the built-in modules: volume, pomodoro, contextual
+    /// function, navigation.
     #[must_use]
     pub fn builtin() -> Self {
         Self {
             home: DEFAULT_HOME_MODULES.map(ModuleKind::from).to_vec(),
-            dials: DEFAULT_DIAL_MODULES.map(ModuleKind::from).to_vec(),
+            dials: vec![
+                DefaultDial::function(audio::AUDIO_KIND, audio::VOLUME_FUNCTION),
+                DefaultDial::function(pomodoro::POMODORO_KIND, pomodoro::CONTROL_FUNCTION),
+                DefaultDial::Contextual,
+                DefaultDial::Navigation,
+            ],
         }
     }
 }
@@ -125,8 +156,6 @@ impl std::fmt::Debug for ModuleRegistry {
 /// The services the built-in modules act on.
 #[derive(Debug, Clone)]
 pub struct BuiltinServices {
-    /// Wall clock (local date and time) of the clock module.
-    pub wall_clock: Arc<dyn clock::WallClock>,
     /// Audio server of the audio module.
     pub audio: Arc<dyn audio::AudioBackend>,
     /// Docker host of the Docker module.
@@ -150,7 +179,6 @@ impl BuiltinServices {
     pub fn system() -> Self {
         let session_bus = session_bus::SessionBus::new();
         Self {
-            wall_clock: Arc::new(clock::SystemClock),
             audio: Arc::new(audio::PactlBackend::new()),
             docker: Arc::new(docker::DockerEngine::new()),
             notifier: Arc::new(notifications::DesktopNotifier::new(session_bus.clone())),
@@ -162,13 +190,11 @@ impl BuiltinServices {
 
     /// Simulations leaving the machine untouched (`--demo`, tests), hermetic
     /// and reproducible: the demo audio server and Docker host, and
-    /// notifications that are only logged. The wall clock is stopped
-    /// ([`clock::FixedClock`]): a test must not depend on the minute it runs
-    /// in. The pomodoro's monotonic time is real.
+    /// notifications that are only logged. The pomodoro's monotonic time is
+    /// real.
     #[must_use]
     pub fn simulated() -> Self {
         Self {
-            wall_clock: Arc::new(clock::FixedClock::default()),
             audio: Arc::new(audio::SimulatedAudio::demo()),
             docker: Arc::new(docker::SimulatedDocker::demo()),
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
@@ -186,9 +212,6 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     let mut registry = ModuleRegistry::new();
     registry.set_default_layout(DefaultLayout::builtin());
     registry.register(Arc::new(audio::AudioFactory::new(services.audio)));
-    registry.register(Arc::new(clock::ClockFactory::with_clock(
-        services.wall_clock,
-    )));
     registry.register(Arc::new(docker::DockerFactory::new(services.docker)));
     // One desktop hub for every module following an application: the
     // backend follows the windows for one hub only.
@@ -202,7 +225,6 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
         services.intellij,
     )));
     registry.register(Arc::new(inbox::InboxFactory));
-    registry.register(Arc::new(navigation::NavigationFactory));
     registry.register(Arc::new(pomodoro::PomodoroFactory::new(
         services.notifier,
         services.pomodoro_clock,
@@ -215,7 +237,7 @@ mod tests {
     use std::time::Duration;
 
     use hubergamof_module_api::testing::TestContext;
-    use hubergamof_module_api::{Module, ModuleEvent, NavigationView, TaskScope, ZoneContent};
+    use hubergamof_module_api::{Module, ModuleEvent, StripWidget, TaskScope, VolumeWidget};
     use serde_json::json;
     use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -247,15 +269,13 @@ mod tests {
             [
                 audio::AUDIO_KIND,
                 claude::CLAUDE_KIND,
-                clock::CLOCK_KIND,
                 docker::DOCKER_KIND,
                 intellij::INTELLIJ_KIND,
-                navigation::NAVIGATION_KIND,
                 inbox::INBOX_KIND,
                 pomodoro::POMODORO_KIND
             ]
         );
-        assert!(registry.get(&"clock".into()).is_some());
+        assert!(registry.get(&"audio".into()).is_some());
         assert!(registry.get(&"unknown".into()).is_none());
         assert_eq!(
             descriptors(&builtin_registry_with(BuiltinServices::system())),
@@ -322,8 +342,8 @@ mod tests {
     fn default_settings_come_from_the_factory() {
         let registry = simulated_registry();
         assert_eq!(
-            registry.default_settings(&clock::CLOCK_KIND.into()),
-            clock::ClockFactory::system().default_settings()
+            registry.default_settings(&audio::AUDIO_KIND.into()),
+            json!({ "volumeStep": 5, "maxVolume": 100 })
         );
         assert_eq!(registry.default_settings(&"unknown".into()), json!({}));
         assert_eq!(
@@ -337,7 +357,15 @@ mod tests {
         let registry = simulated_registry();
         let layout = registry.default_layout();
         assert_eq!(layout.home.len(), DEFAULT_HOME_MODULES.len());
-        assert_eq!(layout.dials[0], ModuleKind::from(clock::CLOCK_KIND));
+        assert_eq!(
+            layout.dials,
+            [
+                DefaultDial::function(audio::AUDIO_KIND, audio::VOLUME_FUNCTION),
+                DefaultDial::function(pomodoro::POMODORO_KIND, pomodoro::CONTROL_FUNCTION),
+                DefaultDial::Contextual,
+                DefaultDial::Navigation,
+            ]
+        );
         assert_eq!(
             ModuleRegistry::new().default_layout(),
             &DefaultLayout::default()
@@ -347,7 +375,7 @@ mod tests {
     #[test]
     fn registering_a_kind_twice_replaces_the_factory() {
         let mut registry = simulated_registry();
-        let previous = registry.register(Arc::new(navigation::NavigationFactory));
+        let previous = registry.register(Arc::new(inbox::InboxFactory));
         assert!(previous.is_some());
         assert_eq!(
             registry.factories().count(),
@@ -386,29 +414,14 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_simulated_clock_ignores_the_system_time() {
-        let registry = simulated_registry();
-        let (clock, _events, _tasks) = instance(&registry, clock::CLOCK_KIND, &json!({}));
-        let nav = NavigationView::new("Accueil", 0, 1, 2);
-        let before = clock.zone(&nav);
-        tokio::time::sleep(Duration::from_secs(120)).await;
-        assert_eq!(clock.zone(&nav), before);
-        // The stopped instant, not the time of the machine running the test.
-        let Some(ZoneContent::Clock(face)) = before else {
-            panic!("expected a clock face, got {before:?}");
-        };
-        assert_eq!(face.time, "14:05");
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn the_simulated_audio_is_the_demo_server() {
         let registry = builtin_registry_with(BuiltinServices::simulated());
         let (mut volume, mut events, _tasks) = instance(&registry, audio::AUDIO_KIND, &json!({}));
         run_for(volume.as_mut(), &mut events, Duration::from_secs(2)).await;
-        let zone = volume.zone(&NavigationView::new("Accueil", 0, 1, 2));
-        assert!(
-            matches!(&zone, Some(ZoneContent::Gauge(gauge)) if gauge.title == "Haut-parleurs"),
-            "{zone:?}"
+        // The speakers of the demo server, at their volume.
+        assert_eq!(
+            volume.strip_widget(),
+            Some(StripWidget::Volume(VolumeWidget::new(40, false)))
         );
     }
 
@@ -417,7 +430,6 @@ mod tests {
         let server = Arc::new(audio::SimulatedAudio::demo());
         let notifier = Arc::new(notifications::SimulatedNotifier::default());
         let registry = builtin_registry_with(BuiltinServices {
-            wall_clock: Arc::new(clock::FixedClock::default()),
             audio: Arc::clone(&server) as _,
             docker: Arc::new(docker::SimulatedDocker::empty()),
             notifier: Arc::clone(&notifier) as _,
@@ -430,7 +442,7 @@ mod tests {
         let (mut volume, mut volume_events, _volume_tasks) =
             instance(&registry, audio::AUDIO_KIND, &json!({}));
         run_for(volume.as_mut(), &mut volume_events, minute).await;
-        volume.on_dial_press().await;
+        volume.on_dial_press(&audio::VOLUME_FUNCTION.into()).await;
         run_for(volume.as_mut(), &mut volume_events, minute).await;
         assert!(server.state().sinks[0].muted);
 

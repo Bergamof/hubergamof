@@ -279,7 +279,7 @@ fn push_text(
     svg.push_str("</text>");
 }
 
-fn escape_xml(svg: &mut String, text: &str) {
+pub(super) fn escape_xml(svg: &mut String, text: &str) {
     for character in text.chars() {
         match character {
             '&' => svg.push_str("&amp;"),

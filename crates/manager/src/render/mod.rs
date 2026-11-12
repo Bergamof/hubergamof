@@ -9,13 +9,10 @@
 //! like those of a countdown, do not push out those that come back) and
 //! encoded to a PNG data URL only on demand.
 
-mod clock;
 mod digest;
-mod gauge;
-mod menu;
 mod notification;
-mod page;
 mod source;
+mod strip;
 mod svg;
 mod text;
 
@@ -27,9 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hubergamof_module_api::{ClockFace, Feedback, GaugeContent, KeyState, MenuZone, PageZone, Rgb};
-#[cfg(test)]
-use hubergamof_module_api::{GaugeLevel, ImageData};
+use hubergamof_module_api::{Feedback, KeyState};
 use hubergamof_protocol::ImageSize;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -55,15 +50,6 @@ pub const TEXT_COLOR: Rgba<u8> = Rgba([u8::MAX, u8::MAX, u8::MAX, u8::MAX]);
 /// Background of a [`KeyState::Attention`] key (dark orange), visible around
 /// and behind a transparent image.
 pub const ATTENTION_BACKGROUND: Rgba<u8> = Rgba([0x5a, 0x2a, 0x00, u8::MAX]);
-
-/// Text of a dimmed gauge (muted, paused).
-pub const DIMMED_TEXT_COLOR: Rgba<u8> = Rgba([0x8a, 0x8a, 0x8a, u8::MAX]);
-
-/// Filled part of a dimmed gauge bar.
-pub const GAUGE_DIMMED_FILL_COLOR: Rgba<u8> = Rgba([0x5c, 0x5c, 0x5c, u8::MAX]);
-
-/// Empty part of a gauge bar.
-pub const GAUGE_TRACK_COLOR: Rgba<u8> = Rgba([0x2a, 0x2a, 0x2a, u8::MAX]);
 
 /// Opacity of the black veil darkening a surface under a feedback mark.
 pub const FEEDBACK_VEIL_ALPHA: u8 = 150;
@@ -99,12 +85,6 @@ const LABEL_FONT_RATIO: f32 = 0.13;
 const LABEL_PADDING_RATIO: f32 = 0.05;
 /// Vertical padding above and below a label, relative to the key height.
 const LABEL_VERTICAL_PADDING_RATIO: f32 = 0.03;
-/// Font size of the first zone line, relative to the zone height.
-const ZONE_TITLE_FONT_RATIO: f32 = 0.30;
-/// Font size of the other zone lines, relative to the zone height.
-const ZONE_DETAIL_FONT_RATIO: f32 = 0.20;
-/// Horizontal padding of zone lines, relative to the zone width.
-const ZONE_PADDING_RATIO: f32 = 0.04;
 const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 
 /// Rendering failure.
@@ -274,31 +254,6 @@ enum CacheKey {
         background: [u8; 4],
         state: KeyState,
     },
-    Zone {
-        lines: Vec<String>,
-        size: (u32, u32),
-        background: [u8; 4],
-    },
-    Gauge {
-        gauge: GaugeContent,
-        size: (u32, u32),
-        background: [u8; 4],
-    },
-    Clock {
-        face: ClockFace,
-        size: (u32, u32),
-        background: [u8; 4],
-    },
-    Page {
-        page: PageZone,
-        size: (u32, u32),
-        background: [u8; 4],
-    },
-    Menu {
-        menu: MenuZone,
-        size: (u32, u32),
-        background: [u8; 4],
-    },
 }
 
 /// Renders key and strip zone images; shareable between threads.
@@ -467,32 +422,6 @@ impl Renderer {
         Ok(mark)
     }
 
-    /// Renders a strip zone with centred lines, the first one larger. The
-    /// layout is made for at most [`hubergamof_module_api::MAX_ZONE_LINES`] lines (the engine
-    /// truncates longer zones); more would overflow the zone.
-    ///
-    /// # Errors
-    ///
-    /// [`RenderError::InvalidSize`] when the size is empty.
-    pub fn render_zone(
-        &self,
-        lines: &[String],
-        size: ImageSize,
-        background: Rgba<u8>,
-    ) -> Result<Arc<Rendered>, RenderError> {
-        check_size(size)?;
-        let key = CacheKey::Zone {
-            lines: lines.to_vec(),
-            size: (size.width, size.height),
-            background: background.0,
-        };
-        self.cached(key, || {
-            let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
-            self.draw_zone_lines(&mut canvas, lines)?;
-            Ok(keep_opaque(canvas, background))
-        })
-    }
-
     fn cached(
         &self,
         key: CacheKey,
@@ -550,34 +479,6 @@ impl Renderer {
         self.text.draw(canvas, &[line])
     }
 
-    fn draw_zone_lines(&self, canvas: &mut RgbaImage, lines: &[String]) -> Result<(), RenderError> {
-        let width = f32_from(canvas.width());
-        let height = f32_from(canvas.height());
-        let max_width = width * (1.0 - 2.0 * ZONE_PADDING_RATIO);
-        let sizes = (0..lines.len()).map(|index| {
-            let ratio = if index == 0 {
-                ZONE_TITLE_FONT_RATIO
-            } else {
-                ZONE_DETAIL_FONT_RATIO
-            };
-            height * ratio
-        });
-        let total: f32 = sizes.clone().map(TextRenderer::line_height).sum();
-        let mut top = (height - total) / 2.0;
-        let mut drawn = Vec::with_capacity(lines.len());
-        for (line, size) in lines.iter().zip(sizes) {
-            drawn.push(self.text.fitted_line(
-                line,
-                semibold(size, TEXT_COLOR),
-                width / 2.0,
-                top + TextRenderer::ascent(size),
-                max_width,
-            )?);
-            top += TextRenderer::line_height(size);
-        }
-        self.text.draw(canvas, &drawn)
-    }
-
     fn lock_cache(&self) -> std::sync::MutexGuard<'_, SegmentedLru<CacheKey, Arc<Rendered>>> {
         // Cache entries are immutable: a poisoned lock is still consistent.
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
@@ -627,39 +528,6 @@ fn darken(canvas: &mut RgbaImage, alpha: u8) {
     }
 }
 
-/// Size of a zone in pixels, for the layouts expressed as ratios of it.
-#[derive(Debug, Clone, Copy)]
-struct ZoneGeometry {
-    width: f32,
-    height: f32,
-}
-
-impl ZoneGeometry {
-    fn of_size(size: ImageSize) -> Self {
-        Self {
-            width: f32_from(size.width),
-            height: f32_from(size.height),
-        }
-    }
-
-    fn of_canvas(canvas: &RgbaImage) -> Self {
-        Self {
-            width: f32_from(canvas.width()),
-            height: f32_from(canvas.height()),
-        }
-    }
-
-    /// Vertical position at `ratio` of the zone height.
-    fn y(self, ratio: f32) -> f32 {
-        self.height * ratio
-    }
-}
-
-/// The opaque pixel of a colour a module gave.
-fn rgba(Rgb(red, green, blue): Rgb) -> Rgba<u8> {
-    Rgba([red, green, blue, u8::MAX])
-}
-
 /// Restores full opacity lost to rounding in alpha blending when the
 /// background is opaque.
 fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
@@ -694,7 +562,5 @@ fn check_size(size: ImageSize) -> Result<(), RenderError> {
     }
 }
 
-#[cfg(test)]
-mod shape_tests;
 #[cfg(test)]
 mod tests;

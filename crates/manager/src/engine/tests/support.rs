@@ -6,14 +6,15 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    ChoiceOption, ClockFace, Command, EventSender, Feedback, GaugeContent, ItemId, KeyContent,
-    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, NavigationView, PageContent, PageId, PageItem, RedrawHandle,
-    SettingField, SettingKind, UnreadNotifications, ZoneContent, parse_settings,
+    ChoiceOption, Command, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, Feedback,
+    ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
+    ModuleError, ModuleEvent, ModuleFactory, PageContent, PageId, PageItem, RedrawHandle,
+    SettingField, SettingKind, StripWidget, UnreadNotifications, VolumeWidget, parse_settings,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{
-    DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ImageSize, ModuleInstance,
+    DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DialAssignment, ImageSize,
+    ModuleInstance,
 };
 use image::RgbaImage;
 use serde::Deserialize;
@@ -26,12 +27,18 @@ use crate::config_store::ConfigStore;
 use crate::device::virtual_deck::VirtualDeck;
 use crate::device::{DeckBackend, DeviceError, InputEvent};
 use crate::engine::*;
+use crate::strip::{HintFace, SimulatedProbe, StripFace, SystemProbe, SystemSample, WallClock};
 use crate::testing::builtin_registry;
 
 pub(super) const LIST_KIND: &str = "list";
 pub(super) const LIST_PAGE: &str = "list";
 pub(super) const FRAGILE_KIND: &str = "fragile";
 pub(super) const FRAGILE_PAGE: &str = "p";
+/// Dial function of the fragile module: turning counts, pressing succeeds.
+pub(super) const FRAGILE_FUNCTION: &str = "turn";
+/// Stands for the navigation function of the manager in the dials of
+/// [`Fixture::with`].
+pub(super) const NAVIGATION_DIAL: &str = "nav";
 pub(super) const WAIT: Duration = Duration::from_secs(5);
 
 /// Upper bound of the `items` setting of the list module.
@@ -52,12 +59,12 @@ pub(super) struct Probe {
     pub(super) unread: Arc<Mutex<Option<UnreadNotifications>>>,
     /// Overrides the key label of every instance.
     pub(super) key_label: Arc<Mutex<Option<String>>>,
-    /// Replaces the zone of fragile instances.
-    pub(super) zone_gauge: Arc<Mutex<Option<GaugeContent>>>,
-    /// Replaces the zone of fragile instances, over `zone_gauge`.
-    pub(super) zone_clock: Arc<Mutex<Option<ClockFace>>>,
-    /// Navigation view given to the last zone of a fragile instance.
-    pub(super) last_view: Arc<Mutex<Option<NavigationView>>>,
+    /// Number of system measures taken by the engines.
+    pub(super) system_samples: Arc<AtomicUsize>,
+    /// Local time of the engines.
+    pub(super) clock: SettableClock,
+    /// Volume shown on the strip by fragile instances.
+    pub(super) volume: Arc<Mutex<Option<VolumeWidget>>>,
     /// Page the list instances no longer have (removed by an event).
     pub(super) gone_page: Arc<Mutex<Option<String>>>,
     /// Added to the index in the ids of page items.
@@ -74,6 +81,45 @@ pub(super) struct Probe {
     pub(super) fragile_events_handled: Arc<AtomicUsize>,
     /// Number of tasks spawned by an `abandon` fragile factory still alive.
     pub(super) abandoned_tasks: Arc<AtomicUsize>,
+}
+
+/// Wall clock a test sets.
+#[derive(Debug, Clone)]
+pub(super) struct SettableClock(Arc<Mutex<jiff::civil::DateTime>>);
+
+impl Default for SettableClock {
+    /// A Wednesday at 14:05:30, like [`crate::strip::FixedClock`].
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(
+            jiff::civil::date(2026, 10, 28).at(14, 5, 30, 0),
+        )))
+    }
+}
+
+impl SettableClock {
+    pub(super) fn set(&self, now: jiff::civil::DateTime) {
+        *self.0.lock().unwrap() = now;
+    }
+}
+
+impl WallClock for SettableClock {
+    fn now(&self) -> jiff::civil::DateTime {
+        *self.0.lock().unwrap()
+    }
+}
+
+/// System probe counting its samples, cycling through lively figures.
+#[derive(Debug)]
+pub(super) struct CountingProbe {
+    samples: Arc<AtomicUsize>,
+    inner: SimulatedProbe,
+}
+
+impl SystemProbe for CountingProbe {
+    fn sample(&self) -> Option<SystemSample> {
+        self.samples.fetch_add(1, Ordering::SeqCst);
+        self.inner.sample()
+    }
 }
 
 /// Sent through the event sender: adds ten presses.
@@ -174,11 +220,8 @@ impl ModuleFactory for ListFactory {
             kind: LIST_KIND.into(),
             name: "List".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: false,
-                touch_zone: false,
-            },
+            capabilities: ModuleCapabilities { key: true },
+            dial_functions: Vec::new(),
             settings: vec![
                 SettingField {
                     key: "label".into(),
@@ -223,8 +266,8 @@ impl ModuleFactory for ListFactory {
 pub(super) enum Failure {
     /// Nothing.
     None,
-    /// `zone` panics.
-    Zone,
+    /// `dial_hint` panics.
+    Hint,
     /// `key` panics.
     Key,
     /// `page` panics.
@@ -245,7 +288,7 @@ pub(super) enum Failure {
 
 /// Every failure, as written in the settings.
 pub(super) const FAILURES: [&str; 10] = [
-    "none", "zone", "key", "page", "press", "slow", "settings", "create", "abandon", "task",
+    "none", "hint", "key", "page", "press", "slow", "settings", "create", "abandon", "task",
 ];
 
 /// Delay before the background task of [`Failure::Task`] panics.
@@ -263,8 +306,9 @@ struct FragileSettings {
 }
 
 /// Module misbehaving as its settings say. Its key shows its tag (default
-/// `fragile`) and opens page `p` (one item `x`); its zone shows the dial
-/// turns, or the gauge of the probe; its dial, item and event handlers report success
+/// `fragile`) and opens page `p` (one item `x`); the reminder of its dial
+/// shows the dial turns, and it shows the volume of the probe on the strip;
+/// its dial, item and event handlers report success
 /// (an event carrying a `Vec<Command>` returns those commands instead).
 struct Fragile {
     failure: Failure,
@@ -311,13 +355,13 @@ impl Module for Fragile {
         vec![Command::Feedback(Feedback::Ok)]
     }
 
-    async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
+    async fn on_dial_rotate(&mut self, _function: &DialFunctionId, ticks: i32) -> Vec<Command> {
         self.misbehave().await;
         self.turns += ticks;
         vec![Command::Feedback(Feedback::Ok)]
     }
 
-    async fn on_dial_press(&mut self) -> Vec<Command> {
+    async fn on_dial_press(&mut self, _function: &DialFunctionId) -> Vec<Command> {
         self.misbehave().await;
         vec![Command::Feedback(Feedback::Ok)]
     }
@@ -334,19 +378,14 @@ impl Module for Fragile {
         }
     }
 
-    fn zone(&self, nav: &NavigationView) -> Option<ZoneContent> {
-        assert_ne!(self.failure, Failure::Zone, "fragile zone");
-        *self.probe.last_view.lock().unwrap() = Some(nav.clone());
-        if let Some(face) = self.probe.zone_clock.lock().unwrap().clone() {
-            return Some(ZoneContent::Clock(face));
-        }
-        if let Some(gauge) = self.probe.zone_gauge.lock().unwrap().clone() {
-            return Some(ZoneContent::Gauge(gauge));
-        }
-        Some(ZoneContent::Lines(vec![format!(
-            "{FRAGILE_KIND} {}",
-            self.turns
-        )]))
+    fn dial_hint(&self, _function: &DialFunctionId) -> DialHint {
+        assert_ne!(self.failure, Failure::Hint, "fragile hint");
+        DialHint::none().rotating(format!("{FRAGILE_KIND} {}", self.turns))
+    }
+
+    fn strip_widget(&self) -> Option<StripWidget> {
+        let volume = *self.probe.volume.lock().unwrap();
+        volume.map(StripWidget::Volume)
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
@@ -385,11 +424,12 @@ impl ModuleFactory for FragileFactory {
             kind: FRAGILE_KIND.into(),
             name: "Fragile".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: true,
-                touch_zone: true,
-            },
+            capabilities: ModuleCapabilities { key: true },
+            dial_functions: vec![DialFunctionDescriptor {
+                id: FRAGILE_FUNCTION.into(),
+                name: "Turn".into(),
+                description: String::new(),
+            }],
             settings: vec![SettingField {
                 key: "failure".into(),
                 label: "Failure".into(),
@@ -533,6 +573,11 @@ pub(super) fn services(dir: &TempDir, probe: &Probe) -> EngineServices {
         store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
         renderer: Arc::new(crate::render::Renderer::new().unwrap()),
         registry,
+        wall_clock: Arc::new(probe.clock.clone()),
+        system: Arc::new(CountingProbe {
+            samples: Arc::clone(&probe.system_samples),
+            inner: SimulatedProbe::demo(),
+        }),
     }
 }
 
@@ -615,7 +660,10 @@ impl Fixture {
         self.engine.config().borrow().clone()
     }
 
-    /// `modules`, `home` and `dials` on top of the current configuration.
+    /// `modules`, `home` and `dials` on top of the current configuration. A
+    /// dial names the instance whose function it is given
+    /// ([`FRAGILE_FUNCTION`]), [`NAVIGATION_DIAL`] for the navigation of the
+    /// manager, or nothing.
     pub(super) fn with(
         &self,
         modules: Vec<ModuleInstance>,
@@ -625,7 +673,7 @@ impl Fixture {
         let mut config = self.config();
         config.modules = modules;
         config.home = home.iter().map(|id| (*id).into()).collect();
-        config.dials = dials.iter().map(|id| id.map(Into::into)).collect();
+        config.dials = dials.iter().map(|dial| assignment(*dial)).collect();
         config
     }
 
@@ -658,14 +706,24 @@ impl Fixture {
         self.live().keys[index].feedback
     }
 
-    /// Feedback mark over the zone of `dial`.
-    pub(super) fn zone_mark(&self, dial: usize) -> Option<Feedback> {
-        self.live().dials[dial].zone.as_ref()?.feedback
+    /// The strip as last drawn.
+    pub(super) fn strip(&self) -> StripFace {
+        self.live().strip.expect("the device has a strip").face
     }
 
-    /// Lines of the zone above `dial`.
-    pub(super) fn zone_lines(&self, dial: usize) -> Vec<String> {
-        self.live().dials[dial].zone.clone().unwrap().lines
+    /// The reminder of `dial`.
+    pub(super) fn hint(&self, dial: usize) -> HintFace {
+        self.strip().hints[dial].clone()
+    }
+
+    /// Feedback mark over the reminder of `dial`.
+    pub(super) fn dial_mark(&self, dial: usize) -> Option<Feedback> {
+        self.hint(dial).feedback
+    }
+
+    /// What turning `dial` does, as its reminder says.
+    pub(super) fn hint_rotation(&self, dial: usize) -> Option<String> {
+        self.hint(dial).rotate
     }
 
     /// Waits until `done` holds, checking after every live state change.
@@ -689,6 +747,17 @@ impl Fixture {
             .await
             .unwrap()
             .unwrap();
+    }
+}
+
+fn assignment(dial: Option<&str>) -> DialAssignment {
+    match dial {
+        None => DialAssignment::None,
+        Some(NAVIGATION_DIAL) => DialAssignment::Navigation,
+        Some(instance) => DialAssignment::Module {
+            instance: instance.into(),
+            function: FRAGILE_FUNCTION.into(),
+        },
     }
 }
 

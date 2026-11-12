@@ -115,11 +115,8 @@ fn descriptor() -> ModuleDescriptor {
         description: "Projets compose et conteneurs : démarrer, arrêter, redémarrer, \
                       supprimer, up et down."
             .into(),
-        capabilities: ModuleCapabilities {
-            key: true,
-            dial: false,
-            touch_zone: false,
-        },
+        capabilities: ModuleCapabilities { key: true },
+        dial_functions: Vec::new(),
         settings: vec![settings::compose_files_field()],
     }
 }

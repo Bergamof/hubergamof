@@ -1,11 +1,16 @@
 use std::time::Duration;
 
 use hubergamof_module_api::testing::TestContext;
-use hubergamof_module_api::{Feedback, TaskScope};
+use hubergamof_module_api::{Feedback, StripWidget, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::*;
+
+/// The dial function of the module.
+fn volume() -> DialFunctionId {
+    VOLUME_FUNCTION.into()
+}
 
 /// Longest (simulated) silence after which the instance is considered idle.
 const IDLE: Duration = Duration::from_secs(1);
@@ -49,17 +54,20 @@ impl Harness {
         commands
     }
 
-    fn zone(&self) -> ZoneContent {
-        self.module
-            .zone(&NavigationView::new("Accueil", 0, 1, 2))
-            .unwrap()
+    fn widget(&self) -> Option<VolumeWidget> {
+        match self.module.strip_widget() {
+            Some(StripWidget::Volume(widget)) => Some(widget),
+            None => None,
+            other => panic!("volume widget expected, got {other:?}"),
+        }
     }
 
-    fn gauge(&self) -> GaugeContent {
-        match self.zone() {
-            ZoneContent::Gauge(gauge) => gauge,
-            other => panic!("gauge expected, got {other:?}"),
-        }
+    fn percent(&self) -> Option<u16> {
+        self.widget().map(|widget| widget.percent)
+    }
+
+    fn hint(&self) -> DialHint {
+        self.module.dial_hint(&volume())
     }
 
     fn page(&self, page: &str) -> PageContent {
@@ -130,8 +138,9 @@ fn settings_have_bounded_defaults() {
     }
     let descriptor = factory.descriptor();
     assert_eq!(descriptor.kind, AUDIO_KIND.into());
-    assert!(descriptor.capabilities.key && descriptor.capabilities.dial);
-    assert!(descriptor.capabilities.touch_zone);
+    assert!(descriptor.capabilities.key);
+    let functions: Vec<_> = descriptor.dial_functions.iter().map(|f| &f.id.0).collect();
+    assert_eq!(functions, [VOLUME_FUNCTION]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -149,55 +158,60 @@ async fn settings_changes_keep_the_state_and_refuse_bad_values() {
         simulated_factory().create(ModuleContext::for_tests("a"), &json!({ "volumeStep": -1 })),
         Err(ModuleError::InvalidSettings(_))
     ));
-    harness.module.on_dial_rotate(1).await;
-    assert_eq!(harness.gauge().value, "50 %");
+    harness.module.on_dial_rotate(&volume(), 1).await;
+    assert_eq!(harness.percent(), Some(50));
     harness.settle().await;
     assert_eq!(volume_changes(&harness.audio), [50]);
 }
 
-// ---------------------------------------------------------------- Dial and zone
+// ---------------------------------------------------------------- Dial and widget
 
 #[tokio::test(start_paused = true)]
-async fn the_zone_shows_the_default_output_as_a_gauge() {
+async fn the_widget_shows_the_volume_of_the_default_output() {
     let harness = Harness::start(&json!({})).await;
-    let gauge = harness.gauge();
-    assert_eq!(gauge.title, "Haut-parleurs");
-    assert_eq!(gauge.value, "40 %");
-    assert_eq!(gauge.level.permille(), 400);
-    assert!(!gauge.dimmed);
-    assert_eq!(gauge.shape, GaugeShape::Arc);
-    assert_eq!(gauge.accent, VOLUME_ACCENT);
-    assert_eq!(gauge.glyph.as_ref(), Some(&*icons::GLYPH));
+    assert_eq!(harness.widget(), Some(VolumeWidget::new(40, false)));
+    assert_eq!(
+        harness.hint(),
+        DialHint::none().rotating("Volume").pressing("Muet")
+    );
 
-    // With a higher ceiling, the arc spans up to it.
+    // The ceiling does not change what is shown: the volume itself.
     let harness = Harness::start(&json!({ "maxVolume": 150 })).await;
-    assert_eq!(harness.gauge().value, "40 %");
-    assert_eq!(harness.gauge().level.permille(), 267);
+    assert_eq!(harness.percent(), Some(40));
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_the_volume_function_is_handled() {
+    let mut harness = Harness::start(&json!({})).await;
+    let other: DialFunctionId = "other".into();
+    assert_eq!(harness.module.on_dial_rotate(&other, 3).await, []);
+    assert_eq!(harness.module.on_dial_press(&other).await, []);
+    assert_eq!(harness.module.dial_hint(&other), DialHint::none());
+    assert_eq!(harness.percent(), Some(40));
 }
 
 #[tokio::test(start_paused = true)]
 async fn turning_the_dial_changes_the_volume_up_to_the_ceiling() {
     let mut harness = Harness::start(&json!({})).await;
-    assert_eq!(harness.module.on_dial_rotate(2).await, []);
+    assert_eq!(harness.module.on_dial_rotate(&volume(), 2).await, []);
     // Shown at once, before the server answers.
-    assert_eq!(harness.gauge().value, "50 %");
+    assert_eq!(harness.percent(), Some(50));
     assert_eq!(harness.settle().await, []);
     assert_eq!(harness.speakers().volume.percent(), 50);
 
     for _ in 0..20 {
-        harness.module.on_dial_rotate(1).await;
+        harness.module.on_dial_rotate(&volume(), 1).await;
         harness.settle().await;
     }
     assert_eq!(harness.speakers().volume.channels(), [VOLUME_NORM; 2]);
-    assert_eq!(harness.gauge().value, "100 %");
-    assert_eq!(harness.gauge().level, GaugeLevel::FULL);
+    assert_eq!(harness.percent(), Some(100));
     let changes = harness.audio.applied().len();
     // At the ceiling, turning further asks nothing.
-    harness.module.on_dial_rotate(3).await;
+    harness.module.on_dial_rotate(&volume(), 3).await;
     harness.settle().await;
     assert_eq!(harness.audio.applied().len(), changes);
 
-    harness.module.on_dial_rotate(-1).await;
+    harness.module.on_dial_rotate(&volume(), -1).await;
     harness.settle().await;
     assert_eq!(harness.speakers().volume.percent(), 95);
 }
@@ -209,8 +223,8 @@ async fn unequal_channels_keep_their_balance() {
         state.sinks[0].volume = Volume::new(vec![level_of_percent(90), level_of_percent(98)]);
     });
     let mut harness = Harness::on(audio, &json!({})).await;
-    assert_eq!(harness.gauge().value, "94 %");
-    harness.module.on_dial_rotate(1).await;
+    assert_eq!(harness.percent(), Some(94));
+    harness.module.on_dial_rotate(&volume(), 1).await;
     harness.settle().await;
     assert_eq!(
         harness.speakers().volume.channels(),
@@ -226,12 +240,12 @@ async fn lowering_unequal_channels_reaches_silence() {
     });
     let mut harness = Harness::on(audio, &json!({})).await;
     for _ in 0..5 {
-        harness.module.on_dial_rotate(-1).await;
+        harness.module.on_dial_rotate(&volume(), -1).await;
         harness.settle().await;
     }
     assert_eq!(harness.speakers().volume.channels(), [0, 0]);
     let changes = harness.audio.applied().len();
-    harness.module.on_dial_rotate(-1).await;
+    harness.module.on_dial_rotate(&volume(), -1).await;
     harness.settle().await;
     assert_eq!(
         harness.audio.applied().len(),
@@ -247,11 +261,11 @@ async fn a_volume_above_the_ceiling_is_only_lowered() {
         state.sinks[0].volume = Volume::uniform(level_of_percent(140), 2);
     });
     let mut harness = Harness::on(audio, &json!({})).await;
-    assert_eq!(harness.module.on_dial_rotate(3).await, []);
+    assert_eq!(harness.module.on_dial_rotate(&volume(), 3).await, []);
     harness.settle().await;
     assert_eq!(harness.audio.applied(), [], "not raised");
-    assert_eq!(harness.gauge().level, GaugeLevel::FULL);
-    harness.module.on_dial_rotate(-1).await;
+    assert_eq!(harness.percent(), Some(140));
+    harness.module.on_dial_rotate(&volume(), -1).await;
     harness.settle().await;
     assert_eq!(volume_changes(&harness.audio), [135]);
 }
@@ -264,7 +278,7 @@ async fn a_volume_raised_elsewhere_meanwhile_never_exceeds_the_ceiling() {
     harness.audio.change_externally(|state| {
         state.sinks[0].volume = Volume::uniform(level_of_percent(140), 2);
     });
-    harness.module.on_dial_rotate(1).await;
+    harness.module.on_dial_rotate(&volume(), 1).await;
     harness.settle().await;
     let volume = harness.speakers().volume;
     assert!(
@@ -279,7 +293,10 @@ async fn a_sink_without_channels_cannot_be_turned() {
     let audio = SimulatedAudio::demo();
     audio.change_externally(|state| state.sinks[0].volume = Volume::default());
     let mut harness = Harness::on(audio, &json!({})).await;
-    assert_eq!(harness.module.on_dial_rotate(1).await, Command::alert());
+    assert_eq!(
+        harness.module.on_dial_rotate(&volume(), 1).await,
+        Command::alert()
+    );
     harness.settle().await;
     assert_eq!(harness.audio.applied(), []);
 }
@@ -288,39 +305,39 @@ async fn a_sink_without_channels_cannot_be_turned() {
 async fn a_fast_turn_sends_merged_volume_changes() {
     let mut harness = Harness::start(&json!({})).await;
     for _ in 0..10 {
-        harness.module.on_dial_rotate(1).await;
+        harness.module.on_dial_rotate(&volume(), 1).await;
     }
-    assert_eq!(harness.gauge().value, "90 %");
+    assert_eq!(harness.percent(), Some(90));
     harness.settle().await;
     // The worker found every notch queued: one change for all of them.
     assert_eq!(volume_changes(&harness.audio), [90]);
-    assert_eq!(harness.gauge().value, "90 %");
+    assert_eq!(harness.percent(), Some(90));
 }
 
 #[tokio::test(start_paused = true)]
 async fn states_older_than_the_queued_changes_are_ignored() {
     let mut harness = Harness::start(&json!({})).await;
-    harness.module.on_dial_rotate(1).await;
+    harness.module.on_dial_rotate(&volume(), 1).await;
     // A state read before the change was applied.
     let stale = AudioEvent::State(HubState {
         server: ServerView::Ready(Arc::new(SimulatedAudio::demo().state())),
         applied: 0,
     });
     harness.module.on_event(Box::new(stale)).await;
-    assert_eq!(harness.gauge().value, "45 %");
+    assert_eq!(harness.percent(), Some(45));
     harness.settle().await;
-    assert_eq!(harness.gauge().value, "45 %");
+    assert_eq!(harness.percent(), Some(45));
 }
 
 #[tokio::test(start_paused = true)]
 async fn pressing_the_dial_mutes_and_unmutes_the_output() {
     let mut harness = Harness::start(&json!({})).await;
-    assert_eq!(harness.module.on_dial_press().await, []);
-    let gauge = harness.gauge();
-    assert_eq!(gauge.value, "Muet");
-    assert!(gauge.dimmed);
-    assert_eq!(gauge.glyph.as_ref(), Some(&*icons::GLYPH_MUTED));
-    assert_eq!(gauge.level.permille(), 400);
+    assert_eq!(harness.module.on_dial_press(&volume()).await, []);
+    assert_eq!(harness.widget(), Some(VolumeWidget::new(40, true)));
+    assert_eq!(
+        harness.hint(),
+        DialHint::none().rotating("Volume").pressing("Réactiver")
+    );
     harness.settle().await;
     assert!(harness.speakers().muted);
     assert_eq!(
@@ -328,10 +345,10 @@ async fn pressing_the_dial_mutes_and_unmutes_the_output() {
         Some(icons::SPEAKER_MUTED.clone())
     );
 
-    harness.module.on_dial_press().await;
+    harness.module.on_dial_press(&volume()).await;
     harness.settle().await;
     assert!(!harness.speakers().muted);
-    assert_eq!(harness.gauge().value, "40 %");
+    assert_eq!(harness.percent(), Some(40));
 }
 
 // ---------------------------------------------------------------- Pages
@@ -454,7 +471,7 @@ async fn device_pages_list_devices_and_select_the_default() {
         Some("demo.headset")
     );
     // The dial now drives the new default.
-    assert_eq!(harness.gauge().title, "Casque Bluetooth");
+    assert_eq!(harness.percent(), Some(25));
 
     assert_eq!(harness.page(INPUTS_PAGE).items.len(), 2);
     harness.press(INPUTS_PAGE, "demo.usb-mic").await;
@@ -479,8 +496,7 @@ async fn external_changes_update_the_display() {
         state.default_sink = Some("bluez.new".into());
     });
     harness.settle().await;
-    assert_eq!(harness.gauge().title, "Écouteurs");
-    assert_eq!(harness.gauge().value, "30 %");
+    assert_eq!(harness.percent(), Some(30));
     assert_eq!(harness.page(OUTPUTS_PAGE).items.len(), 4);
 }
 
@@ -490,18 +506,21 @@ async fn external_changes_update_the_display() {
 async fn failed_changes_alert_on_their_surface_and_restore_the_state() {
     let mut harness = Harness::start(&json!({})).await;
     harness.audio.set_available(false);
-    harness.module.on_dial_rotate(1).await;
+    harness.module.on_dial_rotate(&volume(), 1).await;
     assert_eq!(
         harness.settle().await,
-        [Command::FeedbackOn(ModuleSurface::Zone, Feedback::Alert)]
+        [Command::FeedbackOn(ModuleSurface::Dial, Feedback::Alert)]
+    );
+    assert_eq!(harness.widget(), None);
+    // Without a state, actions alert at once.
+    assert_eq!(
+        harness.module.on_dial_rotate(&volume(), 1).await,
+        Command::alert()
     );
     assert_eq!(
-        harness.zone(),
-        ZoneContent::Lines(vec!["Audio indisponible".into()])
+        harness.module.on_dial_press(&volume()).await,
+        Command::alert()
     );
-    // Without a state, actions alert at once.
-    assert_eq!(harness.module.on_dial_rotate(1).await, Command::alert());
-    assert_eq!(harness.module.on_dial_press().await, Command::alert());
     assert_eq!(
         harness.press(MAIN_PAGE, MICROPHONE_ITEM).await,
         Command::alert()
@@ -514,9 +533,9 @@ async fn failed_changes_alert_on_their_surface_and_restore_the_state() {
 
     // Back: the next attempt reads the state again.
     harness.audio.set_available(true);
-    harness.module.on_dial_rotate(1).await;
+    harness.module.on_dial_rotate(&volume(), 1).await;
     harness.settle().await;
-    assert_eq!(harness.gauge().value, "40 %");
+    assert_eq!(harness.percent(), Some(40));
 }
 
 #[tokio::test(start_paused = true)]
@@ -524,7 +543,7 @@ async fn a_rejected_change_shows_the_real_state_again() {
     let audio = SimulatedAudio::demo();
     let mut harness = Harness::on(audio, &json!({})).await;
     // The output disappears before the server sees the change.
-    harness.module.on_dial_rotate(1).await;
+    harness.module.on_dial_rotate(&volume(), 1).await;
     harness.audio.change_externally(|state| {
         state.sinks.remove(0);
         state.default_sink = Some("demo.headset".into());
@@ -532,10 +551,9 @@ async fn a_rejected_change_shows_the_real_state_again() {
     let commands = harness.settle().await;
     assert_eq!(
         commands,
-        [Command::FeedbackOn(ModuleSurface::Zone, Feedback::Alert)]
+        [Command::FeedbackOn(ModuleSurface::Dial, Feedback::Alert)]
     );
-    assert_eq!(harness.gauge().title, "Casque Bluetooth");
-    assert_eq!(harness.gauge().value, "25 %");
+    assert_eq!(harness.percent(), Some(25));
 }
 
 #[tokio::test(start_paused = true)]
@@ -543,10 +561,7 @@ async fn an_unreachable_server_is_shown_and_never_crashes() {
     let audio = SimulatedAudio::demo();
     audio.set_available(false);
     let mut harness = Harness::on(audio, &json!({})).await;
-    assert_eq!(
-        harness.zone(),
-        ZoneContent::Lines(vec!["Audio indisponible".into()])
-    );
+    assert_eq!(harness.widget(), None);
     assert_eq!(
         harness.item(MAIN_PAGE, MICROPHONE_ITEM).state,
         KeyState::Normal
@@ -556,7 +571,7 @@ async fn an_unreachable_server_is_shown_and_never_crashes() {
     // The watcher retries and the state comes back by itself.
     tokio::time::sleep(hub::MAX_BACKOFF).await;
     harness.settle().await;
-    assert_eq!(harness.gauge().value, "40 %");
+    assert_eq!(harness.percent(), Some(40));
 }
 
 #[tokio::test(start_paused = true)]
@@ -564,10 +579,10 @@ async fn a_change_made_after_the_worker_stopped_is_applied() {
     let mut harness = Harness::start(&json!({})).await;
     harness.factory.hub.crash_worker();
     harness.settle().await;
-    assert_eq!(harness.module.on_dial_rotate(1).await, []);
-    assert_eq!(harness.gauge().value, "45 %");
+    assert_eq!(harness.module.on_dial_rotate(&volume(), 1).await, []);
+    assert_eq!(harness.percent(), Some(45));
     harness.settle().await;
-    assert_eq!(harness.gauge().value, "45 %");
+    assert_eq!(harness.percent(), Some(45));
     assert_eq!(harness.audio.state().sinks[0].volume.percent(), 45);
 }
 
@@ -580,36 +595,35 @@ async fn two_instances_share_the_server() {
         scope: _scope,
     } = TestContext::new("second");
     let mut second = first.factory.create(ctx, &json!({})).unwrap();
-    first.module.on_dial_press().await;
+    first.module.on_dial_press(&volume()).await;
     first.settle().await;
     while let Ok(Some(event)) = tokio::time::timeout(IDLE, events.recv()).await {
         second.on_event(event).await;
     }
-    let zone = second
-        .zone(&NavigationView::new("Accueil", 0, 1, 2))
-        .unwrap();
-    assert!(matches!(zone, ZoneContent::Gauge(gauge) if gauge.value == "Muet"));
+    assert!(matches!(
+        second.strip_widget(),
+        Some(StripWidget::Volume(widget)) if widget.muted
+    ));
     assert_eq!(first.audio.subscriptions(), 1);
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_zone_tells_when_there_is_no_output() {
+async fn there_is_no_widget_without_an_output() {
     let audio = SimulatedAudio::new(AudioSnapshot::default());
     let mut harness = Harness::on(audio, &json!({})).await;
+    assert_eq!(harness.widget(), None);
     assert_eq!(
-        harness.zone(),
-        ZoneContent::Lines(vec!["Aucune sortie".into()])
+        harness.module.on_dial_rotate(&volume(), 1).await,
+        Command::alert()
     );
-    assert_eq!(harness.module.on_dial_rotate(1).await, Command::alert());
 }
 
 #[test]
-fn the_zone_waits_for_the_first_state() {
+fn the_widget_waits_for_the_first_state() {
     let module = simulated_factory()
         .create(ModuleContext::for_tests(AUDIO_KIND), &json!({}))
         .unwrap();
-    let zone = module.zone(&NavigationView::new("Accueil", 0, 1, 2));
-    assert_eq!(zone, Some(ZoneContent::Lines(vec!["Audio".into()])));
+    assert_eq!(module.strip_widget(), None);
 }
 
 #[tokio::test(start_paused = true)]
@@ -624,7 +638,7 @@ async fn the_tasks_stop_with_the_instance() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_zone_tells_a_missing_or_old_pactl_and_recovers() {
+async fn a_missing_or_old_pactl_shows_no_widget_and_recovers() {
     let missing: fn() -> AudioError = || AudioError::Spawn {
         program: "pactl".into(),
         source: std::io::ErrorKind::NotFound.into(),
@@ -634,16 +648,16 @@ async fn the_zone_tells_a_missing_or_old_pactl_and_recovers() {
         status: "exit status: 1".into(),
         stderr: "pactl: unrecognized option '--format=json'".into(),
     };
-    for (make, text) in [(missing, "pactl absent"), (too_old, "pactl trop ancien")] {
+    for make in [missing, too_old] {
         let audio = SimulatedAudio::demo();
         audio.fail_with(make);
         let mut harness = Harness::on(audio, &json!({})).await;
-        assert_eq!(harness.zone(), ZoneContent::Lines(vec![text.into()]));
+        assert_eq!(harness.widget(), None);
 
-        // Installed (or upgraded) since: the next attempt shows the gauge.
+        // Installed (or upgraded) since: the next attempt shows the volume.
         harness.audio.set_available(true);
-        harness.module.on_dial_rotate(1).await;
+        harness.module.on_dial_rotate(&volume(), 1).await;
         harness.settle().await;
-        assert_eq!(harness.gauge().value, "40 %");
+        assert_eq!(harness.percent(), Some(40));
     }
 }

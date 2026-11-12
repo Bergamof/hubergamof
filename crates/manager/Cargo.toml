@@ -40,6 +40,9 @@ futures-util.workspace = true
 # elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
 hidapi = "2.6.7"
 image.workspace = true
+# Local time in the system time zone (`/etc/localtime`, system tzdb), for the
+# clock of the touch strip.
+jiff = "0.2.38"
 lru = "0.19.0"
 mime_guess = "2.0.5"
 # SVG rendering without system fonts nor embedded raster images (untrusted input).

@@ -17,6 +17,12 @@ pub struct ModuleInstanceId(pub String);
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ModuleKind(pub String);
 
+/// Identifier of a dial function of a module (`"volume"`, `"control"`…),
+/// unique within the module kind and chosen by the module.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct DialFunctionId(pub String);
+
 /// Identifier of a page of a module, chosen by the module.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PageId(pub String);
@@ -47,4 +53,4 @@ macro_rules! string_id {
     )+};
 }
 
-string_id!(ModuleInstanceId, ModuleKind, PageId, ItemId);
+string_id!(ModuleInstanceId, ModuleKind, DialFunctionId, PageId, ItemId);

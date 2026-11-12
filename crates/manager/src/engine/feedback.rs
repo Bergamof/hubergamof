@@ -1,4 +1,4 @@
-//! Transient outcome marks ([`Feedback`]) shown over keys and zones.
+//! Transient outcome marks ([`Feedback`]) shown over keys and in the reminders of the dials.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -17,8 +17,8 @@ pub(crate) enum Surface {
     /// The key showing this target: the mark follows the item if the page
     /// scrolls and disappears with it when another page is shown.
     Key(KeyTarget),
-    /// The touch strip zone above this dial.
-    Zone(u8),
+    /// The reminder of this dial, under the touch strip.
+    Dial(u8),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -31,7 +31,7 @@ struct Mark {
 #[derive(Debug, Default)]
 pub(crate) struct Marks {
     keys: BTreeMap<KeyTarget, Mark>,
-    zones: BTreeMap<u8, Mark>,
+    dials: BTreeMap<u8, Mark>,
 }
 
 impl Marks {
@@ -44,7 +44,7 @@ impl Marks {
         };
         match surface {
             Surface::Key(target) => self.keys.insert(target, mark),
-            Surface::Zone(dial) => self.zones.insert(dial, mark),
+            Surface::Dial(dial) => self.dials.insert(dial, mark),
         };
     }
 
@@ -53,16 +53,16 @@ impl Marks {
         self.keys.get(target).map(|mark| mark.feedback)
     }
 
-    /// Mark over the zone of `dial`.
-    pub(crate) fn zone(&self, dial: u8) -> Option<Feedback> {
-        self.zones.get(&dial).map(|mark| mark.feedback)
+    /// Mark over the reminder of `dial`.
+    pub(crate) fn dial(&self, dial: u8) -> Option<Feedback> {
+        self.dials.get(&dial).map(|mark| mark.feedback)
     }
 
     /// Earliest deadline, `None` without marks.
     pub(crate) fn next_expiry(&self) -> Option<Instant> {
         self.keys
             .values()
-            .chain(self.zones.values())
+            .chain(self.dials.values())
             .map(|mark| mark.until)
             .min()
     }
@@ -70,7 +70,7 @@ impl Marks {
     /// Removes the marks whose deadline passed at `now`.
     pub(crate) fn expire(&mut self, now: Instant) {
         self.keys.retain(|_, mark| mark.until > now);
-        self.zones.retain(|_, mark| mark.until > now);
+        self.dials.retain(|_, mark| mark.until > now);
     }
 }
 
@@ -87,13 +87,13 @@ mod tests {
 
         marks.show(Surface::Key(target.clone()), Feedback::Ok, start);
         marks.show(
-            Surface::Zone(2),
+            Surface::Dial(2),
             Feedback::Alert,
             start + Duration::from_millis(300),
         );
         assert_eq!(marks.key(&target), Some(Feedback::Ok));
-        assert_eq!(marks.zone(2), Some(Feedback::Alert));
-        assert_eq!(marks.zone(1), None);
+        assert_eq!(marks.dial(2), Some(Feedback::Alert));
+        assert_eq!(marks.dial(1), None);
         assert_eq!(marks.next_expiry(), Some(start + FEEDBACK_DURATION));
 
         marks.show(Surface::Key(target.clone()), Feedback::Alert, start);
@@ -101,7 +101,7 @@ mod tests {
 
         marks.expire(start + FEEDBACK_DURATION);
         assert_eq!(marks.key(&target), None);
-        assert_eq!(marks.zone(2), Some(Feedback::Alert));
+        assert_eq!(marks.dial(2), Some(Feedback::Alert));
         marks.expire(start + Duration::from_secs(2));
         assert_eq!(marks.next_expiry(), None);
     }

@@ -144,7 +144,7 @@ fn compose_files_must_be_absolute_paths() {
     }
     let descriptor = factory.descriptor();
     assert!(descriptor.capabilities.key);
-    assert!(!descriptor.capabilities.dial && !descriptor.capabilities.touch_zone);
+    assert_eq!(descriptor.dial_functions, []);
 }
 
 #[test]

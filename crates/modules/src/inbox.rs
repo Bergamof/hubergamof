@@ -63,11 +63,8 @@ impl ModuleFactory for InboxFactory {
             description: "Cloche avec le nombre de notifications non lues ; appuyer les liste, \
                           en choisir une l'affiche de nouveau sur la bande tactile."
                 .into(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: false,
-                touch_zone: false,
-            },
+            capabilities: ModuleCapabilities { key: true },
+            dial_functions: Vec::new(),
             settings: Vec::new(),
         }
     }
@@ -273,7 +270,7 @@ mod tests {
         let descriptor = InboxFactory.descriptor();
         assert_eq!(descriptor.kind.0, INBOX_KIND);
         assert!(descriptor.capabilities.key);
-        assert!(!descriptor.capabilities.dial && !descriptor.capabilities.touch_zone);
+        assert_eq!(descriptor.dial_functions, []);
         assert_eq!(descriptor.settings, []);
     }
 }

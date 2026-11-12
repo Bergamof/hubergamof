@@ -5,14 +5,14 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use hubergamof_module_api::{ModuleCapabilities, ModuleInstanceId};
 use hubergamof_modules::ModuleRegistry;
-use hubergamof_protocol::DeviceConfig;
+use hubergamof_protocol::{DeviceConfig, DialAssignment};
 
 use super::EngineError;
 
 /// Refuses `config` when a module of a known kind rejects its settings, or
-/// is placed on the home page without being able to show a key, or on a
-/// dial without being able to handle one. Kinds missing from the registry
-/// are not checked (they show a placeholder); references to unknown
+/// is placed on the home page without being able to show a key, or is given
+/// to a dial for a function it does not offer. Kinds missing from the
+/// registry are not checked (they show a placeholder); references to unknown
 /// instances are left to [`DeviceConfig::validate`].
 ///
 /// # Errors
@@ -35,6 +35,41 @@ pub(crate) fn check_modules(
         });
         checked?;
     }
+    check_dial_functions(registry, config)
+}
+
+/// Every function given to a dial is offered by the module of its instance.
+fn check_dial_functions(
+    registry: &ModuleRegistry,
+    config: &DeviceConfig,
+) -> Result<(), EngineError> {
+    for assignment in &config.dials {
+        let DialAssignment::Module { instance, function } = assignment else {
+            continue;
+        };
+        let Some(factory) = config
+            .modules
+            .iter()
+            .find(|module| module.id == *instance)
+            .and_then(|module| registry.get(&module.kind))
+        else {
+            continue;
+        };
+        let offered = guarded(instance, || {
+            let functions = factory.descriptor().dial_functions;
+            functions
+                .iter()
+                .any(|offered| offered.id == *function)
+                .then_some(())
+                .ok_or_else(|| {
+                    invalid(
+                        instance,
+                        format!("this module has no dial function `{function}`"),
+                    )
+                })
+        });
+        offered?;
+    }
     Ok(())
 }
 
@@ -45,12 +80,6 @@ fn check_placement(
 ) -> Result<(), EngineError> {
     if !capabilities.key && config.home.contains(id) {
         return Err(invalid(id, "this module cannot be placed on a key".into()));
-    }
-    if !capabilities.dial && config.dials.iter().flatten().any(|dial| dial == id) {
-        return Err(invalid(
-            id,
-            "this module cannot be assigned to a dial".into(),
-        ));
     }
     Ok(())
 }
@@ -116,11 +145,8 @@ mod tests {
                     kind: "panicking".into(),
                     name: String::new(),
                     description: String::new(),
-                    capabilities: ModuleCapabilities {
-                        key: true,
-                        dial: true,
-                        touch_zone: true,
-                    },
+                    capabilities: ModuleCapabilities { key: true },
+                    dial_functions: Vec::new(),
                     settings: Vec::new(),
                 }
             }
@@ -141,13 +167,13 @@ mod tests {
         let mut registry = builtin_registry();
         registry.register(Arc::new(Panicking));
         let mut config: DeviceConfig = serde_json::from_value(json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "serial": "S",
             "model": "plus",
             "brightness": 50,
             "home": ["p"],
             "modules": [{ "id": "p", "kind": "panicking" }],
-            "dials": [null, null, null, null],
+            "dials": [{ "kind": "none" }, { "kind": "none" }, { "kind": "none" }, { "kind": "none" }],
             "revision": 0
         }))
         .unwrap();

@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::{DeviceModel, ModuleInstanceId, ModuleKind, is_safe_image_name};
+use crate::{DeviceModel, DialFunctionId, ModuleInstanceId, ModuleKind, is_safe_image_name};
 
 /// Configuration schema version produced and understood by this crate.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Highest accepted brightness, in percent.
 pub const MAX_BRIGHTNESS: u8 = 100;
@@ -25,6 +25,13 @@ pub const MAX_HOME_KEYS: usize = 256;
 
 /// Most dials of a configuration (4 on a Stream Deck+).
 pub const MAX_DIALS: usize = 16;
+
+/// Periods, in seconds, at which the system measures (CPU, memory, swap) of
+/// the touch strip may be refreshed.
+pub const SYSTEM_REFRESH_CHOICES: [u8; 4] = [1, 2, 5, 10];
+
+/// Lowest and highest load, in percent, from which the touch strip warns.
+pub const LOAD_ALERT_RANGE: std::ops::RangeInclusive<u8> = 50..=100;
 
 /// Longest key label, in characters (a few words fit on a key).
 pub const MAX_LABEL_CHARS: usize = 64;
@@ -52,11 +59,89 @@ pub struct DeviceConfig {
     pub home: Vec<ModuleInstanceId>,
     /// All module instances of the device.
     pub modules: Vec<ModuleInstance>,
-    /// Module instance assigned to each dial, by dial index.
-    pub dials: Vec<Option<ModuleInstanceId>>,
+    /// What each dial does, by dial index.
+    pub dials: Vec<DialAssignment>,
+    /// Look and measures of the touch strip.
+    #[serde(default)]
+    pub strip: StripConfig,
     /// Revision counter, incremented on every accepted update; an update
     /// carrying an outdated revision is rejected.
     pub revision: u64,
+}
+
+/// What a dial does: a function offered by a module instance, or one of the
+/// manager itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export)]
+pub enum DialAssignment {
+    /// Nothing.
+    None,
+    /// Scrolls the rows of the displayed page and goes back one page.
+    Navigation,
+    /// Contextual function, depending on what is displayed.
+    Contextual,
+    /// A function of a module instance (see
+    /// [`crate::ModuleDescriptor::dial_functions`]).
+    Module {
+        /// Instance offering the function.
+        instance: ModuleInstanceId,
+        /// The function of that instance's module.
+        function: DialFunctionId,
+    },
+}
+
+/// Colours of the touch strip.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum StripTheme {
+    /// Dark text on a light background.
+    #[default]
+    Light,
+    /// Light text on a dark background.
+    Dark,
+}
+
+/// Look and measures of the touch strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent display options mirrored as-is in the JSON contract"
+)]
+pub struct StripConfig {
+    /// Colours of the strip.
+    pub theme: StripTheme,
+    /// Whether the time shows its seconds.
+    pub show_seconds: bool,
+    /// Whether the pomodoro draws its progress along the strip.
+    pub show_pomodoro_progress: bool,
+    /// Period of the system measures, one of [`SYSTEM_REFRESH_CHOICES`].
+    pub system_refresh_seconds: u8,
+    /// Whether the measures show their recent history as curves.
+    pub show_history: bool,
+    /// Load, in percent (within [`LOAD_ALERT_RANGE`]), from which a measure
+    /// is drawn in the alert colour.
+    pub load_alert_percent: u8,
+}
+
+impl Default for StripConfig {
+    fn default() -> Self {
+        Self {
+            theme: StripTheme::default(),
+            show_seconds: true,
+            show_pomodoro_progress: true,
+            system_refresh_seconds: 2,
+            show_history: true,
+            load_alert_percent: 85,
+        }
+    }
 }
 
 /// A configured instance of a module.
@@ -110,6 +195,21 @@ pub enum ConfigError {
         /// Unknown module id.
         module: ModuleInstanceId,
     },
+    /// A dial function whose identifier is not a plain identifier.
+    #[error("dial {dial} has an invalid function identifier {function:?}")]
+    InvalidDialFunction {
+        /// Dial index.
+        dial: usize,
+        /// Rejected identifier.
+        function: String,
+    },
+    /// A period of the system measures that is not one of
+    /// [`SYSTEM_REFRESH_CHOICES`].
+    #[error("system refresh period of {0} s is not one of {SYSTEM_REFRESH_CHOICES:?}")]
+    InvalidSystemRefresh(u8),
+    /// An alert load outside [`LOAD_ALERT_RANGE`].
+    #[error("load alert of {0} % is outside {LOAD_ALERT_RANGE:?}")]
+    InvalidLoadAlert(u8),
     /// More of something than a configuration may hold.
     #[error("too many {what}: {count} (at most {max})")]
     TooMany {
@@ -157,6 +257,7 @@ impl DeviceConfig {
         let known_ids = self.validate_module_ids()?;
         self.validate_home(&known_ids)?;
         self.validate_dials(&known_ids)?;
+        self.strip.validate()?;
         self.validate_images()
     }
 
@@ -233,19 +334,24 @@ impl DeviceConfig {
     }
 
     fn validate_dials(&self, known_ids: &HashSet<&ModuleInstanceId>) -> Result<(), ConfigError> {
-        let unknown = self.dials.iter().enumerate().find_map(|(dial, module)| {
-            module
-                .as_ref()
-                .filter(|id| !known_ids.contains(id))
-                .map(|id| (dial, id))
-        });
-        match unknown {
-            Some((dial, module)) => Err(ConfigError::UnknownDialModule {
-                dial,
-                module: module.clone(),
-            }),
-            None => Ok(()),
+        for (dial, assignment) in self.dials.iter().enumerate() {
+            let DialAssignment::Module { instance, function } = assignment else {
+                continue;
+            };
+            if !known_ids.contains(instance) {
+                return Err(ConfigError::UnknownDialModule {
+                    dial,
+                    module: instance.clone(),
+                });
+            }
+            if !is_identifier(&function.0) {
+                return Err(ConfigError::InvalidDialFunction {
+                    dial,
+                    function: function.0.clone(),
+                });
+            }
         }
+        Ok(())
     }
 
     fn validate_images(&self) -> Result<(), ConfigError> {
@@ -260,6 +366,25 @@ impl DeviceConfig {
                     image: image.to_owned(),
                 });
             }
+        }
+        Ok(())
+    }
+}
+
+impl StripConfig {
+    /// Checks the bounded values.
+    ///
+    /// # Errors
+    ///
+    /// The first [`ConfigError`] found.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !SYSTEM_REFRESH_CHOICES.contains(&self.system_refresh_seconds) {
+            return Err(ConfigError::InvalidSystemRefresh(
+                self.system_refresh_seconds,
+            ));
+        }
+        if !LOAD_ALERT_RANGE.contains(&self.load_alert_percent) {
+            return Err(ConfigError::InvalidLoadAlert(self.load_alert_percent));
         }
         Ok(())
     }

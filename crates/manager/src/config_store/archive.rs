@@ -241,7 +241,8 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
         expanded += content.len();
         match kind {
             Entry::Config if config.is_none() => {
-                config = Some(serde_json::from_slice(&content).map_err(ArchiveError::Config)?);
+                config =
+                    Some(super::migration::parse_config(&content).map_err(ArchiveError::Config)?);
             }
             Entry::Image(image) if !images.contains_key(&image) => {
                 images.insert(image, content);
@@ -257,19 +258,20 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
 
 #[cfg(test)]
 mod tests {
-    use hubergamof_protocol::DeviceModel;
+    use hubergamof_protocol::{DeviceModel, DialAssignment, StripConfig};
 
     use super::*;
 
     fn config() -> DeviceConfig {
         DeviceConfig {
-            schema_version: 1,
+            schema_version: 2,
             serial: "ABC".into(),
             model: DeviceModel::Plus,
             brightness: 40,
             home: Vec::new(),
             modules: Vec::new(),
-            dials: vec![None; 4],
+            dials: vec![DialAssignment::None; 4],
+            strip: StripConfig::default(),
             revision: 3,
         }
     }

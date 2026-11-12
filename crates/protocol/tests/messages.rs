@@ -4,8 +4,9 @@
 
 use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
-    DeviceModel, DialView, ErrorCode, ImageSize, KeyState, KeyView, LiveState, ModuleCapabilities,
-    ModuleDescriptor, ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, ZoneView,
+    DeviceModel, DialAssignment, DialFunctionDescriptor, ErrorCode, ImageSize, KeyState, KeyView,
+    LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView, ServerMessage,
+    SettingField, SettingKind, StripConfig, StripTheme,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -23,38 +24,67 @@ where
 
 fn sample_config() -> DeviceConfig {
     DeviceConfig {
-        schema_version: 1,
+        schema_version: 2,
         serial: "ABC123".into(),
         model: DeviceModel::Plus,
         brightness: 60,
-        home: vec!["clock".into()],
+        home: vec!["pomodoro".into()],
         modules: vec![ModuleInstance {
-            id: "clock".into(),
-            kind: "clock".into(),
+            id: "pomodoro".into(),
+            kind: "pomodoro".into(),
             label: Some("Time".into()),
             image: None,
-            settings: json!({ "format": "%H:%M" }),
+            settings: json!({ "workMinutes": 25 }),
         }],
-        dials: vec![Some("clock".into()), None],
+        dials: vec![
+            DialAssignment::Module {
+                instance: "pomodoro".into(),
+                function: "control".into(),
+            },
+            DialAssignment::Navigation,
+            DialAssignment::Contextual,
+            DialAssignment::None,
+        ],
+        strip: StripConfig {
+            theme: StripTheme::Dark,
+            show_seconds: false,
+            show_pomodoro_progress: true,
+            system_refresh_seconds: 5,
+            show_history: false,
+            load_alert_percent: 90,
+        },
         revision: 7,
     }
 }
 
 fn sample_config_json() -> Value {
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "serial": "ABC123",
         "model": "plus",
         "brightness": 60,
-        "home": ["clock"],
+        "home": ["pomodoro"],
         "modules": [{
-            "id": "clock",
-            "kind": "clock",
+            "id": "pomodoro",
+            "kind": "pomodoro",
             "label": "Time",
             "image": null,
-            "settings": { "format": "%H:%M" }
+            "settings": { "workMinutes": 25 }
         }],
-        "dials": ["clock", null],
+        "dials": [
+            { "kind": "module", "instance": "pomodoro", "function": "control" },
+            { "kind": "navigation" },
+            { "kind": "contextual" },
+            { "kind": "none" }
+        ],
+        "strip": {
+            "theme": "dark",
+            "showSeconds": false,
+            "showPomodoroProgress": true,
+            "systemRefreshSeconds": 5,
+            "showHistory": false,
+            "loadAlertPercent": 90
+        },
         "revision": 7
     })
 }
@@ -64,14 +94,15 @@ fn catalog_module_without_icon() {
     assert_wire_format(
         &CatalogModule {
             descriptor: ModuleDescriptor {
-                kind: "navigation".into(),
-                name: "Navigation".into(),
-                description: "Scroll".into(),
-                capabilities: ModuleCapabilities {
-                    key: false,
-                    dial: true,
-                    touch_zone: true,
-                },
+                kind: "audio".into(),
+                name: "Audio".into(),
+                description: "Volume".into(),
+                capabilities: ModuleCapabilities { key: false },
+                dial_functions: vec![DialFunctionDescriptor {
+                    id: "volume".into(),
+                    name: "Contrôle du volume".into(),
+                    description: "Tourner change le volume.".into(),
+                }],
                 settings: Vec::new(),
             },
             icon: None,
@@ -79,10 +110,15 @@ fn catalog_module_without_icon() {
             default_settings: json!({}),
         },
         &json!({
-            "kind": "navigation",
-            "name": "Navigation",
-            "description": "Scroll",
-            "capabilities": { "key": false, "dial": true, "touchZone": true },
+            "kind": "audio",
+            "name": "Audio",
+            "description": "Volume",
+            "capabilities": { "key": false },
+            "dialFunctions": [{
+                "id": "volume",
+                "name": "Contrôle du volume",
+                "description": "Tourner change le volume."
+            }],
             "settings": [],
             "icon": null,
             "settingIcons": {},
@@ -234,11 +270,8 @@ fn server_module_catalog() {
                     kind: "pomodoro".into(),
                     name: "Pomodoro".into(),
                     description: "Focus timer".into(),
-                    capabilities: ModuleCapabilities {
-                        key: true,
-                        dial: true,
-                        touch_zone: true,
-                    },
+                    capabilities: ModuleCapabilities { key: true },
+                    dial_functions: Vec::new(),
                     settings: vec![integer, choice],
                 },
                 icon: Some("data:image/png;base64,AA==".into()),
@@ -255,7 +288,8 @@ fn server_module_catalog() {
                 "kind": "pomodoro",
                 "name": "Pomodoro",
                 "description": "Focus timer",
-                "capabilities": { "key": true, "dial": true, "touchZone": true },
+                "capabilities": { "key": true },
+                "dialFunctions": [],
                 "settings": [
                     {
                         "key": "workMinutes",
@@ -343,14 +377,7 @@ fn server_live_state() {
                         state: KeyState::Active,
                     }],
                 },
-                dials: vec![DialView {
-                    index: 0,
-                    module_id: Some("volume".into()),
-                    zone: Some(ZoneView {
-                        lines: vec!["Volume".into(), "42 %".into()],
-                        image: None,
-                    }),
-                }],
+                strip: Some("data:image/png;base64,BBBB".into()),
             },
         },
         &json!({
@@ -369,11 +396,7 @@ fn server_live_state() {
                         "state": "active"
                     }]
                 },
-                "dials": [{
-                    "index": 0,
-                    "moduleId": "volume",
-                    "zone": { "lines": ["Volume", "42 %"], "image": null }
-                }]
+                "strip": "data:image/png;base64,BBBB"
             }
         }),
     );

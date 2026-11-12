@@ -26,14 +26,14 @@ pub enum Command {
     /// host keeps the visible rows within the page.
     ScrollRows(i32),
     /// Briefly marks the surface that triggered the handler (the pressed
-    /// key, the zone of the turned dial; for [`crate::Module::on_event`], the
-    /// home key of the module when it is displayed, or else the zones of its
+    /// key, the hint of the turned dial; for [`crate::Module::on_event`], the
+    /// home key of the module when it is displayed, or else the hints of its
     /// dials) with the outcome of the action.
     Feedback(Feedback),
     /// Briefly marks a given surface of the module with the outcome of an
     /// action. Meant for [`crate::Module::on_event`], when a background task
     /// reports the outcome of an action started by an earlier input (the
-    /// dial zone for a volume change, the pressed item for a selection).
+    /// dial hint for a volume change, the pressed item for a selection).
     /// Only surfaces displayed when the command is applied are marked: a
     /// surface shown afterwards (its page opened within the mark duration)
     /// carries no mark.
@@ -61,8 +61,9 @@ impl Command {
 pub enum ModuleSurface {
     /// Its key on the home page.
     HomeKey,
-    /// The touch strip zones of the dials it is assigned to.
-    Zone,
+    /// The hints under the touch strip of the dials assigned a function of
+    /// the module.
+    Dial,
     /// The key showing item `item` of its page `page`.
     Item {
         /// Page of the item.

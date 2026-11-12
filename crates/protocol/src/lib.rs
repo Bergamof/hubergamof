@@ -20,20 +20,21 @@ mod messages;
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
 pub use catalog::CatalogModule;
 pub use config::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS,
-    MAX_IDENTIFIER_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DialAssignment, LOAD_ALERT_RANGE,
+    MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH, MAX_LABEL_CHARS, MAX_MODULES,
+    MAX_SETTINGS_BYTES, ModuleInstance, SYSTEM_REFRESH_CHOICES, StripConfig, StripTheme,
     is_identifier,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
-pub use live::{DialView, KeyView, LiveState, PageView, ZoneView};
+pub use live::{KeyView, LiveState, PageView};
 pub use messages::{ClientMessage, ErrorCode, ServerMessage};
 
 // Defined in the MPL-2.0 module API so that modules do not link GPL code;
 // re-exported here because they are part of the wire contract.
 pub use hubergamof_module_api::{
-    ChoiceOption, EntryNaming, FileChooser, FileEntry, FileFilter, KeyState, MAX_IMAGE_NAME_LENGTH,
-    ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind, SettingField, SettingKind,
-    is_safe_image_name,
+    ChoiceOption, DialFunctionDescriptor, DialFunctionId, EntryNaming, FileChooser, FileEntry,
+    FileFilter, KeyState, MAX_IMAGE_NAME_LENGTH, ModuleCapabilities, ModuleDescriptor,
+    ModuleInstanceId, ModuleKind, SettingField, SettingKind, is_safe_image_name,
 };
 
 #[cfg(test)]

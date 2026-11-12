@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
-use hubergamof_module_api::{Feedback, KeyState, ModuleInstanceId};
-use hubergamof_protocol::{DialView, KeyView, LiveState, PageView, ZoneView};
+use hubergamof_module_api::{Feedback, KeyState};
+use hubergamof_protocol::{KeyView, LiveState, PageView};
 
 use crate::render::{RenderError, Rendered};
+use crate::strip::StripFace;
 
 /// Page shown on the keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,25 +34,14 @@ pub struct LiveKey {
     pub image: Option<Arc<Rendered>>,
 }
 
-/// A touch strip zone as drawn.
+/// The touch strip as drawn.
 #[derive(Debug, Clone)]
-pub struct LiveZone {
-    /// Text lines (title and value of a gauge), empty for an image or a
-    /// blank zone.
-    pub lines: Vec<String>,
-    /// Outcome mark drawn over the zone for a moment (part of `image`).
-    pub feedback: Option<Feedback>,
-    /// Drawn image, `None` for a blank zone.
+pub struct LiveStrip {
+    /// What it shows, as data.
+    pub face: StripFace,
+    /// Drawn image, `None` while a notification or a label covers it or
+    /// before it was written.
     pub image: Option<Arc<Rendered>>,
-}
-
-/// A dial and its zone.
-#[derive(Debug, Clone)]
-pub struct LiveDial {
-    /// Module instance assigned to the dial.
-    pub module_id: Option<ModuleInstanceId>,
-    /// Zone above the dial, `None` when the device has no touch strip.
-    pub zone: Option<LiveZone>,
 }
 
 /// What a device shows, published by its engine after every visible change.
@@ -67,8 +57,8 @@ pub struct LiveSnapshot {
     pub page: PageSummary,
     /// Keys, by index (empty before the first draw).
     pub keys: Vec<LiveKey>,
-    /// Dials, by index.
-    pub dials: Vec<LiveDial>,
+    /// The whole touch strip, `None` before the first draw or without a strip.
+    pub strip: Option<LiveStrip>,
 }
 
 impl LiveSnapshot {
@@ -84,7 +74,7 @@ impl LiveSnapshot {
                 row_count: 1,
             },
             keys: Vec::new(),
-            dials: Vec::new(),
+            strip: None,
         }
     }
 
@@ -108,28 +98,6 @@ impl LiveSnapshot {
                 })
             })
             .collect::<Result<_, RenderError>>()?;
-        let dials = self
-            .dials
-            .iter()
-            .zip(0_u32..)
-            .map(|(dial, index)| {
-                let zone = dial
-                    .zone
-                    .as_ref()
-                    .map(|zone| {
-                        Ok::<_, RenderError>(ZoneView {
-                            lines: zone.lines.clone(),
-                            image: data_url(zone.image.as_ref())?,
-                        })
-                    })
-                    .transpose()?;
-                Ok(DialView {
-                    index,
-                    module_id: dial.module_id.clone(),
-                    zone,
-                })
-            })
-            .collect::<Result<_, RenderError>>()?;
         Ok(LiveState {
             serial: self.serial.clone(),
             page: PageView {
@@ -139,7 +107,7 @@ impl LiveSnapshot {
                 row_count: self.page.row_count,
                 keys,
             },
-            dials,
+            strip: data_url(self.strip.as_ref().and_then(|strip| strip.image.as_ref()))?,
         })
     }
 }

@@ -130,11 +130,8 @@ impl ModuleFactory for ClaudeFactory {
             description: "Claude Desktop : l'ouvrir ou passer à sa fenêtre ; touche en attention \
                           quand Claude demande quelque chose."
                 .into(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: false,
-                touch_zone: false,
-            },
+            capabilities: ModuleCapabilities { key: true },
+            dial_functions: Vec::new(),
             settings: Vec::new(),
         }
     }

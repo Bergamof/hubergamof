@@ -15,8 +15,6 @@ hubergamof-module-api.workspace = true
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 # Event stream of `bollard`, and running several container actions at once.
 futures-util.workspace = true
-# Local time in the system time zone (`/etc/localtime`, system tzdb).
-jiff = "0.2.38"
 serde.workspace = true
 serde_json.workspace = true
 # `recentProjects.xml` of IntelliJ: a parser refusing any DTD (no entities).

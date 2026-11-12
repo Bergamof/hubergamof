@@ -101,7 +101,7 @@ async fn senders_tell_when_the_queue_is_full() {
 }
 
 #[tokio::test]
-async fn events_of_a_dial_module_mark_its_zone() {
+async fn events_of_a_dial_module_mark_its_dial() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
@@ -118,8 +118,8 @@ async fn events_of_a_dial_module_mark_its_zone() {
         .clone()
         .unwrap();
     fixture.after_change(|| assert!(events.send(()))).await;
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
-    assert_eq!(fixture.zone_mark(1), None);
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Ok));
+    assert_eq!(fixture.dial_mark(1), None);
 }
 
 #[tokio::test]
@@ -143,9 +143,9 @@ async fn events_can_mark_a_named_surface_of_their_module() {
 
     let on_zone = events.clone();
     fixture
-        .after_change(|| assert!(on_zone.send(mark(ModuleSurface::Zone))))
+        .after_change(|| assert!(on_zone.send(mark(ModuleSurface::Dial))))
         .await;
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert));
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Alert));
     assert_eq!(fixture.key_mark(0), None);
 
     let on_home = events.clone();
@@ -187,10 +187,10 @@ async fn surfaces_not_displayed_get_no_mark() {
     // The zone mark tells when the event was handled.
     let marks = vec![
         Command::FeedbackOn(ModuleSurface::HomeKey, Feedback::Alert),
-        Command::FeedbackOn(ModuleSurface::Zone, Feedback::Ok),
+        Command::FeedbackOn(ModuleSurface::Dial, Feedback::Ok),
     ];
     fixture.after_change(|| assert!(events.send(marks))).await;
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Ok));
     assert!(fixture.live().keys.iter().all(|key| key.feedback.is_none()));
 }
 
@@ -217,10 +217,10 @@ async fn an_item_mark_does_not_wait_for_its_page() {
     };
     let marks = vec![
         Command::FeedbackOn(item, Feedback::Alert),
-        Command::FeedbackOn(ModuleSurface::Zone, Feedback::Ok),
+        Command::FeedbackOn(ModuleSurface::Dial, Feedback::Ok),
     ];
     fixture.after_change(|| assert!(events.send(marks))).await;
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Ok));
     assert_eq!(fixture.key_mark(0), None);
 
     // The page opens within the mark duration: its item carries no mark.
@@ -251,7 +251,7 @@ async fn event_outcomes_go_to_the_zone_while_the_home_key_is_hidden() {
     fixture.wait_for(|f| f.page().id != HOME_PAGE_ID).await;
     let alert = vec![Command::Feedback(Feedback::Alert)];
     fixture.after_change(|| assert!(events.send(alert))).await;
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert));
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Alert));
     assert_eq!(fixture.key_mark(0), None);
 }
 
@@ -269,10 +269,10 @@ async fn invalid_settings_are_refused_before_saving() {
         fixture.with(
             vec![
                 list(1),
-                instance("clock", "clock", json!({ "showSeconds": "yes" })),
+                instance("audio", "audio", json!({ "volumeStep": 0 })),
             ],
             &["list"],
-            &[Some("clock"), None, None, None],
+            &[None; 4],
         ),
     ];
     for config in cases {
@@ -289,11 +289,8 @@ async fn invalid_settings_are_refused_before_saving() {
 async fn modules_are_placed_only_where_they_work() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     let current = fixture.config();
-    let nav = || instance("nav", "navigation", json!({}));
     let cases = [
-        // Navigation has no key.
-        (fixture.with(vec![nav()], &["nav"], &[None; 4]), "nav"),
-        // The list has no dial.
+        // The list offers no dial function.
         (
             fixture.with(vec![list(0)], &[], &[Some("list"), None, None, None]),
             "list",
@@ -392,7 +389,7 @@ async fn queued_hardware_inputs_cost_one_redraw() {
             }
         })
         .await;
-    assert_eq!(fixture.zone_lines(0), ["fragile 3"]);
+    assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 3"));
     assert_eq!(fixture.deck.flushes(), 1);
 }
 
@@ -440,7 +437,7 @@ async fn marks_follow_their_item_and_leave_with_its_page() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn dial_handlers_mark_the_zone_of_their_dial() {
+async fn dial_handlers_mark_the_hint_of_their_dial() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
@@ -450,18 +447,18 @@ async fn dial_handlers_mark_the_zone_of_their_dial() {
         )
         .await;
     fixture.engine.press_dial(0).await.unwrap();
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
-    assert_eq!(fixture.zone_mark(1), None);
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Ok));
+    assert_eq!(fixture.dial_mark(1), None);
     fixture.after_change(|| {}).await;
-    assert_eq!(fixture.zone_mark(0), None);
+    assert_eq!(fixture.dial_mark(0), None);
 
     fixture.engine.rotate_dial(0, 2).await.unwrap();
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Ok));
-    assert_eq!(fixture.zone_lines(0), ["fragile 2"]);
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Ok));
+    assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 2"));
 }
 
 #[tokio::test(start_paused = true)]
-async fn failing_dial_handlers_alert_on_their_zone() {
+async fn failing_dial_handlers_alert_on_their_hint() {
     for failure in ["press", "slow"] {
         let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
         fixture
@@ -472,12 +469,12 @@ async fn failing_dial_handlers_alert_on_their_zone() {
             )
             .await;
         fixture.engine.rotate_dial(0, 1).await.unwrap();
-        assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert), "{failure}");
+        assert_eq!(fixture.dial_mark(0), Some(Feedback::Alert), "{failure}");
     }
 }
 
 #[tokio::test]
-async fn dials_without_a_zone_show_no_mark() {
+async fn dials_without_a_strip_show_no_mark() {
     let fixture = start(dials_without_strip_info()).await;
     fixture
         .configure(vec![fragile("none")], &[], &[Some(FRAGILE_KIND), None])
@@ -485,8 +482,7 @@ async fn dials_without_a_zone_show_no_mark() {
     fixture.engine.press_dial(0).await.unwrap();
     fixture.engine.rotate_dial(0, 1).await.unwrap();
     let live = fixture.live();
-    assert_eq!(live.dials.len(), 2);
-    assert!(live.dials.iter().all(|dial| dial.zone.is_none()));
+    assert!(live.strip.is_none());
     assert!(live.keys.iter().all(|key| key.feedback.is_none()));
 }
 
@@ -535,19 +531,18 @@ async fn key_states_are_drawn_and_published() {
 // ---------------------------------------------------------------- Panics
 
 #[tokio::test]
-async fn a_module_panicking_in_its_zone_is_replaced() {
+async fn a_module_panicking_in_its_dial_hint_is_replaced() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
-            vec![list(0), fragile("zone")],
+            vec![list(0), fragile("hint")],
             &["list"],
             &[Some(FRAGILE_KIND), None, None, None],
         )
         .await;
-    // Placeholder without zone, with an alert over the zone of its dial.
-    assert_eq!(fixture.zone_lines(0), Vec::<String>::new());
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert));
-    assert_eq!(fixture.live().dials[0].module_id, Some(FRAGILE_KIND.into()));
+    // Placeholder without hint, with an alert over the hint of its dial.
+    assert_eq!(fixture.hint_rotation(0), None);
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Alert));
 
     // The device keeps working.
     fixture.engine.press_key(0).await.unwrap();
@@ -708,8 +703,8 @@ async fn every_handler_has_the_budget() {
     fixture.engine.press_dial(0).await.unwrap();
     fixture.engine.rotate_dial(0, 1).await.unwrap();
     assert!(started.elapsed() < SLOW_HANDLER);
-    assert_eq!(fixture.zone_mark(0), Some(Feedback::Alert));
-    assert_eq!(fixture.zone_lines(0), ["fragile 0"]);
+    assert_eq!(fixture.dial_mark(0), Some(Feedback::Alert));
+    assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 0"));
 
     // An item of its page, opened while the module was quick.
     fixture

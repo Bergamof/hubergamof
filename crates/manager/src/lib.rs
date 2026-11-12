@@ -22,6 +22,7 @@ pub mod engine;
 pub mod file_chooser;
 pub mod render;
 pub mod server;
+pub mod strip;
 #[cfg(test)]
 mod testing;
 pub mod tray;

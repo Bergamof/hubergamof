@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use futures_util::FutureExt as _;
 use hubergamof_module_api::{
-    Command, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId, KeyContent, Module, ModuleContext,
-    ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind, NavigationView, PageContent, PageId,
-    RedrawHandle, TaskScope, UnreadNotifications, ZoneContent,
+    Command, DialFunctionId, DialHint, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId,
+    KeyContent, Module, ModuleContext, ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind,
+    PageContent, PageId, RedrawHandle, StripPopup, StripWidget, TaskScope, UnreadNotifications,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -64,8 +64,8 @@ pub(crate) struct RoutedEvent {
 pub(crate) enum Call {
     KeyPress,
     ItemPress(PageId, ItemId),
-    DialRotate(i32),
-    DialPress,
+    DialRotate(DialFunctionId, i32),
+    DialPress(DialFunctionId),
     Event(ModuleEvent),
 }
 
@@ -188,13 +188,23 @@ impl Instances {
         self.inspect(id, "page", |module| module.page(page))
     }
 
-    /// Zone of instance `id`, if it draws one.
-    pub(crate) fn zone(
+    /// Reminder of what the dials assigned `function` of instance `id` do.
+    pub(crate) fn dial_hint(
         &mut self,
         id: &ModuleInstanceId,
-        nav: &NavigationView,
-    ) -> Option<ZoneContent> {
-        self.inspect(id, "zone", |module| module.zone(nav))
+        function: &DialFunctionId,
+    ) -> Option<DialHint> {
+        self.inspect(id, "dial_hint", |module| Some(module.dial_hint(function)))
+    }
+
+    /// What instance `id` shows on the touch strip, if anything.
+    pub(crate) fn strip_widget(&mut self, id: &ModuleInstanceId) -> Option<StripWidget> {
+        self.inspect(id, "strip_widget", |module| module.strip_widget())
+    }
+
+    /// The menu instance `id` has open, if any.
+    pub(crate) fn strip_popup(&mut self, id: &ModuleInstanceId) -> Option<StripPopup> {
+        self.inspect(id, "strip_popup", |module| module.strip_popup())
     }
 
     /// Instances replaced since the last call because they panicked outside
@@ -415,8 +425,10 @@ fn invoke(module: &mut dyn Module, call: Call) -> HandlerFuture<'_> {
         Call::ItemPress(page, item) => {
             Box::pin(async move { module.on_item_press(&page, &item).await })
         }
-        Call::DialRotate(ticks) => module.on_dial_rotate(ticks),
-        Call::DialPress => module.on_dial_press(),
+        Call::DialRotate(function, ticks) => {
+            Box::pin(async move { module.on_dial_rotate(&function, ticks).await })
+        }
+        Call::DialPress(function) => Box::pin(async move { module.on_dial_press(&function).await }),
         Call::Event(event) => module.on_event(event),
     }
 }
@@ -462,11 +474,8 @@ mod tests {
                 kind: KIND.into(),
                 name: String::new(),
                 description: String::new(),
-                capabilities: ModuleCapabilities {
-                    key: true,
-                    dial: true,
-                    touch_zone: true,
-                },
+                capabilities: ModuleCapabilities { key: true },
+                dial_functions: Vec::new(),
                 settings: Vec::new(),
             }
         }

@@ -63,7 +63,7 @@ impl Probe {
                 sink: "demo.speakers".into(),
                 volume: Volume::uniform(level_of_percent(percent), 2),
             },
-            ModuleSurface::Zone,
+            ModuleSurface::Dial,
         )
     }
 }
@@ -86,7 +86,7 @@ fn job(seq: Sequence, subscriber: SubscriberId, change: AudioChange) -> Request 
         subscriber,
         replies: EventSender::noop(),
         change,
-        surface: ModuleSurface::Zone,
+        surface: ModuleSurface::Dial,
     })
 }
 
@@ -278,7 +278,7 @@ async fn a_change_reads_once_only_what_it_altered() {
                 direction: Direction::Input,
                 device: "demo.usb-mic".into(),
             },
-            ModuleSurface::Zone,
+            ModuleSurface::Dial,
         )
         .unwrap();
     idle(SETTLE).await;
@@ -288,7 +288,7 @@ async fn a_change_reads_once_only_what_it_altered() {
         probe.snapshot().default_source.as_deref(),
         Some("demo.usb-mic")
     );
-    assert_eq!(probe.outcomes(), [(ModuleSurface::Zone, Feedback::Ok)]);
+    assert_eq!(probe.outcomes(), [(ModuleSurface::Dial, Feedback::Ok)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -430,7 +430,7 @@ async fn a_panicking_backend_fails_the_change_only() {
     idle(SETTLE).await;
     let seq = probe.set_volume(90).unwrap();
     idle(SETTLE).await;
-    assert_eq!(probe.outcomes(), [(ModuleSurface::Zone, Feedback::Alert)]);
+    assert_eq!(probe.outcomes(), [(ModuleSurface::Dial, Feedback::Alert)]);
     // The real state was read again, covering the failed change.
     assert_eq!(probe.state().applied, seq);
     assert_eq!(probe.snapshot().sinks[0].volume.percent(), 40);
@@ -551,7 +551,7 @@ async fn a_volume_notch_costs_two_pactl_calls() {
                 sink,
                 volume: Volume::uniform(level_of_percent(30), 2),
             },
-            ModuleSurface::Zone,
+            ModuleSurface::Dial,
         )
         .unwrap();
     eventually(|| probe.state().applied == seq).await;

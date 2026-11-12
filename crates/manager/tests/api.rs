@@ -19,10 +19,11 @@ use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, ServerContext, SimulatedInput, module_catalog, router,
 };
+use hubergamof_manager::strip::{FixedClock, SimulatedProbe};
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, FileChooser,
-    FileChosen, ImageSize, ImageUploaded,
+    ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DialAssignment, ErrorCode,
+    FileChooser, FileChosen, ImageSize, ImageUploaded,
 };
 use image::{ImageFormat, Rgba, RgbaImage};
 use tempfile::TempDir;
@@ -74,6 +75,8 @@ impl Api {
             store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
             renderer: Arc::new(Renderer::new().unwrap()),
             registry: Arc::clone(&registry),
+            wall_clock: Arc::new(FixedClock::default()),
+            system: Arc::new(SimulatedProbe::default()),
         };
         let catalog = module_catalog(&registry, &services.renderer);
         let store = services.store.clone();
@@ -534,16 +537,14 @@ async fn imports_fit_the_target_model_both_ways() {
     assert_eq!(on_mk2.model, DeviceModel::Mk2);
     assert_eq!(on_mk2.dials, Vec::new());
     assert_eq!(on_mk2.home, plus.home);
-    assert!(
-        on_mk2.modules.len() < plus.modules.len(),
-        "dial-only modules dropped"
-    );
+    // Every default module is on the home page: none is dropped.
+    assert_eq!(on_mk2.modules.len(), plus.modules.len());
     assert_eq!(api.config(NO_DIALS).await, on_mk2);
 
     let response = import(&api, SECOND, export(&api, NO_DIALS).await).await;
     assert_eq!(response.status(), StatusCode::OK);
     let back: DeviceConfig = serde_json::from_slice(&bytes(response).await).unwrap();
-    assert_eq!(back.dials, vec![None; 4]);
+    assert_eq!(back.dials, vec![DialAssignment::None; 4]);
     assert_eq!(back.home, plus.home);
     api.stop().await;
 }
