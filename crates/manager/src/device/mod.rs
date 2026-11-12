@@ -55,18 +55,6 @@ pub trait DeckBackend: Send + Sync {
     /// Draws `image` on the touch strip with its left edge at `x`.
     async fn set_strip_region(&self, x: u32, image: Arc<RgbaImage>) -> Result<(), DeviceError>;
 
-    /// Draws `image` on touch strip zone `zone` (the zone above dial `zone`).
-    async fn set_touch_zone_image(
-        &self,
-        zone: u8,
-        image: Arc<RgbaImage>,
-    ) -> Result<(), DeviceError> {
-        let layout = StripLayout::for_device(self.info()).ok_or(DeviceError::NoTouchStrip)?;
-        let x = layout.zone_x(zone)?;
-        layout.check_zone_image(&image)?;
-        self.set_strip_region(x, image).await
-    }
-
     /// Sets the display brightness, in percent (`0..=100`).
     async fn set_brightness(&self, percent: u8) -> Result<(), DeviceError>;
 

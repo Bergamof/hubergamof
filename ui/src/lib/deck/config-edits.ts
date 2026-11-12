@@ -1,9 +1,12 @@
 import type {
 	CatalogModule,
 	DeviceConfig,
+	DialAssignment,
+	DialFunctionId,
 	JsonValue,
 	ModuleInstance,
-	ModuleInstanceId
+	ModuleInstanceId,
+	StripConfig
 } from '#lib/generated/index.js';
 import { cloneJson } from './json.js';
 
@@ -46,11 +49,16 @@ export function createInstance(config: DeviceConfig, module: CatalogModule): Mod
 	};
 }
 
+/** The instance a dial function belongs to, if the dial has a function of a module. */
+export function dialInstance(assignment: DialAssignment): ModuleInstanceId | undefined {
+	return assignment.kind === 'module' ? assignment.instance : undefined;
+}
+
 function usedInstanceIds(config: DeviceConfig): Set<ModuleInstanceId> {
-	return new Set<ModuleInstanceId>([
-		...config.home,
-		...config.dials.filter((id): id is ModuleInstanceId => id !== null)
-	]);
+	const onDials = config.dials
+		.map(dialInstance)
+		.filter((id): id is ModuleInstanceId => id !== undefined);
+	return new Set<ModuleInstanceId>([...config.home, ...onDials]);
 }
 
 /** Drops the instances no longer placed on a key or a dial. */
@@ -109,24 +117,53 @@ export function moveKey(from: number, to: number): ConfigEdit {
 	};
 }
 
-/** What a dial gets: nothing, an instance already configured, or a new instance of a module. */
+/**
+ * What a dial gets: nothing, a function of the manager, a function of an instance already
+ * configured, or a function of a new instance of a module.
+ */
 export type DialChoice =
 	| { type: 'none' }
-	| { type: 'existing'; id: ModuleInstanceId }
-	| { type: 'new'; module: CatalogModule };
+	| { type: 'navigation' }
+	| { type: 'contextual' }
+	| { type: 'existing'; instance: ModuleInstanceId; function: DialFunctionId }
+	| { type: 'new'; module: CatalogModule; function: DialFunctionId };
 
 /** Assigns dial `dial` according to `choice`; an out-of-range dial changes nothing. */
 export function assignDial(dial: number, choice: DialChoice): ConfigEdit {
 	return (config) => {
 		if (dial < 0 || dial >= config.dials.length) return config;
 		const added = choice.type === 'new' ? createInstance(config, choice.module) : undefined;
-		const id = added?.id ?? (choice.type === 'existing' ? choice.id : null);
+		const assignment = assignmentOf(choice, added);
 		return withoutUnusedInstances({
 			...config,
 			modules: added ? [...config.modules, added] : config.modules,
-			dials: config.dials.map((current, index) => (index === dial ? id : current))
+			dials: config.dials.map((current, index) => (index === dial ? assignment : current))
 		});
 	};
+}
+
+function assignmentOf(choice: DialChoice, added: ModuleInstance | undefined): DialAssignment {
+	switch (choice.type) {
+		case 'navigation':
+			return { kind: 'navigation' };
+		case 'contextual':
+			return { kind: 'contextual' };
+		case 'existing':
+			return { kind: 'module', instance: choice.instance, function: choice.function };
+		case 'new':
+			return {
+				kind: 'module',
+				instance: added?.id ?? choice.module.kind,
+				function: choice.function
+			};
+		default:
+			return { kind: 'none' };
+	}
+}
+
+/** Changes some options of the touch strip. */
+export function setStrip(changes: Partial<StripConfig>): ConfigEdit {
+	return (config) => ({ ...config, strip: { ...config.strip, ...changes } });
 }
 
 /** Replaces the label and settings of instance `id`. */

@@ -3,7 +3,7 @@ import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { DEMO_COMPOSE_FILE, expect, test } from './demo-manager.js';
 
 // Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
-// keys Audio, Pomodoro, Docker, IntelliJ, Claude; dials Horloge, Audio, Pomodoro, Navigation.
+// keys Audio, Pomodoro, Docker, IntelliJ, Claude; dials Volume, Pomodoro, Contexte, Navigation.
 
 function key(page: Page, name: string | RegExp): Locator {
 	return page.getByRole('button', { name: typeof name === 'string' ? `Touche ${name}` : name });
@@ -39,11 +39,12 @@ test('affiche les touches et les molettes de la configuration', async ({ page })
 	]);
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
 	await expectNames(page.getByRole('button', { name: /^Molette / }), [
-		'Molette 1 : Horloge',
-		'Molette 2 : Audio',
-		'Molette 3 : Pomodoro',
+		'Molette 1 : Contrôle du volume',
+		'Molette 2 : Contrôle du pomodoro',
+		'Molette 3 : Fonction contextuelle',
 		'Molette 4 : Navigation'
 	]);
+	await expect(page.getByRole('button', { name: /^Bande tactile/ })).toBeVisible();
 });
 
 test('ajoute une touche depuis le catalogue', async ({ page }) => {
@@ -247,22 +248,55 @@ test('supprime une touche après confirmation et place le focus sur sa voisine',
 	await expect(page.getByText('Touche supprimée.')).toBeAttached();
 });
 
-test('change le module d’une molette seulement sur « Affecter »', async ({ page }) => {
+test('change la fonction d’une molette seulement sur « Affecter »', async ({ page }) => {
 	await open(page);
-	await dial(page, '1 : Horloge').click();
-	const module = page.getByLabel('Module', { exact: true });
-	await module.focus();
-	await page.keyboard.press('ArrowDown');
-	await page.keyboard.press('ArrowDown');
-	await expect(dial(page, '1 : Horloge')).toBeVisible();
-	await expect(page.getByText(/« Horloge » n’est placé nulle part ailleurs/)).toBeVisible();
-
-	await dial(page, '4 : Navigation').click();
-	await page.getByLabel('Module', { exact: true }).selectOption({ label: 'Audio (touche 1)' });
+	await dial(page, '3 : Fonction contextuelle').click();
+	const fonction = page.getByLabel('Fonction', { exact: true });
+	await fonction.focus();
+	await page.keyboard.press('ArrowUp');
+	// Browsing the list changes nothing.
+	await expect(dial(page, '3 : Fonction contextuelle')).toBeVisible();
 	await page.getByRole('button', { name: 'Affecter' }).click();
-	await expect(dial(page, '4 : Audio')).toBeVisible();
-	await expect(dial(page, '1 : Horloge')).toBeVisible();
-	await expect(page.getByLabel('Libellé')).toHaveAttribute('placeholder', 'Audio');
+	await expect(dial(page, '3 : Navigation')).toBeVisible();
+
+	// A new module is created with its function, and deleted when nothing uses it any more.
+	await fonction.selectOption({ label: 'Contrôle du pomodoro (Pomodoro, nouveau)' });
+	await page.getByRole('button', { name: 'Affecter' }).click();
+	await expect(dial(page, '3 : Contrôle du pomodoro')).toBeVisible();
+	await expect(page.getByLabel('Libellé')).toHaveAttribute('placeholder', 'Pomodoro');
+	await fonction.selectOption({ label: 'Rien' });
+	await expect(page.getByText(/« Pomodoro » n’est placé nulle part ailleurs/)).toBeVisible();
+	await page.getByRole('button', { name: 'Affecter' }).click();
+	await expect(dial(page, '3 : Rien')).toBeVisible();
+});
+
+test('règle la bande tactile, avec un aperçu qui suit', async ({ page, context }) => {
+	await open(page);
+	await page.getByRole('button', { name: /^Bande tactile/ }).click();
+	await expect(page.getByRole('heading', { name: 'Bande tactile' })).toBeVisible();
+	const preview = page.locator('svg[data-theme-preview]');
+	await expect(preview).toHaveAttribute('data-theme-preview', 'light');
+
+	await page.getByRole('radio', { name: 'Sombre' }).check();
+	await expect(preview).toHaveAttribute('data-theme-preview', 'dark');
+	await page.getByLabel('Afficher les secondes').uncheck();
+	await expect(preview.getByText('42', { exact: true })).toHaveCount(0);
+	await page.getByLabel(/Actualisation des mesures/).selectOption('5');
+
+	// The edits are sent one after the other: a second tab shows the last one once saved.
+	const other = await context.newPage();
+	await open(other);
+	await other.getByRole('button', { name: /^Bande tactile/ }).click();
+	await expect(other.getByLabel(/Actualisation des mesures/)).toHaveValue('5');
+	await other.close();
+
+	// Kept by the manager.
+	await page.reload();
+	await expect(key(page, '1 : Audio')).toBeVisible();
+	await page.getByRole('button', { name: /^Bande tactile/ }).click();
+	await expect(page.getByRole('radio', { name: 'Sombre' })).toBeChecked();
+	await expect(page.getByLabel('Afficher les secondes')).not.toBeChecked();
+	await expect(page.getByLabel(/Actualisation des mesures/)).toHaveValue('5');
 });
 
 test('synchronise les modifications entre deux onglets', async ({ page, context }) => {
@@ -355,7 +389,7 @@ test('refuse un fichier qui n’est pas une image lisible', async ({ page }) => 
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
 });
 
-test('exporte la configuration puis la réimporte après confirmation', async ({ page }) => {
+test('exporte la configuration puis la réimporte après confirmation', async ({ page, context }) => {
 	await open(page);
 	await key(page, '1 : Audio').click();
 	await keyImageInput(page).setInputFiles({
@@ -374,6 +408,11 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await key(page, /^Touche 5 : Claude/).click();
 	await removeSelectedKey(page);
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	// Importing while the removal is still being saved would race with it: wait until saved.
+	const other = await context.newPage();
+	await open(other);
+	await expect(other.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	await other.close();
 
 	const importInput = page.locator('input[type="file"][accept*=".zip"]');
 	await importInput.setInputFiles(archive);
@@ -421,6 +460,14 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 		await key(page, '2 : Pomodoro').click();
 		await expectAccessible(page, 'touche sélectionnée');
+
+		await page.getByRole('button', { name: /^Bande tactile/ }).click();
+		await expectAccessible(page, 'bande tactile sélectionnée');
+		await page.getByRole('radio', { name: 'Sombre' }).check();
+		await expectAccessible(page, 'bande tactile sombre');
+		await dial(page, '2 : Contrôle du pomodoro').click();
+		await expectAccessible(page, 'molette sélectionnée');
+		await key(page, '2 : Pomodoro').click();
 
 		const work = page.getByLabel('Durée du travail');
 		await work.fill('0');

@@ -1,42 +1,37 @@
 <!--
 @component
-Dials of the device, left to right: a knob drawing and the name of the module assigned to each
-(its icon is already on the touch strip above).
+Dials of the device, left to right: a knob drawing and the name of the function given to each
+(what each dial reminds is drawn on the touch strip above).
 -->
 <script lang="ts">
-	import type { CatalogModule, ModuleInstance } from '#lib/generated/index.js';
-	import { instanceName } from '#lib/deck/display.js';
+	import type { DialSummary } from '#lib/deck/display.js';
 	import DialKnob from './DialKnob.svelte';
 
 	interface Props {
-		/** Instance of each dial (`null`: none assigned). */
-		dials: readonly (ModuleInstance | null)[];
-		moduleOf: (kind: string) => CatalogModule | undefined;
+		dials: readonly DialSummary[];
 		selected: number | undefined;
 		onselect: (index: number) => void;
 	}
 
-	let { dials, moduleOf, selected, onselect }: Props = $props();
+	let { dials, selected, onselect }: Props = $props();
 </script>
 
-<ol class="grid gap-3" style:grid-template-columns="repeat({dials.length}, minmax(0, 6rem))">
-	{#each dials as instance, index (index)}
-		{@const module = instance ? moduleOf(instance.kind) : undefined}
-		{@const name = instance ? instanceName(instance, module) : 'Aucun module'}
+<ol class="grid gap-3" style:grid-template-columns="repeat({dials.length}, minmax(0, 8rem))">
+	{#each dials as dial, index (index)}
 		<li>
 			<button
 				type="button"
-				title={name}
+				title={dial.name}
 				aria-current={selected === index ? 'true' : undefined}
 				class="surface-button"
 				onclick={() => onselect(index)}
 			>
-				<DialKnob assigned={instance !== null} />
+				<DialKnob assigned={dial.assigned} />
 				<span class="w-full truncate">
 					<span class="sr-only">Molette {index + 1} :</span>
-					{name}
+					{dial.name}
 				</span>
-				{#if instance && !module}
+				{#if dial.missing}
 					<span class="text-xs text-device-muted">indisponible</span>
 				{/if}
 			</button>

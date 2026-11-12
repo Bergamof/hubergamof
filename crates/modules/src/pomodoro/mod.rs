@@ -1,10 +1,10 @@
-//! Pomodoro module: work sessions and breaks on a key, a dial and its touch
-//! strip zone.
+//! Pomodoro module: work sessions and breaks on a key, a dial function and
+//! the pomodoro widget of the touch strip.
 //!
-//! - Key or dial press: starts or pauses the time (dial: when the menu is
-//!   closed).
-//! - Dial rotation: opens a menu (pause or resume, skip to the next step,
-//!   reset), browsed by rotating, confirmed by a press, closed after
+//! - Key press: starts or pauses the time.
+//! - Press of a dial assigned [`CONTROL_FUNCTION`]: opens a menu (pause or
+//!   resume, skip to the next step, reset), shown as a popup over the strip,
+//!   browsed by rotating, confirmed by a press, closed after
 //!   [`MENU_TIMEOUT`] without input.
 //! - When a step ends, the next one is prepared stopped (unless `autoStart`)
 //!   and the key asks for attention; a silent desktop notification and a
@@ -15,7 +15,6 @@
 //! step whose end passed while the machine slept is over on waking up. The
 //! state lives in memory only: a restart begins a new cycle.
 
-mod icons;
 mod menu;
 mod settings;
 mod timer;
@@ -25,10 +24,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, EventSender, GaugeContent, GaugeLevel, GaugeSteps, ImageData, KeyContent, KeyState,
-    MenuZone, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, NavigationView, Notification as StripNotification, Rgb, ZoneAccent,
-    ZoneContent,
+    Command, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, ImageData, KeyContent,
+    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    ModuleEvent, ModuleFactory, Notification as StripNotification, PomodoroState, PomodoroWidget,
+    PopupEntry, PopupIcon, Rgb, StripPopup, StripWidget,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -45,6 +44,10 @@ use timer::{Phase, StepEnd, Timer};
 /// Kind of the pomodoro module.
 pub const POMODORO_KIND: &str = "pomodoro";
 
+/// Dial function: pressing opens the menu of the pomodoro, rotating browses
+/// it and pressing again runs the selected entry.
+pub const CONTROL_FUNCTION: &str = "control";
+
 /// Icon of the module: a timer.
 const ICON_SVG: &str = asset!("pomodoro");
 
@@ -52,6 +55,15 @@ const ICON_SVG: &str = asset!("pomodoro");
 pub(crate) const TICK_PERIOD: Duration = Duration::from_secs(1);
 
 const SECONDS_PER_MINUTE: u64 = 60;
+
+/// Name of a work step on the touch strip.
+const WORK_NAME: &str = "Focus";
+const READY_SUFFIX: &str = "prêt";
+const PAUSED_SUFFIX: &str = "pause";
+
+const MENU_HINT: &str = "Menu pomodoro";
+const CHOOSE_HINT: &str = "Choisir";
+const VALIDATE_HINT: &str = "Valider";
 
 /// Creates [`Pomodoro`] instances.
 #[derive(Clone)]
@@ -84,15 +96,17 @@ fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: POMODORO_KIND.into(),
         name: "Pomodoro".into(),
-        description: "Sessions de travail et pauses. Touche et clic de la molette : \
-                      lancent ou mettent en pause. Tourner la molette ouvre le menu \
-                      (pause, passer, remise à zéro)."
+        description: "Sessions de travail et pauses. Touche : lance ou met en pause. \
+                      Minuteur affiché sur la bande tactile."
             .into(),
-        capabilities: ModuleCapabilities {
-            key: true,
-            dial: true,
-            touch_zone: true,
-        },
+        capabilities: ModuleCapabilities { key: true },
+        dial_functions: vec![DialFunctionDescriptor {
+            id: CONTROL_FUNCTION.into(),
+            name: "Contrôle du pomodoro".into(),
+            description: "Appuyer ouvre le menu (pause, passer, remise à zéro), tourner \
+                          choisit, appuyer valide."
+                .into(),
+        }],
         settings: settings::fields(),
     }
 }
@@ -242,23 +256,48 @@ impl Pomodoro {
         }
     }
 
-    /// The menu: the step and the time left as its title, the entries
-    /// below, in the colours of the step.
-    fn menu_zone(&self, menu: Menu) -> ZoneContent {
+    /// Whether none of the current step has elapsed.
+    fn is_untouched(&self) -> bool {
+        self.timer.elapsed(self.now()).is_zero()
+    }
+
+    /// The widget of the touch strip: step, time left and progress.
+    fn widget(&self) -> PomodoroWidget {
         let timer = &self.timer;
-        let title = format!(
-            "{} · {}",
-            phase_name(timer.phase()),
-            format_remaining(timer.remaining(self.now()))
-        );
-        let untouched = timer.elapsed(self.now()).is_zero();
+        let remaining = timer.remaining(self.now());
+        let name = step_name(timer);
+        let (state, label) = if timer.is_running() {
+            let state = if timer.phase().is_break() {
+                PomodoroState::Resting
+            } else {
+                PomodoroState::Working
+            };
+            (state, name)
+        } else if self.is_untouched() {
+            (PomodoroState::Ready, format!("{name} · {READY_SUFFIX}"))
+        } else {
+            (PomodoroState::Paused, format!("{name} · {PAUSED_SUFFIX}"))
+        };
+        PomodoroWidget::new(
+            state,
+            label,
+            format_remaining(remaining),
+            displayed_progress(timer.step_duration(), remaining),
+        )
+    }
+
+    /// The popup of the open menu: one entry per [`MENU_ENTRIES`].
+    fn popup(&self, menu: Menu) -> StripPopup {
         let entries = MENU_ENTRIES
             .iter()
-            .map(|&entry| entry_label(entry, timer, untouched).to_owned())
+            .map(|&entry| {
+                PopupEntry::new(
+                    entry_icon(entry, &self.timer),
+                    entry_label(entry, &self.timer, self.is_untouched()),
+                )
+            })
             .collect();
-        ZoneContent::Menu(
-            MenuZone::new(title, entries, menu.selected_index()).with_accent(step_accent(timer)),
-        )
+        StripPopup::new(CONTROL_FUNCTION.into(), entries, menu.selected_index())
     }
 }
 
@@ -285,25 +324,25 @@ impl Module for Pomodoro {
         Vec::new()
     }
 
-    async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
+    async fn on_dial_rotate(&mut self, function: &DialFunctionId, ticks: i32) -> Vec<Command> {
         let now = self.now();
-        match &mut self.menu {
-            Some(menu) => menu.rotate(ticks, now),
-            None => self.menu = Some(Menu::open(now)),
+        if let (CONTROL_FUNCTION, Some(menu)) = (function.0.as_str(), &mut self.menu) {
+            menu.rotate(ticks, now);
         }
-        self.sync_ticker();
         Vec::new()
     }
 
-    async fn on_dial_press(&mut self) -> Vec<Command> {
-        if let Some(menu) = self.menu {
-            // No ✓: the zone changing is the result.
-            self.run_menu_entry(menu.selected());
-            Vec::new()
-        } else {
-            self.toggle();
-            Vec::new()
+    async fn on_dial_press(&mut self, function: &DialFunctionId) -> Vec<Command> {
+        if function.0 != CONTROL_FUNCTION {
+            return Vec::new();
         }
+        if let Some(menu) = self.menu {
+            self.run_menu_entry(menu.selected());
+        } else {
+            self.menu = Some(Menu::open(self.now()));
+            self.sync_ticker();
+        }
+        Vec::new()
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
@@ -313,13 +352,25 @@ impl Module for Pomodoro {
         Vec::new()
     }
 
-    fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
-        if let Some(menu) = self.menu {
-            return Some(self.menu_zone(menu));
+    fn dial_hint(&self, function: &DialFunctionId) -> DialHint {
+        if function.0 != CONTROL_FUNCTION {
+            return DialHint::none();
         }
-        let remaining = self.timer.remaining(self.now());
-        let gauge = zone_gauge(&self.timer, remaining);
-        Some(ZoneContent::Gauge(gauge))
+        if self.menu.is_some() {
+            DialHint::none()
+                .rotating(CHOOSE_HINT)
+                .pressing(VALIDATE_HINT)
+        } else {
+            DialHint::none().pressing(MENU_HINT)
+        }
+    }
+
+    fn strip_widget(&self) -> Option<StripWidget> {
+        Some(StripWidget::Pomodoro(self.widget()))
+    }
+
+    fn strip_popup(&self) -> Option<StripPopup> {
+        self.menu.map(|menu| self.popup(menu))
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
@@ -398,12 +449,15 @@ fn displayed_seconds(remaining: Duration) -> u64 {
     remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
 }
 
-/// Gauge level matching the time shown: the bar moves when the displayed
-/// second changes and is identical in between, so that the zone image is
-/// rendered once per second.
-fn displayed_level(step: Duration, remaining: Duration) -> GaugeLevel {
+/// Progress matching the time shown, in thousandths of the step: it moves
+/// when the displayed second changes and is identical in between, so that the
+/// strip is drawn once per second.
+fn displayed_progress(step: Duration, remaining: Duration) -> u16 {
     let shown_remaining = Duration::from_secs(displayed_seconds(remaining));
-    GaugeLevel::from_fraction(millis(step.saturating_sub(shown_remaining)), millis(step))
+    let done = millis(step.saturating_sub(shown_remaining));
+    let total = millis(step).max(1);
+    let permille = done.saturating_mul(u64::from(PomodoroWidget::FULL_PROGRESS)) / total;
+    u16::try_from(permille).unwrap_or(PomodoroWidget::FULL_PROGRESS)
 }
 
 fn millis(duration: Duration) -> u64 {
@@ -419,50 +473,34 @@ fn phase_name(phase: Phase) -> &'static str {
     }
 }
 
-/// Red of the tomato icon, from its light to its deep end: work.
-const WORK_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0xFF, 0x8A, 0x6B), Rgb(0xF0, 0x3E, 0x2F));
-/// Green of the break notification, from its light to its deep end: breaks.
-const BREAK_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0x6E, 0xE7, 0xB7), Rgb(0x16, 0xA0, 0x6E));
-
-/// Colours of the current step: red for work, green for a break.
-fn step_accent(timer: &Timer) -> ZoneAccent {
-    if timer.phase().is_break() {
-        BREAK_ACCENT
-    } else {
-        WORK_ACCENT
+/// Name of the step on the touch strip: `Focus 2/4` for work, the name of
+/// the break otherwise.
+fn step_name(timer: &Timer) -> String {
+    match timer.phase() {
+        Phase::Work => format!("{WORK_NAME} {}/{}", timer.pomodoro(), timer.cycle_length()),
+        Phase::ShortBreak | Phase::LongBreak => phase_name(timer.phase()).to_owned(),
     }
-}
-
-/// Ring gauge of the zone: the step as the title, the time left, the share of
-/// the step elapsed, the pomodoros of the cycle as dots, and a glyph telling
-/// work from break from a stopped timer.
-fn zone_gauge(timer: &Timer, remaining: Duration) -> GaugeContent {
-    let phase = timer.phase();
-    let glyph = match (timer.is_running(), phase.is_break()) {
-        (false, _) => &icons::PAUSED,
-        (true, true) => &icons::BREAK,
-        (true, false) => &icons::WORK,
-    };
-    GaugeContent::new(
-        phase_name(phase),
-        format_remaining(remaining),
-        displayed_level(timer.step_duration(), remaining),
-    )
-    .with_accent(step_accent(timer))
-    .with_glyph(ImageData::clone(glyph))
-    .with_steps(GaugeSteps::new(timer.pomodoro(), timer.cycle_length()))
-    .with_dimmed(!timer.is_running())
 }
 
 /// Label of `entry`; `untouched` tells that none of the step has elapsed.
 fn entry_label(entry: MenuEntry, timer: &Timer, untouched: bool) -> &'static str {
     match entry {
-        MenuEntry::Toggle if timer.is_running() => "Mettre en pause",
+        MenuEntry::Toggle if timer.is_running() => "Pause",
         MenuEntry::Toggle if untouched => "Démarrer",
         MenuEntry::Toggle => "Reprendre",
         MenuEntry::Skip if timer.phase().is_break() => "Passer au travail",
         MenuEntry::Skip => "Passer à la pause",
         MenuEntry::Reset => "Remise à zéro",
+    }
+}
+
+/// Icon of `entry`: the action it runs given the timer.
+fn entry_icon(entry: MenuEntry, timer: &Timer) -> PopupIcon {
+    match entry {
+        MenuEntry::Toggle if timer.is_running() => PopupIcon::Pause,
+        MenuEntry::Toggle => PopupIcon::Play,
+        MenuEntry::Skip => PopupIcon::Skip,
+        MenuEntry::Reset => PopupIcon::Reset,
     }
 }
 

@@ -8,8 +8,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    Command, ImageData, ItemId, KeyContent, ModuleContext, ModuleDescriptor, ModuleEvent,
-    NavigationView, PageContent, PageId, ZoneContent,
+    Command, DialFunctionId, DialHint, ImageData, ItemId, KeyContent, ModuleContext,
+    ModuleDescriptor, ModuleEvent, PageContent, PageId, StripPopup, StripWidget,
 };
 
 /// Longest time the host lets a handler run (see [`Module`]) before
@@ -63,13 +63,6 @@ pub trait ModuleFactory: Send + Sync {
         None
     }
 
-    /// Whether pressing the dial an instance is assigned to dismisses the
-    /// notification shown over the touch strip (it stays unread), the other
-    /// dials being inert meanwhile. Only the navigation module does.
-    fn dismisses_notifications(&self) -> bool {
-        false
-    }
-
     /// Settings of a new instance. Defaults to the default value of every
     /// setting of [`ModuleFactory::descriptor`].
     fn default_settings(&self) -> Value {
@@ -109,14 +102,14 @@ pub trait ModuleFactory: Send + Sync {
 /// external modules (WASM or sub-process), so that the host only ever drives
 /// this trait.
 ///
-/// An instance may appear as a key on the home page, open pages of keys, be
-/// assigned to a dial and draw the touch strip zone above that dial. Every
-/// method has a default doing nothing, except
+/// An instance may appear as a key on the home page, open pages of keys, offer
+/// functions to the dials ([`ModuleDescriptor::dial_functions`]) and show a
+/// widget on the touch strip. Every method has a default doing nothing, except
 /// [`Module::update_settings`]: implement only the surfaces the module uses.
 ///
 /// # Getters
 ///
-/// `key`, `page` and `zone` are called on every redraw and must be cheap and
+/// `key`, `page`, `dial_hint`, `strip_widget` and `strip_popup` are called on every redraw and must be cheap and
 /// side-effect free: they describe the current state, the host compares the
 /// result with what is displayed and only rewrites what changed.
 ///
@@ -169,15 +162,17 @@ pub trait Module: Send {
         Vec::new()
     }
 
-    /// Handles a rotation of the dial the instance is assigned to, by
-    /// `ticks` steps (positive clockwise).
-    async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
-        let _ = ticks;
+    /// Handles a rotation, by `ticks` steps (positive clockwise), of a dial
+    /// assigned the function `function` of this instance.
+    async fn on_dial_rotate(&mut self, function: &DialFunctionId, ticks: i32) -> Vec<Command> {
+        let _ = (function, ticks);
         Vec::new()
     }
 
-    /// Handles a press of the dial the instance is assigned to.
-    async fn on_dial_press(&mut self) -> Vec<Command> {
+    /// Handles a press of a dial assigned the function `function` of this
+    /// instance.
+    async fn on_dial_press(&mut self, function: &DialFunctionId) -> Vec<Command> {
+        let _ = function;
         Vec::new()
     }
 
@@ -188,10 +183,22 @@ pub trait Module: Send {
         Vec::new()
     }
 
-    /// Content of the touch strip zone above the dial the instance is
-    /// assigned to; `None` leaves the zone black.
-    fn zone(&self, nav: &NavigationView) -> Option<ZoneContent> {
-        let _ = nav;
+    /// Reminder of what the dials assigned `function` do in the current
+    /// state, shown under the touch strip. Nothing by default.
+    fn dial_hint(&self, function: &DialFunctionId) -> DialHint {
+        let _ = function;
+        DialHint::none()
+    }
+
+    /// What the instance shows on the touch strip, in the place the host
+    /// gives to its kind of widget; `None` shows nothing.
+    fn strip_widget(&self) -> Option<StripWidget> {
+        None
+    }
+
+    /// The menu to show as a card over the touch strip, `None` while none
+    /// is open. A notification covers it while it lasts.
+    fn strip_popup(&self) -> Option<StripPopup> {
         None
     }
 

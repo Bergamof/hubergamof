@@ -5,20 +5,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hubergamof_module_api::{
-    Command, Feedback, ModuleInstanceId, ModuleSurface, NavigationView, PageContent, PageId,
+    Command, DialFunctionId, Feedback, ModuleInstanceId, ModuleSurface, PageContent, PageId,
     RedrawHandle,
 };
-use hubergamof_protocol::{DeviceConfig, ModuleInstance};
+use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 
 use super::feedback::{Marks, Surface};
-use super::frame::{
-    DialFace, Frame, FrameKey, KeyFace, KeyTarget, NotificationFace, StripOverlay, ZoneContentFace,
-    ZoneFace,
-};
+use super::frame::{Frame, FrameKey, KeyFace, KeyTarget, NotificationFace, StripOverlay};
 use super::handle::{REQUEST_CAPACITY, Request};
 use super::instances::{Call, Instances, Outcome, RoutedEvent};
 use super::layout::KeyGrid;
@@ -28,8 +25,12 @@ use super::notifications::NotificationCenter;
 use super::painter::Painter;
 use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
+use crate::config_store::check_config;
 use crate::device::{self, DeckBackend, InputEvent, StripLayout};
 use crate::render::ImageSource;
+use crate::strip::SystemHistory;
+
+mod strip;
 
 /// Longest wait for the screens to be blanked when the engine stops.
 const BLANK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,10 +48,9 @@ const MAX_BATCHED_WAKES: usize = 32;
 pub(crate) const HOLD_THRESHOLD: Duration = Duration::from_millis(400);
 
 /// How long after the first drawing the whole touch strip is written once
-/// more: a device just connected may lose the zone images written while it
-/// starts, and zones whose content never changes (everything but the clock)
-/// would otherwise stay blank until the next change.
-const STRIP_SETTLE_DELAY: Duration = Duration::from_millis(400);
+/// more: a device just connected may lose the images written while it
+/// starts.
+pub(super) const STRIP_SETTLE_DELAY: Duration = Duration::from_millis(400);
 
 /// A key being held down, and what releasing it does.
 struct HeldKey {
@@ -115,6 +115,10 @@ enum Wake {
     HoldElapsed,
     /// The device had time to settle: the strip is written again.
     StripSettled,
+    /// The time shown on the strip changes.
+    ClockTick,
+    /// The system measures of the strip are due.
+    SystemSample,
     RequestsClosed,
     Disconnected,
 }
@@ -129,7 +133,8 @@ pub struct DeviceEngine {
     instances: Instances,
     nav: Navigation,
     grid: KeyGrid,
-    zone_count: usize,
+    /// Whether the device has a touch strip.
+    has_strip: bool,
     painter: Painter,
     marks: Marks,
     notifications: NotificationCenter,
@@ -141,6 +146,10 @@ pub struct DeviceEngine {
     /// When the strip is written again after the first drawing, `None`
     /// once done (or without a strip).
     strip_settle: Option<Instant>,
+    /// Recent system measures, for the curves of the strip.
+    system: SystemHistory,
+    /// When the system is measured next, `None` without a strip.
+    next_system_sample: Option<Instant>,
     inputs: broadcast::Receiver<InputEvent>,
     requests: Option<mpsc::Receiver<Request>>,
     events: mpsc::Receiver<RoutedEvent>,
@@ -183,9 +192,8 @@ impl DeviceEngine {
         let redraw = Arc::new(Notify::new());
         let notify = Arc::clone(&redraw);
         let (events_tx, events) = mpsc::channel(MODULE_EVENT_CAPACITY);
-        let zone_count = StripLayout::for_device(deck.info())
-            .map_or(0, |layout| usize::from(layout.zone_count()));
-        let notifications = NotificationCenter::new(zone_count > 0);
+        let has_strip = StripLayout::for_device(deck.info()).is_some();
+        let notifications = NotificationCenter::new(has_strip);
         let mut instances = Instances::new(
             Arc::clone(&services.registry),
             RedrawHandle::new(move || notify.notify_one()),
@@ -201,7 +209,7 @@ impl DeviceEngine {
         let handle = EngineHandle::new(deck.info().clone(), requests_tx, live_rx, config_rx);
         let mut engine = Self {
             grid: KeyGrid::new(&deck.info().capabilities),
-            zone_count,
+            has_strip,
             painter: Painter::new(deck.as_ref()),
             deck,
             services,
@@ -214,6 +222,8 @@ impl DeviceEngine {
             applied_brightness,
             last_frame: None,
             strip_settle: None,
+            system: SystemHistory::default(),
+            next_system_sample: None,
             inputs,
             requests: Some(requests),
             events,
@@ -221,10 +231,11 @@ impl DeviceEngine {
             live,
             config_tx,
         };
-        engine.refresh().await?;
-        if zone_count > 0 {
+        if has_strip {
             engine.strip_settle = Some(Instant::now() + STRIP_SETTLE_DELAY);
+            engine.sample_system().await;
         }
+        engine.refresh().await?;
         Ok((engine, handle))
     }
 
@@ -260,7 +271,8 @@ impl DeviceEngine {
                     }
                     self.refresh_or_log().await;
                 }
-                Wake::Redraw => self.refresh_or_log().await,
+                // The strip changed (clock) or a module asked for a redraw.
+                Wake::Redraw | Wake::ClockTick => self.refresh_or_log().await,
                 Wake::NotificationStep => {
                     self.notifications.step(Instant::now());
                     self.refresh_or_log().await;
@@ -277,7 +289,11 @@ impl DeviceEngine {
                 }
                 Wake::StripSettled => {
                     self.strip_settle = None;
-                    self.painter.forget_zones();
+                    self.painter.forget_strip();
+                    self.refresh_or_log().await;
+                }
+                Wake::SystemSample => {
+                    self.sample_system().await;
                     self.refresh_or_log().await;
                 }
                 Wake::RequestsClosed => self.requests = None,
@@ -290,6 +306,7 @@ impl DeviceEngine {
 
     async fn next_wake(&mut self) -> Wake {
         loop {
+            let clock_tick = self.next_clock_tick();
             let wake = tokio::select! {
                 request = recv_request(self.requests.as_mut()) => {
                     Some(request.map_or(Wake::RequestsClosed, Wake::Request))
@@ -311,6 +328,8 @@ impl DeviceEngine {
                     Some(Wake::HoldElapsed)
                 }
                 () = sleep_until(self.strip_settle) => Some(Wake::StripSettled),
+                () = sleep_until(clock_tick) => Some(Wake::ClockTick),
+                () = sleep_until(self.next_system_sample) => Some(Wake::SystemSample),
             };
             if let Some(wake) = wake {
                 return wake;
@@ -354,9 +373,9 @@ impl DeviceEngine {
             InputEvent::KeyDown(index) => self.hold_key(index),
             InputEvent::KeyUp(index) => self.release_key(index).await,
             InputEvent::DialRotate { index, ticks } => {
-                self.dial_input(index, Call::DialRotate(ticks)).await;
+                self.dial_input(index, DialInput::Rotate(ticks)).await;
             }
-            InputEvent::DialDown(index) => self.dial_input(index, Call::DialPress).await,
+            InputEvent::DialDown(index) => self.dial_input(index, DialInput::Press).await,
             InputEvent::TouchTap { .. } => self.tap_strip(),
             // Releases of dials act on nothing; swipes are not used yet.
             InputEvent::DialUp(_) | InputEvent::TouchSwipe { .. } | InputEvent::Disconnected => {}
@@ -434,24 +453,50 @@ impl DeviceEngine {
             .await;
     }
 
-    async fn dial_input(&mut self, dial: u8, call: Call) {
+    async fn dial_input(&mut self, dial: u8, input: DialInput) {
+        let assignment = self
+            .config
+            .dials
+            .get(usize::from(dial))
+            .cloned()
+            .unwrap_or(DialAssignment::None);
         if self.notifications.shown().is_some() {
             // Under a notification only the navigation dial acts: its press
             // removes the notification, leaving it unread.
-            if matches!(call, Call::DialPress) && self.is_navigation_dial(dial) {
+            if matches!(input, DialInput::Press) && assignment == DialAssignment::Navigation {
                 self.notifications.dismiss(Instant::now());
             }
             return;
         }
-        let Some(module) = self.config.dials.get(usize::from(dial)).cloned().flatten() else {
-            return;
-        };
-        let surfaces = if usize::from(dial) < self.zone_count {
-            vec![Surface::Zone(dial)]
-        } else {
-            Vec::new()
-        };
-        self.run_handler(&module, call, surfaces).await;
+        match assignment {
+            DialAssignment::Navigation => self.navigate(input),
+            DialAssignment::Module { instance, function } => {
+                let surfaces = if self.has_strip {
+                    vec![Surface::Dial(dial)]
+                } else {
+                    Vec::new()
+                };
+                self.run_handler(&instance, input.into_call(function), surfaces)
+                    .await;
+            }
+            // Contextual function: not defined yet, nothing to do.
+            DialAssignment::Contextual | DialAssignment::None => {}
+        }
+    }
+
+    /// The navigation dial: turning scrolls the rows of the displayed page,
+    /// pressing goes back one page.
+    fn navigate(&mut self, input: DialInput) {
+        match input {
+            DialInput::Rotate(ticks) => self.scroll_rows(ticks),
+            DialInput::Press => self.nav.back(),
+        }
+    }
+
+    fn scroll_rows(&mut self, delta: i32) {
+        let items = self.page_item_count();
+        let row = self.grid.scroll(self.nav.row(), delta, items);
+        self.nav.set_row(row);
     }
 
     /// A tap on the strip reads the notification on it, unless the label of a
@@ -464,18 +509,6 @@ impl DeviceEngine {
         if !covered {
             self.notifications.read(Instant::now());
         }
-    }
-
-    fn is_navigation_dial(&self, dial: u8) -> bool {
-        let Some(module) = self.config.dials.get(usize::from(dial)).cloned().flatten() else {
-            return false;
-        };
-        self.config
-            .modules
-            .iter()
-            .find(|instance| instance.id == module)
-            .and_then(|instance| self.services.registry.get(&instance.kind))
-            .is_some_and(|factory| factory.dismisses_notifications())
     }
 
     async fn handle_event(&mut self, routed: RoutedEvent) {
@@ -501,25 +534,25 @@ impl DeviceEngine {
     }
 
     /// Surfaces showing the outcome of an event of `module`: its home key
-    /// when displayed, or else the zones of its dials.
+    /// when displayed, or else the reminders of its dials.
     fn event_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
         let home = self.displayed(vec![Self::home_surface(module)]);
         if home.is_empty() {
-            self.zone_surfaces(module)
+            self.displayed_dials(module)
         } else {
             home
         }
     }
 
     /// Surfaces alerting that `module` was replaced by a placeholder: its
-    /// home key if it is on the home page, or else the zones of its dials.
+    /// home key if it is on the home page, or else the reminders of its dials.
     /// Not limited to the last frame: the replacement happens while the next
     /// one is composed.
     fn failure_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
         if self.config.home.contains(module) {
             vec![Self::home_surface(module)]
         } else {
-            self.dial_zones(module)
+            self.dial_surfaces(module)
         }
     }
 
@@ -527,22 +560,23 @@ impl DeviceEngine {
         Surface::Key(KeyTarget::Home(module.clone()))
     }
 
-    /// The zones of the dials `module` is assigned to.
-    fn dial_zones(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+    /// The reminders of the dials assigned a function of `module`.
+    fn dial_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+        if !self.has_strip {
+            return Vec::new();
+        }
         self.config
             .dials
             .iter()
             .zip(0_u8..)
-            .filter(|(assigned, dial)| {
-                assigned.as_ref() == Some(module) && usize::from(*dial) < self.zone_count
-            })
-            .map(|(_, dial)| Surface::Zone(dial))
+            .filter(|(assigned, _)| assigned.instance() == Some(module))
+            .map(|(_, dial)| Surface::Dial(dial))
             .collect()
     }
 
-    /// The displayed zones of the dials `module` is assigned to.
-    fn zone_surfaces(&self, module: &ModuleInstanceId) -> Vec<Surface> {
-        self.displayed(self.dial_zones(module))
+    /// The displayed reminders of the dials assigned a function of `module`.
+    fn displayed_dials(&self, module: &ModuleInstanceId) -> Vec<Surface> {
+        self.displayed(self.dial_surfaces(module))
     }
 
     /// Surfaces of `module` named by a [`Command::FeedbackOn`], among those
@@ -550,7 +584,7 @@ impl DeviceEngine {
     fn named_surfaces(&self, module: &ModuleInstanceId, surface: ModuleSurface) -> Vec<Surface> {
         match surface {
             ModuleSurface::HomeKey => self.displayed(vec![Self::home_surface(module)]),
-            ModuleSurface::Zone => self.zone_surfaces(module),
+            ModuleSurface::Dial => self.displayed_dials(module),
             ModuleSurface::Item { page, item } => {
                 self.displayed(vec![Surface::Key(KeyTarget::Item {
                     module: module.clone(),
@@ -578,10 +612,10 @@ impl DeviceEngine {
                 .keys
                 .iter()
                 .any(|key| key.target.as_ref() == Some(target)),
-            Surface::Zone(dial) => frame
-                .dials
-                .get(usize::from(*dial))
-                .is_some_and(|dial| dial.zone.is_some()),
+            Surface::Dial(dial) => frame
+                .strip
+                .as_ref()
+                .is_some_and(|strip| usize::from(*dial) < strip.hints.len()),
         });
         surfaces
     }
@@ -605,11 +639,7 @@ impl DeviceEngine {
                 Command::Back => self.nav.back(),
                 Command::BackTo(page) => self.nav.back_to(source, &page),
                 Command::GoHome => self.nav.home(),
-                Command::ScrollRows(delta) => {
-                    let items = self.page_item_count();
-                    let row = self.grid.scroll(self.nav.row(), delta, items);
-                    self.nav.set_row(row);
-                }
+                Command::ScrollRows(delta) => self.scroll_rows(delta),
                 Command::Feedback(feedback) => self.show_feedback(surfaces, feedback),
                 Command::FeedbackOn(surface, feedback) => {
                     let named = self.named_surfaces(source, surface);
@@ -635,12 +665,19 @@ impl DeviceEngine {
     /// saved, the configuration is always adopted; a brightness the device
     /// refuses is only logged, and tried again with the next configuration.
     async fn apply_config(&mut self, config: DeviceConfig) -> Result<DeviceConfig, EngineError> {
+        // Bounds first: the modules are checked on lists of a known size.
+        check_config(&config, self.deck.info())?;
         check_modules(&self.services.registry, &config)?;
         let store = self.services.store.clone();
         let info = self.deck.info().clone();
         let saved = spawn_blocking(move || store.save(&info, config)).await??;
         self.instances.sync(&saved.modules);
+        let refresh_changed =
+            saved.strip.system_refresh_seconds != self.config.strip.system_refresh_seconds;
         self.config = saved.clone();
+        if refresh_changed && self.has_strip {
+            self.schedule_system_sample();
+        }
         self.config_tx.send_replace(saved.clone());
         tracing::info!(serial = %self.serial(), revision = saved.revision, "configuration applied");
         if self.applied_brightness != Some(saved.brightness) {
@@ -808,23 +845,11 @@ impl DeviceEngine {
                     .unwrap_or_default()
             })
             .collect();
-        let mut view = NavigationView::new(
-            page.title.clone(),
-            row,
-            row_count,
-            u32::from(self.deck.info().capabilities.key_rows),
-        );
-        if let Some(current) = self.nav.current() {
-            view = view
-                .on_page(
-                    current.module.clone(),
-                    current.page.clone(),
-                    self.nav.depth(),
-                )
-                .with_parent_title(self.parent_title());
-        }
+        let strip = self
+            .has_strip
+            .then(|| self.strip_face(&page.title, row, self.grid.max_row(page.keys.len()) + 1));
         Frame {
-            dials: self.dial_faces(&view),
+            strip,
             page: PageSummary {
                 id: page.id,
                 title: page.title,
@@ -894,27 +919,27 @@ impl DeviceEngine {
             .to_owned()
     }
 
-    fn dial_faces(&mut self, view: &NavigationView) -> Vec<DialFace> {
-        let dial_count = self.deck.info().capabilities.dial_count;
-        let mut dials = Vec::with_capacity(usize::from(dial_count));
-        for dial in 0..dial_count {
-            let module = self.config.dials.get(usize::from(dial)).cloned().flatten();
-            let zone = (usize::from(dial) < self.zone_count).then(|| {
-                let content = module.as_ref().and_then(|id| self.instances.zone(id, view));
-                ZoneFace {
-                    content: ZoneContentFace::from_content(content),
-                    feedback: self.marks.zone(dial),
-                }
-            });
-            dials.push(DialFace { module, zone });
-        }
-        dials
-    }
-
     /// Destroys the modules and blanks the screens.
     async fn blank(&mut self) {
         self.instances.clear();
         device::blank(self.deck.as_ref(), BLANK_TIMEOUT).await;
+    }
+}
+
+/// What a dial did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DialInput {
+    Rotate(i32),
+    Press,
+}
+
+impl DialInput {
+    /// The call of a module handler for a dial assigned `function`.
+    fn into_call(self, function: DialFunctionId) -> Call {
+        match self {
+            Self::Rotate(ticks) => Call::DialRotate(function, ticks),
+            Self::Press => Call::DialPress(function),
+        }
     }
 }
 

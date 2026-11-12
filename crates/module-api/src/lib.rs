@@ -1,8 +1,9 @@
 //! API implemented by HuBergamof modules.
 //!
 //! A module drives part of a Stream Deck: the key that represents it on the
-//! home page, the pages of keys it opens, the dial it may be assigned to and
-//! the touch strip zone above that dial. Built-in modules
+//! home page, the pages of keys it opens, the functions it offers to the
+//! dials and what it shows on the touch strip (a widget, a popup menu).
+//! The strip as a whole belongs to the host. Built-in modules
 //! (`hubergamof-modules`) use this API exactly like future external modules
 //! will.
 //!
@@ -15,7 +16,7 @@
 //!   in the configuration UI), validates its settings and creates one
 //!   [`Module`] per configured instance.
 //! - The host owns the instance, calls its input handlers and reads its
-//!   surfaces ([`Module::key`], [`Module::page`], [`Module::zone`]) whenever
+//!   surfaces ([`Module::key`], [`Module::page`], [`Module::strip_widget`]) whenever
 //!   it redraws. Handlers return [`Command`]s to navigate or show the outcome
 //!   of an action ([`Feedback`]).
 //! - Work that takes time (I/O, processes, timers) runs in background tasks
@@ -37,9 +38,9 @@
 //!
 //! use async_trait::async_trait;
 //! use hubergamof_module_api::{
-//!     Command, EventSender, Feedback, KeyContent, Module, ModuleCapabilities, ModuleContext,
-//!     ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, SettingField, SettingKind,
-//!     TaskScope, parse_settings,
+//!     Command, DialFunctionDescriptor, DialFunctionId, EventSender, Feedback, KeyContent, Module,
+//!     ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent,
+//!     ModuleFactory, SettingField, SettingKind, TaskScope, parse_settings,
 //! };
 //! use serde::Deserialize;
 //! use serde_json::{Value, json};
@@ -68,7 +69,7 @@
 //!         vec![Command::Feedback(Feedback::Ok)]
 //!     }
 //!
-//!     async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
+//!     async fn on_dial_rotate(&mut self, _function: &DialFunctionId, ticks: i32) -> Vec<Command> {
 //!         self.count += i64::from(ticks) * self.step;
 //!         Vec::new()
 //!     }
@@ -104,7 +105,12 @@
 //!             kind: "counter".into(),
 //!             name: "Compteur".into(),
 //!             description: "Compte les appuis.".into(),
-//!             capabilities: ModuleCapabilities { key: true, dial: true, touch_zone: false },
+//!             capabilities: ModuleCapabilities { key: true },
+//!             dial_functions: vec![DialFunctionDescriptor {
+//!                 id: "count".into(),
+//!                 name: "Compteur".into(),
+//!                 description: "Tourner change le compte.".into(),
+//!             }],
 //!             settings: vec![SettingField {
 //!                 key: "step".into(),
 //!                 label: "Pas".into(),
@@ -132,7 +138,7 @@
 //! let mut counter = factory.create(ctx, &factory.default_settings())?;
 //! counter.on_key_press().await;
 //! counter.update_settings(&json!({ "step": 10 }))?;
-//! counter.on_dial_rotate(2).await;
+//! counter.on_dial_rotate(&"count".into(), 2).await;
 //! assert_eq!(counter.key().label.as_deref(), Some("21"));
 //! counter.on_event(Box::new(Reset)).await;
 //! assert_eq!(counter.key().label.as_deref(), Some("0"));
@@ -150,19 +156,19 @@ mod images;
 mod module;
 mod notification;
 mod paths;
+mod strip;
 #[cfg(feature = "testing")]
 pub mod testing;
 
-pub use catalog::{ChoiceOption, ModuleCapabilities, ModuleDescriptor, SettingField, SettingKind};
-pub use command::{Command, Feedback, ModuleSurface};
-pub use content::{
-    CalendarLeaf, ClockFace, ClockSeconds, GaugeContent, GaugeLevel, GaugeShape, GaugeSteps,
-    ImageData, KeyContent, KeyState, MAX_MENU_ENTRIES, MAX_ZONE_LINES, MenuZone, NavigationView,
-    PageContent, PageItem, PageZone, RowPosition, ZoneAccent, ZoneContent,
+pub use catalog::{
+    ChoiceOption, DialFunctionDescriptor, ModuleCapabilities, ModuleDescriptor, SettingField,
+    SettingKind,
 };
+pub use command::{Command, Feedback, ModuleSurface};
+pub use content::{ImageData, KeyContent, KeyState, PageContent, PageItem};
 pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
 pub use file_entries::{EntryNaming, FileChooser, FileEntry, FileFilter, is_hidden_control};
-pub use ids::{ItemId, ModuleInstanceId, ModuleKind, PageId};
+pub use ids::{DialFunctionId, ItemId, ModuleInstanceId, ModuleKind, PageId};
 pub use images::{ImageFuture, ImageLibrary, MAX_IMAGE_NAME_LENGTH, is_safe_image_name};
 pub use module::{HANDLER_BUDGET, Module, ModuleError, ModuleFactory, parse_settings};
 pub use notification::{
@@ -170,3 +176,7 @@ pub use notification::{
     UnreadNotifications,
 };
 pub use paths::{expand_home, is_setting_path};
+pub use strip::{
+    DialHint, MAX_POPUP_ENTRIES, PomodoroState, PomodoroWidget, PopupEntry, PopupIcon, StripPopup,
+    StripWidget, VolumeWidget,
+};

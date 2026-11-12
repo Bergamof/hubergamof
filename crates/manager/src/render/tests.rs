@@ -1,19 +1,10 @@
 use std::io::Cursor;
 
-use hubergamof_module_api::{CalendarLeaf, ClockFace, GaugeContent, GaugeLevel};
-
-use super::clock::{CLOCK_ACCENT_COLOR, CLOCK_DEEP_ACCENT_COLOR};
-
 use super::*;
 
 const KEY: ImageSize = ImageSize {
     width: 120,
     height: 120,
-};
-
-const ZONE: ImageSize = ImageSize {
-    width: 200,
-    height: 100,
 };
 
 const RED: Rgba<u8> = Rgba([255, 0, 0, 255]);
@@ -289,19 +280,11 @@ fn a_countdown_does_not_push_icons_out_of_the_cache() {
     // Shown, then shown again after a page visit.
     let first = render_icon();
     assert!(Arc::ptr_eq(&first, &render_icon()));
-    // 300 seconds of a pomodoro: a new key and a new gauge every second.
+    // 300 seconds of a pomodoro: a new key every second.
     for second in 0..300_u32 {
         let label = format!("{:02}:{:02} Travail", second / 60, second % 60);
         subject
             .render_key(&KeyRequest::new(KEY, None, Some(&label)))
-            .unwrap();
-        let level = GaugeLevel::from_fraction(u64::from(second), 1500);
-        subject
-            .render_gauge(
-                &GaugeContent::new("Travail · 1/4", label, level),
-                ZONE,
-                DEFAULT_BACKGROUND,
-            )
             .unwrap();
     }
     assert!(Arc::ptr_eq(&first, &render_icon()), "the icon was evicted");
@@ -323,24 +306,6 @@ fn data_url_is_a_png_encoded_once() {
         url,
         format!("data:image/png;base64,{}", BASE64.encode(&*png))
     );
-}
-
-#[test]
-fn zone_lines_are_rendered_centred() {
-    let subject = renderer();
-    let lines = vec!["Volume".to_owned(), "42 %".to_owned()];
-    let rendered = subject
-        .render_zone(&lines, ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    let image = rendered.image();
-    assert_eq!(image.dimensions(), (200, 100));
-    let lit_columns: Vec<u32> = (0..200)
-        .filter(|x| (0..100).any(|y| image.get_pixel(*x, y).0[0] > 128))
-        .collect();
-    let first = *lit_columns.first().unwrap();
-    let last = *lit_columns.last().unwrap();
-    assert!(first > 10 && last < 190);
-    assert!((i64::from(first) + i64::from(last) - 200).abs() < 12);
 }
 
 #[test]
@@ -382,139 +347,40 @@ fn keys_needing_attention_get_an_orange_background_and_no_frame() {
     assert_eq!(*image.get_pixel(60, 30), ATTENTION_BACKGROUND);
 }
 
+/// `value` as a pixel coordinate (tests only draw within a few hundred).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn pixel_at(value: f32) -> u32 {
+    value.max(0.0) as u32
+}
+
 #[test]
 fn feedback_marks_are_drawn_over_the_surface() {
     let renderer = renderer();
     let base = renderer
-        .render_zone(&["12:00".into()], ZONE, DEFAULT_BACKGROUND)
+        .render_key(&KeyRequest::new(KEY, None, Some("12:00")))
         .unwrap();
+    // The marks fill 70 % of the smaller side, centred.
+    let side = f32_from(KEY.width.min(KEY.height)) * FEEDBACK_MARK_RATIO;
+    let at = |ratio_x: f32, ratio_y: f32| {
+        let left = (f32_from(KEY.width) - side) / 2.0;
+        let top = (f32_from(KEY.height) - side) / 2.0;
+        (
+            pixel_at(left + side * ratio_x),
+            pixel_at(top + side * ratio_y),
+        )
+    };
     let ok = renderer.with_feedback(&base, Feedback::Ok).unwrap();
-    let centre = ok.image().get_pixel(100, 25).0;
-    assert!(centre[1] > centre[0] && centre[1] > centre[2], "{centre:?}");
+    let (x, y) = at(0.12, 0.5);
+    let disc = ok.image().get_pixel(x, y).0;
+    assert!(disc[1] > disc[0] && disc[1] > disc[2], "{disc:?}");
     let alert = renderer.with_feedback(&base, Feedback::Alert).unwrap();
-    let tip = alert.image().get_pixel(82, 71).0;
-    assert!(tip[0] > 150 && tip[1] < 100, "{tip:?}");
-    assert_eq!(alert.image().dimensions(), (200, 100));
+    let (x, y) = at(0.2, 0.85);
+    let triangle = alert.image().get_pixel(x, y).0;
+    assert!(triangle[0] > 150 && triangle[1] < 100, "{triangle:?}");
+    assert_eq!(alert.image().dimensions(), (KEY.width, KEY.height));
     assert!(alert.image().pixels().all(|pixel| pixel.0[3] == u8::MAX));
     // The base image is left untouched.
     assert_ne!(base.image().as_ref(), ok.image().as_ref());
-}
-
-#[test]
-fn zone_images_fit_the_zone() {
-    let rendered = renderer().render_image(ZONE, &png(10, 10, RED)).unwrap();
-    assert_eq!(rendered.image().dimensions(), (200, 100));
-    assert_eq!(*rendered.image().get_pixel(100, 50), RED);
-    assert_eq!(*rendered.image().get_pixel(10, 50), DEFAULT_BACKGROUND);
-}
-
-/// Filled part of a bar gauge that asks for no colour of its own.
-const GAUGE_FILL_COLOR: Rgba<u8> = Rgba([0x3b, 0xa1, 0xff, u8::MAX]);
-
-fn gauge(level: f32) -> GaugeContent {
-    GaugeContent::new("Volume", "25 %", GaugeLevel::from_ratio(level))
-}
-
-/// Row crossing the middle of the gauge bar on a [`ZONE`].
-const GAUGE_BAR_ROW: u32 = 84;
-
-/// Columns of `row` painted with `color`.
-fn columns_with(image: &RgbaImage, row: u32, color: Rgba<u8>) -> usize {
-    (0..image.width())
-        .filter(|x| *image.get_pixel(*x, row) == color)
-        .count()
-}
-
-/// Columns of [`GAUGE_BAR_ROW`] painted with `color`.
-fn bar_columns(image: &RgbaImage, color: Rgba<u8>) -> usize {
-    columns_with(image, GAUGE_BAR_ROW, color)
-}
-
-#[test]
-fn gauge_bars_are_filled_in_proportion_to_the_level() {
-    let renderer = renderer();
-    let quarter = renderer
-        .render_gauge(&gauge(0.25), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    let image = quarter.image();
-    assert_eq!(image.dimensions(), (200, 100));
-    let filled = bar_columns(image, GAUGE_FILL_COLOR);
-    let track = bar_columns(image, GAUGE_TRACK_COLOR);
-    // 4 % margins: a 184 px track, a quarter of it filled from the left.
-    assert_eq!((filled, track), (46, 138));
-    assert_eq!(*image.get_pixel(8, GAUGE_BAR_ROW), GAUGE_FILL_COLOR);
-    assert_eq!(*image.get_pixel(7, GAUGE_BAR_ROW), DEFAULT_BACKGROUND);
-
-    let empty = renderer
-        .render_gauge(&gauge(0.0), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert_eq!(bar_columns(empty.image(), GAUGE_FILL_COLOR), 0);
-    let full = renderer
-        .render_gauge(&gauge(1.0), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert_eq!(bar_columns(full.image(), GAUGE_FILL_COLOR), 184);
-}
-
-#[test]
-fn gauge_text_is_drawn_above_the_bar() {
-    let rendered = renderer()
-        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    let image = rendered.image();
-    let lit_rows = |rows: std::ops::Range<u32>| {
-        rows.filter(|y| (0..200).any(|x| image.get_pixel(x, *y).0[0] > 200))
-            .count()
-    };
-    // Title in the top quarter, value in the middle, nothing white in the bar.
-    assert!(lit_rows(0..25) > 5);
-    assert!(lit_rows(30..70) > 10);
-    assert_eq!(lit_rows(80..90), 0);
-    assert!(image.pixels().all(|pixel| pixel.0[3] == u8::MAX));
-}
-
-#[test]
-fn dimmed_gauges_are_greyed_out() {
-    let renderer = renderer();
-    let normal = renderer
-        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    let dimmed = renderer
-        .render_gauge(&gauge(0.5).with_dimmed(true), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert_eq!(bar_columns(dimmed.image(), GAUGE_FILL_COLOR), 0);
-    assert_eq!(bar_columns(dimmed.image(), GAUGE_DIMMED_FILL_COLOR), 92);
-    let brightest = |image: &RgbaImage| image.pixels().map(|pixel| pixel.0[0]).max().unwrap();
-    assert_eq!(brightest(normal.image()), u8::MAX);
-    assert!(brightest(dimmed.image()) <= DIMMED_TEXT_COLOR.0[0]);
-}
-
-#[test]
-fn identical_gauges_hit_the_cache() {
-    let renderer = renderer();
-    let first = renderer
-        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    let again = renderer
-        .render_gauge(&gauge(0.5), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert!(Arc::ptr_eq(&first, &again));
-    let other = renderer
-        .render_gauge(&gauge(0.6), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert!(!Arc::ptr_eq(&first, &other));
-    assert_eq!(renderer.cached_len(), 2);
-    assert!(
-        renderer
-            .render_gauge(
-                &gauge(0.5),
-                ImageSize {
-                    width: 0,
-                    height: 100
-                },
-                DEFAULT_BACKGROUND
-            )
-            .is_err()
-    );
 }
 
 #[test]
@@ -558,257 +424,4 @@ fn checked_images_are_drawn_but_not_remembered() {
         renderer.check_image(b"plain text", size),
         Err(RenderError::UnsupportedFormat)
     ));
-}
-
-fn clock_face(seconds: Option<u8>, with_leaf: bool) -> ClockFace {
-    let mut face = ClockFace::new("14:05").with_caption("semaine 45");
-    if let Some(seconds) = seconds {
-        face = face.with_seconds(seconds);
-    }
-    if with_leaf {
-        face = face.with_leaf(CalendarLeaf::new("mer.", 5, "nov."));
-    }
-    face
-}
-
-fn render_clock(face: &ClockFace) -> Arc<Rendered> {
-    render_clock_on(face, ZONE)
-}
-
-fn render_clock_on(face: &ClockFace, size: ImageSize) -> Arc<Rendered> {
-    renderer()
-        .render_clock(face, size, DEFAULT_BACKGROUND)
-        .unwrap()
-}
-
-/// Row crossing the middle of the seconds track on a zone of `size`.
-fn clock_track_row(size: ImageSize) -> u32 {
-    size.height * 85 / 100
-}
-
-fn count_pixels(image: &RgbaImage, color: Rgba<u8>) -> usize {
-    image.pixels().filter(|pixel| **pixel == color).count()
-}
-
-/// Zones of the strips of the supported devices, and a tiny one.
-const CLOCK_ZONES: [ImageSize; 3] = [
-    ZONE,
-    ImageSize {
-        width: 120,
-        height: 60,
-    },
-    ImageSize {
-        width: 248,
-        height: 58,
-    },
-];
-
-#[test]
-fn clock_leaf_is_drawn_only_with_a_date() {
-    let with_leaf = render_clock(&clock_face(None, true));
-    let without_leaf = render_clock(&clock_face(None, false));
-    assert_eq!(with_leaf.image().dimensions(), (200, 100));
-    // The middle of the band of the leaf, left of its weekday.
-    assert_eq!(
-        *with_leaf.image().get_pixel(16, 21),
-        CLOCK_DEEP_ACCENT_COLOR
-    );
-    assert_eq!(
-        count_pixels(without_leaf.image(), CLOCK_DEEP_ACCENT_COLOR),
-        0
-    );
-    // The time is centred in the room the leaf leaves, or in the whole zone.
-    let time_centre = |image: &RgbaImage| {
-        let lit: Vec<u32> = (80..image.width())
-            .filter(|x| (35..65).any(|y| image.get_pixel(*x, y).0[0] > 128))
-            .collect();
-        lit.iter().sum::<u32>() / u32::try_from(lit.len()).unwrap()
-    };
-    assert!(time_centre(with_leaf.image()) > 127);
-    assert!(time_centre(without_leaf.image()) < 127);
-}
-
-#[test]
-fn clock_leaf_texts_are_capitalised_by_the_renderer() {
-    let lines = |weekday: &str, month: &str| {
-        let face = ClockFace::new("14:05").with_leaf(CalendarLeaf::new(weekday, 5, month));
-        let rendered = render_clock(&face);
-        rendered.image().clone()
-    };
-    assert_eq!(lines("mer.", "nov."), lines("MER.", "NOV."));
-}
-
-#[test]
-fn clock_seconds_track_fills_one_sixtieth_per_second() {
-    let row = clock_track_row(ZONE);
-    let filled = |seconds| {
-        let rendered = render_clock(&clock_face(Some(seconds), true));
-        columns_with(rendered.image(), row, CLOCK_ACCENT_COLOR)
-    };
-    // A 108 px track. The quarter marks cut a column out of the fill and the
-    // rounded end is anti-aliased: a few pixels of tolerance.
-    let mut previous = None;
-    for seconds in [0_u8, 15, 29, 45, 59] {
-        let count = filled(seconds);
-        let expected = 108 * usize::from(seconds) / 60;
-        // Each of the marks passed costs a column on both of its sides.
-        let tolerance = 4 + 2 * usize::from(seconds / 15);
-        assert!(
-            count.abs_diff(expected) <= tolerance,
-            "{seconds} s: {count} columns, expected about {expected}"
-        );
-        assert!(previous.is_none_or(|previous| count > previous));
-        previous = Some(count);
-    }
-    assert_eq!(filled(0), 0);
-}
-
-#[test]
-fn clock_seconds_beyond_the_minute_are_drawn_as_the_last_second() {
-    let renderer = renderer();
-    let render = |seconds| {
-        renderer
-            .render_clock(&clock_face(Some(seconds), true), ZONE, DEFAULT_BACKGROUND)
-            .unwrap()
-    };
-    assert!(Arc::ptr_eq(&render(255), &render(59)));
-}
-
-#[test]
-fn clock_without_seconds_has_no_track_and_no_superscript() {
-    let row = clock_track_row(ZONE);
-    let without = render_clock(&clock_face(None, true));
-    assert_eq!(columns_with(without.image(), row, CLOCK_ACCENT_COLOR), 0);
-    assert_eq!(columns_with(without.image(), row, GAUGE_TRACK_COLOR), 0);
-    assert_eq!(count_pixels(without.image(), CLOCK_ACCENT_COLOR), 0);
-    // With seconds, the superscript is drawn in the accent colour.
-    let with = render_clock(&clock_face(Some(9), true));
-    let superscript_pixels = (150..200)
-        .flat_map(|x| (15..45).map(move |y| (x, y)))
-        .filter(|(x, y)| {
-            let pixel = with.image().get_pixel(*x, *y);
-            pixel.0[1] > 150 && pixel.0[0] < 150
-        })
-        .count();
-    assert!(superscript_pixels > 20, "{superscript_pixels}");
-}
-
-/// Whether the two outermost columns on each side of `image` are black.
-fn edges_are_black(image: &RgbaImage) -> bool {
-    let last = image.width() - 1;
-    [0, 1, last - 1, last]
-        .into_iter()
-        .all(|x| (0..image.height()).all(|y| image.get_pixel(x, y).0[..3] == [0, 0, 0]))
-}
-
-#[test]
-fn clock_widest_times_stay_inside_every_zone() {
-    for size in CLOCK_ZONES {
-        for time in ["00:00", "12:08", "20:08"] {
-            for seconds in [0, 59] {
-                let face = ClockFace::new(time)
-                    .with_seconds(seconds)
-                    .with_leaf(CalendarLeaf::new("mer.", 28, "sept."))
-                    .with_caption("semaine 53");
-                let rendered = render_clock_on(&face, size);
-                assert!(
-                    edges_are_black(rendered.image()),
-                    "{time}:{seconds} on {size:?}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn clock_texts_are_shortened_to_their_room() {
-    let renderer = renderer();
-    let face = ClockFace::new("23:59:59:59")
-        .with_seconds(59)
-        .with_leaf(CalendarLeaf::new("mercredi", 28, "septembre"))
-        .with_caption("semaine 53 d'une année bien trop longue");
-    let lines = renderer.clock_lines(&face, ZONE).unwrap();
-    assert!(lines.iter().any(|line| line.text.ends_with('…')));
-    for line in &lines {
-        let width = renderer
-            .text
-            .width(&line.text, line.size, line.weight)
-            .unwrap();
-        // The widest room is the time area, 54 % of the zone.
-        assert!(width <= 108.0, "{:?} is {width} px wide", line.text);
-    }
-}
-
-#[test]
-fn clock_faces_without_leaf_or_caption_are_drawn() {
-    for size in CLOCK_ZONES {
-        for (with_leaf, with_caption) in
-            [(false, false), (false, true), (true, false), (true, true)]
-        {
-            let mut face = ClockFace::new("14:05").with_seconds(30);
-            if with_leaf {
-                face = face.with_leaf(CalendarLeaf::new("mer.", 5, "nov."));
-            }
-            if with_caption {
-                face = face.with_caption("semaine 45");
-            }
-            let rendered = render_clock_on(&face, size);
-            assert_eq!(
-                (rendered.image().width(), rendered.image().height()),
-                (size.width, size.height)
-            );
-            assert!(edges_are_black(rendered.image()), "{face:?} on {size:?}");
-        }
-    }
-}
-
-#[test]
-fn tiny_zones_are_drawn_without_panicking() {
-    let tiny = ImageSize {
-        width: 8,
-        height: 4,
-    };
-    let rendered = render_clock_on(&clock_face(Some(59), true), tiny);
-    assert_eq!(rendered.image().dimensions(), (8, 4));
-}
-
-#[test]
-fn identical_clock_faces_hit_the_cache() {
-    let renderer = renderer();
-    let render = |seconds| {
-        renderer
-            .render_clock(&clock_face(Some(seconds), true), ZONE, DEFAULT_BACKGROUND)
-            .unwrap()
-    };
-    let first = render(7);
-    assert!(Arc::ptr_eq(&first, &render(7)));
-    assert!(!Arc::ptr_eq(&first, &render(8)));
-    assert_eq!(renderer.cached_len(), 2);
-}
-
-#[test]
-fn clock_zones_of_no_size_are_refused() {
-    let renderer = renderer();
-    for (width, height) in [(0, 100), (200, 0)] {
-        assert!(matches!(
-            renderer.render_clock(
-                &clock_face(None, true),
-                ImageSize { width, height },
-                DEFAULT_BACKGROUND
-            ),
-            Err(RenderError::InvalidSize)
-        ));
-    }
-}
-
-#[test]
-fn gauge_bars_take_the_accent_of_the_content() {
-    let green = hubergamof_module_api::ZoneAccent::solid(hubergamof_module_api::Rgb(0, 0xc0, 0));
-    let rendered = renderer()
-        .render_gauge(&gauge(0.5).with_accent(green), ZONE, DEFAULT_BACKGROUND)
-        .unwrap();
-    assert_eq!(
-        *rendered.image().get_pixel(8, GAUGE_BAR_ROW),
-        Rgba([0, 0xc0, 0, u8::MAX])
-    );
 }

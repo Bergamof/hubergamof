@@ -9,6 +9,11 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Bande tactile globale : le gestionnaire dessine lui-même l'heure (secondes en option), la date et la semaine, la charge CPU, mémoire et swap (courbes d'historique, alerte au-delà d'un seuil), le chemin de la page, le volume et le pomodoro avec sa barre de progression, thème clair ou sombre. Sous la bande, un rappel par molette dit ce qu'elle fait (rotation, clic) et suit l'état (« Muet » puis « Réactiver »). Le menu du pomodoro s'ouvre en fenêtre flottante au-dessus de sa molette et se ferme seul après 5 s.
+- Configuration : chaque molette reçoit une fonction (Rien, Navigation, Contextuelle, ou une fonction offerte par un module : « Contrôle du volume », « Contrôle du pomodoro »), par défaut Volume, Pomodoro, Contexte, Navigation. La fonction contextuelle est assignable mais n'est pas encore définie.
+- Interface : aperçu de la bande (valeurs d'exemple, suit le thème et les options) ; un clic ouvre ses réglages (thème, secondes, barre de progression du pomodoro, courbes, période des mesures, seuil d'alerte).
+- API des modules : fonctions de molette (`ModuleDescriptor::dial_functions`), rappels (`Module::dial_hint`), widgets de bande (`StripWidget`) et menu flottant (`StripPopup`). Contrat : schéma de configuration 2 (`DialAssignment`, `StripConfig`) ; `liveState` porte l'image de la bande entière.
+
 - Lanceur de bureau « HuBergamof » avec son icône (paquets et `make install`) : il relance le service utilisateur quand le gestionnaire a été fermé (quitté, arrêté, abandonné par systemd après des échecs), puis ouvre l'interface. Nouvelle sous-commande `hubergamof open` (démarrage par D-Bus, sans shell).
 - Release : workflow manuel `release.yml` (depuis `main` seulement, CI verte exigée sur le commit, attente d'un run en cours). Version déduite des Conventional Commits depuis le dernier tag (1.0.0 au début, forçage d'un patch possible), release GitHub avec note, `SHA256SUMS` et tag `vX.Y.Z`.
 - Paquets `.deb` (Ubuntu 24.04+, Debian 12+) et pacman (Manjaro, Arch) : dépendances obligatoires dont `pactl` et un serveur de son, optionnelles pour Docker, portail de fichiers et extension de tray ; règle udev, service utilisateur activé pour tous et démarré dans les sessions graphiques ouvertes. Cibles `make package*`, job CI `package` (lintian, installation en conteneurs Ubuntu et Arch).
@@ -23,6 +28,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Bande tactile : les points de navigation n'apparaissent que si des lignes sont cachées, un par position de défilement (le dernier point est donc atteignable) ; le rappel « Retour » de la molette Navigation disparaît sur l'accueil ; le menu du pomodoro se rafraîchit plus vite (seules les colonnes modifiées de la bande sont écrites, ombre du menu moins coûteuse) et son rappel devient « Menu pomodoro » (un rappel seul dispose de toute la largeur de sa molette).
+- Interface : les touches sont centrées au-dessus des molettes.
 - Module Docker : le ✓/⚠ d'un `up`/`down` sur un service s'affiche sur son entrée (conteneur ou service sans conteneur) et non sur la touche du projet.
 
 - `make dev` : le sélecteur de fichier compose ouvre maintenant la vraie boîte du bureau. `--demo` le remplaçait par une réponse fixe ; cette réponse est devenue l'option `--file-chooser-answer <fichier>`, que seuls les tests e2e passent.
@@ -44,6 +51,9 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Les configurations existantes sont migrées à la lecture (schéma 1 vers 2) : les molettes Audio et Pomodoro gardent leur fonction, la molette Navigation devient la fonction du même nom, les autres (Horloge…) deviennent « Rien ».
+- Pomodoro : le clic de la molette ouvre le menu (tourner ne l'ouvre plus) ; un clic sur une entrée la valide.
+- Configuration d'exemple : fonctions de molette et réglages de la bande.
 - Interface : les réglages d'un module s'enregistrent sans bouton « Appliquer » : un choix (case, liste, fichier validé ou retiré) tout de suite, un texte à la fin de la saisie (1 s sans frappe, sortie du champ ou Entrée), jamais pendant la frappe. Échap rétablit la valeur enregistrée d'un champ ; un champ invalide garde sa saisie et son erreur sans bloquer les autres, et un message avertit qu'elle est perdue si l'on passe à une autre touche ou molette. Une modification faite dans un autre onglet met à jour les champs non touchés (le bandeau « Recharger » disparaît).
 - Interne : `docker/mod.rs` découpé en `settings`, `pages`, `actions`, `operation` et `render` ; la portée service d'une action compose est un paramètre (`ComposeScope`) et non plus un champ de `ComposeTarget` ; `FileEntry` lit seul l'ancien format (liste de chemins) ; `ConfigStore` prend les descripteurs des modules par un trait propre (`ModuleDescriptors`) au lieu de méthodes à corps vide de `ConfigDefaults`, `prepare_import` en est une méthode.
 - Module Docker, page « Up » : les variantes se nomment Up, Rebuild, Pull et No start ; page « Down » : Down et Avec volumes (aussi pour le `down` d'un seul service).
@@ -109,3 +119,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Retour ✓/⚠ affiché seulement sur une surface visible.
 - Sécurité : hors `--demo`, le serveur refuse les appuis simulés (`InputRefused`) ; les actions ne viennent que de l'appareil.
 - Service systemd lié à `graphical-session.target` ; image Docker sans `libhidapi`, lancée en `--demo --no-tray` (`--network host`).
+
+### Supprimé
+
+- Modules Horloge et Navigation : leurs rôles sont tenus par la bande (heure, date, page) et par la fonction de molette Navigation. API des modules : `Module::zone`, `ZoneContent` (jauges, horloge, page, menu de zone), `NavigationView`, `ModuleFactory::dismisses_notifications`, `ModuleCapabilities::dial` et `touch_zone`. Contrat : `LiveState::dials` (remplacé par l'image de la bande).
+

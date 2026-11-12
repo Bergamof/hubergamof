@@ -1,6 +1,6 @@
-//! Audio module: volume and mute of the default output on a dial (gauge in
-//! the zone above it), microphone mute and choice of the default output and
-//! input on its pages.
+//! Audio module: volume and mute of the default output on a dial (function
+//! [`VOLUME_FUNCTION`], volume widget of the touch strip), microphone mute
+//! and choice of the default output and input on its pages.
 //!
 //! The audio server is reached through an [`AudioBackend`]: `pactl` on the
 //! session server ([`PactlBackend`]) or an in-memory server
@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, GaugeContent, GaugeLevel, GaugeShape, ImageData, ItemId, KeyContent, KeyState, Module,
-    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    ModuleSurface, NavigationView, PageContent, PageId, PageItem, Rgb, SettingField, SettingKind,
-    ZoneAccent, ZoneContent,
+    Command, DialFunctionDescriptor, DialFunctionId, DialHint, ImageData, ItemId, KeyContent,
+    KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+    ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId, PageItem, SettingField,
+    SettingKind, StripWidget, VolumeWidget,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -42,6 +42,10 @@ use crate::background::forward_states;
 
 /// Kind of the audio module.
 pub const AUDIO_KIND: &str = "audio";
+
+/// Dial function: turning changes the volume of the default output,
+/// pressing mutes it.
+pub const VOLUME_FUNCTION: &str = "volume";
 
 const VOLUME_STEP_KEY: &str = "volumeStep";
 const MAX_VOLUME_KEY: &str = "maxVolume";
@@ -75,11 +79,9 @@ const MICROPHONE_LABEL: &str = "Micro";
 const MICROPHONE_MUTED_LABEL: &str = "Micro coupé";
 const OUTPUTS_LABEL: &str = "Sortie";
 const INPUTS_LABEL: &str = "Entrée";
-const MUTED_VALUE: &str = "Muet";
-const UNAVAILABLE_TEXT: &str = "Audio indisponible";
-const TOOL_MISSING_TEXT: &str = "pactl absent";
-const TOOL_TOO_OLD_TEXT: &str = "pactl trop ancien";
-const NO_OUTPUT_TEXT: &str = "Aucune sortie";
+const VOLUME_HINT: &str = "Volume";
+const MUTE_HINT: &str = "Muet";
+const UNMUTE_HINT: &str = "Réactiver";
 
 /// Creates [`Audio`] instances, all driving the same audio server through
 /// one hub.
@@ -111,14 +113,15 @@ fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: AUDIO_KIND.into(),
         name: "Audio".into(),
-        description: "Molette : volume de la sortie (appui : couper). Touche : micro, choix \
+        description: "Volume de la sortie sur la bande tactile. Touche : micro, choix \
                       de la sortie et de l'entrée."
             .into(),
-        capabilities: ModuleCapabilities {
-            key: true,
-            dial: true,
-            touch_zone: true,
-        },
+        capabilities: ModuleCapabilities { key: true },
+        dial_functions: vec![DialFunctionDescriptor {
+            id: VOLUME_FUNCTION.into(),
+            name: "Contrôle du volume".into(),
+            description: "Tourner change le volume, appuyer coupe le son.".into(),
+        }],
         settings: vec![
             percent_setting(
                 VOLUME_STEP_KEY,
@@ -246,6 +249,13 @@ impl Audio {
             View::Ready(snapshot) => Some(snapshot),
             View::Loading | View::Unavailable(_) => None,
         }
+    }
+
+    /// Whether the default output is known and muted.
+    fn output_muted(&self) -> bool {
+        self.snapshot()
+            .and_then(|snapshot| snapshot.default_device(Direction::Output))
+            .is_some_and(|device| device.muted)
     }
 
     /// Submits `change`; `surface` will show its outcome. Should the hub
@@ -394,14 +404,6 @@ impl Audio {
     }
 }
 
-fn unavailable_text(fault: AudioFault) -> &'static str {
-    match fault {
-        AudioFault::ToolMissing => TOOL_MISSING_TEXT,
-        AudioFault::ToolTooOld => TOOL_TOO_OLD_TEXT,
-        AudioFault::Unreachable => UNAVAILABLE_TEXT,
-    }
-}
-
 fn item(id: &str, key: KeyContent) -> PageItem {
     PageItem { id: id.into(), key }
 }
@@ -417,11 +419,7 @@ fn direction_of(page: &PageId) -> Option<Direction> {
 #[async_trait]
 impl Module for Audio {
     fn key(&self) -> KeyContent {
-        let muted = self
-            .snapshot()
-            .and_then(|snapshot| snapshot.default_device(Direction::Output))
-            .is_some_and(|device| device.muted);
-        let icon = if muted {
+        let icon = if self.output_muted() {
             &icons::SPEAKER_MUTED
         } else {
             &icons::SPEAKER
@@ -458,7 +456,10 @@ impl Module for Audio {
         }
     }
 
-    async fn on_dial_rotate(&mut self, ticks: i32) -> Vec<Command> {
+    async fn on_dial_rotate(&mut self, function: &DialFunctionId, ticks: i32) -> Vec<Command> {
+        if function.0 != VOLUME_FUNCTION {
+            return Vec::new();
+        }
         let settings = self.settings;
         let Some(sink) = self
             .snapshot_mut()
@@ -482,11 +483,14 @@ impl Module for Audio {
             sink: sink.name.clone(),
             volume,
         };
-        self.request(change, ModuleSurface::Zone)
+        self.request(change, ModuleSurface::Dial)
     }
 
-    async fn on_dial_press(&mut self) -> Vec<Command> {
-        self.toggle_mute(Direction::Output, ModuleSurface::Zone)
+    async fn on_dial_press(&mut self, function: &DialFunctionId) -> Vec<Command> {
+        if function.0 != VOLUME_FUNCTION {
+            return Vec::new();
+        }
+        self.toggle_mute(Direction::Output, ModuleSurface::Dial)
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
@@ -496,56 +500,28 @@ impl Module for Audio {
         }
     }
 
-    fn zone(&self, _nav: &NavigationView) -> Option<ZoneContent> {
-        let content = match &self.view {
-            View::Loading => ZoneContent::Lines(vec![MODULE_LABEL.into()]),
-            View::Unavailable(fault) => ZoneContent::Lines(vec![unavailable_text(*fault).into()]),
-            View::Ready(snapshot) => match snapshot.default_device(Direction::Output) {
-                Some(sink) => ZoneContent::Gauge(gauge(sink, self.settings)),
-                None => ZoneContent::Lines(vec![NO_OUTPUT_TEXT.into()]),
-            },
+    fn dial_hint(&self, function: &DialFunctionId) -> DialHint {
+        if function.0 != VOLUME_FUNCTION {
+            return DialHint::none();
+        }
+        let press = if self.output_muted() {
+            UNMUTE_HINT
+        } else {
+            MUTE_HINT
         };
-        Some(content)
+        DialHint::none().rotating(VOLUME_HINT).pressing(press)
+    }
+
+    fn strip_widget(&self) -> Option<StripWidget> {
+        let sink = self.snapshot()?.default_device(Direction::Output)?;
+        let percent = u16::try_from(percent_of(sink.volume.average())).unwrap_or(u16::MAX);
+        Some(StripWidget::Volume(VolumeWidget::new(percent, sink.muted)))
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
         self.settings = AudioSettings::parse(settings)?;
         Ok(())
     }
-}
-
-/// Cyan of the speaker icon, from its light to its deep end.
-const VOLUME_ACCENT: ZoneAccent = ZoneAccent::new(Rgb(0x67, 0xE8, 0xF9), Rgb(0x0E, 0xA5, 0xE9));
-
-/// Gauge of the default output, as an arc. The arc spans the reach of the
-/// dial (0 to the ceiling), so that a full arc means « the dial goes no
-/// further ».
-fn gauge(sink: &AudioDevice, settings: AudioSettings) -> GaugeContent {
-    let average = sink.volume.average();
-    let value = if sink.muted {
-        MUTED_VALUE.to_owned()
-    } else {
-        format!("{} %", percent_of(average))
-    };
-    let glyph = if sink.muted {
-        &icons::GLYPH_MUTED
-    } else {
-        &icons::GLYPH
-    };
-    GaugeContent::new(&sink.description, value, level(average, settings.ceiling()))
-        .with_shape(GaugeShape::Arc)
-        .with_accent(VOLUME_ACCENT)
-        .with_glyph(ImageData::clone(glyph))
-        .with_dimmed(sink.muted)
-}
-
-/// `volume` out of `ceiling`, rounded to the nearest thousandth (volumes set
-/// in whole percents fall just below them in PulseAudio units).
-fn level(volume: u32, ceiling: u32) -> GaugeLevel {
-    let full = u64::from(GaugeLevel::FULL_PERMILLE);
-    let ceiling = u64::from(ceiling.max(1));
-    let permille = (u64::from(volume).min(ceiling) * full + ceiling / 2) / ceiling;
-    GaugeLevel::from_permille(u16::try_from(permille).unwrap_or(GaugeLevel::FULL_PERMILLE))
 }
 
 #[cfg(test)]

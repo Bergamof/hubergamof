@@ -1,6 +1,6 @@
-use hubergamof_modules::DEFAULT_HOME_MODULES;
+use hubergamof_modules::{DEFAULT_HOME_MODULES, DefaultDial};
 use hubergamof_protocol::{
-    DeviceCapabilities, DeviceModel, ImageSize, ModuleInstanceId, ModuleKind,
+    DeviceCapabilities, DeviceModel, ImageSize, ModuleInstanceId, ModuleKind, StripConfig,
 };
 use tempfile::TempDir;
 
@@ -64,24 +64,22 @@ fn missing_config_is_created_from_defaults() {
     );
     assert_eq!(
         config.dials,
-        ids(&["clock", "audio", "pomodoro", "navigation"])
-            .into_iter()
-            .map(Some)
-            .collect::<Vec<_>>()
-    );
-    let kinds: Vec<&str> = config.modules.iter().map(|m| m.kind.0.as_str()).collect();
-    assert_eq!(
-        kinds,
         [
-            "audio",
-            "pomodoro",
-            "docker",
-            "intellij",
-            "claude",
-            "clock",
-            "navigation"
+            DialAssignment::Module {
+                instance: "audio".into(),
+                function: "volume".into()
+            },
+            DialAssignment::Module {
+                instance: "pomodoro".into(),
+                function: "control".into()
+            },
+            DialAssignment::Contextual,
+            DialAssignment::Navigation,
         ]
     );
+    assert_eq!(config.strip, StripConfig::default());
+    let kinds: Vec<&str> = config.modules.iter().map(|m| m.kind.0.as_str()).collect();
+    assert_eq!(kinds, ["audio", "pomodoro", "docker", "intellij", "claude"]);
     assert!(config.modules.iter().all(|m| m.id.0 == m.kind.0));
     config.validate().unwrap();
 
@@ -146,15 +144,30 @@ fn layout_and_settings_come_from_the_defaults() {
             vec!["a".into(), "b".into()]
         }
 
-        fn dial_modules(&self) -> Vec<ModuleKind> {
-            vec!["b".into(), "c".into()]
+        fn dials(&self) -> Vec<DefaultDial> {
+            vec![
+                DefaultDial::function("b", "first"),
+                DefaultDial::function("c", "second"),
+                DefaultDial::Navigation,
+            ]
         }
     }
     let config = default_config(&plus(), &Defaults);
     assert_eq!(config.home, ids(&["a", "b"]));
     assert_eq!(
         config.dials,
-        [Some("b".into()), Some("c".into()), None, None]
+        [
+            DialAssignment::Module {
+                instance: "b".into(),
+                function: "first".into()
+            },
+            DialAssignment::Module {
+                instance: "c".into(),
+                function: "second".into()
+            },
+            DialAssignment::Navigation,
+            DialAssignment::None,
+        ]
     );
     let settings: Vec<_> = config.modules.iter().map(|m| m.settings.clone()).collect();
     assert_eq!(
@@ -489,8 +502,18 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
 fn images_of_instances_dropped_by_the_fit_are_left_out() {
     let (_dir, store) = store();
     let mut config = store.load(&plus()).unwrap().config;
-    let dial_only = config.dials[0].clone().unwrap();
-    assert!(!config.home.contains(&dial_only));
+    let dial_only = ModuleInstanceId::from("volume-only");
+    config.modules.push(ModuleInstance {
+        id: dial_only.clone(),
+        kind: "audio".into(),
+        label: None,
+        image: None,
+        settings: serde_json::json!({}),
+    });
+    config.dials[2] = DialAssignment::Module {
+        instance: dial_only.clone(),
+        function: "volume".into(),
+    };
     let module = config
         .modules
         .iter_mut()
@@ -546,7 +569,7 @@ fn imported_configs_are_fitted_to_the_target_device() {
 
     let mk2_config = store.load(&mk2()).unwrap().config;
     let on_plus = fit_to_device(mk2_config, &plus(), 0);
-    assert_eq!(on_plus.dials, vec![None; 4]);
+    assert_eq!(on_plus.dials, vec![DialAssignment::None; 4]);
     check_config(&on_plus, &plus()).unwrap();
 }
 

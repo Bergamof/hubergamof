@@ -9,7 +9,8 @@ Gestionnaire de Stream Deck pour Linux, à base de modules, avec une interface d
 
 - **Gestionnaire** (Rust) : pilote les appareils (touches, molettes, bande tactile), exécute les modules, sert l'interface et un WebSocket sur `127.0.0.1:7878`, icône dans la barre système.
 - **Interface** (SvelteKit) : détecte les appareils, configure l'accueil, les modules et les molettes ; les changements s'appliquent immédiatement sur l'appareil.
-- **Modules intégrés** : Horloge, Navigation, Audio, Pomodoro, Docker, IntelliJ, Claude.
+- **Bande tactile** : affichage global (heure, date, charge CPU/RAM/swap, page, volume, pomodoro), indépendant des molettes ; chaque molette reçoit une fonction (navigation, volume, pomodoro…) dont un rappel s'affiche sous la bande.
+- **Modules intégrés** : Audio, Pomodoro, Docker, IntelliJ, Claude.
 
 Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme Stream Deck est prise en charge par conception.
 

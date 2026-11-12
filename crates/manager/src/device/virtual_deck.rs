@@ -348,10 +348,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn touch_zone_images_land_in_their_zone() {
+    async fn strip_regions_land_where_they_are_drawn() {
         let deck = plus();
         let red = Rgba([255, 0, 0, 255]);
-        deck.set_touch_zone_image(2, Arc::new(RgbaImage::from_pixel(200, 100, red)))
+        deck.set_strip_region(400, Arc::new(RgbaImage::from_pixel(200, 100, red)))
             .await
             .unwrap();
         let strip = deck.screen().strip.unwrap();
@@ -359,11 +359,6 @@ mod tests {
         assert_eq!(*strip.get_pixel(400, 50), red);
         assert_eq!(*strip.get_pixel(599, 99), red);
         assert_eq!(*strip.get_pixel(600, 0), Rgba([0, 0, 0, 0]));
-        assert!(matches!(
-            deck.set_touch_zone_image(4, Arc::new(RgbaImage::new(200, 100)))
-                .await,
-            Err(DeviceError::InvalidZone { .. })
-        ));
     }
 
     #[tokio::test]

@@ -5,9 +5,10 @@
 use std::path::Path;
 
 use hubergamof_protocol::{
-    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, MAX_BRIGHTNESS, MAX_DIALS,
-    MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH, MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES,
-    MAX_SETTINGS_BYTES, ModuleInstance, ModuleInstanceId, is_identifier, is_safe_image_name,
+    CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, DialAssignment,
+    LOAD_ALERT_RANGE, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH,
+    MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance,
+    ModuleInstanceId, SYSTEM_REFRESH_CHOICES, StripConfig, is_identifier, is_safe_image_name,
 };
 use serde_json::json;
 
@@ -29,7 +30,14 @@ fn valid_config() -> DeviceConfig {
         brightness: MAX_BRIGHTNESS,
         home: vec!["clock".into(), "volume".into()],
         modules: vec![module("clock"), module("volume")],
-        dials: vec![Some("volume".into()), None],
+        dials: vec![
+            DialAssignment::Module {
+                instance: "volume".into(),
+                function: "volume".into(),
+            },
+            DialAssignment::None,
+        ],
+        strip: StripConfig::default(),
         revision: 0,
     }
 }
@@ -91,7 +99,10 @@ fn unknown_home_module_is_rejected() {
 #[test]
 fn unknown_dial_module_is_rejected() {
     let mut config = valid_config();
-    config.dials.push(Some("ghost".into()));
+    config.dials.push(DialAssignment::Module {
+        instance: "ghost".into(),
+        function: "volume".into(),
+    });
     assert_eq!(
         config.validate(),
         Err(ConfigError::UnknownDialModule {
@@ -99,6 +110,55 @@ fn unknown_dial_module_is_rejected() {
             module: ModuleInstanceId::from("ghost"),
         })
     );
+}
+
+#[test]
+fn dial_functions_are_plain_identifiers() {
+    let mut config = valid_config();
+    config.dials[0] = DialAssignment::Module {
+        instance: "volume".into(),
+        function: "bad\nfunction".into(),
+    };
+    let error = config.validate().unwrap_err();
+    assert!(matches!(
+        error,
+        ConfigError::InvalidDialFunction { dial: 0, .. }
+    ));
+    assert!(!error.to_string().contains('\n'), "escaped: {error}");
+}
+
+#[test]
+fn host_dial_functions_need_no_module() {
+    let mut config = valid_config();
+    config.dials = vec![
+        DialAssignment::Navigation,
+        DialAssignment::Contextual,
+        DialAssignment::None,
+    ];
+    assert_eq!(config.validate(), Ok(()));
+}
+
+#[test]
+fn the_strip_accepts_only_known_refresh_periods_and_alert_loads() {
+    for period in SYSTEM_REFRESH_CHOICES {
+        let mut config = valid_config();
+        config.strip.system_refresh_seconds = period;
+        assert_eq!(config.validate(), Ok(()), "{period}");
+    }
+    let mut config = valid_config();
+    config.strip.system_refresh_seconds = 3;
+    assert_eq!(config.validate(), Err(ConfigError::InvalidSystemRefresh(3)));
+
+    for load in [*LOAD_ALERT_RANGE.start(), *LOAD_ALERT_RANGE.end()] {
+        let mut config = valid_config();
+        config.strip.load_alert_percent = load;
+        assert_eq!(config.validate(), Ok(()), "{load}");
+    }
+    for load in [LOAD_ALERT_RANGE.start() - 1, LOAD_ALERT_RANGE.end() + 1] {
+        let mut config = valid_config();
+        config.strip.load_alert_percent = load;
+        assert_eq!(config.validate(), Err(ConfigError::InvalidLoadAlert(load)));
+    }
 }
 
 #[test]
@@ -193,7 +253,7 @@ fn oversized_configurations_are_rejected() {
     ));
 
     let mut config = valid_config();
-    config.dials = vec![None; MAX_DIALS + 1];
+    config.dials = vec![DialAssignment::None; MAX_DIALS + 1];
     assert!(matches!(
         config.validate(),
         Err(ConfigError::TooMany { what: "dials", .. })

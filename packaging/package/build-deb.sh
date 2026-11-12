@@ -82,7 +82,7 @@ Priority: optional
 Homepage: $HOMEPAGE
 Description: Stream Deck manager with a local web interface
  HuBergamof drives Elgato Stream Deck devices (Stream Deck+ first) with
- modules (audio, Docker, IntelliJ, Claude, pomodoro, clock, notifications)
+ modules (audio, Docker, IntelliJ, Claude, pomodoro, notifications)
  and a web configuration interface served on 127.0.0.1 only.
  .
  The service runs as a systemd user unit; the udev rule gives the logged-in

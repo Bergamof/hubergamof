@@ -23,8 +23,8 @@ use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, local_address, module_catalog,
 };
+use hubergamof_manager::strip::{ProcProbe, SimulatedProbe, SystemClock, SystemProbe};
 use hubergamof_manager::tray::{TrayIcon, quit_on};
-use hubergamof_modules::clock::SystemClock;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::CatalogModule;
 use tokio::signal::unix::{SignalKind, signal};
@@ -131,7 +131,11 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let (shutdown, stopping) = watch::channel(false);
 
-    let services = services(&cli.config_dir, builtin_services(cli.demo))?;
+    let services = services(
+        &cli.config_dir,
+        builtin_services(cli.demo),
+        system_probe(cli.demo),
+    )?;
     let catalog = catalog_of(&services).await?;
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
@@ -257,13 +261,19 @@ fn file_picker(answer: Option<PathBuf>) -> Arc<dyn FilePicker> {
 
 fn builtin_services(demo: bool) -> BuiltinServices {
     if demo {
-        // A demo shows a living clock: only the tests freeze the time.
-        BuiltinServices {
-            wall_clock: Arc::new(SystemClock),
-            ..BuiltinServices::simulated()
-        }
+        BuiltinServices::simulated()
     } else {
         BuiltinServices::system()
+    }
+}
+
+/// What the touch strip measures: the machine, or lively figures for the
+/// demo. Both show the real time: only the tests freeze it.
+fn system_probe(demo: bool) -> Arc<dyn SystemProbe> {
+    if demo {
+        Arc::new(SimulatedProbe::demo())
+    } else {
+        Arc::new(ProcProbe::new())
     }
 }
 
@@ -276,12 +286,18 @@ async fn catalog_of(services: &EngineServices) -> Result<Arc<[CatalogModule]>> {
         .context("cannot build the module catalog")
 }
 
-fn services(config_dir: &std::path::Path, builtins: BuiltinServices) -> Result<EngineServices> {
+fn services(
+    config_dir: &std::path::Path,
+    builtins: BuiltinServices,
+    system: Arc<dyn SystemProbe>,
+) -> Result<EngineServices> {
     let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
         store: ConfigStore::new(config_dir, Arc::clone(&registry)),
         renderer: Arc::new(Renderer::new().context("cannot initialise the renderer")?),
         registry,
+        wall_clock: Arc::new(SystemClock),
+        system,
     })
 }
 
@@ -324,12 +340,13 @@ fn init_tracing() {
 mod tests {
     use hubergamof_manager::device::DeckBackend as _;
     use hubergamof_manager::engine::LiveSnapshot;
+    use hubergamof_module_api::VolumeWidget;
 
     use super::*;
 
     /// Dial of the audio module in the default layout.
-    const AUDIO_DIAL_INDEX: u8 = 1;
-    const AUDIO_DIAL: usize = AUDIO_DIAL_INDEX as usize;
+    /// The volume is the first dial of the default layout.
+    const VOLUME_DIAL: u8 = 0;
     const WAIT: Duration = Duration::from_secs(5);
 
     #[test]
@@ -430,7 +447,7 @@ mod tests {
         let discovery = DeviceDiscovery::new();
         let supervisor = Supervisor::start(
             &discovery,
-            services(dir.path(), builtin_services(true)).unwrap(),
+            services(dir.path(), builtin_services(true), system_probe(true)).unwrap(),
         );
         let devices = VirtualDevices::new(discovery.clone());
         let engines = supervisor.engines();
@@ -452,23 +469,21 @@ mod tests {
         assert_eq!(screen.brightness, 70);
         assert!(screen.strip.unwrap().pixels().any(|pixel| pixel.0[0] > 128));
 
-        // The audio dial drives the simulated server, never the machine's.
-        let audio_zone = |volume: &str| {
-            let lines = vec!["Haut-parleurs".to_owned(), volume.to_owned()];
+        // The volume dial drives the simulated server, never the machine's.
+        let volume = |percent: u16| {
             move |live: &LiveSnapshot| {
-                live.dials[AUDIO_DIAL]
-                    .zone
-                    .as_ref()
-                    .is_some_and(|zone| zone.lines == lines)
+                live.strip.as_ref().is_some_and(|strip| {
+                    strip.face.volume == Some(VolumeWidget::new(percent, false))
+                })
             }
         };
         let mut live = engine.live();
-        tokio::time::timeout(WAIT, live.wait_for(audio_zone("40 %")))
+        tokio::time::timeout(WAIT, live.wait_for(volume(40)))
             .await
             .unwrap()
             .unwrap();
-        engine.rotate_dial(AUDIO_DIAL_INDEX, 2).await.unwrap();
-        tokio::time::timeout(WAIT, live.wait_for(audio_zone("50 %")))
+        engine.rotate_dial(VOLUME_DIAL, 2).await.unwrap();
+        tokio::time::timeout(WAIT, live.wait_for(volume(50)))
             .await
             .unwrap()
             .unwrap();

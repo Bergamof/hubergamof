@@ -1,17 +1,15 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "serial": "EXAMPLE0000001",
   "model": "plus",
   "brightness": 70,
-  "home": ["pomodoro", "docker", "intellij", "claude"],
+  "home": [
+    "pomodoro",
+    "docker",
+    "intellij",
+    "claude"
+  ],
   "modules": [
-    {
-      "id": "clock",
-      "kind": "clock",
-      "label": null,
-      "image": null,
-      "settings": { "showSeconds": false, "showDate": true }
-    },
     {
       "id": "pomodoro",
       "kind": "pomodoro",
@@ -30,14 +28,20 @@
       "kind": "docker",
       "label": null,
       "image": null,
-      "settings": { "composeFiles": ["~/projects/app/compose.yaml"] }
+      "settings": {
+        "composeFiles": [
+          "~/projects/app/compose.yaml"
+        ]
+      }
     },
     {
       "id": "intellij",
       "kind": "intellij",
       "label": "IDE",
       "image": null,
-      "settings": { "projectsDirectory": "~/projects" }
+      "settings": {
+        "projectsDirectory": "~/projects"
+      }
     },
     {
       "id": "claude",
@@ -51,16 +55,36 @@
       "kind": "audio",
       "label": "Volume",
       "image": null,
-      "settings": { "target": "defaultSink" }
-    },
-    {
-      "id": "mic",
-      "kind": "audio",
-      "label": "Micro",
-      "image": null,
-      "settings": { "target": "defaultSource" }
+      "settings": {
+        "target": "defaultSink"
+      }
     }
   ],
-  "dials": ["volume", "mic", "pomodoro", "clock"],
+  "dials": [
+    {
+      "kind": "module",
+      "instance": "volume",
+      "function": "volume"
+    },
+    {
+      "kind": "module",
+      "instance": "pomodoro",
+      "function": "control"
+    },
+    {
+      "kind": "contextual"
+    },
+    {
+      "kind": "navigation"
+    }
+  ],
+  "strip": {
+    "theme": "light",
+    "showSeconds": true,
+    "showPomodoroProgress": true,
+    "systemRefreshSeconds": 2,
+    "showHistory": true,
+    "loadAlertPercent": 85
+  },
   "revision": 0
 }

@@ -10,7 +10,8 @@ use serde_json::{Map, Value};
 
 use crate::file_entries::check_file_entries;
 use crate::{
-    EntryNaming, FileChooser, FileEntry, ModuleError, ModuleKind, is_setting_path, parse_settings,
+    DialFunctionId, EntryNaming, FileChooser, FileEntry, ModuleError, ModuleKind, is_setting_path,
+    parse_settings,
 };
 
 /// Description of a module kind available to the user.
@@ -28,25 +29,35 @@ pub struct ModuleDescriptor {
     pub description: String,
     /// Where an instance of this module can be placed.
     pub capabilities: ModuleCapabilities,
+    /// What the module lets a dial do, in display order: the user assigns
+    /// one of these functions (or one of the host) to each dial.
+    #[serde(default)]
+    pub dial_functions: Vec<DialFunctionDescriptor>,
     /// Settings accepted by the module, in display order.
     pub settings: Vec<SettingField>,
 }
 
-/// Device surfaces a module can drive.
+/// Device surfaces a module can drive. The dials are not listed: what a
+/// module offers them is described by [`ModuleDescriptor::dial_functions`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "independent flags mirrored as-is in the JSON contract"
-)]
 pub struct ModuleCapabilities {
     /// Can be placed on a key.
     pub key: bool,
-    /// Can be assigned to a dial.
-    pub dial: bool,
-    /// Can render a touch strip zone.
-    pub touch_zone: bool,
+}
+
+/// A function a module offers to a dial.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct DialFunctionDescriptor {
+    /// Identifier, passed back to the module with every dial input.
+    pub id: DialFunctionId,
+    /// Name shown in the dial configuration.
+    pub name: String,
+    /// What turning and pressing the dial do.
+    pub description: String,
 }
 
 /// One setting of a module.
@@ -377,11 +388,8 @@ mod tests {
             kind: "sample".into(),
             name: "Sample".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: false,
-                touch_zone: false,
-            },
+            capabilities: ModuleCapabilities { key: true },
+            dial_functions: Vec::new(),
             settings,
         }
     }

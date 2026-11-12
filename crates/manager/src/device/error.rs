@@ -25,14 +25,6 @@ pub enum DeviceError {
         /// Number of dials of the device.
         count: u8,
     },
-    /// The touch strip zone does not exist on the device.
-    #[error("touch strip zone {index} does not exist (device has {count} zones)")]
-    InvalidZone {
-        /// Requested zone.
-        index: u8,
-        /// Number of zones of the device.
-        count: u8,
-    },
     /// The device has no touch strip.
     #[error("device has no touch strip")]
     NoTouchStrip,

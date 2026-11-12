@@ -97,11 +97,8 @@ mod tests {
                 kind: self.kind.into(),
                 name: self.kind.into(),
                 description: String::new(),
-                capabilities: ModuleCapabilities {
-                    key: true,
-                    dial: false,
-                    touch_zone: false,
-                },
+                capabilities: ModuleCapabilities { key: true },
+                dial_functions: Vec::new(),
                 settings: Vec::new(),
             }
         }

@@ -25,6 +25,7 @@ pub mod file_chooser;
 pub mod launcher;
 pub mod render;
 pub mod server;
+pub mod strip;
 #[cfg(test)]
 mod testing;
 pub mod tray;

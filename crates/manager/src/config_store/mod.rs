@@ -16,6 +16,7 @@
 
 mod archive;
 mod defaults;
+mod migration;
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
@@ -27,7 +28,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
-    ConfigError, DeviceConfig, DeviceInfo, ErrorCode, ModuleInstance, is_safe_image_name,
+    ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode, ModuleInstance,
+    is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
@@ -610,13 +612,14 @@ pub fn fit_to_device(mut config: DeviceConfig, device: &DeviceInfo, revision: u6
     config.serial.clone_from(&device.serial);
     config.model = device.model;
     config.revision = revision;
-    config
-        .dials
-        .resize(usize::from(device.capabilities.dial_count), None);
+    config.dials.resize(
+        usize::from(device.capabilities.dial_count),
+        DialAssignment::None,
+    );
     let used: HashSet<_> = config
         .home
         .iter()
-        .chain(config.dials.iter().flatten())
+        .chain(config.dials.iter().filter_map(DialAssignment::instance))
         .cloned()
         .collect();
     config.modules.retain(|module| used.contains(&module.id));
@@ -715,7 +718,7 @@ fn read_config(path: &Path) -> Result<Option<DeviceConfig>, ConfigStoreError> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(io_error(path, error)),
     };
-    serde_json::from_slice(&bytes)
+    migration::parse_config(&bytes)
         .map(Some)
         .map_err(|source| ConfigStoreError::Json {
             path: path.to_owned(),

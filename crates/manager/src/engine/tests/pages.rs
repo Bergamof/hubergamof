@@ -1,18 +1,19 @@
 //! Pages, navigation, configuration and drawing.
 
-use hubergamof_module_api::{CalendarLeaf, ClockFace, GaugeContent, GaugeLevel, KeyState};
+use hubergamof_module_api::{KeyState, VolumeWidget};
 use hubergamof_protocol::ErrorCode;
 use image::RgbaImage;
 use serde_json::json;
 
 use super::support::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
-use crate::device::{DeckBackend, InputEvent, StripLayout};
+use crate::device::{DeckBackend, InputEvent};
 use crate::engine::*;
 use crate::render::ImageKind;
+use crate::strip::HintFace;
 
 #[tokio::test]
-async fn default_configuration_shows_the_builtin_modules_and_dial_zones() {
+async fn default_configuration_shows_the_builtin_modules_and_the_strip() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     let live = fixture.live();
     assert_eq!(live.page.id, HOME_PAGE_ID);
@@ -35,23 +36,41 @@ async fn default_configuration_shows_the_builtin_modules_and_dial_zones() {
         ])
     );
     assert!(live.keys[5].image.is_none());
-    let modules: Vec<_> = live
-        .dials
+
+    // The strip is the manager's: time, measures and page come with it.
+    let strip = fixture.strip();
+    assert_eq!(strip.clock.time, "14:05");
+    assert_eq!(strip.clock.seconds, Some(30));
+    assert_eq!(strip.clock.date, "mer. 28 oct.");
+    assert_eq!(strip.page.trail, HOME_PAGE_TITLE);
+    let measures: Vec<_> = strip
+        .measures
         .iter()
-        .map(|dial| dial.module_id.clone().unwrap().0)
+        .map(|measure| (measure.label, measure.percent))
         .collect();
-    assert_eq!(modules, ["clock", "audio", "pomodoro", "navigation"]);
-    let clock = fixture.zone_lines(0);
-    assert_eq!(clock.len(), 2);
-    assert!(clock[0].contains(':'));
-    // Every default dial module draws its zone.
-    assert_eq!(fixture.zone_lines(2), ["Travail · 1/4", "25:00"]);
-    assert!(live.dials[2].zone.as_ref().unwrap().image.is_some());
-    assert_eq!(fixture.zone_lines(3), ["Accueil"]);
-    // The (simulated) audio module shows its gauge once it read the state.
+    assert_eq!(
+        measures,
+        [("CPU", Some(22)), ("RAM", Some(61)), ("SWAP", Some(8))]
+    );
+    assert!(live.strip.unwrap().image.is_some());
+
+    // The pomodoro is shown, ready; the dials remind what they do, in the
+    // default order: volume, pomodoro, contextual, navigation.
+    let pomodoro = strip.pomodoro.expect("the pomodoro is configured");
+    assert_eq!(pomodoro.widget.label, "Focus 1/4 · prêt");
+    assert_eq!(pomodoro.widget.time, "25:00");
+    assert_eq!(fixture.hint(1).press.as_deref(), Some("Menu pomodoro"));
+    assert_eq!(fixture.hint(2).rotate.as_deref(), Some("Contexte"));
+    let navigation = fixture.hint(3);
+    assert_eq!(navigation.rotate.as_deref(), Some("Navigation"));
+    // Nothing to go back to on the home page.
+    assert_eq!(navigation.press, None);
+    // The (simulated) audio module shows its volume once it read the state.
     fixture
-        .wait_for(|f| f.zone_lines(1) == ["Haut-parleurs", "40 %"])
+        .wait_for(|f| f.strip().volume == Some(VolumeWidget::new(40, false)))
         .await;
+    assert_eq!(fixture.hint(0).rotate.as_deref(), Some("Volume"));
+    assert_eq!(fixture.hint(0).press.as_deref(), Some("Muet"));
 }
 
 #[tokio::test]
@@ -59,9 +78,9 @@ async fn overflowing_pages_scroll_by_rows_within_bounds() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
-            vec![list(11), instance("nav", "navigation", json!({}))],
+            vec![list(11)],
             &["list"],
-            &[Some("nav"), None, None, None],
+            &[Some(NAVIGATION_DIAL), None, None, None],
         )
         .await;
 
@@ -71,7 +90,11 @@ async fn overflowing_pages_scroll_by_rows_within_bounds() {
     assert_eq!(page.title, "list (list)");
     assert_eq!((page.row, page.row_count), (0, 3));
     assert_eq!(fixture.labels()[7].as_deref(), Some("item 7"));
-    assert_eq!(fixture.zone_lines(0), ["list (list)", "ligne 1/3"]);
+    let page = fixture.strip().page;
+    assert_eq!(page.trail, "Accueil › list (list)");
+    // Three rows, two of them visible: two scroll positions.
+    assert_eq!((page.row, page.positions), (0, 2));
+    assert_eq!(fixture.hint(0).press.as_deref(), Some("Retour"));
 
     fixture.engine.rotate_dial(0, 5).await.unwrap();
     assert_eq!(fixture.page().row, 1);
@@ -88,7 +111,7 @@ async fn overflowing_pages_scroll_by_rows_within_bounds() {
             None,
         ])
     );
-    assert_eq!(fixture.zone_lines(0), ["list (list)", "ligne 2/3"]);
+    assert_eq!(fixture.strip().page.row, 1);
     // Beyond the content: blank.
     assert!(fixture.live().keys[7].image.is_none());
     assert!(
@@ -130,7 +153,7 @@ async fn devices_without_dials_scroll_through_module_commands() {
     fixture.engine.press_key(5).await.unwrap();
     assert_eq!(fixture.page().row, 1);
 
-    assert!(fixture.live().dials.is_empty());
+    assert!(fixture.live().strip.is_none());
     let error = fixture.engine.rotate_dial(0, 1).await.unwrap_err();
     assert_eq!(error.error_code(), ErrorCode::InvalidInput);
     let error = fixture.engine.press_key(6).await.unwrap_err();
@@ -142,9 +165,9 @@ async fn back_and_home_unwind_the_navigation_stack() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
-            vec![list(4), instance("nav", "navigation", json!({}))],
+            vec![list(4)],
             &["list"],
-            &[None, None, None, Some("nav")],
+            &[None, None, None, Some(NAVIGATION_DIAL)],
         )
         .await;
     // Back on the home page does nothing.
@@ -166,7 +189,7 @@ async fn back_and_home_unwind_the_navigation_stack() {
     fixture.engine.press_key(0).await.unwrap();
     fixture.engine.press_dial(3).await.unwrap();
     assert_eq!(fixture.page().id, HOME_PAGE_ID);
-    assert_eq!(fixture.zone_lines(3), ["Accueil"]);
+    assert_eq!(fixture.strip().page.trail, "Accueil");
 }
 
 #[tokio::test]
@@ -278,7 +301,7 @@ async fn stale_revisions_are_rejected_without_change() {
 
 #[tokio::test]
 async fn only_changed_keys_are_rewritten() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(vec![list(0)], &["list"], &[None; 4])
         .await;
@@ -303,42 +326,32 @@ async fn only_changed_keys_are_rewritten() {
 }
 
 #[tokio::test]
-async fn zones_know_the_page_the_navigation_leads_back_to() {
+async fn the_strip_shows_the_path_of_the_displayed_page() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
-        .configure(
-            vec![list(4), fragile("none")],
-            &["list"],
-            &[Some(FRAGILE_KIND), None, None, None],
-        )
+        .configure(vec![list(4)], &["list"], &[None; 4])
         .await;
-    let parent_title = || {
-        fixture
-            .probe
-            .last_view
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|view| view.parent_title.clone())
-    };
-    assert_eq!(parent_title(), None, "nothing to go back to at home");
+    assert_eq!(fixture.strip().page.trail, "Accueil");
 
     fixture.engine.press_key(0).await.unwrap();
     let list_title = fixture.page().title;
-    fixture
-        .wait_for(|_| parent_title().as_deref() == Some(HOME_PAGE_TITLE))
-        .await;
+    assert_eq!(
+        fixture.strip().page.trail,
+        format!("Accueil › {list_title}")
+    );
 
     fixture.engine.press_key(3).await.unwrap();
     assert_eq!(fixture.page().id, "list/nested");
-    fixture
-        .wait_for(|_| parent_title().as_deref() == Some(list_title.as_str()))
-        .await;
+    let nested = fixture.page().title;
+    assert_eq!(
+        fixture.strip().page.trail,
+        format!("{list_title} › {nested}")
+    );
 }
 
 #[tokio::test]
-async fn only_changed_gauges_are_rewritten() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+async fn the_strip_is_rewritten_only_when_it_changes() {
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
             vec![list(0), fragile("none")],
@@ -347,111 +360,91 @@ async fn only_changed_gauges_are_rewritten() {
         )
         .await;
     let redraw = fixture.probe.redraw.lock().unwrap().clone().unwrap();
-    let show = |level: f32| {
-        *fixture.probe.zone_gauge.lock().unwrap() = Some(GaugeContent::new(
-            "Volume",
-            "25 %",
-            GaugeLevel::from_ratio(level),
-        ));
+    let show = |percent: u16| {
+        *fixture.probe.volume.lock().unwrap() = Some(VolumeWidget::new(percent, false));
         redraw.request_redraw();
     };
     let mut live = fixture.engine.live();
-    let mut redrawn = async |expected_lines: [&str; 2]| {
+    let mut redrawn = async |expected: u16| {
         live.mark_unchanged();
         tokio::time::timeout(WAIT, live.changed())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fixture.zone_lines(0), expected_lines);
+        assert_eq!(
+            fixture.strip().volume,
+            Some(VolumeWidget::new(expected, false))
+        );
     };
     let _ = fixture.deck.writes();
 
-    show(0.25);
-    redrawn(["Volume", "25 %"]).await;
+    show(25);
+    redrawn(25).await;
     assert_eq!(fixture.deck.writes(), (0, 1));
 
-    // The same gauge: nothing written.
-    show(0.25);
+    // The same volume: nothing written.
+    show(25);
     fixture.engine.press_key(7).await.unwrap();
     assert_eq!(fixture.deck.writes(), (0, 0));
 
-    // Only the level changed: the zone is rewritten.
-    show(0.5);
-    redrawn(["Volume", "25 %"]).await;
+    // Another volume: the strip is written once.
+    show(50);
+    redrawn(50).await;
     assert_eq!(fixture.deck.writes(), (0, 1));
 }
 
 #[tokio::test]
-async fn only_changed_clock_faces_are_rewritten() {
-    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
-    fixture
-        .configure(
-            vec![list(0), fragile("none")],
-            &["list"],
-            &[Some(FRAGILE_KIND), None, None, None],
-        )
-        .await;
-    let redraw = fixture.probe.redraw.lock().unwrap().clone().unwrap();
-    let show = |seconds: u8| {
-        let face = ClockFace::new("14:05")
-            .with_seconds(seconds)
-            .with_leaf(CalendarLeaf::new("mer.", 5, "nov."))
-            .with_caption("semaine 45");
-        *fixture.probe.zone_clock.lock().unwrap() = Some(face);
-        redraw.request_redraw();
+async fn the_strip_follows_the_clock() {
+    let fixture = start_settled(virtual_plus_info(DEMO_SERIAL)).await;
+    let redraw = {
+        fixture
+            .configure(vec![list(0)], &["list"], &[None; 4])
+            .await;
+        fixture.probe.redraw.lock().unwrap().clone().unwrap()
     };
     let mut live = fixture.engine.live();
-    let mut redrawn = async |expected_lines: [&str; 2]| {
-        live.mark_unchanged();
-        tokio::time::timeout(WAIT, live.changed())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fixture.zone_lines(0), expected_lines);
-    };
     let _ = fixture.deck.writes();
+    assert_eq!(fixture.strip().clock.time, "14:05");
 
-    show(9);
-    redrawn(["14:05:09", "mer. 5 nov. · semaine 45"]).await;
+    fixture
+        .probe
+        .clock
+        .set(jiff::civil::date(2026, 10, 28).at(14, 6, 1, 0));
+    live.mark_unchanged();
+    redraw.request_redraw();
+    tokio::time::timeout(WAIT, live.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    let clock = fixture.strip().clock;
+    assert_eq!((clock.time.as_str(), clock.seconds), ("14:06", Some(1)));
     assert_eq!(fixture.deck.writes(), (0, 1));
     // The face is drawn on the strip, not left blank.
     let strip = fixture.deck.inner.screen().strip.unwrap();
-    assert!((0..200).any(|x| (0..strip.height()).any(|y| strip.get_pixel(x, y).0[1] > 150)));
+    assert!(strip.pixels().any(|pixel| pixel.0[0] < 100));
 
-    // The same face: nothing written.
-    show(9);
+    // The same time: nothing written.
+    redraw.request_redraw();
     fixture.engine.press_key(7).await.unwrap();
     assert_eq!(fixture.deck.writes(), (0, 0));
-
-    // One second later: the zone is rewritten.
-    show(10);
-    redrawn(["14:05:10", "mer. 5 nov. · semaine 45"]).await;
-    assert_eq!(fixture.deck.writes(), (0, 1));
 }
 
 #[tokio::test]
-async fn dial_zones_follow_their_modules() {
+async fn the_dials_remind_what_their_functions_do() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     fixture
         .configure(
-            vec![instance("nav", "navigation", json!({}))],
-            &[],
-            &[Some("nav"), None, None, None],
+            vec![list(0)],
+            &["list"],
+            &[Some(NAVIGATION_DIAL), None, None, None],
         )
         .await;
-    let strip = fixture.deck.inner.screen().strip.unwrap();
-    let layout = StripLayout::for_device(fixture.deck.info()).unwrap();
-    let zone_width = layout.zone_size().width;
-    let lit = |zone: u32| {
-        (zone * zone_width..(zone + 1) * zone_width)
-            .any(|x| (0..strip.height()).any(|y| strip.get_pixel(x, y).0[0] > 128))
-    };
-    assert!(lit(0));
-    assert!(!lit(1));
-    let live = fixture.live();
-    assert_eq!(live.dials[0].module_id, Some("nav".into()));
-    assert_eq!(live.dials[1].module_id, None);
-    assert_eq!(fixture.zone_lines(1), Vec::<String>::new());
+    let navigation = fixture.hint(0);
+    assert_eq!(navigation.rotate.as_deref(), Some("Navigation"));
+    // On the home page there is nothing to go back to.
+    assert_eq!(navigation.press, None);
+    assert_eq!(fixture.hint(1), HintFace::default());
+    assert_eq!(fixture.strip().hints.len(), 4);
 }
 
 #[tokio::test]
@@ -528,7 +521,7 @@ async fn stopping_the_engine_blanks_the_device() {
 #[tokio::test]
 async fn the_whole_strip_is_written_again_once_the_device_settled() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
-    // A device just connected may lose the first zone writes.
+    // A device just connected may lose the first writes.
     fixture.deck.inner.clear_all().await.unwrap();
     let last_zone_pixel = || {
         let screen = fixture.deck.inner.screen();
@@ -541,5 +534,5 @@ async fn the_whole_strip_is_written_again_once_the_device_settled() {
         }
     })
     .await
-    .expect("every zone is written again, not only the changing ones");
+    .expect("the whole strip is written again");
 }

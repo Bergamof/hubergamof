@@ -12,7 +12,6 @@ use crate::device::virtual_deck::virtual_plus_info;
 
 const BACKGROUND: Rgb = Rgb(200, 30, 30);
 const BACKGROUND_PIXEL: Rgba<u8> = Rgba([200, 30, 30, 255]);
-const NAVIGATION: &str = "navigation";
 /// Longer than [`crate::engine::device_engine::HOLD_THRESHOLD`].
 const HOLD: Duration = Duration::from_millis(600);
 
@@ -21,13 +20,9 @@ async fn plus_fixture() -> Fixture {
     let fixture = start(virtual_plus_info("PLUS")).await;
     fixture
         .configure(
-            vec![
-                list(0),
-                fragile("none"),
-                instance(NAVIGATION, NAVIGATION, serde_json::json!({})),
-            ],
+            vec![list(0), fragile("none")],
             &["list"],
-            &[Some(FRAGILE_KIND), Some(NAVIGATION), None, None],
+            &[Some(FRAGILE_KIND), Some(NAVIGATION_DIAL), None, None],
         )
         .await;
     fixture
@@ -124,14 +119,14 @@ async fn under_a_notification_only_the_navigation_dial_press_acts() {
     fixture.inject(InputEvent::DialRotate { index: 1, ticks: 1 });
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(fixture.strip_pixel(799, 0), BACKGROUND_PIXEL);
-    assert_eq!(fixture.zone_mark(0), None);
+    assert_eq!(fixture.dial_mark(0), None);
 
     // Its press removes the notification, which stays unread.
     fixture.inject(InputEvent::DialDown(1));
     fixture.wait_for_notification(false).await;
     assert_eq!(fixture.unread_messages(), ["Pause !"]);
     // The module was never told about the dial.
-    assert_eq!(fixture.zone_lines(0), ["fragile 0"]);
+    assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 0"));
 }
 
 #[tokio::test]
@@ -206,8 +201,8 @@ async fn a_key_held_shows_its_label_and_runs_no_action() {
 
     fixture.inject(InputEvent::KeyUp(0));
     tokio::time::sleep(Duration::from_millis(200)).await;
-    // The strip shows the zones again, the key did nothing.
-    assert_eq!(fixture.zone_lines(0), ["fragile 0"]);
+    // The strip shows again, the key did nothing.
+    assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 0"));
     assert_eq!(fixture.labels()[0].as_deref(), Some("list 0"));
     assert_eq!(fixture.page().id, "home");
 }
@@ -234,10 +229,9 @@ async fn the_notifications_module_counts_lists_and_shows_again() {
                 list(0),
                 fragile("none"),
                 instance("notifications", "notifications", serde_json::json!({})),
-                instance(NAVIGATION, NAVIGATION, serde_json::json!({})),
             ],
             &["notifications"],
-            &[Some(FRAGILE_KIND), Some(NAVIGATION), None, None],
+            &[Some(FRAGILE_KIND), Some(NAVIGATION_DIAL), None, None],
         )
         .await;
     let bell = fixture.live().keys[0].image.clone().unwrap().png().unwrap();

@@ -22,6 +22,7 @@ use hubergamof_manager::server::{
     MIN_LIVE_STATE_INTERVAL, MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH,
     module_catalog, router,
 };
+use hubergamof_manager::strip::{FixedClock, SimulatedProbe};
 use hubergamof_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory,
@@ -107,11 +108,8 @@ impl ModuleFactory for CounterFactory {
             kind: COUNTER_KIND.into(),
             name: "Counter".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                dial: false,
-                touch_zone: false,
-            },
+            capabilities: ModuleCapabilities { key: true },
+            dial_functions: Vec::new(),
             settings: Vec::new(),
         }
     }
@@ -144,6 +142,8 @@ impl Devices {
             store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
             renderer: Arc::new(Renderer::new().unwrap()),
             registry: Arc::clone(&registry),
+            wall_clock: Arc::new(FixedClock::default()),
+            system: Arc::new(SimulatedProbe::default()),
         };
         let catalog = module_catalog(&registry, &services.renderer);
         let store = services.store.clone();
@@ -581,19 +581,26 @@ async fn clients_are_greeted_with_devices_and_catalog() {
                 .iter()
                 .map(|module| module.descriptor.kind.0.as_str())
                 .collect();
-            assert!(kinds.contains(&"clock"), "{kinds:?}");
+            assert!(kinds.contains(&"audio"), "{kinds:?}");
             assert!(kinds.contains(&COUNTER_KIND), "{kinds:?}");
-            let clock = modules
+            let audio = modules
                 .iter()
-                .find(|module| module.descriptor.kind.0 == "clock")
+                .find(|module| module.descriptor.kind.0 == "audio")
                 .unwrap();
             assert!(
-                clock
+                audio
                     .icon
                     .as_deref()
                     .is_some_and(|icon| icon.starts_with("data:image/png;base64,")),
-                "{clock:?}"
+                "{audio:?}"
             );
+            let functions: Vec<_> = audio
+                .descriptor
+                .dial_functions
+                .iter()
+                .map(|function| function.id.0.as_str())
+                .collect();
+            assert_eq!(functions, ["volume"]);
         }
         other => panic!("expected the catalog, got {other:?}"),
     }

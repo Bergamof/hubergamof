@@ -1,9 +1,10 @@
 //! Configuration generated for a device seen for the first time.
 
 use hubergamof_module_api::ModuleDescriptor;
-use hubergamof_modules::ModuleRegistry;
+use hubergamof_modules::{DefaultDial, ModuleRegistry};
 use hubergamof_protocol::{
-    CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, ModuleInstance, ModuleInstanceId, ModuleKind,
+    CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, DialAssignment, ModuleInstance,
+    ModuleInstanceId, ModuleKind, StripConfig,
 };
 use serde_json::Value;
 
@@ -20,9 +21,9 @@ pub trait ConfigDefaults: Send + Sync {
     /// Kinds shown on the home page, in key order.
     fn home_modules(&self) -> Vec<ModuleKind>;
 
-    /// Kinds assigned to the dials, from left to right; a device with fewer
-    /// dials takes the first ones.
-    fn dial_modules(&self) -> Vec<ModuleKind>;
+    /// What the dials are assigned, from left to right; a device with fewer
+    /// dials takes the first ones, one with more leaves the others empty.
+    fn dials(&self) -> Vec<DefaultDial>;
 }
 
 impl ConfigDefaults for ModuleRegistry {
@@ -34,7 +35,7 @@ impl ConfigDefaults for ModuleRegistry {
         self.default_layout().home.clone()
     }
 
-    fn dial_modules(&self) -> Vec<ModuleKind> {
+    fn dials(&self) -> Vec<DefaultDial> {
         self.default_layout().dials.clone()
     }
 }
@@ -53,18 +54,21 @@ impl ModuleDescriptors for ModuleRegistry {
 }
 
 /// Default configuration of `device`: the default modules on the home page
-/// and on the dials, one instance per kind whose id is the kind.
+/// and the default function of each dial, one instance per kind whose id is
+/// the kind.
 #[must_use]
 pub fn default_config(device: &DeviceInfo, defaults: &dyn ConfigDefaults) -> DeviceConfig {
     let home = defaults.home_modules();
-    let dials: Vec<Option<ModuleKind>> = {
-        let mut kinds = defaults.dial_modules().into_iter();
-        (0..device.capabilities.dial_count)
-            .map(|_| kinds.next())
-            .collect()
-    };
+    let mut wanted = defaults.dials().into_iter();
+    let dials: Vec<DefaultDial> = (0..device.capabilities.dial_count)
+        .map(|_| wanted.next().unwrap_or(DefaultDial::Nothing))
+        .collect();
     let mut kinds: Vec<&ModuleKind> = Vec::new();
-    for kind in home.iter().chain(dials.iter().flatten()) {
+    let dial_kinds = dials.iter().filter_map(|dial| match dial {
+        DefaultDial::Function { kind, .. } => Some(kind),
+        DefaultDial::Navigation | DefaultDial::Contextual | DefaultDial::Nothing => None,
+    });
+    for kind in home.iter().chain(dial_kinds) {
         if !kinds.contains(&kind) {
             kinds.push(kind);
         }
@@ -86,11 +90,21 @@ pub fn default_config(device: &DeviceInfo, defaults: &dyn ConfigDefaults) -> Dev
         brightness: DEFAULT_BRIGHTNESS,
         home: home.iter().map(instance_id).collect(),
         modules,
-        dials: dials
-            .iter()
-            .map(|kind| kind.as_ref().map(instance_id))
-            .collect(),
+        dials: dials.into_iter().map(assignment).collect(),
+        strip: StripConfig::default(),
         revision: 0,
+    }
+}
+
+fn assignment(dial: DefaultDial) -> DialAssignment {
+    match dial {
+        DefaultDial::Function { kind, function } => DialAssignment::Module {
+            instance: instance_id(&kind),
+            function,
+        },
+        DefaultDial::Navigation => DialAssignment::Navigation,
+        DefaultDial::Contextual => DialAssignment::Contextual,
+        DefaultDial::Nothing => DialAssignment::None,
     }
 }
 
