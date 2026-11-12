@@ -108,13 +108,16 @@ pub(super) async fn publish_theme(
         .object_server()
         .interface::<_, DbusMenu>(MENU_PATH)
         .await?;
-    let revision = {
+    let (revision, entries) = {
         let mut menu = menu.get_mut().await;
         if !menu.menu_mut().set_theme(theme) {
             return Ok(());
         }
-        menu.revision()
+        (menu.revision(), menu.theme_entries())
     };
+    // Hosts keep what they read when they registered, often before the
+    // devices were ready: both signals, whichever one a host follows.
+    DbusMenu::items_properties_updated(menu.signal_emitter(), entries, Vec::new()).await?;
     // The entries of the submenu changed, not the layout of the root: hosts
     // that reload only the first level below the announced parent would
     // keep the old marks.

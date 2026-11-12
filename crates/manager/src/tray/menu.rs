@@ -179,6 +179,12 @@ impl TrayMenu {
             .collect()
     }
 
+    /// Ids of the entries choosing a theme.
+    #[must_use]
+    pub fn theme_entry_ids() -> Vec<i32> {
+        THEME_CHOICE_IDS.to_vec()
+    }
+
     /// Whether item `id` exists.
     #[must_use]
     pub fn contains(&self, id: i32) -> bool {

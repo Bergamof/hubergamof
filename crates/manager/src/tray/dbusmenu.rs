@@ -105,6 +105,19 @@ impl DbusMenu {
         self.menu.revision()
     }
 
+    /// Properties of the theme entries, as `ItemsPropertiesUpdated` sends
+    /// them.
+    pub fn theme_entries(&self) -> Vec<(i32, HashMap<String, OwnedVariant>)> {
+        TrayMenu::theme_entry_ids()
+            .into_iter()
+            .filter_map(|id| {
+                self.menu
+                    .properties(id, &[])
+                    .map(|properties| (id, wire_properties(properties)))
+            })
+            .collect()
+    }
+
     /// Handles one event; `false` when the item is unknown.
     fn handle_event(&self, id: i32, event_id: &str) -> bool {
         if !self.menu.contains(id) {
@@ -253,7 +266,9 @@ impl DbusMenu {
         Vec::new()
     }
 
-    /// Item properties changed (unused: every change is a layout change).
+    /// Properties of some items changed: hosts update them without asking
+    /// for the layout again (used for the theme marks, the other changes
+    /// are layout changes).
     #[zbus(signal)]
     pub async fn items_properties_updated(
         emitter: &SignalEmitter<'_>,

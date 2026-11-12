@@ -558,27 +558,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_theme_change_announces_an_update_of_the_theme_submenu() {
+    async fn a_theme_change_announces_the_new_marks_to_the_host() {
         use futures_util::StreamExt as _;
         use hubergamof_protocol::DeviceTheme::Dark;
-        let (tray, host) = connected_pair(&[], EngineRegistry::default(), Arc::new(|| {})).await;
+        type Updated = (
+            Vec<(i32, HashMap<String, OwnedVariant>)>,
+            Vec<(i32, Vec<String>)>,
+        );
+        let (tray, host) = connected_pair(
+            &["Deck (A1)".to_owned()],
+            EngineRegistry::default(),
+            Arc::new(|| {}),
+        )
+        .await;
         let mut messages = zbus::MessageStream::from(&host);
 
         theme::publish_theme(&tray, Some(Dark)).await.unwrap();
-        let (revision, parent) = tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
+        let mut marks = None;
+        let mut layout = None;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while marks.is_none() || layout.is_none() {
                 let message = messages.next().await.unwrap().unwrap();
-                if message
+                match message
                     .header()
                     .member()
-                    .is_some_and(|member| member == "LayoutUpdated")
+                    .map(zbus::names::MemberName::as_str)
                 {
-                    break message.body().deserialize::<(u32, i32)>().unwrap();
+                    Some("ItemsPropertiesUpdated") => {
+                        marks = Some(message.body().deserialize::<Updated>().unwrap());
+                    }
+                    Some("LayoutUpdated") => {
+                        layout = Some(message.body().deserialize::<(u32, i32)>().unwrap());
+                    }
+                    _ => {}
                 }
             }
         })
         .await
         .expect("the host is told");
-        assert_eq!((revision, parent), (2, menu::THEME_ID));
+
+        assert_eq!(layout, Some((2, menu::THEME_ID)));
+        let (updated, removed) = marks.unwrap();
+        assert_eq!(removed, []);
+        let labels: Vec<(i32, String)> = updated
+            .iter()
+            .map(|(id, properties)| (*id, label(properties)))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                (menu::THEME_LIGHT_ID, "○ Clair".to_owned()),
+                (menu::THEME_DARK_ID, "● Sombre".to_owned())
+            ]
+        );
     }
 }
