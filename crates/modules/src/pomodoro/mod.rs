@@ -96,10 +96,10 @@ fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: POMODORO_KIND.into(),
         name: "Pomodoro".into(),
-        description: "Sessions de travail et pauses. Touche : lance ou met en pause. \
-                      Minuteur affiché sur la bande tactile."
+        description: "Sessions de travail et pauses, avec un minuteur affiché sur la bande \
+                      tactile. Se pilote depuis une molette."
             .into(),
-        capabilities: ModuleCapabilities { key: true },
+        capabilities: ModuleCapabilities::default(),
         dial_functions: vec![DialFunctionDescriptor {
             id: CONTROL_FUNCTION.into(),
             name: "Contrôle du pomodoro".into(),

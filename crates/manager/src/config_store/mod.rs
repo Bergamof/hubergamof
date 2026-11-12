@@ -17,6 +17,7 @@
 mod archive;
 mod defaults;
 mod migration;
+mod placement;
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
@@ -31,6 +32,7 @@ use hubergamof_protocol::{
     ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode, ModuleInstance,
     is_safe_image_name,
 };
+use placement::normalize_placement;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -41,6 +43,7 @@ pub use archive::{
     read_archive, write_archive,
 };
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};
+pub use placement::PlacementChange;
 
 use tokio::io::AsyncReadExt as _;
 
@@ -178,6 +181,12 @@ pub enum LoadOutcome {
         /// New path of the invalid file.
         backup: PathBuf,
     },
+    /// Read from disk, then brought back to the placement rules of the
+    /// modules and written again.
+    Normalized {
+        /// What was changed.
+        changes: Vec<PlacementChange>,
+    },
 }
 
 /// Result of [`ConfigStore::load`].
@@ -246,16 +255,17 @@ impl ConfigStore {
         let path = self.config_path(&device.serial)?;
         self.make_device_private(&device.serial)?;
         let outcome = match read_config(&path) {
-            Ok(Some(config)) => match check_config(&config, device) {
-                Ok(()) => {
-                    self.prune_images(&device.serial, &config);
-                    return Ok(LoadedConfig {
-                        config,
-                        outcome: LoadOutcome::Loaded,
-                    });
+            Ok(Some(mut config)) => {
+                let changes = normalize_placement(&mut config, self.descriptors.as_ref());
+                match check_config(&config, device) {
+                    Ok(()) => {
+                        let outcome = Self::keep_normalized(&path, &mut config, changes)?;
+                        self.prune_images(&device.serial, &config);
+                        return Ok(LoadedConfig { config, outcome });
+                    }
+                    Err(error) => set_invalid_aside(&path, &error)?,
                 }
-                Err(error) => set_invalid_aside(&path, &error)?,
-            },
+            }
             Ok(None) => LoadOutcome::CreatedDefault,
             Err(error @ ConfigStoreError::Json { .. }) => set_invalid_aside(&path, &error)?,
             Err(error) => return Err(error),
@@ -264,6 +274,22 @@ impl ConfigStore {
         write_atomically(&path, &config)?;
         tracing::info!(serial = %device.serial, path = %path.display(), "default configuration written");
         Ok(LoadedConfig { config, outcome })
+    }
+
+    /// Writes `config` again when `changes` normalized it; the revision goes
+    /// up so that clients holding the previous one refresh.
+    fn keep_normalized(
+        path: &Path,
+        config: &mut DeviceConfig,
+        changes: Vec<PlacementChange>,
+    ) -> Result<LoadOutcome, ConfigStoreError> {
+        if changes.is_empty() {
+            return Ok(LoadOutcome::Loaded);
+        }
+        config.revision += 1;
+        write_atomically(path, config)?;
+        tracing::info!(serial = %config.serial, ?changes, "configuration brought back to the placement rules");
+        Ok(LoadOutcome::Normalized { changes })
     }
 
     /// Saves `config` for `device` if it is valid and based on the current
@@ -473,6 +499,13 @@ impl ConfigStore {
     ) -> Result<PreparedImport, ConfigStoreError> {
         let Archive { config, images } = read_archive(bytes)?;
         let mut config = fit_to_device(config, device, revision);
+        let changes = normalize_placement(&mut config, self.descriptors.as_ref());
+        if !changes.is_empty() {
+            tracing::info!(
+                ?changes,
+                "imported configuration brought back to the placement rules"
+            );
+        }
         let mut stager = ImageStager::new(&images, check);
         for module in &mut config.modules {
             if let Some(name) = module.image.take() {

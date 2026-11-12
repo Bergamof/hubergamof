@@ -114,7 +114,10 @@ fn descriptor() -> ModuleDescriptor {
         name: "IntelliJ".into(),
         description: "Projets récents d'IntelliJ IDEA : ouvrir un projet ou passer à sa fenêtre."
             .into(),
-        capabilities: ModuleCapabilities { key: true },
+        capabilities: ModuleCapabilities {
+            key: true,
+            ..Default::default()
+        },
         dial_functions: Vec::new(),
         settings: vec![SettingField {
             key: MAX_PROJECTS_KEY.into(),

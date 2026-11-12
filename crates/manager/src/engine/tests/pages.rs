@@ -31,22 +31,22 @@ async fn default_configuration_shows_the_builtin_modules_and_the_strip() {
     assert_eq!(live.page.title, HOME_PAGE_TITLE);
     // The Docker key counts the containers once the simulated host answers.
     fixture
-        .wait_for(|fixture| fixture.labels()[2].as_deref() == Some("Docker 4/7"))
+        .wait_for(|fixture| fixture.labels()[1].as_deref() == Some("Docker 4/7"))
         .await;
     assert_eq!(
         fixture.labels(),
         labels(&[
             Some("Audio"),
-            Some("25:00 Travail"),
             Some("Docker 4/7"),
             Some("IntelliJ"),
             Some("Claude"),
             None,
             None,
             None,
+            None,
         ])
     );
-    assert!(live.keys[5].image.is_none());
+    assert!(live.keys[4].image.is_none());
 
     // The strip is the manager's: time, measures and page come with it.
     let strip = fixture.strip();

@@ -3,9 +3,18 @@
 /**
  * Device surfaces a module can drive. The dials are not listed: what a
  * module offers them is described by [`ModuleDescriptor::dial_functions`].
+ *
+ * Everything is refused by default: a module states explicitly what it
+ * allows (`ModuleCapabilities { key: true, ..Default::default() }`).
  */
 export type ModuleCapabilities = { 
 /**
  * Can be placed on a key.
  */
-key: boolean, };
+key: boolean, 
+/**
+ * Can be configured several times on one device (several keys, or a key
+ * and a dial with separate settings). Otherwise the device holds at most
+ * one instance of the module, shared by its key and its dials.
+ */
+multipleInstances: boolean, };

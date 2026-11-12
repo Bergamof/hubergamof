@@ -4,7 +4,6 @@
   "model": "plus",
   "brightness": 70,
   "home": [
-    "pomodoro",
     "docker",
     "intellij",
     "claude"

@@ -105,7 +105,7 @@
 //!             kind: "counter".into(),
 //!             name: "Compteur".into(),
 //!             description: "Compte les appuis.".into(),
-//!             capabilities: ModuleCapabilities { key: true },
+//!             capabilities: ModuleCapabilities { key: true, ..Default::default() },
 //!             dial_functions: vec![DialFunctionDescriptor {
 //!                 id: "count".into(),
 //!                 name: "Compteur".into(),

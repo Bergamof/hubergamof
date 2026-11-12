@@ -85,6 +85,12 @@ nothing, and the settings of the module of that function.
 		pending === current ? undefined : removedInstance(config, assignDial(index, choice))
 	);
 	const module = $derived(instance ? moduleOf(instance.kind) : undefined);
+	/** The module exists once and is also on a key: that key and this dial share its settings. */
+	const sharedWithKey = $derived(
+		instance !== null &&
+			module?.capabilities.multipleInstances === false &&
+			config.home.includes(instance.id)
+	);
 
 	/** What the function being chosen does. */
 	const description = $derived.by(() => {
@@ -176,6 +182,11 @@ nothing, and the settings of the module of that function.
 				assignment.function
 			)} ».
 		</p>
+		{#if sharedWithKey}
+			<p class="text-sm text-muted">
+				Ce module n’existe qu’une fois : ses réglages sont partagés avec sa touche.
+			</p>
+		{/if}
 		{#key `${instance.id}/${module?.kind ?? ''}`}
 			<InstanceEditor {instance} {module} {serial} {api} {onapply} {ondiscard} />
 		{/key}

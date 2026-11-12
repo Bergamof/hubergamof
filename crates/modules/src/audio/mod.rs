@@ -116,7 +116,10 @@ fn descriptor() -> ModuleDescriptor {
         description: "Volume de la sortie sur la bande tactile. Touche : micro, choix \
                       de la sortie et de l'entrée."
             .into(),
-        capabilities: ModuleCapabilities { key: true },
+        capabilities: ModuleCapabilities {
+            key: true,
+            ..Default::default()
+        },
         dial_functions: vec![DialFunctionDescriptor {
             id: VOLUME_FUNCTION.into(),
             name: "Contrôle du volume".into(),

@@ -39,12 +39,19 @@ pub struct ModuleDescriptor {
 
 /// Device surfaces a module can drive. The dials are not listed: what a
 /// module offers them is described by [`ModuleDescriptor::dial_functions`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Everything is refused by default: a module states explicitly what it
+/// allows (`ModuleCapabilities { key: true, ..Default::default() }`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ModuleCapabilities {
     /// Can be placed on a key.
     pub key: bool,
+    /// Can be configured several times on one device (several keys, or a key
+    /// and a dial with separate settings). Otherwise the device holds at most
+    /// one instance of the module, shared by its key and its dials.
+    pub multiple_instances: bool,
 }
 
 /// A function a module offers to a dial.
@@ -388,7 +395,10 @@ mod tests {
             kind: "sample".into(),
             name: "Sample".into(),
             description: String::new(),
-            capabilities: ModuleCapabilities { key: true },
+            capabilities: ModuleCapabilities {
+                key: true,
+                ..Default::default()
+            },
             dial_functions: Vec::new(),
             settings,
         }

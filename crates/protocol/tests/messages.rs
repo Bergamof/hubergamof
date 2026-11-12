@@ -97,7 +97,10 @@ fn catalog_module_without_icon() {
                 kind: "audio".into(),
                 name: "Audio".into(),
                 description: "Volume".into(),
-                capabilities: ModuleCapabilities { key: false },
+                capabilities: ModuleCapabilities {
+                    key: false,
+                    multiple_instances: true,
+                },
                 dial_functions: vec![DialFunctionDescriptor {
                     id: "volume".into(),
                     name: "Contrôle du volume".into(),
@@ -113,7 +116,7 @@ fn catalog_module_without_icon() {
             "kind": "audio",
             "name": "Audio",
             "description": "Volume",
-            "capabilities": { "key": false },
+            "capabilities": { "key": false, "multipleInstances": true },
             "dialFunctions": [{
                 "id": "volume",
                 "name": "Contrôle du volume",
@@ -270,7 +273,10 @@ fn server_module_catalog() {
                     kind: "pomodoro".into(),
                     name: "Pomodoro".into(),
                     description: "Focus timer".into(),
-                    capabilities: ModuleCapabilities { key: true },
+                    capabilities: ModuleCapabilities {
+                        key: true,
+                        ..Default::default()
+                    },
                     dial_functions: Vec::new(),
                     settings: vec![integer, choice],
                 },
@@ -288,7 +294,7 @@ fn server_module_catalog() {
                 "kind": "pomodoro",
                 "name": "Pomodoro",
                 "description": "Focus timer",
-                "capabilities": { "key": true },
+                "capabilities": { "key": true, "multipleInstances": false },
                 "dialFunctions": [],
                 "settings": [
                     {

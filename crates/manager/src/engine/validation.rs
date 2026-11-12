@@ -1,6 +1,7 @@
 //! Checks a configuration against the modules before it is saved: settings
 //! accepted by each module and modules placed only where they can work.
 
+use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use hubergamof_module_api::{ModuleCapabilities, ModuleInstanceId};
@@ -10,8 +11,9 @@ use hubergamof_protocol::{DeviceConfig, DialAssignment};
 use super::EngineError;
 
 /// Refuses `config` when a module of a known kind rejects its settings, or
-/// is placed on the home page without being able to show a key, or is given
-/// to a dial for a function it does not offer. Kinds missing from the
+/// is placed on the home page without being able to show a key, is configured
+/// several times without allowing it, or is given to a dial for a function it
+/// does not offer. Kinds missing from the
 /// registry are not checked (they show a placeholder); references to unknown
 /// instances are left to [`DeviceConfig::validate`].
 ///
@@ -22,6 +24,7 @@ pub(crate) fn check_modules(
     registry: &ModuleRegistry,
     config: &DeviceConfig,
 ) -> Result<(), EngineError> {
+    let mut single_instances = HashSet::new();
     for instance in &config.modules {
         let Some(factory) = registry.get(&instance.kind) else {
             continue;
@@ -29,6 +32,12 @@ pub(crate) fn check_modules(
         let checked = guarded(&instance.id, || {
             let capabilities = factory.descriptor().capabilities;
             check_placement(config, &instance.id, capabilities)?;
+            if !capabilities.multiple_instances && !single_instances.insert(&instance.kind) {
+                return Err(invalid(
+                    &instance.id,
+                    "this module can be configured only once".into(),
+                ));
+            }
             factory
                 .validate_settings(&instance.settings)
                 .map_err(|error| invalid(&instance.id, error.to_string()))
@@ -129,6 +138,59 @@ mod tests {
         assert!(checked > 0, "no example configuration found");
     }
 
+    fn default_config_with(edit: impl FnOnce(&mut DeviceConfig)) -> DeviceConfig {
+        let registry = builtin_registry();
+        let info = crate::device::virtual_deck::virtual_plus_info("S");
+        let mut config = crate::config_store::default_config(&info, &registry);
+        edit(&mut config);
+        config
+    }
+
+    fn instance(id: &str, kind: &str) -> hubergamof_protocol::ModuleInstance {
+        let registry = builtin_registry();
+        hubergamof_protocol::ModuleInstance {
+            id: id.into(),
+            kind: kind.into(),
+            label: None,
+            image: None,
+            settings: registry.default_settings(&kind.into()),
+        }
+    }
+
+    #[test]
+    fn the_default_configuration_follows_the_placement_rules() {
+        let config = default_config_with(|_| {});
+        assert!(check_modules(&builtin_registry(), &config).is_ok());
+    }
+
+    #[test]
+    fn a_module_without_key_is_refused_on_the_home_page() {
+        let config = default_config_with(|config| config.home.push("pomodoro".into()));
+        let error = check_modules(&builtin_registry(), &config).unwrap_err();
+        assert!(
+            matches!(error, EngineError::InvalidConfig { module, .. } if module.0 == "pomodoro")
+        );
+    }
+
+    #[test]
+    fn a_module_is_configured_once_unless_it_says_otherwise() {
+        let registry = builtin_registry();
+        let twice_audio = default_config_with(|config| {
+            config.modules.push(instance("audio-2", "audio"));
+            config.home.push("audio-2".into());
+        });
+        let error = check_modules(&registry, &twice_audio).unwrap_err();
+        assert!(
+            matches!(error, EngineError::InvalidConfig { module, .. } if module.0 == "audio-2")
+        );
+
+        let twice_docker = default_config_with(|config| {
+            config.modules.push(instance("docker-2", "docker"));
+            config.home.push("docker-2".into());
+        });
+        assert!(check_modules(&registry, &twice_docker).is_ok());
+    }
+
     #[test]
     fn modules_panicking_while_validating_refuse_the_configuration() {
         use std::sync::Arc;
@@ -145,7 +207,10 @@ mod tests {
                     kind: "panicking".into(),
                     name: String::new(),
                     description: String::new(),
-                    capabilities: ModuleCapabilities { key: true },
+                    capabilities: ModuleCapabilities {
+                        key: true,
+                        ..Default::default()
+                    },
                     dial_functions: Vec::new(),
                     settings: Vec::new(),
                 }

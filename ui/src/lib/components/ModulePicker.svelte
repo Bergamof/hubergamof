@@ -11,11 +11,13 @@ come with it).
 		open: boolean;
 		title: string;
 		modules: readonly CatalogModule[];
+		/** What to tell about a module besides its description, if anything. */
+		notice?: (module: CatalogModule) => string | undefined;
 		onpick: (module: CatalogModule) => void;
 		onclose: () => void;
 	}
 
-	let { open, title, modules, onpick, onclose }: Props = $props();
+	let { open, title, modules, notice, onpick, onclose }: Props = $props();
 
 	const uid = $props.id();
 	let dialog: HTMLDialogElement | undefined = $state();
@@ -53,6 +55,9 @@ come with it).
 						<span class="flex flex-col">
 							<span class="font-medium">{module.name}</span>
 							<span class="text-sm text-muted">{module.description}</span>
+							{#if notice?.(module)}
+								<span class="text-sm font-medium">{notice(module)}</span>
+							{/if}
 						</span>
 					</button>
 				</li>

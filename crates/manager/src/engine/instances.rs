@@ -474,7 +474,10 @@ mod tests {
                 kind: KIND.into(),
                 name: String::new(),
                 description: String::new(),
-                capabilities: ModuleCapabilities { key: true },
+                capabilities: ModuleCapabilities {
+                    key: true,
+                    ..Default::default()
+                },
                 dial_functions: Vec::new(),
                 settings: Vec::new(),
             }

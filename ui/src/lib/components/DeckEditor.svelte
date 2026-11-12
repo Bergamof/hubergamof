@@ -14,6 +14,9 @@ selected key or dial.
 	import {
 		addKey,
 		assignDial,
+		canAddKey,
+		canCreateInstance,
+		sharedInstance,
 		moveKey,
 		removeKey,
 		removedInstance,
@@ -70,8 +73,12 @@ selected key or dial.
 	const dials = $derived(
 		config.dials.map((assignment) => dialSummary(assignment, instancesById, moduleOf))
 	);
-	const keyModules = $derived(deck.catalog.filter((module) => module.capabilities.key));
-	const dialModules = $derived(deck.catalog.filter((module) => module.dialFunctions.length > 0));
+	const keyModules = $derived(deck.catalog.filter((module) => canAddKey(config, module)));
+	const dialModules = $derived(
+		deck.catalog.filter(
+			(module) => module.dialFunctions.length > 0 && canCreateInstance(config, module)
+		)
+	);
 	const dialCandidates = $derived(
 		config.modules
 			.filter((instance) => (moduleOf(instance.kind)?.dialFunctions.length ?? 0) > 0)
@@ -86,6 +93,17 @@ selected key or dial.
 		if (selection?.surface === 'strip' && dials.length > 0) return selection;
 		return undefined;
 	});
+
+	/** Whether a dial uses the instance of a module that exists only once: its settings are shared. */
+	function usedByDial(instance: ModuleInstance | undefined): boolean {
+		return (
+			instance !== undefined &&
+			moduleOf(instance.kind)?.capabilities.multipleInstances === false &&
+			config.dials.some(
+				(assignment) => assignment.kind === 'module' && assignment.instance === instance.id
+			)
+		);
+	}
 
 	function placeOf(id: string): string {
 		const key = config.home.indexOf(id);
@@ -155,10 +173,13 @@ selected key or dial.
 
 	async function add(module: CatalogModule) {
 		const position = config.home.length;
+		const shared = sharedInstance(config, module);
 		void deck.edit(addKey(module));
 		pickerOpen = false;
 		selectKey(position);
-		announcement = `Touche ${module.name} ajoutée en position ${position + 1}.`;
+		announcement = `Touche ${module.name} ajoutée en position ${position + 1}.${
+			shared ? ' Ses réglages sont partagés avec sa molette.' : ''
+		}`;
 		// The picker gives the focus back to « Ajouter une touche »: the new key is the next step.
 		await tick();
 		document.getElementById(keyButtonId(position))?.focus();
@@ -274,6 +295,7 @@ selected key or dial.
 					count={keys.length}
 					{instance}
 					module={moduleFor(instance)}
+					sharedWithDial={usedByDial(instance)}
 					serial={device.serial}
 					{api}
 					headingId={detailsHeadingId}
@@ -336,6 +358,10 @@ selected key or dial.
 	open={pickerOpen}
 	title="Ajouter une touche"
 	modules={keyModules}
+	notice={(module) =>
+		sharedInstance(config, module)
+			? 'Déjà configuré pour une molette : la touche en partagera les réglages.'
+			: undefined}
 	onpick={add}
 	onclose={() => (pickerOpen = false)}
 />

@@ -29,6 +29,7 @@ mod live;
 mod navigation;
 mod notifications;
 mod painter;
+mod placement_notice;
 mod supervisor;
 mod validation;
 

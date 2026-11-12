@@ -12,6 +12,7 @@ use crate::device::virtual_deck::virtual_plus_info;
 
 const BACKGROUND: Rgb = Rgb(200, 30, 30);
 const BACKGROUND_PIXEL: Rgba<u8> = Rgba([200, 30, 30, 255]);
+const NOTICE_PIXEL: Rgba<u8> = Rgba([0x2B, 0x6C, 0xB0, 255]);
 /// Longer than [`crate::engine::device_engine::HOLD_THRESHOLD`].
 const HOLD: Duration = Duration::from_millis(600);
 
@@ -333,4 +334,26 @@ async fn a_tap_under_a_held_label_does_not_read_the_notification() {
     fixture.tap_strip();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(fixture.unread_messages(), ["Pause !"]);
+}
+
+#[tokio::test]
+async fn a_configuration_brought_back_to_the_rules_is_explained_on_the_strip() {
+    let info = virtual_plus_info("PLUS");
+    let fixture = start_with_stored(info, |info, store| {
+        let mut config = store.load(info).unwrap().config;
+        // Pomodoro cannot be placed on a key.
+        config.home.push("pomodoro".into());
+        store.save(info, config).unwrap();
+    })
+    .await;
+    assert!(!fixture.config().home.iter().any(|id| id.0 == "pomodoro"));
+    let mut live = fixture.engine.live();
+    tokio::time::timeout(WAIT, async {
+        while fixture.strip_pixel(799, 0) != NOTICE_PIXEL {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            live.mark_unchanged();
+        }
+    })
+    .await
+    .unwrap();
 }

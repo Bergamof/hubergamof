@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { CatalogModule, DeviceConfig, ModuleInstance } from '#lib/generated/index.js';
 import {
 	addKey,
+	canAddKey,
+	canCreateInstance,
 	assignDial,
 	createInstance,
 	moveKey,
@@ -50,7 +52,7 @@ const pomodoro: CatalogModule = {
 	kind: 'pomodoro',
 	name: 'Pomodoro',
 	description: '',
-	capabilities: { key: true },
+	capabilities: { key: true, multipleInstances: true },
 	dialFunctions: [],
 	icon: null,
 	settingIcons: {},
@@ -64,6 +66,23 @@ const pomodoro: CatalogModule = {
 		},
 		{ key: 'autoStart', label: 'Enchaîner', help: null, kind: { type: 'boolean', default: false } }
 	]
+};
+
+/** A module that exists once (like the audio module of `config()`), with a dial function. */
+const audio: CatalogModule = {
+	...pomodoro,
+	kind: 'audio',
+	name: 'Audio',
+	capabilities: { key: true, multipleInstances: false },
+	dialFunctions: [{ id: 'volume', name: 'Volume', description: '' }]
+};
+
+/** A module driven by a dial only. */
+const dialOnly: CatalogModule = {
+	...audio,
+	kind: 'timer',
+	name: 'Minuteur',
+	capabilities: { key: false, multipleInstances: false }
 };
 
 describe('newInstanceId', () => {
@@ -108,6 +127,42 @@ describe('edits', () => {
 		const edited = addKey(pomodoro)(config());
 		expect(edited.home).toEqual(['audio', 'pomodoro', 'docker', 'pomodoro-2']);
 		expect(edited.modules.at(-1)).toEqual(createInstance(config(), pomodoro));
+	});
+
+	it('add the single instance of a module to a key instead of a second one', () => {
+		const withoutKey = config({
+			home: ['pomodoro', 'docker'],
+			dials: [
+				{ kind: 'module', instance: 'audio', function: 'volume' },
+				{ kind: 'none' },
+				{ kind: 'none' },
+				{ kind: 'none' }
+			]
+		});
+		const edited = addKey(audio)(withoutKey);
+		expect(edited.home).toEqual(['pomodoro', 'docker', 'audio']);
+		expect(edited.modules.filter((module) => module.kind === 'audio')).toHaveLength(1);
+	});
+
+	it('refuse a second key for a single-instance module, and a key for a dial-only module', () => {
+		const original = config();
+		expect(canAddKey(original, audio)).toBe(false);
+		expect(addKey(audio)(original)).toBe(original);
+		expect(canAddKey(original, dialOnly)).toBe(false);
+		expect(addKey(dialOnly)(original)).toBe(original);
+		expect(canAddKey(original, pomodoro)).toBe(true);
+	});
+
+	it('only create a new instance for a dial when the module may have several', () => {
+		expect(canCreateInstance(config(), audio)).toBe(false);
+		expect(canCreateInstance(config(), dialOnly)).toBe(true);
+		expect(canCreateInstance(config(), pomodoro)).toBe(true);
+	});
+
+	it('give a dial the single instance of a module chosen as new', () => {
+		const edited = assignDial(3, { type: 'new', module: audio, function: 'volume' })(config());
+		expect(edited.dials[3]).toEqual({ kind: 'module', instance: 'audio', function: 'volume' });
+		expect(edited.modules.filter((module) => module.kind === 'audio')).toHaveLength(1);
 	});
 
 	it('remove a key and its instance unless a dial still uses it', () => {
