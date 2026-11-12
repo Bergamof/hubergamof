@@ -490,7 +490,7 @@ impl Fixture {
     fn reminder_ink(&self, from: u32, to: u32) -> usize {
         let strip = self.deck.inner.screen().strip.unwrap();
         (from..to)
-            .flat_map(|x| (76..96).map(move |y| (x, y)))
+            .flat_map(|x| (86..97).map(move |y| (x, y)))
             .filter(|(x, y)| *strip.get_pixel(*x, *y) != BACKGROUND_PIXEL)
             .count()
     }

@@ -18,6 +18,7 @@ use super::{RenderError, Rendered, Renderer, check_size, keep_opaque};
 use crate::strip::{HintFace, MeasureFace, PageFace, PomodoroFace, PopupFace, StripFace};
 
 /// Colours of a theme.
+#[derive(Clone, Copy)]
 struct Palette {
     background: Rgba<u8>,
     card: Rgba<u8>,
@@ -183,8 +184,14 @@ const PROGRESS_Y: f32 = 75.0;
 const PROGRESS_HEIGHT: f32 = 4.0;
 
 /// Reminders of the dials, under everything.
+/// Share of the ink (out of 255) of the text of a reminder over a notification.
+const REMINDER_TEXT_SHARE: u8 = 200;
+/// Same, for the rule above the reminders.
+const REMINDER_RULE_SHARE: u8 = 90;
 const HINT_MARGIN: f32 = 16.0;
-const HINT_RULE_Y: f32 = 83.5;
+/// Top of the reminders of the dials, also the bottom of what a surface
+/// drawn over the strip may keep for itself.
+pub(super) const HINT_RULE_Y: f32 = 83.5;
 const HINT_ICON_Y: f32 = 86.5;
 const HINT_ICON_SIZE: f32 = 10.0;
 const HINT_BASELINE: f32 = 95.0;
@@ -452,6 +459,47 @@ impl Renderer {
             image,
             palette.background,
         ))))
+    }
+
+    /// Draws the reminders of the dials over `image`, a surface covering the
+    /// strip (a notification), in the format of the strip: a rule, then an
+    /// icon and a text under each dial. They are drawn in shades of `ink`
+    /// over `background`, which stay legible whatever the colours.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Svg`] when a text cannot be drawn.
+    pub(super) fn draw_dial_reminders(
+        &self,
+        image: &mut RgbaImage,
+        hints: &[HintFace],
+        (ink, background): (Rgba<u8>, Rgba<u8>),
+    ) -> Result<(), RenderError> {
+        let shade = |alpha| {
+            let mixed = |from: u8, to: u8| {
+                let (from, to, alpha) = (u16::from(from), u16::from(to), u16::from(alpha));
+                u8::try_from((from * (u16::from(u8::MAX) - alpha) + to * alpha) / 255)
+                    .unwrap_or(u8::MAX)
+            };
+            let [red, green, blue, _] = background.0;
+            let [ink_red, ink_green, ink_blue, _] = ink.0;
+            Rgba([
+                mixed(red, ink_red),
+                mixed(green, ink_green),
+                mixed(blue, ink_blue),
+                u8::MAX,
+            ])
+        };
+        let palette = Palette {
+            muted: shade(REMINDER_TEXT_SHARE),
+            line: shade(REMINDER_RULE_SHARE),
+            ..*Palette::of(DeviceTheme::Light)
+        };
+        let (width, height) = image.dimensions();
+        let size = ImageSize { width, height };
+        let mut canvas = Canvas::new();
+        self.draw_hints(&mut canvas, hints, size, &palette)?;
+        self.text.overlay_svg(image, &canvas.svg)
     }
 
     fn draw_clock(

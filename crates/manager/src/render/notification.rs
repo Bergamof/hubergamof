@@ -8,10 +8,12 @@ use hubergamof_protocol::ImageSize;
 use image::{Rgba, RgbaImage, imageops};
 
 use super::source::f32_from;
+use super::strip::HINT_RULE_Y;
 use super::{
     FontWeight, ImageSource, KeyRequest, LineStyle, RenderError, Renderer, TEXT_COLOR,
     TextRenderer, check_size, keep_opaque,
 };
+use crate::strip::HintFace;
 
 /// Icon side, relative to the strip height.
 const ICON_RATIO: f32 = 0.72;
@@ -23,18 +25,8 @@ const ICON_GAP_RATIO: f32 = 0.20;
 const MESSAGE_FONT_RATIO: f32 = 0.40;
 /// Label font size, relative to the strip height.
 const LABEL_FONT_RATIO: f32 = 0.34;
-/// Action reminder font size, relative to the strip height.
-const ACTION_FONT_RATIO: f32 = 0.15;
-/// Distance between the reminder baseline and the strip bottom, relative to
-/// the strip height (above the time bar).
-const ACTION_BASELINE_RATIO: f32 = 0.10;
-/// Icon side when a reminder is drawn, relative to the strip height.
-const ACTION_ICON_RATIO: f32 = 0.56;
-/// Space above the icon when a reminder is drawn, relative to the strip
-/// height.
-const ACTION_ICON_TOP_RATIO: f32 = 0.07;
-/// Share of the dial column the reminder may fill.
-const ACTION_WIDTH_SHARE: f32 = 0.92;
+/// Icon side when reminders are drawn, relative to the room above them.
+const ACTION_ICON_SHARE: f32 = 0.8;
 /// Height of the remaining-time bar, relative to the strip height.
 const BAR_RATIO: f32 = 0.06;
 /// Opacity of the remaining-time bar.
@@ -155,13 +147,13 @@ impl Metrics {
         if !with_action {
             return (self.icon, self.edge, self.edge);
         }
-        let height = f32_from(self.height);
-        let side = pixels(height * ACTION_ICON_RATIO, self.icon);
+        let room = HINT_RULE_Y.min(f32_from(self.height));
+        let side = pixels(room * ACTION_ICON_SHARE, self.icon);
         let left = self.edge + (self.icon - side) / 2;
         (
             side,
             left,
-            pixels(height * ACTION_ICON_TOP_RATIO, self.height),
+            pixels((room - f32_from(side)) / 2.0, self.height),
         )
     }
 
@@ -239,8 +231,13 @@ impl Renderer {
             );
         }
         let scrolls = self.draw_message(&mut canvas, look, &metrics, elapsed)?;
-        for action in look.actions {
-            self.draw_action(&mut canvas, look, action)?;
+        if look.shows_action() {
+            let ink = readable_text_color(look.background);
+            self.draw_dial_reminders(
+                &mut canvas,
+                &reminder_hints(look.actions),
+                (ink, background),
+            )?;
         }
         if let Some(timeout) = timeout {
             draw_time_bar(&mut canvas, look.background, elapsed, timeout);
@@ -283,35 +280,6 @@ impl Renderer {
         let mut canvas = RgbaImage::from_pixel(size.width, size.height, Rgba([0, 0, 0, u8::MAX]));
         self.text.draw(&mut canvas, &[line])?;
         Ok(Arc::new(canvas))
-    }
-
-    /// The reminder of the contextual dial, centred above its column.
-    fn draw_action(
-        &self,
-        canvas: &mut RgbaImage,
-        look: &NotificationLook<'_>,
-        action: &NotificationActionLook<'_>,
-    ) -> Result<(), RenderError> {
-        let Some(dials) = u16::try_from(action.dials).ok().filter(|dials| *dials > 0) else {
-            return Ok(());
-        };
-        let height = f32_from(look.size.height);
-        let column = f32_from(look.size.width) / f32::from(dials);
-        let centre = (f32::from(u16::try_from(action.dial).unwrap_or(0)) + 0.5) * column;
-        let style = LineStyle {
-            size: height * ACTION_FONT_RATIO,
-            weight: FontWeight::SemiBold,
-            color: readable_text_color(look.background),
-        };
-        let baseline = height * (1.0 - ACTION_BASELINE_RATIO);
-        let line = self.text.fitted_line(
-            action.text.trim(),
-            style,
-            centre,
-            baseline,
-            column * ACTION_WIDTH_SHARE,
-        )?;
-        self.text.draw(canvas, &[line])
     }
 
     fn draw_message(
@@ -415,6 +383,19 @@ impl Renderer {
         });
         Ok((image, text_width))
     }
+}
+
+/// The reminders as the strip draws them: a press under each dial that
+/// does something, nothing under the others.
+fn reminder_hints(actions: &[NotificationActionLook<'_>]) -> Vec<HintFace> {
+    let dials = actions.iter().map(|action| action.dials).max().unwrap_or(0);
+    let mut hints = vec![HintFace::default(); dials];
+    for action in actions {
+        if let Some(hint) = hints.get_mut(action.dial) {
+            hint.press = Some(action.text.to_owned());
+        }
+    }
+    hints
 }
 
 /// Fades the first `left` and the last `right` columns of `window` to
@@ -613,8 +594,8 @@ mod tests {
         let drawn = renderer
             .render_notification(&with_action, Duration::ZERO, None)
             .unwrap();
-        // Below the message, only the third column changes.
-        let (left, right) = changed_columns(&drawn.image, &bare.image, 75).unwrap();
+        // Under the rule, only the third column changes.
+        let (left, right) = changed_columns(&drawn.image, &bare.image, 86).unwrap();
         assert!(left >= 400 && right < 600, "{left}..{right}");
         assert!(!drawn.scrolls);
     }
@@ -647,7 +628,7 @@ mod tests {
         assert!(side < full && top < full_top && left >= full_left);
         // Still centred on the same column and clear of the reminder line.
         assert_eq!(left * 2 + side, full_left * 2 + full);
-        assert!(top + side < 76, "{}", top + side);
+        assert!(f32_from(top + side) < HINT_RULE_Y, "{}", top + side);
     }
 
     #[test]
@@ -721,8 +702,37 @@ mod tests {
                 None,
             )
             .unwrap();
-        let (left, right) = changed_columns(&drawn.image, &bare.image, 75).unwrap();
+        let (left, right) = changed_columns(&drawn.image, &bare.image, 86).unwrap();
         assert!((400..600).contains(&left), "third column inked: {left}");
         assert!((600..800).contains(&right), "fourth column inked: {right}");
+    }
+
+    #[test]
+    fn the_reminders_sit_under_a_rule_like_on_the_strip() {
+        let renderer = Renderer::new().unwrap();
+        let bare = renderer
+            .render_notification(&look("Pause !"), Duration::ZERO, None)
+            .unwrap();
+        let drawn = renderer
+            .render_notification(
+                &NotificationLook {
+                    actions: &[NotificationActionLook {
+                        text: "Masquer",
+                        dial: 1,
+                        dials: 4,
+                    }],
+                    ..look("Pause !")
+                },
+                Duration::ZERO,
+                None,
+            )
+            .unwrap();
+        let rule_row = 83;
+        let (left, right) = changed_columns(&drawn.image, &bare.image, rule_row).unwrap();
+        assert_eq!((left, right), (16, 783), "rule from margin to margin");
+        let rule_pixels = (0..STRIP.width)
+            .filter(|x| drawn.image.get_pixel(*x, rule_row) != bare.image.get_pixel(*x, rule_row))
+            .count();
+        assert_eq!(rule_pixels, 768);
     }
 }
