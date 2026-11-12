@@ -188,6 +188,7 @@ selected key or dial.
 
 	function assign(index: number, choice: DialChoice) {
 		void deck.edit(assignDial(index, choice));
+		announcement = `Fonction de la molette ${index + 1} modifiée.`;
 	}
 </script>
 

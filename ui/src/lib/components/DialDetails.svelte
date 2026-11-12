@@ -113,11 +113,13 @@ nothing, and the settings of the module of that function.
 				class="field w-auto flex-1"
 				value={pending}
 				onchange={(event) => (chosen = event.currentTarget.value)}
-				aria-describedby="{uid}-hint{lost ? ` ${uid}-lost` : ''}"
+				aria-describedby="{description ? `${uid}-description ` : ''}{uid}-hint{lost
+					? ` ${uid}-lost`
+					: ''}"
 			>
 				<option value={NO_DIAL_FUNCTION}>Rien</option>
 				<option value={NAVIGATION_OPTION}>Navigation</option>
-				<option value={CONTEXTUAL_OPTION}>Fonction contextuelle</option>
+				<option value={CONTEXTUAL_OPTION}>Fonction contextuelle (pas encore définie)</option>
 				{#if candidates.length > 0}
 					<optgroup label="Fonctions des modules configurés">
 						{#each candidates as candidate (candidate.instance.id)}
@@ -151,8 +153,10 @@ nothing, and the settings of the module of that function.
 				Affecter
 			</button>
 		</div>
+		{#if description}
+			<p id="{uid}-description" class="text-sm text-muted">{description}</p>
+		{/if}
 		<p id="{uid}-hint" class="text-sm text-muted">
-			{#if description}{description}{/if}
 			Un module déjà configuré garde ses réglages, partagés avec ses autres emplacements.
 		</p>
 		{#if lost}

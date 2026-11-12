@@ -191,6 +191,22 @@ mod tests {
     }
 
     #[test]
+    fn an_upgraded_configuration_is_read_again_as_it_is() {
+        let once = upgraded();
+        let twice = parse_config(&serde_json::to_vec(&once).unwrap()).unwrap();
+        assert_eq!(twice, once);
+    }
+
+    #[test]
+    fn other_versions_are_not_upgraded() {
+        // A future version is left for validation to refuse; nothing is guessed.
+        let future = FIRST_CONFIG.replace(r#""schemaVersion": 1"#, r#""schemaVersion": 3"#);
+        assert!(parse_config(future.as_bytes()).is_err());
+        let text = FIRST_CONFIG.replace(r#""schemaVersion": 1"#, r#""schemaVersion": "1""#);
+        assert!(parse_config(text.as_bytes()).is_err());
+    }
+
+    #[test]
     fn what_is_not_a_configuration_is_refused() {
         assert!(parse_config(b"[]").is_err());
         assert!(parse_config(b"{").is_err());

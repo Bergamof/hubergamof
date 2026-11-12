@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -9,8 +10,10 @@ use std::sync::{Mutex, PoisonError};
 pub const HISTORY_LEN: usize = 14;
 
 const PERCENT: u64 = 100;
-const STAT_FILE: &str = "/proc/stat";
-const MEMINFO_FILE: &str = "/proc/meminfo";
+/// Where the kernel publishes its figures.
+const PROC_ROOT: &str = "/proc";
+const STAT_FILE: &str = "stat";
+const MEMINFO_FILE: &str = "meminfo";
 
 /// Use of the machine at one instant, in percent of the whole.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,23 +135,40 @@ fn parse_memory(meminfo: &str) -> Option<(u8, u8)> {
 }
 
 /// Measures the machine from `/proc`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ProcProbe {
+    root: PathBuf,
     previous: Mutex<Option<CpuTimes>>,
 }
 
 impl ProcProbe {
-    /// A probe whose first sample is the load since boot.
+    /// A probe of this machine, whose first sample is the load since boot.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self::reading(PROC_ROOT)
+    }
+
+    /// A probe reading `stat` and `meminfo` from `root` (tests give it
+    /// files they wrote).
+    #[must_use]
+    pub fn reading(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            previous: Mutex::new(None),
+        }
+    }
+}
+
+impl Default for ProcProbe {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl SystemProbe for ProcProbe {
     fn sample(&self) -> Option<SystemSample> {
-        let times = parse_cpu_times(&fs::read_to_string(STAT_FILE).ok()?)?;
-        let (ram, swap) = parse_memory(&fs::read_to_string(MEMINFO_FILE).ok()?)?;
+        let times = parse_cpu_times(&fs::read_to_string(self.root.join(STAT_FILE)).ok()?)?;
+        let (ram, swap) = parse_memory(&fs::read_to_string(self.root.join(MEMINFO_FILE)).ok()?)?;
         let mut previous = self.previous.lock().unwrap_or_else(PoisonError::into_inner);
         let cpu = cpu_percent(*previous, times);
         *previous = Some(times);
@@ -287,11 +307,49 @@ mod tests {
         assert_eq!(demo.sample(), Some(first[0]), "the cycle starts over");
     }
 
+    fn proc_with(stat: &str, meminfo: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(STAT_FILE), stat).unwrap();
+        fs::write(dir.path().join(MEMINFO_FILE), meminfo).unwrap();
+        dir
+    }
+
+    const MEMINFO: &str =
+        "MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n";
+
     #[test]
-    fn the_proc_probe_reads_this_machine() {
-        let probe = ProcProbe::new();
-        let sample = probe.sample().expect("/proc is readable on Linux");
+    fn the_proc_probe_measures_between_its_readings() {
+        let dir = proc_with("cpu  100 0 100 800 0 0 0 0\n", MEMINFO);
+        let probe = ProcProbe::reading(dir.path());
+        // First reading: the load since boot, 20 %.
+        assert_eq!(
+            probe.sample(),
+            Some(SystemSample {
+                cpu: 20,
+                ram: 75,
+                swap: 0
+            })
+        );
+        // 100 more ticks, 50 of them busy.
+        fs::write(dir.path().join(STAT_FILE), "cpu  125 0 125 850 0 0 0 0\n").unwrap();
+        assert_eq!(probe.sample().map(|sample| sample.cpu), Some(50));
+    }
+
+    #[test]
+    fn the_proc_probe_gives_nothing_for_files_it_cannot_use() {
+        let missing = tempfile::tempdir().unwrap();
+        assert_eq!(ProcProbe::reading(missing.path()).sample(), None);
+        let garbled = proc_with("nonsense", MEMINFO);
+        assert_eq!(ProcProbe::reading(garbled.path()).sample(), None);
+        let no_memory = proc_with("cpu  1 1 1 1 1 1 1 1\n", "nonsense");
+        assert_eq!(ProcProbe::reading(no_memory.path()).sample(), None);
+    }
+
+    #[test]
+    fn the_proc_probe_runs_on_this_machine() {
+        let sample = ProcProbe::new()
+            .sample()
+            .expect("/proc is readable on Linux");
         assert!(sample.cpu <= 100 && sample.ram <= 100 && sample.swap <= 100);
-        assert!(probe.sample().is_some());
     }
 }

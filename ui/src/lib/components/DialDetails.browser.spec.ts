@@ -67,7 +67,7 @@ describe('DialDetails', () => {
 		await expect.element(page.getByRole('heading', { name: 'Molette 1' })).toBeVisible();
 		const functions = page.getByRole('combobox', { name: 'Fonction' });
 		await expect.element(functions).toHaveValue('function:audio/main');
-		for (const name of ['Rien', 'Navigation', 'Fonction contextuelle']) {
+		for (const name of ['Rien', 'Navigation', 'Fonction contextuelle (pas encore définie)']) {
 			await expect.element(page.getByRole('option', { name, exact: true })).toBeInTheDocument();
 		}
 		await expect
@@ -106,7 +106,9 @@ describe('DialDetails', () => {
 	it('says what the function being chosen does', async () => {
 		await show({ kind: 'navigation' });
 		await expect.element(page.getByText(/fait défiler les lignes de la page/)).toBeVisible();
-		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Fonction contextuelle');
+		await page
+			.getByRole('combobox', { name: 'Fonction' })
+			.selectOptions('Fonction contextuelle (pas encore définie)');
 		await expect.element(page.getByText(/dépend de ce qui est affiché/)).toBeVisible();
 		await page
 			.getByRole('combobox', { name: 'Fonction' })

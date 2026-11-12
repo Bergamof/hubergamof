@@ -116,7 +116,7 @@ Options of the touch strip: its colours and what it shows. Every change is appli
 	</div>
 
 	<div class="flex flex-col gap-1">
-		<label class="font-medium" for="{uid}-alert">Alerte de charge</label>
+		<label class="font-medium" for="{uid}-alert">Alerte de charge (en pourcentage)</label>
 		<span class="flex items-center gap-2">
 			<input
 				id="{uid}-alert"
@@ -135,7 +135,7 @@ Options of the touch strip: its colours and what it shows. Every change is appli
 			Une mesure est affichée en rouge à partir de cette charge, entre {ALERT_MIN} et {ALERT_MAX} %.
 		</p>
 		{#if !alertValid}
-			<p id="{uid}-alert-error" class="text-sm font-medium text-danger">
+			<p id="{uid}-alert-error" role="alert" class="text-sm font-medium text-danger">
 				Saisissez un nombre entier entre {ALERT_MIN} et {ALERT_MAX}.
 			</p>
 		{/if}

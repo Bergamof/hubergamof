@@ -22,7 +22,7 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 		light: {
 			background: '#e7ebf1',
 			ink: '#13213b',
-			muted: '#5f6d85',
+			muted: '#566178',
 			track: '#cdd5e0',
 			line: '#c3ccd9',
 			cpu: '#e0502a',
@@ -48,8 +48,8 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 	const WIDTH = 800;
 	const MARGIN = 16;
 	const CURVE = { x: 282, width: 170, height: 14 } as const;
-	const HINT_CHAR_WIDTH = 5.9;
-	const HINT_MAX_CHARS = 16;
+	const HINT_CHAR_WIDTH = 7.3;
+	const HINT_MAX_CHARS = 13;
 	const SAMPLE_VOLUME = 62;
 	const SAMPLE_PROGRESS = 0.26;
 	const MEASURES = [
@@ -101,7 +101,7 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 	/** Where the press part of a reminder starts, after its rotation part. */
 	function pressX(index: number, rotate: string | null): number {
 		const start = hintX(index);
-		return rotate ? start + 14 + shortened(rotate).length * HINT_CHAR_WIDTH + 10 : start;
+		return rotate ? start + 16 + shortened(rotate).length * HINT_CHAR_WIDTH + 10 : start;
 	}
 </script>
 
@@ -127,7 +127,7 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 		{#if strip.showSeconds}
 			<text x="182" y="54" font-size="22" fill={palette.muted}>42</text>
 		{/if}
-		<text x="20" y="71" font-size="11" letter-spacing="1" fill={palette.muted}
+		<text x="20" y="71" font-size="13" letter-spacing="1" fill={palette.muted}
 			>JEU. 12 NOV. · SEM. 46</text
 		>
 		<rect x="224" y="12" width="1" height="58" fill={palette.line} />
@@ -135,7 +135,7 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 		<!-- Mesures du système -->
 		{#each MEASURES as measure, row (measure.label)}
 			{@const color = palette[measure.color]}
-			<text x="240" y={baseline(row)} font-size="10" letter-spacing="1" fill={palette.muted}
+			<text x="240" y={baseline(row)} font-size="12" letter-spacing="1" fill={palette.muted}
 				>{measure.label}</text
 			>
 			{#if strip.showHistory}
@@ -174,7 +174,7 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 		<rect x="528" y="12" width="1" height="58" fill={palette.line} />
 
 		<!-- Page, volume et pomodoro -->
-		<text x="546" y="21" font-size="12.5" fill={palette.ink}>Docker › api-server</text>
+		<text x="546" y="21" font-size="14" fill={palette.ink}>Docker › api-server</text>
 		{#each [0, 1, 2] as dot (dot)}
 			<circle cx={766 + dot * 12} cy="17" r="3.2" fill={dot === 1 ? palette.ink : palette.track} />
 		{/each}
@@ -210,7 +210,7 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 		{#each dials as dial, index (index)}
 			{#if dial.rotate}
 				<g
-					transform="translate({hintX(index)} 86.5) scale(0.42)"
+					transform="translate({hintX(index)} 85.5) scale(0.5)"
 					fill="none"
 					stroke={palette.muted}
 					stroke-width="2.6"
@@ -220,20 +220,20 @@ options of the strip, and shows under it what each dial does. Selecting it opens
 					<path d="M20 12a8 8 0 1 1-2.5-5.8" />
 					<path d="M20 4v5h-5" />
 				</g>
-				<text x={hintX(index) + 14} y="95" font-size="10.5" fill={palette.muted}
+				<text x={hintX(index) + 16} y="96" font-size="13" fill={palette.muted}
 					>{shortened(dial.rotate)}</text
 				>
 			{/if}
 			{#if dial.press}
 				<g
-					transform="translate({pressX(index, dial.rotate)} 86.5) scale(0.42)"
+					transform="translate({pressX(index, dial.rotate)} 85.5) scale(0.5)"
 					stroke={palette.muted}
 					stroke-width="2.6"
 				>
 					<circle cx="12" cy="12" r="9" fill="none" />
 					<circle cx="12" cy="12" r="3.2" fill={palette.muted} />
 				</g>
-				<text x={pressX(index, dial.rotate) + 14} y="95" font-size="10.5" fill={palette.muted}
+				<text x={pressX(index, dial.rotate) + 16} y="96" font-size="13" fill={palette.muted}
 					>{shortened(dial.press)}</text
 				>
 			{/if}

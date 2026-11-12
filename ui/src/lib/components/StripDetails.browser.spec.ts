@@ -29,7 +29,9 @@ describe('StripDetails', () => {
 		await expect.element(page.getByLabelText(/barre de progression du pomodoro/)).toBeChecked();
 		await expect.element(page.getByLabelText(/historique des mesures/)).toBeChecked();
 		await expect.element(page.getByLabelText(/Actualisation des mesures/)).toHaveValue('5');
-		await expect.element(page.getByLabelText('Alerte de charge')).toHaveValue('85');
+		await expect
+			.element(page.getByLabelText('Alerte de charge (en pourcentage)'))
+			.toHaveValue('85');
 	});
 
 	it('reports each change at once', async () => {
@@ -48,7 +50,7 @@ describe('StripDetails', () => {
 
 	it('sends the alert load once it is a valid percentage', async () => {
 		const { onchange } = await show();
-		const field = page.getByLabelText('Alerte de charge');
+		const field = page.getByLabelText('Alerte de charge (en pourcentage)');
 		await field.fill('90');
 		expect(onchange).toHaveBeenLastCalledWith({ loadAlertPercent: 90 });
 		onchange.mockClear();
