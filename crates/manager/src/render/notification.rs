@@ -4,11 +4,11 @@
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use hubergamof_protocol::ImageSize;
+use hubergamof_protocol::{DeviceTheme, ImageSize};
 use image::{Rgba, RgbaImage, imageops};
 
 use super::source::f32_from;
-use super::strip::HINT_RULE_Y;
+use super::strip::{self, HINT_RULE_Y};
 use super::{
     FontWeight, ImageSource, KeyRequest, LineStyle, RenderError, Renderer, TEXT_COLOR,
     TextRenderer, check_size, keep_opaque,
@@ -258,8 +258,8 @@ impl Renderer {
         })
     }
 
-    /// Renders the label of a held key over the whole strip: white on
-    /// black, centred.
+    /// Renders the label of a held key over the whole strip, centred, in
+    /// the ink of `theme` on the background of its strip.
     ///
     /// # Errors
     ///
@@ -267,16 +267,18 @@ impl Renderer {
     pub fn render_strip_label(
         &self,
         label: &str,
+        theme: DeviceTheme,
         size: ImageSize,
     ) -> Result<Arc<RgbaImage>, RenderError> {
         check_size(size)?;
+        let (background, ink) = strip::surface(theme);
         let height = f32_from(size.height);
         let font = height * LABEL_FONT_RATIO;
         let max_width = f32_from(size.width) * 0.9;
         let style = LineStyle {
             size: font,
             weight: FontWeight::SemiBold,
-            color: TEXT_COLOR,
+            color: ink,
         };
         let baseline =
             (height - TextRenderer::line_height(font)) / 2.0 + TextRenderer::ascent(font);
@@ -287,7 +289,7 @@ impl Renderer {
             baseline,
             max_width,
         )?;
-        let mut canvas = RgbaImage::from_pixel(size.width, size.height, Rgba([0, 0, 0, u8::MAX]));
+        let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
         self.text.draw(&mut canvas, &[line])?;
         Ok(Arc::new(canvas))
     }
@@ -597,12 +599,15 @@ mod tests {
     }
 
     #[test]
-    fn a_held_label_is_white_on_black() {
+    fn a_held_label_is_drawn_in_the_ink_of_the_theme_on_its_strip() {
         let renderer = Renderer::new().unwrap();
-        let image = renderer.render_strip_label("Docker", STRIP).unwrap();
-        assert_eq!(image.dimensions(), (800, 100));
-        assert_eq!(*image.get_pixel(0, 0), Rgba([0, 0, 0, 255]));
-        assert!(image.pixels().any(|pixel| pixel.0[0] > 200));
+        for theme in [DeviceTheme::Light, DeviceTheme::Dark] {
+            let (background, ink) = strip::surface(theme);
+            let image = renderer.render_strip_label("Docker", theme, STRIP).unwrap();
+            assert_eq!(image.dimensions(), (800, 100));
+            assert_eq!(*image.get_pixel(0, 0), background, "{theme:?}");
+            assert!(image.pixels().any(|pixel| *pixel == ink), "{theme:?}");
+        }
     }
 
     /// Pixels of `image` that differ from `other`, as `(min_x, max_x)`

@@ -556,11 +556,7 @@ async fn a_container_page_offers_removal_only_when_stopped() {
     );
 
     harness.press(REDIS, "stop").await;
-    assert_eq!(label(&harness.item(REDIS, "stop")), "Arrêt…");
-    assert_eq!(
-        harness.settle().await,
-        [feedback(REDIS, "stop", Feedback::Ok)]
-    );
+    harness.settle().await;
     assert_eq!(harness.page(REDIS).unwrap().title, "cache-redis · Arrêté");
     let ids: Vec<_> = harness
         .items(REDIS)
@@ -583,8 +579,16 @@ async fn removal_waits_for_a_second_press_within_the_timeout() {
     harness.settle().await;
     assert!(harness.status("outil-migration").is_some());
 
-    harness.press(MIGRATION, "remove").await;
+    assert_eq!(
+        harness.press(MIGRATION, "remove").await,
+        [Command::Back],
+        "removing: back to the page of the container's entry"
+    );
     assert_eq!(label(&harness.item(MIGRATION, "remove")), "Suppression…");
+    assert_eq!(
+        label(&harness.item(MAIN_PAGE, MIGRATION)),
+        "outil-migration Suppression…"
+    );
     harness.settle().await;
     assert!(harness.status("outil-migration").is_none());
     assert!(
@@ -611,12 +615,42 @@ async fn another_press_cancels_a_pending_confirmation() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_failed_action_alerts_on_its_key() {
+async fn a_container_action_goes_back_and_shows_on_the_entry_of_the_container() {
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(harness.press(REDIS, "stop").await, [Command::Back]);
+    // Its entry on the main page, where the host went back, says it works.
+    let entry = harness.item(MAIN_PAGE, REDIS);
+    assert_eq!(label(&entry), "cache-redis Arrêt…");
+    assert_eq!(entry.image.as_ref(), Some(&*icons::WORKING));
+    // Its page, opened again, too.
+    assert_eq!(label(&harness.item(REDIS, "stop")), "Arrêt…");
+    assert_eq!(harness.press(REDIS, "stop").await, [], "already running");
+
+    assert_eq!(
+        harness.settle().await,
+        [feedback(MAIN_PAGE, REDIS, Feedback::Ok)]
+    );
+    assert_eq!(label(&harness.item(MAIN_PAGE, REDIS)), "cache-redis");
+    assert_eq!(harness.status("cache-redis"), Some(ContainerStatus::Exited));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_action_of_a_compose_container_shows_on_its_project_page() {
+    const API: &str = "container/boutique-api-1";
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(harness.press(API, "restart").await, [Command::Back]);
+    assert_eq!(label(&harness.item(SHOP, API)), "api-1 Redémarrage…");
+    assert_eq!(harness.settle().await, [feedback(SHOP, API, Feedback::Ok)]);
+    assert_eq!(label(&harness.item(SHOP, API)), "api-1");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_container_action_alerts_on_its_entry() {
     let mut harness = Harness::start(&json!({})).await;
     harness.press(REDIS, "restart").await;
     harness.docker.set_available(false);
     let commands = harness.settle().await;
-    assert_eq!(commands, [feedback(REDIS, "restart", Feedback::Alert)]);
+    assert_eq!(commands, [feedback(MAIN_PAGE, REDIS, Feedback::Alert)]);
     assert_eq!(harness.docker.actions(), [] as [String; 0]);
 }
 
@@ -747,16 +781,19 @@ async fn actions_of_two_keys_run_at_once_each_showing_its_progress() {
     harness.docker.set_latency(Duration::from_secs(2));
     harness.press(REDIS, "stop").await;
     harness.press(MIGRATION, "start").await;
-    assert_eq!(label(&harness.item(REDIS, "stop")), "Arrêt…");
-    assert_eq!(label(&harness.item(MIGRATION, "start")), "Démarrage…");
+    assert_eq!(label(&harness.item(MAIN_PAGE, REDIS)), "cache-redis Arrêt…");
+    assert_eq!(
+        label(&harness.item(MAIN_PAGE, MIGRATION)),
+        "outil-migration Démarrage…"
+    );
     tokio::time::sleep(Duration::from_secs(2)).await;
     let mut commands = harness.settle().await;
     commands.sort_by_key(|command| format!("{command:?}"));
     assert_eq!(
         commands,
         [
-            feedback(REDIS, "stop", Feedback::Ok),
-            feedback(MIGRATION, "start", Feedback::Ok),
+            feedback(MAIN_PAGE, REDIS, Feedback::Ok),
+            feedback(MAIN_PAGE, MIGRATION, Feedback::Ok),
         ]
     );
 }

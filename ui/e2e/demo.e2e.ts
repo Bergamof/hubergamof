@@ -3,7 +3,8 @@ import type { Locator, Page, WebSocketRoute } from '@playwright/test';
 import { DEMO_COMPOSE_FILE, expect, test } from './demo-manager.js';
 
 // Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
-// keys Audio, Docker, IntelliJ, Claude; dials Volume, Pomodoro (no key: it is driven by its dial),
+// keys Audio, Docker, IntelliJ, Claude, Notifications; dials Volume, Pomodoro (no key: it is driven
+// by its dial),
 // Contextuelle, Navigation.
 
 function key(page: Page, name: string | RegExp): Locator {
@@ -35,7 +36,8 @@ test('affiche les touches et les molettes de la configuration', async ({ page })
 		'Touche 1 : Audio',
 		'Touche 2 : Docker',
 		'Touche 3 : IntelliJ',
-		'Touche 4 : Claude'
+		'Touche 4 : Claude',
+		'Touche 5 : Notifications'
 	]);
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
 	await expectNames(page.getByRole('button', { name: /^Molette / }), [
@@ -54,22 +56,22 @@ test('ajoute une touche depuis le catalogue, sans proposer ce qui ne s’y place
 	await page.getByRole('button', { name: 'Ajouter une touche' }).click();
 	const picker = page.getByRole('dialog', { name: 'Ajouter une touche' });
 	await expect(picker.getByRole('button', { name: /Horloge/ })).toHaveCount(0);
-	// Pomodoro is driven by a dial only; Audio, IntelliJ and Claude exist once and are on a key.
-	for (const name of [/^Pomodoro/, /^Audio/, /^IntelliJ/, /^Claude/]) {
+	// Pomodoro is driven by a dial only; Audio, IntelliJ, Claude and Notifications exist once and
+	// are on a key.
+	for (const name of [/^Pomodoro/, /^Audio/, /^IntelliJ/, /^Claude/, /^Notifications/]) {
 		await expect(picker.getByRole('button', { name })).toHaveCount(0);
 	}
-	// Docker may be shown again; Notifications needs a key to show the unread ones.
-	await expect(picker.getByRole('button', { name: /^Docker/ })).toHaveCount(1);
-	await picker.getByRole('button', { name: /^Notifications/ }).click();
+	// Docker may be shown again.
+	await picker.getByRole('button', { name: /^Docker/ }).click();
 
 	await expect(picker).toBeHidden();
-	await expect(key(page, '5 : Notifications')).toHaveAttribute('aria-current', 'true');
-	await expect(page.getByRole('heading', { name: 'Touche 5 : Notifications' })).toBeVisible();
+	await expect(key(page, '6 : Docker')).toHaveAttribute('aria-current', 'true');
+	await expect(page.getByRole('heading', { name: 'Touche 6 : Docker' })).toBeVisible();
 	await expect(page.getByRole('status').filter({ hasText: 'ajoutée' })).toHaveText(
-		'Touche Notifications ajoutée en position 5.'
+		'Touche Docker ajoutée en position 6.'
 	);
 	// Next step: configuring it.
-	await expect(key(page, '5 : Notifications')).toBeFocused();
+	await expect(key(page, '6 : Docker')).toBeFocused();
 });
 
 test('déplace une touche au clavier sans perdre le focus', async ({ page }) => {
@@ -85,7 +87,7 @@ test('déplace une touche au clavier sans perdre le focus', async ({ page }) => 
 
 	await after.focus();
 	await page.keyboard.press('Enter');
-	await expect(page.getByText('Touche déplacée en position 2 sur 4.')).toBeAttached();
+	await expect(page.getByText('Touche déplacée en position 2 sur 5.')).toBeAttached();
 	await expect(after).toBeFocused();
 	await expect(key(page, '2 : Audio')).toHaveAttribute('aria-current', 'true');
 	await expect(key(page, '1 : Docker')).toBeVisible();
@@ -95,7 +97,7 @@ test('déplace une touche à la souris', async ({ page }) => {
 	await open(page);
 	await key(page, '1 : Audio').dragTo(key(page, '3 : IntelliJ'));
 	await expect(key(page, '3 : Audio')).toBeVisible();
-	await expect(page.getByText('Touche déplacée en position 3 sur 4.')).toBeAttached();
+	await expect(page.getByText('Touche déplacée en position 3 sur 5.')).toBeAttached();
 });
 
 test('refuse un réglage invalide, puis enregistre sans bouton un réglage valide', async ({
@@ -241,18 +243,18 @@ test('supprime une touche après confirmation et place le focus sur sa voisine',
 	page
 }) => {
 	await open(page);
-	await key(page, /^Touche 4 : Claude/).click();
+	await key(page, /^Touche 5 : Notifications/).click();
 	await page.getByRole('button', { name: 'Supprimer la touche' }).click();
 	const confirm = page.getByRole('dialog', { name: 'Supprimer la touche ?' });
-	await expect(confirm).toContainText('« Claude » n’est placé nulle part ailleurs');
+	await expect(confirm).toContainText('« Notifications » n’est placé nulle part ailleurs');
 	await expect(confirm.getByRole('button', { name: 'Annuler' })).toBeFocused();
 	await page.keyboard.press('Escape');
 	await expect(confirm).toBeHidden();
-	await expect(key(page, /^Touche 4 : Claude/)).toBeVisible();
+	await expect(key(page, /^Touche 5 : Notifications/)).toBeVisible();
 
 	await removeSelectedKey(page);
-	await expect(page.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
-	await expect(key(page, /^Touche 3 : IntelliJ/)).toBeFocused();
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+	await expect(key(page, /^Touche 4 : Claude/)).toBeFocused();
 	await expect(page.getByText('Touche supprimée.')).toBeAttached();
 });
 
@@ -425,13 +427,13 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	const archive = await (await download).path();
 	expect((await download).suggestedFilename()).toMatch(/^hubergamof-.+-\d{4}-\d{2}-\d{2}\.zip$/);
 
-	await key(page, /^Touche 4 : Claude/).click();
+	await key(page, /^Touche 5 : Notifications/).click();
 	await removeSelectedKey(page);
-	await expect(page.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 	// Importing while the removal is still being saved would race with it: wait until saved.
 	const other = await context.newPage();
 	await open(other);
-	await expect(other.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
+	await expect(other.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 	await other.close();
 
 	const importInput = page.locator('input[type="file"][accept*=".zip"]');
@@ -442,12 +444,12 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await page.keyboard.press('Escape');
 	await expect(confirm).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Importer une configuration…' })).toBeFocused();
-	await expect(page.getByRole('button', { name: /^Touche 4/ })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 
 	await importInput.setInputFiles(archive);
 	await confirm.getByRole('button', { name: 'Remplacer' }).click();
 	await expect(page.getByText(/Configuration importée depuis/)).toBeVisible();
-	await expect(key(page, /^Touche 4 : Claude/)).toBeVisible();
+	await expect(key(page, /^Touche 5 : Notifications/)).toBeVisible();
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', customImage ?? '');
 });
 

@@ -164,8 +164,8 @@ impl NotificationFace {
 pub(crate) enum StripOverlay {
     /// A notification.
     Notification(NotificationFace),
-    /// The label of the key being held.
-    HeldLabel(String),
+    /// The label of the key being held, in the theme of the device.
+    HeldLabel { label: String, theme: DeviceTheme },
 }
 
 /// Everything the device shows.

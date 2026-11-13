@@ -976,7 +976,10 @@ impl DeviceEngine {
     /// notification.
     fn strip_overlay(&self) -> Option<StripOverlay> {
         if let Some(label) = self.held.as_ref().and_then(HeldKey::shown_label) {
-            return Some(StripOverlay::HeldLabel(label.to_owned()));
+            return Some(StripOverlay::HeldLabel {
+                label: label.to_owned(),
+                theme: self.config.theme,
+            });
         }
         let shown = self.notifications.shown()?;
         Some(StripOverlay::Notification(NotificationFace::new(

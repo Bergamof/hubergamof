@@ -111,6 +111,15 @@ impl<'a> Page<'a> {
     }
 }
 
+/// The page listing the container `name`, the one its page is opened from:
+/// the page of its project, else the main page.
+pub(super) fn container_parent(overview: &Overview, name: &str) -> PageId {
+    overview.project_of(name).map_or_else(
+        || MAIN_PAGE.into(),
+        |project| project_id(&project.name).into(),
+    )
+}
+
 /// The project and service a compose container runs.
 pub(super) fn compose_service(container: &Container) -> Option<(&str, &str)> {
     let labels = container.compose.as_ref()?;

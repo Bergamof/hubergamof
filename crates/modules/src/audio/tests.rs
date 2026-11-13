@@ -368,7 +368,11 @@ async fn the_home_key_opens_the_audio_page() {
         .iter()
         .map(|item| item.key.label.clone().unwrap())
         .collect();
-    assert_eq!(labels, ["Micro", "Sortie", "Entrée"]);
+    assert_eq!(labels, ["Micro", "Sorties", "Entrées"]);
+    // Muting the microphone and choosing an input are told apart.
+    let icons: Vec<_> = page.items.iter().map(|item| &item.key.image).collect();
+    assert_ne!(icons[0], icons[2]);
+    assert_ne!(icons[1], icons[2]);
     assert_eq!(
         harness.press(MAIN_PAGE, OUTPUTS_ITEM).await,
         [Command::OpenPage(OUTPUTS_PAGE.into())]
@@ -384,14 +388,14 @@ async fn the_home_key_opens_the_audio_page() {
 #[tokio::test(start_paused = true)]
 async fn the_microphone_item_mutes_the_default_input() {
     let mut harness = Harness::start(&json!({})).await;
-    assert_eq!(
-        harness.item(MAIN_PAGE, MICROPHONE_ITEM).state,
-        KeyState::Normal
-    );
+    let live = harness.item(MAIN_PAGE, MICROPHONE_ITEM);
+    assert_eq!(live.state, KeyState::Normal);
     assert_eq!(harness.press(MAIN_PAGE, MICROPHONE_ITEM).await, []);
     let key = harness.item(MAIN_PAGE, MICROPHONE_ITEM);
-    assert_eq!(key.state, KeyState::Attention);
+    // The struck icon says it: no attention colour.
+    assert_eq!(key.state, KeyState::Normal);
     assert_eq!(key.label.as_deref(), Some("Micro coupé"));
+    assert_ne!(key.image, live.image);
     harness.settle().await;
     assert!(harness.audio.state().sources[0].muted);
     harness.press(MAIN_PAGE, MICROPHONE_ITEM).await;
@@ -403,7 +407,7 @@ async fn the_microphone_item_mutes_the_default_input() {
 async fn device_pages_list_devices_and_select_the_default() {
     let mut harness = Harness::start(&json!({})).await;
     let outputs = harness.page(OUTPUTS_PAGE);
-    assert_eq!(outputs.title, "Sortie");
+    assert_eq!(outputs.title, "Sorties");
     let listed: Vec<_> = outputs
         .items
         .iter()

@@ -434,7 +434,9 @@ fn render_overlay(
     overlay: &StripOverlay,
 ) -> Result<(Arc<image::RgbaImage>, Option<bool>), RenderError> {
     match overlay {
-        StripOverlay::HeldLabel(label) => Ok((renderer.render_strip_label(label, size)?, None)),
+        StripOverlay::HeldLabel { label, theme } => {
+            Ok((renderer.render_strip_label(label, *theme, size)?, None))
+        }
         StripOverlay::Notification(face) => {
             let actions: Vec<_> = face
                 .actions

@@ -4,10 +4,9 @@ use super::actions::{Action, CONTAINER_ACTIONS, PROJECT_ACTIONS};
 use super::pages::{Page, compose_service};
 use super::selection::{selectables, with_count};
 use super::{
-    CONFIRM_LABEL, Container, ContainerStatus, DOWN_ITEM, DOWN_LABEL, Docker, HashMap, Health,
-    ImageData, ItemKey, KeyContent, KeyState, MODULE_LABEL, NOT_BUILT_LABEL, Operation, Overview,
-    PageContent, PageId, PageItem, Project, TITLE_SEPARATOR, UP_ITEM, UP_LABEL, container_id,
-    icons, project_id, service_id,
+    CONFIRM_LABEL, Container, ContainerStatus, DOWN_ITEM, DOWN_LABEL, Docker, Health, ItemKey,
+    KeyContent, KeyState, MODULE_LABEL, NOT_BUILT_LABEL, Overview, PageContent, PageId, PageItem,
+    Project, TITLE_SEPARATOR, UP_ITEM, UP_LABEL, container_id, icons, project_id, service_id,
 };
 
 /// An entry of a project page: a container, or a service that has none.
@@ -63,11 +62,13 @@ impl Docker {
                 .compose
                 .as_ref()
                 .and_then(|c| c.service.as_deref());
-            let item = self.working(project, service, container_id(&container.name), short);
+            let item = self
+                .working(project, service, container_id(&container.name), short)
+                .unwrap_or_else(|| self.container_entry(container, short));
             Entry {
                 name: short.to_owned(),
                 service: service.map(str::to_owned),
-                item: item.unwrap_or_else(|| container_item(container, short)),
+                item,
             }
         });
         let planned = project.planned.iter().map(|service| {
@@ -122,6 +123,71 @@ impl Docker {
             id: id.into(),
             key: KeyContent::with_icon(&icons::WORKING, &label),
         })
+    }
+
+    /// Key of a container, labelled `label`: what it shows while an action
+    /// of its page runs, else its state.
+    pub(super) fn container_entry(&self, container: &Container, label: &str) -> PageItem {
+        let Some(action) = self.container_action(&container.name) else {
+            return container_item(container, label);
+        };
+        let label = format!("{label} {}", action.busy_label());
+        PageItem {
+            id: container_id(&container.name).into(),
+            key: KeyContent::with_icon(&icons::WORKING, &label),
+        }
+    }
+
+    /// The projects, then the other containers.
+    pub(super) fn main_page(&self, overview: &Overview) -> PageContent {
+        let projects = overview
+            .projects
+            .iter()
+            .map(|project| self.project_item(project));
+        let containers = overview
+            .isolated
+            .iter()
+            .map(|container| self.container_entry(container, &container.name));
+        PageContent::new(MODULE_LABEL, projects.chain(containers).collect())
+    }
+
+    /// Key of a project on the main page.
+    fn project_item(&self, project: &Project) -> PageItem {
+        if let Some(operation) = self.operations.iter().find(|op| op.project == project.name) {
+            let label = format!(
+                "{} {}",
+                project.shown_name(),
+                operation.kind.working_label()
+            );
+            return PageItem {
+                id: project_id(&project.name).into(),
+                key: KeyContent::with_icon(&icons::WORKING, &label),
+            };
+        }
+        let (icon, state) = if project.needs_attention() {
+            (&icons::PROJECT_ATTENTION, KeyState::Attention)
+        } else if project.running() > 0 {
+            (&icons::PROJECT_RUNNING, KeyState::Active)
+        } else {
+            (&icons::PROJECT_STOPPED, KeyState::Normal)
+        };
+        // The user's icon replaces the layers; the state then shows in the
+        // counts of the label (and the background of an attention).
+        let icon = project
+            .icon
+            .as_ref()
+            .and_then(|name| self.icons.get(name))
+            .unwrap_or(icon);
+        let label = format!(
+            "{} {}/{}",
+            project.shown_name(),
+            project.running(),
+            project.total()
+        );
+        PageItem {
+            id: project_id(&project.name).into(),
+            key: KeyContent::with_icon(icon, &label).in_state(state),
+        }
     }
 
     pub(super) fn variants_page(
@@ -189,56 +255,6 @@ pub(super) fn down_item() -> PageItem {
         id: DOWN_ITEM.into(),
         key: KeyContent::with_icon(&icons::DOWN, DOWN_LABEL),
     }
-}
-
-/// The projects, then the other containers.
-pub(super) fn main_page(
-    overview: &Overview,
-    custom_icons: &HashMap<String, ImageData>,
-    operations: &[Operation],
-) -> PageContent {
-    let projects = overview.projects.iter().map(|project| {
-        let (icon, state) = if project.needs_attention() {
-            (&icons::PROJECT_ATTENTION, KeyState::Attention)
-        } else if project.running() > 0 {
-            (&icons::PROJECT_RUNNING, KeyState::Active)
-        } else {
-            (&icons::PROJECT_STOPPED, KeyState::Normal)
-        };
-        // The user's icon replaces the layers; the state then shows in the
-        // counts of the label (and the background of an attention).
-        let icon = project
-            .icon
-            .as_ref()
-            .and_then(|name| custom_icons.get(name))
-            .unwrap_or(icon);
-        let label = format!(
-            "{} {}/{}",
-            project.shown_name(),
-            project.running(),
-            project.total()
-        );
-        if let Some(operation) = operations.iter().find(|op| op.project == project.name) {
-            let label = format!(
-                "{} {}",
-                project.shown_name(),
-                operation.kind.working_label()
-            );
-            return PageItem {
-                id: project_id(&project.name).into(),
-                key: KeyContent::with_icon(&icons::WORKING, &label),
-            };
-        }
-        PageItem {
-            id: project_id(&project.name).into(),
-            key: KeyContent::with_icon(icon, &label).in_state(state),
-        }
-    });
-    let containers = overview
-        .isolated
-        .iter()
-        .map(|container| container_item(container, &container.name));
-    PageContent::new(MODULE_LABEL, projects.chain(containers).collect())
 }
 
 /// Title of an `up` or `down` page: `label` and what it is about, with the

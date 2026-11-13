@@ -1,8 +1,8 @@
 //! What the keys of the action pages do, and what it amounts to.
 
-use hubergamof_module_api::Command;
+use hubergamof_module_api::{Command, PageId};
 
-use super::pages::compose_service;
+use super::pages::{compose_service, container_id, container_parent};
 use super::selection::with_count;
 use super::{
     ComposeAction, ComposeScope, ContainerAction, DOWN_LABEL, Docker, DockerEvent, Feedback,
@@ -183,15 +183,44 @@ impl Docker {
                 ok: outcome.is_ok(),
             });
         });
-        if started {
-            self.busy.insert(key);
-            if let Page::Project(project) = page {
-                self.spend_selection(project);
-            }
-            Vec::new()
-        } else {
-            Command::alert()
+        if !started {
+            return Command::alert();
         }
+        self.busy.insert(key);
+        if let Page::Project(project) = page {
+            self.spend_selection(project);
+        }
+        // The page of a container is left as soon as its action starts: the
+        // entry of the container, on the page it was opened from, shows it.
+        if matches!(page, Page::Container(_)) {
+            vec![Command::Back]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The action of the page of the container `name` that runs, if any.
+    pub(super) fn container_action(&self, name: &str) -> Option<Action> {
+        let page: PageId = container_id(name).into();
+        CONTAINER_ACTIONS.into_iter().find(|action| {
+            self.busy
+                .contains(&ItemKey::new(&page, &action.item().into()))
+        })
+    }
+
+    /// Where the outcome of the action of `key` shows: on its key, or, for
+    /// the page of a container, left as soon as the action starts, on the
+    /// entry of the container in the page it was opened from.
+    pub(super) fn outcome_key(&self, key: ItemKey) -> ItemKey {
+        let (Some(Page::Container(name)), Some(overview)) =
+            (Page::parse(&key.page.0), self.overview())
+        else {
+            return key;
+        };
+        ItemKey::new(
+            &container_parent(overview, name),
+            &container_id(name).into(),
+        )
     }
 
     /// Starts the compose `request` of an `up` or a `down`, and leaves its

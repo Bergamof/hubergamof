@@ -71,7 +71,7 @@ use pages::{
     DOWN_ITEM, MAIN_PAGE, PROJECT_PREFIX, Page, Scope, UP_ITEM, container_id, project_id,
     service_id,
 };
-use render::{main_page, variants_title};
+use render::variants_title;
 use selection::Selection;
 use settings::{COMPOSE_FILES_KEY, ParsedSettings};
 
@@ -433,8 +433,7 @@ impl Docker {
             }
             DockerEvent::Outcome { key, ok } => {
                 self.busy.remove(&key);
-                let feedback = Feedback::of(ok);
-                vec![key.feedback(feedback)]
+                vec![self.outcome_key(key).feedback(Feedback::of(ok))]
             }
             DockerEvent::ConfirmExpired(token) => {
                 if self
@@ -545,7 +544,7 @@ impl Module for Docker {
         };
         // A project or container gone (removed, taken down): back.
         match page {
-            Page::Main => Some(main_page(overview, &self.icons, &self.operations)),
+            Page::Main => Some(self.main_page(overview)),
             Page::Project(name) => overview
                 .project(name)
                 .map(|project| self.project_page(page_id, project)),
