@@ -371,6 +371,7 @@ async fn the_home_key_opens_the_audio_page() {
     assert_eq!(labels, ["Micro", "Sorties", "Entrées"]);
     // Muting the microphone and choosing an input are told apart.
     let icons: Vec<_> = page.items.iter().map(|item| &item.key.image).collect();
+    assert_ne!(icons[0], icons[1]);
     assert_ne!(icons[0], icons[2]);
     assert_ne!(icons[1], icons[2]);
     assert_eq!(

@@ -22,7 +22,11 @@ impl Docker {
     pub(super) fn action_key(&self, page: &PageId, action: Action) -> PageItem {
         let key = ItemKey::new(page, &action.item().into());
         let ticked = Page::parse(&page.0).map_or(0, |page| self.ticked_on(page));
-        let (label, state) = if self.busy.contains(&key) {
+        let running = match Page::parse(&page.0) {
+            Some(Page::Container(name)) => self.container_action(name) == Some(action),
+            _ => self.busy.contains(&key),
+        };
+        let (label, state) = if running {
             (action.busy_label().to_owned(), KeyState::Normal)
         } else if self.is_confirming(&key) {
             (CONFIRM_LABEL.to_owned(), KeyState::Attention)
@@ -118,11 +122,7 @@ impl Docker {
             .operations
             .iter()
             .find(|op| op.project == project.name && op.covers(service))?;
-        let label = format!("{label} {}", operation.kind.working_label());
-        Some(PageItem {
-            id: id.into(),
-            key: KeyContent::with_icon(&icons::WORKING, &label),
-        })
+        Some(working_item(id, label, operation.kind.working_label()))
     }
 
     /// Key of a container, labelled `label`: what it shows while an action
@@ -131,11 +131,7 @@ impl Docker {
         let Some(action) = self.container_action(&container.name) else {
             return container_item(container, label);
         };
-        let label = format!("{label} {}", action.busy_label());
-        PageItem {
-            id: container_id(&container.name).into(),
-            key: KeyContent::with_icon(&icons::WORKING, &label),
-        }
+        working_item(container_id(&container.name), label, action.busy_label())
     }
 
     /// The projects, then the other containers.
@@ -154,15 +150,11 @@ impl Docker {
     /// Key of a project on the main page.
     fn project_item(&self, project: &Project) -> PageItem {
         if let Some(operation) = self.operations.iter().find(|op| op.project == project.name) {
-            let label = format!(
-                "{} {}",
+            return working_item(
+                project_id(&project.name),
                 project.shown_name(),
-                operation.kind.working_label()
+                operation.kind.working_label(),
             );
-            return PageItem {
-                id: project_id(&project.name).into(),
-                key: KeyContent::with_icon(&icons::WORKING, &label),
-            };
         }
         let (icon, state) = if project.needs_attention() {
             (&icons::PROJECT_ATTENTION, KeyState::Attention)
@@ -238,6 +230,14 @@ impl Docker {
             let title = format!("{service}{TITLE_SEPARATOR}{NOT_BUILT_LABEL}");
             PageContent::new(title, items)
         })
+    }
+}
+
+/// Key `id` of something being worked on: `label` and what is `done`.
+fn working_item(id: String, label: &str, done: &str) -> PageItem {
+    PageItem {
+        id: id.into(),
+        key: KeyContent::with_icon(&icons::WORKING, format!("{label} {done}")),
     }
 }
 

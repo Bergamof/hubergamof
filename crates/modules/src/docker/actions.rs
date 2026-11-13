@@ -1,6 +1,6 @@
 //! What the keys of the action pages do, and what it amounts to.
 
-use hubergamof_module_api::{Command, PageId};
+use hubergamof_module_api::Command;
 
 use super::pages::{compose_service, container_id, container_parent};
 use super::selection::with_count;
@@ -157,7 +157,7 @@ pub(super) enum Plan {
 
 impl Docker {
     pub(super) fn perform(&mut self, key: ItemKey, page: Page<'_>, action: Action) -> Vec<Command> {
-        if self.busy.contains(&key) {
+        if self.is_running(&key, page) {
             return Vec::new();
         }
         let request = match self.plan(page, action) {
@@ -170,6 +170,9 @@ impl Docker {
         }
         if let (Some(scope), Some(kind)) = (page.scope(), action.operation()) {
             return self.start_operation(scope, kind, request);
+        }
+        if let Page::Container(name) = page {
+            return self.start_container_action(name, action, request);
         }
         let events = self.events.clone();
         let outcome_key = key.clone();
@@ -190,37 +193,57 @@ impl Docker {
         if let Page::Project(project) = page {
             self.spend_selection(project);
         }
-        // The page of a container is left as soon as its action starts: the
-        // entry of the container, on the page it was opened from, shows it.
-        if matches!(page, Page::Container(_)) {
-            vec![Command::Back]
-        } else {
-            Vec::new()
+        Vec::new()
+    }
+
+    /// Whether the action of `key` already runs; on the page of a container,
+    /// whether any of its actions does: one at a time.
+    fn is_running(&self, key: &ItemKey, page: Page<'_>) -> bool {
+        match page {
+            Page::Container(name) => self.container_actions.contains_key(name),
+            _ => self.busy.contains(key),
         }
     }
 
-    /// The action of the page of the container `name` that runs, if any.
-    pub(super) fn container_action(&self, name: &str) -> Option<Action> {
-        let page: PageId = container_id(name).into();
-        CONTAINER_ACTIONS.into_iter().find(|action| {
-            self.busy
-                .contains(&ItemKey::new(&page, &action.item().into()))
-        })
+    /// Starts `action` of the page of the container `name`, and goes back to
+    /// the page listing it, whose entry shows the action then its outcome.
+    fn start_container_action(
+        &mut self,
+        name: &str,
+        action: Action,
+        request: Request,
+    ) -> Vec<Command> {
+        let Some(parent) = self
+            .overview()
+            .map(|overview| container_parent(overview, name))
+        else {
+            return Command::alert();
+        };
+        // Chosen now: a container removed meanwhile is listed nowhere.
+        let shown_on = ItemKey::new(&parent, &container_id(name).into());
+        let events = self.events.clone();
+        let container = name.to_owned();
+        let started = self.hub.run(request, move |outcome| {
+            if let Err(error) = &outcome {
+                tracing::warn!(%error, "Docker action failed");
+            }
+            // An instance gone meanwhile needs no outcome.
+            let _ = events.send(DockerEvent::ContainerOutcome {
+                container,
+                shown_on,
+                ok: outcome.is_ok(),
+            });
+        });
+        if !started {
+            return Command::alert();
+        }
+        self.container_actions.insert(name.to_owned(), action);
+        vec![Command::BackTo(parent)]
     }
 
-    /// Where the outcome of the action of `key` shows: on its key, or, for
-    /// the page of a container, left as soon as the action starts, on the
-    /// entry of the container in the page it was opened from.
-    pub(super) fn outcome_key(&self, key: ItemKey) -> ItemKey {
-        let (Some(Page::Container(name)), Some(overview)) =
-            (Page::parse(&key.page.0), self.overview())
-        else {
-            return key;
-        };
-        ItemKey::new(
-            &container_parent(overview, name),
-            &container_id(name).into(),
-        )
+    /// The action of its page running on the container `name`, if any.
+    pub(super) fn container_action(&self, name: &str) -> Option<Action> {
+        self.container_actions.get(name).copied()
     }
 
     /// Starts the compose `request` of an `up` or a `down`, and leaves its

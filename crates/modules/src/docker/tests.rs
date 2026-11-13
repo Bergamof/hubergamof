@@ -581,7 +581,7 @@ async fn removal_waits_for_a_second_press_within_the_timeout() {
 
     assert_eq!(
         harness.press(MIGRATION, "remove").await,
-        [Command::Back],
+        [Command::BackTo(MAIN_PAGE.into())],
         "removing: back to the page of the container's entry"
     );
     assert_eq!(label(&harness.item(MIGRATION, "remove")), "Suppression…");
@@ -617,7 +617,10 @@ async fn another_press_cancels_a_pending_confirmation() {
 #[tokio::test(start_paused = true)]
 async fn a_container_action_goes_back_and_shows_on_the_entry_of_the_container() {
     let mut harness = Harness::start(&json!({})).await;
-    assert_eq!(harness.press(REDIS, "stop").await, [Command::Back]);
+    assert_eq!(
+        harness.press(REDIS, "stop").await,
+        [Command::BackTo(MAIN_PAGE.into())]
+    );
     // Its entry on the main page, where the host went back, says it works.
     let entry = harness.item(MAIN_PAGE, REDIS);
     assert_eq!(label(&entry), "cache-redis Arrêt…");
@@ -625,6 +628,9 @@ async fn a_container_action_goes_back_and_shows_on_the_entry_of_the_container() 
     // Its page, opened again, too.
     assert_eq!(label(&harness.item(REDIS, "stop")), "Arrêt…");
     assert_eq!(harness.press(REDIS, "stop").await, [], "already running");
+    // One action at a time on a container: the others wait for its end.
+    assert_eq!(harness.press(REDIS, "restart").await, []);
+    assert_eq!(label(&harness.item(REDIS, "restart")), "Redémarrer");
 
     assert_eq!(
         harness.settle().await,
@@ -632,16 +638,52 @@ async fn a_container_action_goes_back_and_shows_on_the_entry_of_the_container() 
     );
     assert_eq!(label(&harness.item(MAIN_PAGE, REDIS)), "cache-redis");
     assert_eq!(harness.status("cache-redis"), Some(ContainerStatus::Exited));
+    assert_eq!(harness.docker.actions(), ["stop cache-redis"]);
 }
 
 #[tokio::test(start_paused = true)]
 async fn an_action_of_a_compose_container_shows_on_its_project_page() {
     const API: &str = "container/boutique-api-1";
     let mut harness = Harness::start(&json!({})).await;
-    assert_eq!(harness.press(API, "restart").await, [Command::Back]);
+    assert_eq!(
+        harness.press(API, "restart").await,
+        [Command::BackTo(SHOP.into())]
+    );
     assert_eq!(label(&harness.item(SHOP, API)), "api-1 Redémarrage…");
     assert_eq!(harness.settle().await, [feedback(SHOP, API, Feedback::Ok)]);
     assert_eq!(label(&harness.item(SHOP, API)), "api-1");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_removal_of_a_compose_container_reports_on_its_project_page() {
+    const GRAFANA: &str = "container/supervision-grafana-1";
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(harness.press(GRAFANA, "remove").await, [], "confirm first");
+    assert_eq!(
+        harness.press(GRAFANA, "remove").await,
+        [Command::BackTo(MONITORING.into())]
+    );
+    // Decided at the start: once removed, the container is listed nowhere.
+    assert_eq!(
+        harness.settle().await,
+        [feedback(MONITORING, GRAFANA, Feedback::Ok)]
+    );
+    assert!(harness.status("supervision-grafana-1").is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_action_of_a_compose_container_alerts_on_its_project_page() {
+    const API: &str = "container/boutique-api-1";
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(
+        harness.press(API, "restart").await,
+        [Command::BackTo(SHOP.into())]
+    );
+    harness.docker.set_available(false);
+    assert_eq!(
+        harness.settle().await,
+        [feedback(SHOP, API, Feedback::Alert)]
+    );
 }
 
 #[tokio::test(start_paused = true)]

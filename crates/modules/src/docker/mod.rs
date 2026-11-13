@@ -162,6 +162,7 @@ impl ModuleFactory for DockerFactory {
             images,
             icons: HashMap::new(),
             busy: HashSet::new(),
+            container_actions: HashMap::new(),
             confirming: None,
             next_token: 0,
             service_names: HashMap::new(),
@@ -208,6 +209,13 @@ enum DockerEvent {
     View(DockerView),
     /// The action of `key` ended.
     Outcome { key: ItemKey, ok: bool },
+    /// The action of the page of `container` ended; its outcome shows on
+    /// `shown_on`, the entry of the container chosen when it started.
+    ContainerOutcome {
+        container: String,
+        shown_on: ItemKey,
+        ok: bool,
+    },
     /// The confirmation `token` is over.
     ConfirmExpired(u64),
     /// Icons read from the stored images, by name.
@@ -251,8 +259,11 @@ pub struct Docker {
     /// The icons the user gave to compose files, once read: a project whose
     /// icon is not (yet) here shows the default one.
     icons: HashMap<String, ImageData>,
-    /// Action keys whose action runs.
+    /// Action keys whose action runs, but those of the container pages.
     busy: HashSet<ItemKey>,
+    /// The action of its page running on a container, by container name:
+    /// one at a time, shown on its entry.
+    container_actions: HashMap<String, Action>,
     confirming: Option<Confirmation>,
     next_token: u64,
     /// The services each project's files define, by project name, once read.
@@ -433,7 +444,15 @@ impl Docker {
             }
             DockerEvent::Outcome { key, ok } => {
                 self.busy.remove(&key);
-                vec![self.outcome_key(key).feedback(Feedback::of(ok))]
+                vec![key.feedback(Feedback::of(ok))]
+            }
+            DockerEvent::ContainerOutcome {
+                container,
+                shown_on,
+                ok,
+            } => {
+                self.container_actions.remove(&container);
+                vec![shown_on.feedback(Feedback::of(ok))]
             }
             DockerEvent::ConfirmExpired(token) => {
                 if self
