@@ -75,7 +75,7 @@ const OUTPUTS_ITEM: &str = OUTPUTS_PAGE;
 const INPUTS_ITEM: &str = INPUTS_PAGE;
 
 const MODULE_LABEL: &str = "Audio";
-const MICROPHONE_LABEL: &str = "Micro";
+const MICROPHONE_LABEL: &str = "Micro activé";
 const MICROPHONE_MUTED_LABEL: &str = "Micro coupé";
 const OUTPUTS_LABEL: &str = "Sorties";
 const INPUTS_LABEL: &str = "Entrées";
@@ -330,7 +330,7 @@ impl Audio {
         let microphone = if microphone_muted {
             KeyContent::with_icon(&icons::MICROPHONE_MUTED, MICROPHONE_MUTED_LABEL)
         } else {
-            KeyContent::with_icon(&icons::MICROPHONE_LIVE, MICROPHONE_LABEL)
+            KeyContent::with_icon(&icons::MICROPHONE, MICROPHONE_LABEL)
         };
         PageContent::new(
             MODULE_LABEL,

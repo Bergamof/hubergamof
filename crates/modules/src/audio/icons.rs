@@ -14,9 +14,6 @@ pub(super) static SPEAKER_MUTED: LazyLock<ImageData> =
 /// Microphone: an input.
 pub(super) static MICROPHONE: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("audio-microphone")));
-/// Microphone sending sound waves: the default input, listening.
-pub(super) static MICROPHONE_LIVE: LazyLock<ImageData> =
-    LazyLock::new(|| svg(asset!("audio-microphone-live")));
 /// Microphone with a list: choosing the default input.
 pub(super) static INPUTS: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("audio-inputs")));
 /// Speaker with a list: choosing the default output.
