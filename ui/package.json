@@ -28,7 +28,7 @@
 		"@fontsource-variable/bricolage-grotesque": "^5.3.0",
 		"@fontsource-variable/instrument-sans": "^5.3.0",
 		"@fontsource-variable/jetbrains-mono": "^5.3.0",
-		"@playwright/test": "^1.64.1",
+		"@playwright/test": "^1.65.0",
 		"@sveltejs/adapter-static": "^4.0.1",
 		"@sveltejs/kit": "^3.1.1",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -48,7 +48,7 @@
 		"tailwindcss": "^4.3.4",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.72.1",
-		"vite": "^8.3.5",
+		"vite": "^8.3.6",
 		"vitest": "^5.1.0",
 		"vitest-browser-svelte": "^3.1.0"
 	},
