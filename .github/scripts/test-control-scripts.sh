@@ -79,7 +79,7 @@ expect_pactl warn 'echo "n importe quoi"' "sortie illisible"
 expect_pactl warn 'exit 1' "pactl en échec (n'interrompt pas l'installation)"
 
 # next-version.sh : dépôt temporaire, commits et tags choisis par chaque cas.
-# expect_version <attendu | "rien"> <libellé> [--force-patch] -- <sujets des commits…>
+# expect_version <attendu | "rien" | "usage"> <libellé> [options…] -- <sujets des commits…>
 # Un sujet peut porter un corps après « || ». Le dépôt part d'un tag v1.2.3 sauf
 # si le libellé commence par « sans tag ».
 expect_version() {
@@ -109,6 +109,8 @@ expect_version() {
 	rm -rf "$repo"
 	if [[ "$expected" == rien ]]; then
 		[[ $status -eq 3 ]] && return
+	elif [[ "$expected" == usage ]]; then
+		[[ $status -eq 2 ]] && return
 	elif [[ $status -eq 0 && "$output" == "$expected" ]]; then
 		return
 	fi
@@ -131,9 +133,20 @@ BREAKING-CHANGE: changement"
 expect_version rien "seulement chore/ci/docs/refactor" -- "chore: a" "ci: b" "docs: c" "refactor: d"
 expect_version rien "aucun commit depuis le tag" --
 expect_version rien "sujet hors convention" -- "Update stuff"
-expect_version 1.2.4 "patch forcé" --force-patch -- "chore: a" "refactor: b"
-expect_version 1.3.0 "le forçage ne rétrograde pas un feat" --force-patch -- "feat: a"
-expect_version rien "forçage sans aucun commit" --force-patch --
+expect_version rien "auto explicite : comme sans option" --bump auto -- "chore: a"
+expect_version 1.3.0 "auto explicite avec un feat" --bump auto -- "feat: a"
+expect_version 1.2.4 "patch forcé" --bump patch -- "chore: a" "refactor: b"
+expect_version 1.3.0 "mineur forcé sans changement publiable" --bump minor -- "docs: a"
+expect_version 2.0.0 "majeur forcé sans changement publiable" --bump major -- "chore: a"
+expect_version 1.3.0 "mineur forcé au-dessus d'un fix" --bump minor -- "fix: a"
+expect_version 2.0.0 "majeur forcé au-dessus d'un feat" --bump major -- "feat: a" "fix: b"
+expect_version 1.3.0 "le patch forcé ne rétrograde pas un feat" --bump patch -- "feat: a"
+expect_version 2.0.0 "le mineur forcé ne rétrograde pas un changement incompatible" --bump minor -- "feat!: a"
+expect_version rien "forçage sans aucun commit" --bump major --
+expect_version 1.0.0 "sans tag : le forçage garde la première version" --bump major -- "feat: a"
+expect_version usage "niveau inconnu" --bump huge -- "feat: a"
+expect_version usage "--bump sans niveau" --bump -- "feat: a"
+expect_version usage "ancienne option --force-patch" --force-patch -- "chore: a"
 
 # Tag de pré-version ignoré : la base reste v1.2.3.
 prerelease_repo="$(mktemp -d)"

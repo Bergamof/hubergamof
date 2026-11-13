@@ -1,6 +1,7 @@
 # Release manuelle, depuis `main` uniquement :
 #   1. gate    : branche main, CI verte sur le commit (attend si elle tourne),
-#                version déduite des commits depuis le dernier tag (1.0.0 au début) ;
+#                version déduite des commits depuis le dernier tag (1.0.0 au début),
+#                niveau minimal au choix (jamais en dessous des commits) ;
 #   2. build   : binaire, paquets .deb et Arch, tests d'installation en conteneur ;
 #   3. publish : release GitHub (livrables, SHA256SUMS, notes) et tag vX.Y.Z.
 # La version n'est jamais committée : elle vient du tag, fixée dans la copie de
@@ -11,10 +12,15 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      force_patch:
-        description: "Publier un patch même sans feat, fix ni perf depuis le dernier tag"
-        type: boolean
-        default: false
+      bump:
+        description: "Niveau de version minimal (auto : d'après les commits ; jamais en dessous de ce qu'ils imposent)"
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+        default: auto
 
 permissions:
   contents: read
@@ -70,11 +76,9 @@ jobs:
       - name: Compute the version
         id: version
         env:
-          FORCE_PATCH: ${{ inputs.force_patch }}
+          BUMP: ${{ inputs.bump }}
         run: |
-          flags=()
-          if [[ "$FORCE_PATCH" == true ]]; then flags+=(--force-patch); fi
-          version="$(.github/scripts/next-version.sh "${flags[@]}" "$GITHUB_SHA")"
+          version="$(.github/scripts/next-version.sh --bump "$BUMP" "$GITHUB_SHA")"
           previous_tag="$(.github/scripts/next-version.sh --previous-tag "$GITHUB_SHA")"
           if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
             echo "Le tag v$version existe déjà." >&2
@@ -82,7 +86,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
-          echo "Version à publier : $version (précédente : ${previous_tag:-aucune})"
+          echo "Version à publier : $version (précédente : ${previous_tag:-aucune} ; niveau demandé : $BUMP)"
 
   build:
     name: Build et paquets
