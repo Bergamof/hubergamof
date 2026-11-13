@@ -22,7 +22,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Types TS du contrat : `make gen-types` (ne doit produire aucun diff en CI)
 - Build : `make build` (UI puis binaire release qui l'embarque)
 - Lancement local : `make dev` (gestionnaire en `--demo` + `pnpm dev` avec proxy) ; matériel réel : `make run`
-- Paquets : `make package` (`.deb` + pacman dans `dist/`, après `make build`, Docker requis), `package-lint`, `package-smoke`. Release : voir `docs/release.md` (manuelle sur `main`, version déduite des commits, 1.0.0 au début, forçage patch).
+- Paquets : `make package` (`.deb` + pacman dans `dist/`, après `make build`, Docker requis), `package-lint`, `package-smoke`. Release : voir `docs/release.md` (manuelle sur `main`, version déduite des commits, 1.0.0 au début, niveau minimal au choix `auto|patch|minor|major` qui ne rétrograde jamais).
 - Aussi : `make check-node` / `make check-branch` / `make test-scripts` (scripts de `.github/scripts/` + leur auto-test), `make check-versions` (Dockerfile ↔ `rust-toolchain.toml`/`.nvmrc`), `make deny`, `make lighthouse`, `make lint-workflows` (zizmor), sous-cibles `lint-rust|lint-ui|test-rust|test-ui|coverage-rust|coverage-ui|ui-build` (appelées telles quelles par la CI).
 - pnpm : `PNPM ?= corepack pnpm` lancé depuis `ui/` (Corepack lit `packageManager` du dossier courant) ; `make PNPM=pnpm …` en CI.
 

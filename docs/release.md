@@ -3,7 +3,7 @@
 ## Lancer une release
 
 GitHub → Actions → **Release** → *Run workflow*, branche **main** (toute autre branche est refusée).
-Case « Publier un patch même sans feat, fix ni perf » : pour publier quand les commits depuis le dernier tag ne contiennent que du `chore`, `ci`, `docs`, `refactor`…
+Choix « Niveau de version » : `auto` (par défaut, d'après les commits), `patch`, `minor` ou `major`. Le niveau choisi est un **minimum** : il permet de publier quand les commits ne contiennent que du `chore`, `ci`, `docs`, `refactor`…, ou de monter d'un cran (une majeure sans commit `!`), mais ne descend jamais sous ce qu'imposent les commits (`patch` avec un `feat` donne une mineure).
 
 Le workflow `.github/workflows/release.yml` enchaîne trois jobs :
 
@@ -21,8 +21,10 @@ Le workflow `.github/workflows/release.yml` enchaîne trois jobs :
 | `type!:` ou `BREAKING CHANGE:` dans le corps | majeure |
 | `feat` | mineure |
 | `fix`, `perf` | patch |
-| seulement `chore`, `ci`, `docs`, `refactor`… | refus « rien à publier » (sauf option de forçage : patch) |
-| aucun commit depuis le tag | refus, même avec le forçage |
+| seulement `chore`, `ci`, `docs`, `refactor`… | refus « rien à publier » en `auto` |
+| aucun commit depuis le tag | refus, quel que soit le niveau choisi |
+
+Puis le niveau choisi (`--bump patch|minor|major`) s'applique s'il est plus haut que celui des commits ; sans tag, toujours `1.0.0`.
 
 Un sujet qui ne suit pas la convention ne déclenche aucun bump. Les titres de PR (fusion en squash) deviennent les sujets : les soigner.
 
