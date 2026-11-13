@@ -59,7 +59,10 @@ fn missing_config_is_created_from_defaults() {
     assert_eq!(config.serial, DEMO_SERIAL);
     assert_eq!(config.revision, 0);
     assert_eq!(config.brightness, DEFAULT_BRIGHTNESS);
-    assert_eq!(config.home, ids(&["audio", "docker", "intellij", "claude"]));
+    assert_eq!(
+        config.home,
+        ids(&["audio", "docker", "intellij", "claude", "notifications"])
+    );
     assert_eq!(
         config.dials,
         [
@@ -78,7 +81,17 @@ fn missing_config_is_created_from_defaults() {
     assert_eq!(config.strip, StripConfig::default());
     let kinds: Vec<&str> = config.modules.iter().map(|m| m.kind.0.as_str()).collect();
     // Pomodoro has no key: its instance exists for its dial only.
-    assert_eq!(kinds, ["audio", "docker", "intellij", "claude", "pomodoro"]);
+    assert_eq!(
+        kinds,
+        [
+            "audio",
+            "docker",
+            "intellij",
+            "claude",
+            "notifications",
+            "pomodoro"
+        ]
+    );
     assert!(config.modules.iter().all(|m| m.id.0 == m.kind.0));
     config.validate().unwrap();
 
@@ -824,10 +837,7 @@ fn a_module_without_key_is_removed_from_the_home_page_but_keeps_its_dial() {
             module: "Pomodoro".into()
         }]
     );
-    assert_eq!(
-        loaded.config.home,
-        ids(&["audio", "docker", "intellij", "claude"])
-    );
+    assert_eq!(loaded.config.home, ids(&DEFAULT_HOME_MODULES));
     assert!(loaded.config.modules.iter().any(|m| m.id.0 == "pomodoro"));
     // Written back, with a new revision for the clients.
     assert_eq!(loaded.config.revision, 1);
@@ -869,10 +879,7 @@ fn a_single_instance_module_configured_twice_is_merged_into_the_first() {
             }
         ]
     );
-    assert_eq!(
-        loaded.config.home,
-        ids(&["audio", "docker", "intellij", "claude"])
-    );
+    assert_eq!(loaded.config.home, ids(&DEFAULT_HOME_MODULES));
     // The merged instance is already on dial 0: a module has one dial only.
     assert_eq!(loaded.config.dials[3], DialAssignment::None);
     assert_eq!(

@@ -36,7 +36,13 @@ use hubergamof_module_api::{DialFunctionId, ModuleFactory, ModuleKind};
 use serde_json::{Map, Value};
 
 /// Built-in modules shown on the home page of a new device, in key order.
-pub const DEFAULT_HOME_MODULES: [&str; 4] = ["audio", "docker", "intellij", "claude"];
+pub const DEFAULT_HOME_MODULES: [&str; 5] = [
+    audio::AUDIO_KIND,
+    docker::DOCKER_KIND,
+    intellij::INTELLIJ_KIND,
+    claude::CLAUDE_KIND,
+    inbox::INBOX_KIND,
+];
 
 /// What a dial of a new device is assigned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -396,7 +402,10 @@ mod tests {
     fn builtin_layout_fills_home_and_dials() {
         let registry = simulated_registry();
         let layout = registry.default_layout();
-        assert_eq!(layout.home.len(), DEFAULT_HOME_MODULES.len());
+        assert_eq!(
+            layout.home,
+            ["audio", "docker", "intellij", "claude", "notifications"].map(ModuleKind::from)
+        );
         assert_eq!(
             layout.dials,
             [

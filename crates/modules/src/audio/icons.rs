@@ -11,9 +11,13 @@ pub(super) static SPEAKER: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("au
 /// Crossed speaker: muted output.
 pub(super) static SPEAKER_MUTED: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("audio-speaker-muted")));
-/// Microphone: inputs.
+/// Microphone: an input.
 pub(super) static MICROPHONE: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("audio-microphone")));
+/// Microphone with a list: choosing the default input.
+pub(super) static INPUTS: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("audio-inputs")));
+/// Speaker with a list: choosing the default output.
+pub(super) static OUTPUTS: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("audio-outputs")));
 /// Speaker with a green tick: the selected output.
 pub(super) static SPEAKER_SELECTED: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("audio-speaker-selected")));

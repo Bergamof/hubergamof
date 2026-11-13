@@ -40,13 +40,13 @@ async fn default_configuration_shows_the_builtin_modules_and_the_strip() {
             Some("Docker 4/7"),
             Some("IntelliJ"),
             Some("Claude"),
-            None,
+            Some("Notifications"),
             None,
             None,
             None,
         ])
     );
-    assert!(live.keys[4].image.is_none());
+    assert!(live.keys[5].image.is_none());
 
     // The strip is the manager's: time, measures and page come with it.
     let strip = fixture.strip();

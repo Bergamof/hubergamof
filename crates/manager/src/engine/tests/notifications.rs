@@ -3,13 +3,14 @@
 use std::time::Duration;
 
 use hubergamof_module_api::{Command, ContextDial, Notification, NotificationId, Rgb};
-use hubergamof_protocol::DialAssignment;
+use hubergamof_protocol::{DeviceTheme, DialAssignment, ImageSize};
 use image::Rgba;
 
 use super::support::*;
 use crate::device::InputEvent;
 use crate::device::TouchPoint;
 use crate::device::virtual_deck::virtual_plus_info;
+use crate::render::KeyRequest;
 
 const BACKGROUND: Rgb = Rgb(200, 30, 30);
 const BACKGROUND_PIXEL: Rgba<u8> = Rgba([200, 30, 30, 255]);
@@ -223,10 +224,11 @@ async fn a_key_held_shows_its_label_and_runs_no_action() {
     assert_eq!(fixture.labels()[0].as_deref(), Some("list 0"));
     fixture.inject(InputEvent::KeyDown(0));
     tokio::time::sleep(HOLD).await;
-    // White text over black.
+    // Dark text over the light strip of the default theme.
+    let (background, ink) = surface(DeviceTheme::Light);
     let screen = fixture.deck.inner.screen().strip.unwrap();
-    assert_eq!(*screen.get_pixel(0, 0), Rgba([0, 0, 0, 255]));
-    assert!(screen.pixels().any(|pixel| pixel.0[0] > 200));
+    assert_eq!(*screen.get_pixel(0, 0), background);
+    assert!(screen.pixels().any(|pixel| *pixel == ink));
 
     fixture.inject(InputEvent::KeyUp(0));
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -234,6 +236,31 @@ async fn a_key_held_shows_its_label_and_runs_no_action() {
     assert_eq!(fixture.hint_rotation(0).as_deref(), Some("fragile 0"));
     assert_eq!(fixture.labels()[0].as_deref(), Some("list 0"));
     assert_eq!(fixture.page().id, "home");
+}
+
+#[tokio::test]
+async fn the_label_of_a_held_key_follows_the_dark_theme() {
+    let fixture = plus_fixture().await;
+    let mut config = fixture.config();
+    config.theme = DeviceTheme::Dark;
+    fixture.engine.apply_config(config).await.unwrap();
+    fixture.inject(InputEvent::KeyDown(0));
+    tokio::time::sleep(HOLD).await;
+    let (background, ink) = surface(DeviceTheme::Dark);
+    let screen = fixture.deck.inner.screen().strip.unwrap();
+    assert_eq!(*screen.get_pixel(0, 0), background);
+    assert!(screen.pixels().any(|pixel| *pixel == ink));
+    fixture.inject(InputEvent::KeyUp(0));
+}
+
+/// Background and ink of the strip in `theme`, as a held label is drawn.
+fn surface(theme: DeviceTheme) -> (Rgba<u8>, Rgba<u8>) {
+    let size = ImageSize {
+        width: 1,
+        height: 1,
+    };
+    let key = KeyRequest::new(size, None, None).themed(theme);
+    (key.background, key.text_color)
 }
 
 #[tokio::test]

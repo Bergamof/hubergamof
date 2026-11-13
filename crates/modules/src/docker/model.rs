@@ -326,6 +326,17 @@ impl Overview {
         self.projects.iter().find(|project| project.name == name)
     }
 
+    /// The project whose page lists the container `name`.
+    #[must_use]
+    pub(crate) fn project_of(&self, name: &str) -> Option<&Project> {
+        self.projects.iter().find(|project| {
+            project
+                .containers
+                .iter()
+                .any(|container| container.name == name)
+        })
+    }
+
     /// Any container, by name.
     #[must_use]
     pub(crate) fn container(&self, name: &str) -> Option<&Container> {

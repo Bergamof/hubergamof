@@ -75,10 +75,10 @@ const OUTPUTS_ITEM: &str = OUTPUTS_PAGE;
 const INPUTS_ITEM: &str = INPUTS_PAGE;
 
 const MODULE_LABEL: &str = "Audio";
-const MICROPHONE_LABEL: &str = "Micro";
+const MICROPHONE_LABEL: &str = "Micro activé";
 const MICROPHONE_MUTED_LABEL: &str = "Micro coupé";
-const OUTPUTS_LABEL: &str = "Sortie";
-const INPUTS_LABEL: &str = "Entrée";
+const OUTPUTS_LABEL: &str = "Sorties";
+const INPUTS_LABEL: &str = "Entrées";
 const VOLUME_HINT: &str = "Volume";
 const MUTE_HINT: &str = "Muet";
 const UNMUTE_HINT: &str = "Réactiver";
@@ -326,9 +326,9 @@ impl Audio {
             .snapshot()
             .and_then(|snapshot| snapshot.default_device(Direction::Input))
             .is_some_and(|device| device.muted);
+        // The struck microphone says it is muted: no attention colour.
         let microphone = if microphone_muted {
             KeyContent::with_icon(&icons::MICROPHONE_MUTED, MICROPHONE_MUTED_LABEL)
-                .in_state(KeyState::Attention)
         } else {
             KeyContent::with_icon(&icons::MICROPHONE, MICROPHONE_LABEL)
         };
@@ -338,11 +338,11 @@ impl Audio {
                 item(MICROPHONE_ITEM, microphone),
                 item(
                     OUTPUTS_ITEM,
-                    KeyContent::with_icon(&icons::SPEAKER, OUTPUTS_LABEL),
+                    KeyContent::with_icon(&icons::OUTPUTS, OUTPUTS_LABEL),
                 ),
                 item(
                     INPUTS_ITEM,
-                    KeyContent::with_icon(&icons::MICROPHONE, INPUTS_LABEL),
+                    KeyContent::with_icon(&icons::INPUTS, INPUTS_LABEL),
                 ),
             ],
         )
