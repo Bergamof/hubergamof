@@ -93,3 +93,8 @@ updates:
       timezone: Europe/Paris
     commit-message:
       prefix: "chore(docker)"
+    # La cible Ubuntu est la 24.04 (plancher : pactl 16) : seuls les digests de
+    # cette version sont rafraîchis, jamais un changement de version.
+    ignore:
+      - dependency-name: ubuntu
+        update-types: [version-update:semver-major, version-update:semver-minor, version-update:semver-patch]
