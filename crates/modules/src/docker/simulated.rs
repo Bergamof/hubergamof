@@ -269,7 +269,6 @@ impl SimulatedDocker {
                 let suffix = match variant {
                     UpVariant::Plain => "",
                     UpVariant::Build => " --build",
-                    UpVariant::Pull => " --pull",
                     UpVariant::NoStart => " --no-start",
                 };
                 let scope = scope_suffix(scope);
@@ -497,7 +496,7 @@ mod tests {
             .compose(
                 &by_file,
                 &ComposeScope::Project,
-                ComposeAction::Up(UpVariant::Pull),
+                ComposeAction::Up(UpVariant::Plain),
             )
             .await
             .unwrap();
@@ -522,7 +521,7 @@ mod tests {
             docker.actions(),
             [
                 "down boutique --volumes",
-                "up boutique --pull",
+                "up boutique",
                 "up boutique --build"
             ]
         );

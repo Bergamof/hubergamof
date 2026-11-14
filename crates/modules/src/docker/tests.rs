@@ -376,7 +376,7 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
         .into_iter()
         .map(|(_, l, _)| l)
         .collect();
-    assert_eq!(labels, ["Up", "Rebuild", "Pull", "No start"]);
+    assert_eq!(labels, ["Up", "Rebuild", "No start"]);
     assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique");
     // Pressing a variant goes back to the project page, where the work shows.
     assert_eq!(
@@ -759,7 +759,7 @@ async fn removing_one_container_then_another_asks_again() {
 #[tokio::test(start_paused = true)]
 async fn every_up_variant_reaches_compose() {
     let mut harness = Harness::start(&json!({})).await;
-    for item in ["up-plain", "up-build", "up-pull", "up-no-start"] {
+    for item in ["up-plain", "up-build", "up-no-start"] {
         harness.press(SHOP_UP, item).await;
         harness.settle().await;
     }
@@ -768,7 +768,6 @@ async fn every_up_variant_reaches_compose() {
         [
             "up boutique",
             "up boutique --build",
-            "up boutique --pull",
             "up boutique --no-start"
         ]
     );
@@ -1123,18 +1122,18 @@ async fn one_operation_at_a_time_on_a_project() {
     let mut harness = Harness::start(&json!({})).await;
     harness.docker.set_latency(Duration::from_secs(2));
     assert_eq!(
-        harness.press(SHOP_UP, "up-pull").await,
+        harness.press(SHOP_UP, "up-build").await,
         [Command::BackTo(SHOP.into())]
     );
     assert_eq!(
-        harness.press(SHOP_UP, "up-build").await,
+        harness.press(SHOP_UP, "up-plain").await,
         Command::alert(),
         "refused while the first one runs"
     );
-    assert_eq!(label(&harness.item(SHOP, WEB)), "web-1 Pull…");
+    assert_eq!(label(&harness.item(SHOP, WEB)), "web-1 Build…");
     tokio::time::sleep(Duration::from_secs(3)).await;
     harness.settle().await;
-    assert_eq!(harness.docker.actions(), ["up boutique --pull"]);
+    assert_eq!(harness.docker.actions(), ["up boutique --build"]);
 }
 
 #[tokio::test(start_paused = true)]

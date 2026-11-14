@@ -25,10 +25,9 @@ pub(super) enum Action {
 
 pub(super) const PROJECT_ACTIONS: [Action; 2] = [Action::StartAll, Action::StopAll];
 
-pub(super) const UP_ACTIONS: [Action; 4] = [
+pub(super) const UP_ACTIONS: [Action; 3] = [
     Action::Up(UpVariant::Plain),
     Action::Up(UpVariant::Build),
-    Action::Up(UpVariant::Pull),
     Action::Up(UpVariant::NoStart),
 ];
 
@@ -53,7 +52,6 @@ impl Action {
             Self::Remove => "remove",
             Self::Up(UpVariant::Plain) => "up-plain",
             Self::Up(UpVariant::Build) => "up-build",
-            Self::Up(UpVariant::Pull) => "up-pull",
             Self::Up(UpVariant::NoStart) => "up-no-start",
             Self::Down { volumes: false } => "down-keep",
             Self::Down { volumes: true } => "down-volumes",
@@ -70,7 +68,6 @@ impl Action {
             Self::Remove => "Supprimer",
             Self::Up(UpVariant::Plain) => UP_LABEL,
             Self::Up(UpVariant::Build) => "Rebuild",
-            Self::Up(UpVariant::Pull) => "Pull",
             Self::Up(UpVariant::NoStart) => "No start",
             Self::Down { volumes: false } => DOWN_LABEL,
             Self::Down { volumes: true } => "Avec volumes",

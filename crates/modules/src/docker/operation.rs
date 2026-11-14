@@ -14,7 +14,6 @@ impl OperationKind {
     pub(super) fn working_label(self) -> &'static str {
         match self {
             Self::Up(UpVariant::Build) => "Build…",
-            Self::Up(UpVariant::Pull) => "Pull…",
             Self::Up(_) => "Up…",
             Self::Down => "Down…",
         }

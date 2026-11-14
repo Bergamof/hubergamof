@@ -29,9 +29,7 @@ pub enum UpVariant {
     Plain,
     /// `up --detach --build`: rebuilds the images first.
     Build,
-    /// `up --detach --pull=always`: pulls the images first.
-    Pull,
-    /// `up --no-start`: creates the containers (and builds or pulls what is
+    /// `up --no-start`: creates the containers (and builds what is
     /// missing) without starting them.
     NoStart,
 }

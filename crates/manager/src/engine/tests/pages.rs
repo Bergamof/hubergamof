@@ -8,6 +8,7 @@ use serde_json::json;
 use super::support::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
 use crate::device::{DeckBackend, InputEvent};
+use crate::engine::device_engine::HOLD_THRESHOLD;
 use crate::engine::*;
 use crate::render::{ImageKind, KeyRequest};
 use crate::strip::HintFace;
@@ -548,4 +549,44 @@ async fn the_whole_strip_is_written_again_once_the_device_settled() {
     })
     .await
     .expect("the whole strip is written again");
+}
+
+/// Opens `list/nested` (two pages deep) with the navigation dial on dial 3.
+async fn deep_fixture() -> Fixture {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .configure(
+            vec![list(4)],
+            &["list"],
+            &[None, None, None, Some(NAVIGATION_DIAL)],
+        )
+        .await;
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.engine.press_key(3).await.unwrap();
+    assert_eq!(fixture.page().id, "list/nested");
+    fixture
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_short_press_of_the_navigation_dial_goes_back_one_page() {
+    let fixture = deep_fixture().await;
+    fixture.deck.inner.inject(InputEvent::DialDown(3)).unwrap();
+    tokio::time::sleep(HOLD_THRESHOLD.saturating_sub(std::time::Duration::from_millis(1))).await;
+    fixture.deck.inner.inject(InputEvent::DialUp(3)).unwrap();
+    fixture
+        .wait_for(|fixture| fixture.page().id == "list/list")
+        .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_long_press_of_the_navigation_dial_goes_home_and_its_release_does_nothing() {
+    let fixture = deep_fixture().await;
+    fixture.deck.inner.inject(InputEvent::DialDown(3)).unwrap();
+    tokio::time::sleep(HOLD_THRESHOLD + std::time::Duration::from_millis(1)).await;
+    fixture
+        .wait_for(|fixture| fixture.page().id == HOME_PAGE_ID)
+        .await;
+    fixture.deck.inner.inject(InputEvent::DialUp(3)).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
 }
