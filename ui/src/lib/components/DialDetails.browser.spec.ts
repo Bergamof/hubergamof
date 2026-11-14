@@ -15,7 +15,7 @@ function module(kind: string, name: string, functionName: string): CatalogModule
 		kind,
 		name,
 		description: '',
-		capabilities: { key: true, multipleInstances: false },
+		capabilities: { key: true, multipleInstances: false, usableWhenLocked: false },
 		dialFunctions: [{ id: 'main', name: functionName, description: `Réglage de ${name}.` }],
 		icon: null,
 		settingIcons: {},

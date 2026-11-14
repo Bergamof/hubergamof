@@ -48,6 +48,7 @@ pub use supervisor::{EngineRegistry, Supervisor};
 use crate::config_store::{ConfigStore, ConfigStoreError};
 use crate::device::DeviceError;
 use crate::render::{RenderError, Renderer};
+use crate::screen_lock::ScreenLock;
 use crate::strip::{SystemProbe, WallClock};
 
 /// Id of the home page in [`PageSummary::id`].
@@ -69,6 +70,8 @@ pub struct EngineServices {
     pub wall_clock: Arc<dyn WallClock>,
     /// Measures of the machine shown on the touch strip.
     pub system: Arc<dyn SystemProbe>,
+    /// Whether the computer is locked.
+    pub screen_lock: Arc<dyn ScreenLock>,
 }
 
 /// Failure of an engine operation.

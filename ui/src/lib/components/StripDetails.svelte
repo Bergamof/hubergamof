@@ -4,6 +4,7 @@ Options of the touch strip: what it shows (its colours are the theme of the devi
 -->
 <script lang="ts">
 	import type { StripConfig } from '#lib/generated/index.js';
+	import IntegerField from './IntegerField.svelte';
 
 	interface Props {
 		strip: StripConfig;
@@ -21,24 +22,6 @@ Options of the touch strip: what it shows (its colours are the theme of the devi
 	/** Range of the alert load, in percent: `LOAD_ALERT_RANGE` of `hubergamof_protocol`. */
 	const ALERT_MIN = 50;
 	const ALERT_MAX = 100;
-
-	let alertDraft: string | undefined = $state();
-	const alertText = $derived(alertDraft ?? String(strip.loadAlertPercent));
-	const alertValue = $derived(Number(alertText));
-	const alertValid = $derived(
-		alertText.trim() !== '' &&
-			Number.isInteger(alertValue) &&
-			alertValue >= ALERT_MIN &&
-			alertValue <= ALERT_MAX
-	);
-
-	function setAlert(text: string) {
-		alertDraft = text;
-		const value = Number(text);
-		if (text.trim() !== '' && Number.isInteger(value) && value >= ALERT_MIN && value <= ALERT_MAX) {
-			onchange({ loadAlertPercent: value });
-		}
-	}
 </script>
 
 <section aria-labelledby={headingId} class="flex flex-col gap-4">
@@ -92,29 +75,14 @@ Options of the touch strip: what it shows (its colours are the theme of the devi
 		</select>
 	</div>
 
-	<div class="flex flex-col gap-1">
-		<label class="font-medium" for="{uid}-alert">Alerte de charge (en pourcentage)</label>
-		<span class="flex items-center gap-2">
-			<input
-				id="{uid}-alert"
-				type="text"
-				inputmode="numeric"
-				class="field w-24"
-				value={alertText}
-				oninput={(event) => setAlert(event.currentTarget.value)}
-				onblur={() => (alertDraft = undefined)}
-				aria-describedby="{uid}-alert-hint{alertValid ? '' : ` ${uid}-alert-error`}"
-				aria-invalid={alertValid ? undefined : true}
-			/>
-			<span class="text-sm text-muted">%</span>
-		</span>
-		<p id="{uid}-alert-hint" class="text-sm text-muted">
-			Une mesure est affichée en rouge à partir de cette charge, entre {ALERT_MIN} et {ALERT_MAX} %.
-		</p>
-		{#if !alertValid}
-			<p id="{uid}-alert-error" role="alert" class="text-sm font-medium text-danger">
-				Saisissez un nombre entier entre {ALERT_MIN} et {ALERT_MAX}.
-			</p>
-		{/if}
-	</div>
+	<IntegerField
+		label="Alerte de charge (en pourcentage)"
+		value={strip.loadAlertPercent}
+		min={ALERT_MIN}
+		max={ALERT_MAX}
+		unit="%"
+		hint="Une mesure est affichée en rouge à partir de cette charge, entre {ALERT_MIN} et {ALERT_MAX} %."
+		error="Saisissez un nombre entier entre {ALERT_MIN} et {ALERT_MAX}."
+		onchange={(loadAlertPercent) => onchange({ loadAlertPercent })}
+	/>
 </section>

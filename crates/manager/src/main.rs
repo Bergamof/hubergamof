@@ -20,6 +20,7 @@ use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::render::Renderer;
+use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, local_address, module_catalog,
 };
@@ -135,6 +136,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         &cli.config_dir,
         builtin_services(cli.demo),
         system_probe(cli.demo),
+        screen_lock(cli.demo),
     )?;
     let catalog = catalog_of(&services).await?;
     let store = services.store.clone();
@@ -273,6 +275,16 @@ fn builtin_services(demo: bool) -> BuiltinServices {
     }
 }
 
+/// Whether the computer is locked: read from logind, never in the demo (a
+/// development machine locking must not blank the demo device).
+fn screen_lock(demo: bool) -> Arc<dyn ScreenLock> {
+    if demo {
+        Arc::new(NoScreenLock)
+    } else {
+        Arc::new(LogindScreenLock::start())
+    }
+}
+
 /// What the touch strip measures: the machine, or lively figures for the
 /// demo. Both show the real time: only the tests freeze it.
 fn system_probe(demo: bool) -> Arc<dyn SystemProbe> {
@@ -296,6 +308,7 @@ fn services(
     config_dir: &std::path::Path,
     builtins: BuiltinServices,
     system: Arc<dyn SystemProbe>,
+    screen_lock: Arc<dyn ScreenLock>,
 ) -> Result<EngineServices> {
     let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
@@ -304,6 +317,7 @@ fn services(
         registry,
         wall_clock: Arc::new(SystemClock),
         system,
+        screen_lock,
     })
 }
 
@@ -453,7 +467,13 @@ mod tests {
         let discovery = DeviceDiscovery::new();
         let supervisor = Supervisor::start(
             &discovery,
-            services(dir.path(), builtin_services(true), system_probe(true)).unwrap(),
+            services(
+                dir.path(),
+                builtin_services(true),
+                system_probe(true),
+                screen_lock(true),
+            )
+            .unwrap(),
         );
         let devices = VirtualDevices::new(discovery.clone());
         let engines = supervisor.engines();

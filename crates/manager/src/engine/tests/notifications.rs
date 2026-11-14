@@ -453,6 +453,26 @@ async fn the_contextual_dial_press_runs_the_notification_action_and_reads_it() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_notification_action_of_a_module_refused_when_locked_does_not_run() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(with_action("Pause !", "Démarrer la pause"));
+    fixture.wait_for_notification(true).await;
+    fixture.probe.screen_lock.set(true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    fixture.press_dial(2).await;
+
+    assert_eq!(fixture.notification_presses(), []);
+    assert_eq!(fixture.unread_messages(), ["Pause !"]);
+
+    // Unlocked, the same press runs the action.
+    fixture.probe.screen_lock.set(false);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fixture.press_dial(2).await;
+    assert_eq!(fixture.notification_presses().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_notification_without_action_ignores_the_contextual_dial() {
     let fixture = contextual_fixture().await;
     fixture.notify(permanent("Pause !"));

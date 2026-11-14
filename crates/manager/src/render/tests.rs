@@ -596,6 +596,21 @@ fn a_ticked_key_carries_a_check_mark_in_its_top_right_corner() {
 }
 
 #[test]
+fn a_locked_key_wears_a_padlock_in_its_top_right_corner_and_is_cached_apart() {
+    let renderer = renderer();
+    let request = KeyRequest::new(KEY, None, None);
+    let locked = renderer.render_key(&request.locked(true)).unwrap();
+    let plain = renderer.render_key(&request).unwrap();
+
+    assert_ne!(locked.image(), plain.image());
+    // The dark disc of the badge, not the background, at its centre.
+    assert_ne!(*locked.image().get_pixel(90, 25), DEFAULT_BACKGROUND);
+    assert_eq!(*plain.image().get_pixel(90, 25), DEFAULT_BACKGROUND);
+    // Nothing elsewhere.
+    assert_eq!(*locked.image().get_pixel(10, 100), DEFAULT_BACKGROUND);
+}
+
+#[test]
 fn the_cursor_and_the_tick_cumulate_and_are_cached_apart() {
     let renderer = renderer();
     let request = KeyRequest::new(KEY, None, None).themed(DeviceTheme::Light);

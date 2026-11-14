@@ -25,6 +25,8 @@ pub(crate) struct KeyFace {
     pub(crate) focused: bool,
     /// Ticked: a check mark is drawn on it.
     pub(crate) checked: bool,
+    /// Refused while the computer is locked: a padlock is drawn on it.
+    pub(crate) locked: bool,
     /// Transient outcome mark drawn over the key.
     pub(crate) feedback: Option<Feedback>,
 }
@@ -37,6 +39,7 @@ impl KeyFace {
             state: content.state,
             focused: content.focused,
             checked: content.checked,
+            locked: false,
             feedback: None,
         }
     }
@@ -47,6 +50,7 @@ impl KeyFace {
             && self.state == KeyState::Normal
             && !self.focused
             && !self.checked
+            && !self.locked
             && self.feedback.is_none()
     }
 }

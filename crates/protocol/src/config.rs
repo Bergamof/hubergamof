@@ -33,6 +33,10 @@ pub const SYSTEM_REFRESH_CHOICES: [u8; 4] = [1, 2, 5, 10];
 /// Lowest and highest load, in percent, from which the touch strip warns.
 pub const LOAD_ALERT_RANGE: std::ops::RangeInclusive<u8> = 50..=100;
 
+/// Lowest and highest delay, in seconds, after which the device goes dark once
+/// the computer is locked; `0` keeps it lit.
+pub const LOCK_SLEEP_RANGE: std::ops::RangeInclusive<u16> = 0..=300;
+
 /// Longest key label, in characters (a few words fit on a key).
 pub const MAX_LABEL_CHARS: usize = 64;
 
@@ -41,6 +45,12 @@ pub const MAX_IDENTIFIER_LENGTH: usize = 64;
 
 /// Largest settings of an instance, serialized as JSON.
 pub const MAX_SETTINGS_BYTES: usize = 16 * 1024;
+
+/// Delay before a locked device goes dark, when a configuration does not say.
+#[must_use]
+pub const fn default_lock_sleep_seconds() -> u16 {
+    5
+}
 
 /// Full configuration of one device.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -55,6 +65,11 @@ pub struct DeviceConfig {
     pub model: DeviceModel,
     /// Brightness in percent, `0..=100`.
     pub brightness: u8,
+    /// Seconds after which the device goes dark while the computer is locked
+    /// (within [`LOCK_SLEEP_RANGE`]); `0` never turns it off. Locked, the
+    /// device only runs what modules declare usable when locked, either way.
+    #[serde(default = "default_lock_sleep_seconds")]
+    pub lock_sleep_seconds: u16,
     /// Module instances shown on the home page, in key order.
     pub home: Vec<ModuleInstanceId>,
     /// All module instances of the device.
@@ -222,6 +237,9 @@ pub enum ConfigError {
     /// An alert load outside [`LOAD_ALERT_RANGE`].
     #[error("load alert of {0} % is outside {LOAD_ALERT_RANGE:?}")]
     InvalidLoadAlert(u8),
+    /// A lock sleep delay outside [`LOCK_SLEEP_RANGE`].
+    #[error("lock sleep delay of {0} s is outside {LOCK_SLEEP_RANGE:?}")]
+    InvalidLockSleep(u16),
     /// More of something than a configuration may hold.
     #[error("too many {what}: {count} (at most {max})")]
     TooMany {
@@ -264,6 +282,7 @@ impl DeviceConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.validate_schema_version()?;
         self.validate_brightness()?;
+        self.validate_lock_sleep()?;
         self.validate_sizes()?;
         self.validate_instances()?;
         let known_ids = self.validate_module_ids()?;
@@ -280,6 +299,14 @@ impl DeviceConfig {
             Err(ConfigError::UnsupportedSchemaVersion {
                 found: self.schema_version,
             })
+        }
+    }
+
+    fn validate_lock_sleep(&self) -> Result<(), ConfigError> {
+        if LOCK_SLEEP_RANGE.contains(&self.lock_sleep_seconds) {
+            Ok(())
+        } else {
+            Err(ConfigError::InvalidLockSleep(self.lock_sleep_seconds))
         }
     }
 

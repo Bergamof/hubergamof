@@ -28,6 +28,7 @@ use crate::config_store::ConfigStore;
 use crate::device::virtual_deck::VirtualDeck;
 use crate::device::{DeckBackend, DeviceError, InputEvent};
 use crate::engine::*;
+use crate::screen_lock::SimulatedScreenLock;
 use crate::strip::{HintFace, SimulatedProbe, StripFace, SystemProbe, SystemSample, WallClock};
 use crate::testing::builtin_registry;
 
@@ -64,6 +65,8 @@ pub(super) struct Probe {
     pub(super) system_samples: Arc<AtomicUsize>,
     /// Local time of the engines.
     pub(super) clock: SettableClock,
+    /// Lock of the computer, driven by the tests.
+    pub(super) screen_lock: SimulatedScreenLock,
     /// Volume shown on the strip by fragile instances.
     pub(super) volume: Arc<Mutex<Option<VolumeWidget>>>,
     /// Page the list instances no longer have (removed by an event).
@@ -626,6 +629,7 @@ pub(super) fn services(dir: &TempDir, probe: &Probe) -> EngineServices {
             samples: Arc::clone(&probe.system_samples),
             inner: SimulatedProbe::demo(),
         }),
+        screen_lock: Arc::new(probe.screen_lock.clone()),
     }
 }
 
@@ -652,7 +656,12 @@ pub(super) async fn start_settled(info: DeviceInfo) -> Fixture {
 
 /// Starts an engine on a deck whose brightness fails if `fail_brightness`.
 pub(super) async fn start_with(info: DeviceInfo, fail_brightness: bool) -> Fixture {
-    start_after(info, fail_brightness, |_| {}).await
+    start_after(info, fail_brightness, false, |_| {}).await
+}
+
+/// Starts an engine on a computer that is already locked.
+pub(super) async fn start_locked(info: DeviceInfo) -> Fixture {
+    start_after(info, false, true, |_| {}).await
 }
 
 /// Starts an engine on a device whose configuration `prepare` stored first.
@@ -661,16 +670,18 @@ pub(super) async fn start_with_stored(
     prepare: impl FnOnce(&DeviceInfo, &ConfigStore),
 ) -> Fixture {
     let stored_for = info.clone();
-    start_after(info, false, move |store| prepare(&stored_for, store)).await
+    start_after(info, false, false, move |store| prepare(&stored_for, store)).await
 }
 
 async fn start_after(
     info: DeviceInfo,
     fail_brightness: bool,
+    locked: bool,
     prepare: impl FnOnce(&ConfigStore),
 ) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let probe = Probe::default();
+    probe.screen_lock.set(locked);
     let services = services(&dir, &probe);
     let store = services.store.clone();
     prepare(&store);

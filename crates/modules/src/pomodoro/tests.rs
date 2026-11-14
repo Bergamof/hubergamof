@@ -183,10 +183,14 @@ fn default_settings_are_the_classic_cycle() {
             "notificationSeconds": 10
         })
     );
-    // Pomodoro is driven by a dial: no key, one instance.
+    // Pomodoro is driven by a dial: no key, one instance, and a timer that
+    // stays usable on a locked computer.
     assert_eq!(
         factory.descriptor().capabilities,
-        ModuleCapabilities::default()
+        ModuleCapabilities {
+            usable_when_locked: true,
+            ..Default::default()
+        }
     );
 }
 

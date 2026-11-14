@@ -77,6 +77,7 @@ impl Api {
             registry: Arc::clone(&registry),
             wall_clock: Arc::new(FixedClock::default()),
             system: Arc::new(SimulatedProbe::default()),
+            screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
         };
         let catalog = module_catalog(&registry, &services.renderer);
         let store = services.store.clone();

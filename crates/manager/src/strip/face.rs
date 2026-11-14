@@ -48,6 +48,9 @@ pub struct HintFace {
     pub press: Option<String>,
     /// Outcome of the last action of the dial, for a moment.
     pub feedback: Option<Feedback>,
+    /// The dial does nothing while the computer is locked: a padlock is drawn
+    /// instead of the reminder.
+    pub locked: bool,
 }
 
 /// A menu drawn over the strip.

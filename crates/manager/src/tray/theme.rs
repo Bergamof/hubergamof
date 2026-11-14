@@ -161,6 +161,7 @@ pub(super) mod tests {
                 registry,
                 wall_clock: Arc::new(FixedClock::default()),
                 system: Arc::new(SimulatedProbe::default()),
+                screen_lock: Arc::new(crate::screen_lock::NoScreenLock),
             };
             let discovery = DeviceDiscovery::new();
             let supervisor = Supervisor::start(&discovery, services);

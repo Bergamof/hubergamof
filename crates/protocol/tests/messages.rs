@@ -28,6 +28,7 @@ fn sample_config() -> DeviceConfig {
         serial: "ABC123".into(),
         model: DeviceModel::Plus,
         brightness: 60,
+        lock_sleep_seconds: 30,
         home: vec!["pomodoro".into()],
         modules: vec![ModuleInstance {
             id: "pomodoro".into(),
@@ -63,6 +64,7 @@ fn sample_config_json() -> Value {
         "serial": "ABC123",
         "model": "plus",
         "brightness": 60,
+        "lockSleepSeconds": 30,
         "home": ["pomodoro"],
         "modules": [{
             "id": "pomodoro",
@@ -100,6 +102,7 @@ fn catalog_module_without_icon() {
                 capabilities: ModuleCapabilities {
                     key: false,
                     multiple_instances: true,
+                    usable_when_locked: true,
                 },
                 dial_functions: vec![DialFunctionDescriptor {
                     id: "volume".into(),
@@ -116,7 +119,7 @@ fn catalog_module_without_icon() {
             "kind": "audio",
             "name": "Audio",
             "description": "Volume",
-            "capabilities": { "key": false, "multipleInstances": true },
+            "capabilities": { "key": false, "multipleInstances": true, "usableWhenLocked": true },
             "dialFunctions": [{
                 "id": "volume",
                 "name": "Contrôle du volume",
@@ -294,7 +297,7 @@ fn server_module_catalog() {
                 "kind": "pomodoro",
                 "name": "Pomodoro",
                 "description": "Focus timer",
-                "capabilities": { "key": true, "multipleInstances": false },
+                "capabilities": { "key": true, "multipleInstances": false, "usableWhenLocked": false },
                 "dialFunctions": [],
                 "settings": [
                     {
@@ -438,4 +441,14 @@ fn every_device_model_has_a_camel_case_name() {
     for (model, name) in names {
         assert_wire_format(&model, &json!(name));
     }
+}
+
+#[test]
+fn a_configuration_without_a_lock_sleep_delay_gets_the_default() {
+    let mut json = sample_config_json();
+    json.as_object_mut().unwrap().remove("lockSleepSeconds");
+
+    let config: DeviceConfig = serde_json::from_value(json).unwrap();
+
+    assert_eq!(config.lock_sleep_seconds, 5);
 }

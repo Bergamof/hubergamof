@@ -4,7 +4,7 @@ use hubergamof_module_api::ModuleDescriptor;
 use hubergamof_modules::{DefaultDial, ModuleRegistry};
 use hubergamof_protocol::{
     CURRENT_SCHEMA_VERSION, DeviceConfig, DeviceInfo, DeviceTheme, DialAssignment, ModuleInstance,
-    ModuleInstanceId, ModuleKind, StripConfig,
+    ModuleInstanceId, ModuleKind, StripConfig, default_lock_sleep_seconds,
 };
 use serde_json::Value;
 
@@ -88,6 +88,7 @@ pub fn default_config(device: &DeviceInfo, defaults: &dyn ConfigDefaults) -> Dev
         serial: device.serial.clone(),
         model: device.model,
         brightness: DEFAULT_BRIGHTNESS,
+        lock_sleep_seconds: default_lock_sleep_seconds(),
         home: home.iter().map(instance_id).collect(),
         modules,
         dials: dials.into_iter().map(assignment).collect(),

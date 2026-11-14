@@ -1,6 +1,6 @@
 <!--
 @component
-Configuration of the selected device: brightness, home keys and dials, and the details of the
+Configuration of the selected device: brightness, lock delay, home keys and dials, and the details of the
 selected key or dial.
 -->
 <script lang="ts">
@@ -21,6 +21,7 @@ selected key or dial.
 		removeKey,
 		removedInstance,
 		setBrightness,
+		setLockSleepSeconds,
 		setKeyImage,
 		setStrip,
 		setTheme,
@@ -32,6 +33,7 @@ selected key or dial.
 	import type { DeckState, EditOutcome } from '#lib/deck/deck-state.svelte.js';
 	import { dialSummary, instanceName, keyImage } from '#lib/deck/display.js';
 	import BrightnessControl from './BrightnessControl.svelte';
+	import LockSleepControl from './LockSleepControl.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DialDetails from './DialDetails.svelte';
 	import DialRow from './DialRow.svelte';
@@ -282,6 +284,10 @@ selected key or dial.
 			<BrightnessControl
 				brightness={config.brightness}
 				onchange={(brightness) => deck.edit(setBrightness(brightness))}
+			/>
+			<LockSleepControl
+				seconds={config.lockSleepSeconds}
+				onchange={(seconds) => deck.edit(setLockSleepSeconds(seconds))}
 			/>
 			<ExportImport {device} {api} />
 		</div>

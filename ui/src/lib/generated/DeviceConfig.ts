@@ -27,6 +27,12 @@ model: DeviceModel,
  */
 brightness: number, 
 /**
+ * Seconds after which the device goes dark while the computer is locked
+ * (within [`LOCK_SLEEP_RANGE`]); `0` never turns it off. Locked, the
+ * device only runs what modules declare usable when locked, either way.
+ */
+lockSleepSeconds: number, 
+/**
  * Module instances shown on the home page, in key order.
  */
 home: Array<ModuleInstanceId>, 

@@ -13,6 +13,7 @@ import {
 	removedInstance,
 	setBrightness,
 	setKeyImage,
+	setLockSleepSeconds,
 	setStrip,
 	setTheme,
 	updateInstance
@@ -28,6 +29,7 @@ function config(overrides: Partial<DeviceConfig> = {}): DeviceConfig {
 		serial: 'DEMO',
 		model: 'plus',
 		brightness: 50,
+		lockSleepSeconds: 5,
 		home: ['audio', 'pomodoro', 'docker'],
 		modules: [instance('audio'), instance('pomodoro'), instance('docker'), instance('extra')],
 		dials: [
@@ -53,7 +55,7 @@ const pomodoro: CatalogModule = {
 	kind: 'pomodoro',
 	name: 'Pomodoro',
 	description: '',
-	capabilities: { key: true, multipleInstances: true },
+	capabilities: { key: true, multipleInstances: true, usableWhenLocked: false },
 	dialFunctions: [],
 	icon: null,
 	settingIcons: {},
@@ -74,7 +76,7 @@ const audio: CatalogModule = {
 	...pomodoro,
 	kind: 'audio',
 	name: 'Audio',
-	capabilities: { key: true, multipleInstances: false },
+	capabilities: { key: true, multipleInstances: false, usableWhenLocked: false },
 	dialFunctions: [{ id: 'volume', name: 'Volume', description: '' }]
 };
 
@@ -83,7 +85,7 @@ const dialOnly: CatalogModule = {
 	...audio,
 	kind: 'timer',
 	name: 'Minuteur',
-	capabilities: { key: false, multipleInstances: false }
+	capabilities: { key: false, multipleInstances: false, usableWhenLocked: false }
 };
 
 describe('newInstanceId', () => {
@@ -122,6 +124,13 @@ describe('edits', () => {
 		expect(setBrightness(42.6)(config()).brightness).toBe(43);
 		expect(setBrightness(140)(config()).brightness).toBe(100);
 		expect(setBrightness(-3)(config()).brightness).toBe(0);
+	});
+
+	it('round and bound the lock sleep delay', () => {
+		expect(setLockSleepSeconds(7.4)(config()).lockSleepSeconds).toBe(7);
+		expect(setLockSleepSeconds(999)(config()).lockSleepSeconds).toBe(300);
+		expect(setLockSleepSeconds(-1)(config()).lockSleepSeconds).toBe(0);
+		expect(setLockSleepSeconds(0)(config()).lockSleepSeconds).toBe(0);
 	});
 
 	it('add a key at the end with its new instance', () => {

@@ -85,6 +85,13 @@ const CHECK_BADGE_RATIO: f32 = 0.3;
 /// smaller side: clear of the frame of the cursor.
 const CHECK_BADGE_MARGIN_RATIO: f32 = 0.09;
 
+/// Distance of the padlock of a locked key from its corner, relative to the
+/// smaller side.
+const LOCK_BADGE_MARGIN_RATIO: f32 = 0.06;
+
+/// Padlock on a dark disc: what a locked computer refuses.
+const LOCK_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="#1c1c1e" fill-opacity="0.88"/><rect x="29" y="46" width="42" height="29" rx="6" fill="#ffffff"/><path d="M37 46 V38 a13 13 0 0 1 26 0 V46" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/></svg>"##;
+
 /// Green disc with a white check mark ([`Feedback::Ok`]).
 const OK_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="#2e9d4a"/><path d="M27 52 L44 69 L74 34" fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
 /// Red warning triangle with a white exclamation mark ([`Feedback::Alert`]).
@@ -158,6 +165,9 @@ pub struct KeyRequest<'a> {
     pub accent: Rgba<u8>,
     /// Whether the key is ticked: a check mark is drawn in a corner.
     pub checked: bool,
+    /// Whether the key is refused while the computer is locked: a padlock is
+    /// drawn in a corner.
+    pub locked: bool,
 }
 
 impl<'a> KeyRequest<'a> {
@@ -174,6 +184,7 @@ impl<'a> KeyRequest<'a> {
             focused: false,
             accent: strip::accent(DeviceTheme::Light),
             checked: false,
+            locked: false,
         }
     }
 
@@ -217,6 +228,13 @@ impl<'a> KeyRequest<'a> {
     #[must_use]
     pub fn checked(self, checked: bool) -> Self {
         Self { checked, ..self }
+    }
+
+    /// The same request for a key refused while the computer is locked (or
+    /// not).
+    #[must_use]
+    pub fn locked(self, locked: bool) -> Self {
+        Self { locked, ..self }
     }
 }
 
@@ -317,6 +335,7 @@ enum CacheKey {
         /// Colour of the frame of the cursor, if the key holds it.
         frame: Option<[u8; 4]>,
         checked: bool,
+        locked: bool,
     },
 }
 
@@ -407,6 +426,7 @@ impl Renderer {
             state: request.state,
             frame: frame.map(|color| color.0),
             checked: request.checked,
+            locked: request.locked,
         };
         self.cached(key, || {
             // Read now if the digest was remembered without reading.
@@ -429,6 +449,9 @@ impl Renderer {
             }
             if request.checked {
                 self.draw_check(&mut canvas)?;
+            }
+            if request.locked {
+                self.draw_lock(&mut canvas)?;
             }
             Ok(keep_opaque(canvas, background))
         })
@@ -562,6 +585,25 @@ impl Renderer {
         imageops::overlay(
             canvas,
             badge.as_ref(),
+            i64::from(width.saturating_sub(side + margin)),
+            i64::from(margin),
+        );
+        Ok(())
+    }
+
+    /// Draws the padlock of a key refused while locked, in its top right
+    /// corner.
+    fn draw_lock(&self, canvas: &mut RgbaImage) -> Result<(), RenderError> {
+        let (width, height) = canvas.dimensions();
+        let smaller = width.min(height);
+        let side = scaled_dimension(smaller, CHECK_BADGE_RATIO, smaller);
+        let margin = scaled_dimension(smaller, LOCK_BADGE_MARGIN_RATIO, smaller);
+        let tree = usvg::Tree::from_str(LOCK_MARK_SVG, self.text.source_svg_options())
+            .map_err(RenderError::Svg)?;
+        let badge = source::rasterize_svg(&tree, side, side)?;
+        imageops::overlay(
+            canvas,
+            &badge,
             i64::from(width.saturating_sub(side + margin)),
             i64::from(margin),
         );

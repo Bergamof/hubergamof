@@ -14,6 +14,7 @@ use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 
+use self::lock::LockState;
 use super::feedback::{Marks, Surface};
 use super::frame::{
     ContextFace, ContextGesture, Frame, FrameKey, KeyFace, KeyTarget, NotificationAction,
@@ -34,6 +35,7 @@ use crate::device::{self, DeckBackend, InputEvent, StripLayout, TouchPoint};
 use crate::render::{ImageSource, is_system_panel};
 use crate::strip::SystemHistory;
 
+mod lock;
 mod strip;
 
 /// Reminder of the navigation dial under a notification: its press hides it.
@@ -150,6 +152,10 @@ enum Wake {
     StripSettled,
     /// The time shown on the strip changes.
     ClockTick,
+    /// The computer was locked or unlocked.
+    LockChanged,
+    /// The device has been locked long enough to go dark.
+    LockSleep,
     /// The system measures of the strip are due.
     SystemSample,
     RequestsClosed,
@@ -180,6 +186,8 @@ pub struct DeviceEngine {
     /// Brightness the device last accepted, `None` after a failure: applied
     /// again with the next configuration.
     applied_brightness: Option<u8>,
+    /// The lock of the computer: no action, then dark.
+    lock: LockState,
     last_frame: Option<Frame>,
     /// When the strip is written again after the first drawing, `None`
     /// once done (or without a strip).
@@ -226,6 +234,7 @@ impl DeviceEngine {
             );
         }
         let applied_brightness = apply_brightness(deck.as_ref(), loaded.config.brightness).await;
+        let lock = LockState::new(services.screen_lock.watch());
 
         let redraw = Arc::new(Notify::new());
         let notify = Arc::clone(&redraw);
@@ -260,6 +269,7 @@ impl DeviceEngine {
             held_dial: None,
             focus: None,
             applied_brightness,
+            lock,
             last_frame: None,
             strip_settle: None,
             system: SystemHistory::default(),
@@ -283,6 +293,7 @@ impl DeviceEngine {
             engine.strip_settle = Some(Instant::now() + STRIP_SETTLE_DELAY);
             engine.sample_system().await;
         }
+        engine.schedule_initial_sleep();
         engine.refresh().await?;
         Ok((engine, handle))
     }
@@ -348,6 +359,11 @@ impl DeviceEngine {
                     self.sample_system().await;
                     self.refresh_or_log().await;
                 }
+                Wake::LockChanged => {
+                    self.on_lock_changed().await;
+                    self.refresh_or_log().await;
+                }
+                Wake::LockSleep => self.fall_asleep().await,
                 Wake::RequestsClosed => self.requests = None,
                 Wake::Disconnected => break,
             }
@@ -359,6 +375,9 @@ impl DeviceEngine {
     async fn next_wake(&mut self) -> Wake {
         loop {
             let clock_tick = self.next_clock_tick();
+            let lock_sleep = self.lock.sleep_at();
+            // Nothing is drawn on a dark device: its timers wait for it to wake.
+            let lit = !self.lock.is_asleep();
             let wake = tokio::select! {
                 request = recv_request(self.requests.as_mut()) => {
                     Some(request.map_or(Wake::RequestsClosed, Wake::Request))
@@ -374,17 +393,19 @@ impl DeviceEngine {
                 // The instances keep a sender: the queue never closes.
                 Some(routed) = self.events.recv() => Some(Wake::ModuleEvent(routed)),
                 () = self.redraw.notified() => Some(Wake::Redraw),
-                () = sleep_until(self.marks.next_expiry()) => Some(Wake::FeedbackExpired),
-                () = sleep_until(self.notifications.next_step()) => Some(Wake::NotificationStep),
+                () = sleep_until(self.marks.next_expiry().filter(|_| lit)) => Some(Wake::FeedbackExpired),
+                () = sleep_until(self.notifications.next_step().filter(|_| lit)) => Some(Wake::NotificationStep),
                 () = sleep_until(self.held.as_ref().and_then(HeldKey::label_due)) => {
                     Some(Wake::HoldElapsed)
                 }
                 () = sleep_until(self.held_dial.as_ref().map(HeldDial::due)) => {
                     Some(Wake::DialHoldElapsed)
                 }
-                () = sleep_until(self.strip_settle) => Some(Wake::StripSettled),
-                () = sleep_until(clock_tick) => Some(Wake::ClockTick),
-                () = sleep_until(self.next_system_sample) => Some(Wake::SystemSample),
+                () = sleep_until(self.strip_settle.filter(|_| lit)) => Some(Wake::StripSettled),
+                () = sleep_until(clock_tick.filter(|_| lit)) => Some(Wake::ClockTick),
+                () = sleep_until(self.next_system_sample.filter(|_| lit)) => Some(Wake::SystemSample),
+                () = self.lock.changed() => Some(Wake::LockChanged),
+                () = sleep_until(lock_sleep) => Some(Wake::LockSleep),
             };
             if let Some(wake) = wake {
                 return wake;
@@ -424,6 +445,9 @@ impl DeviceEngine {
     }
 
     async fn handle_input(&mut self, event: InputEvent) {
+        if event != InputEvent::Disconnected && self.absorbed_while_locked().await {
+            return;
+        }
         match event {
             InputEvent::KeyDown(index) => self.hold_key(index),
             InputEvent::KeyUp(index) => self.release_key(index).await,
@@ -559,6 +583,9 @@ impl DeviceEngine {
             return;
         }
         let (id, source) = (shown.notification.id, shown.notification.source.clone());
+        if !self.may_act(&source) {
+            return;
+        }
         let surfaces = self.failure_surfaces(&source);
         let Some(outcome) = self
             .instances
@@ -739,6 +766,9 @@ impl DeviceEngine {
 
     /// Runs a handler of `module`; `surfaces` show its outcome.
     async fn run_handler(&mut self, module: &ModuleInstanceId, call: Call, surfaces: Vec<Surface>) {
+        if !self.may_act(module) {
+            return;
+        }
         if let Some(outcome) = self.instances.call(module, call).await {
             self.conclude(module, &surfaces, outcome);
         }
@@ -900,9 +930,11 @@ impl DeviceEngine {
         }
         self.config_tx.send_replace(saved.clone());
         tracing::info!(serial = %self.serial(), revision = saved.revision, "configuration applied");
-        if self.applied_brightness != Some(saved.brightness) {
+        // A dark device gets its brightness back when it wakes up.
+        if !self.lock.is_asleep() && self.applied_brightness != Some(saved.brightness) {
             self.applied_brightness = apply_brightness(self.deck.as_ref(), saved.brightness).await;
         }
+        self.lock_config_changed().await;
         Ok(saved)
     }
 
@@ -941,6 +973,9 @@ impl DeviceEngine {
 
     /// Draws what changed and publishes the live state if anything did.
     async fn refresh(&mut self) -> Result<(), EngineError> {
+        if self.lock.is_asleep() {
+            return Ok(());
+        }
         let frame = self.next_frame();
         let written = self
             .painter
@@ -1029,7 +1064,9 @@ impl DeviceEngine {
             .enumerate()
             .filter_map(|(dial, assignment)| {
                 let text = match assignment {
-                    DialAssignment::Contextual => contextual.clone()?,
+                    DialAssignment::Contextual if self.may_act(&notification.source) => {
+                        contextual.clone()?
+                    }
                     DialAssignment::Navigation => HIDE_NOTIFICATION.to_owned(),
                     _ => return None,
                 };
@@ -1133,6 +1170,10 @@ impl DeviceEngine {
     }
 
     fn marked(&self, mut key: FrameKey) -> FrameKey {
+        key.face.locked = key
+            .target
+            .as_ref()
+            .is_some_and(|target| !self.may_act(target.module()));
         key.face.feedback = key
             .target
             .as_ref()

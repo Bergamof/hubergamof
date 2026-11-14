@@ -31,6 +31,12 @@
 - Validé le 2026-11-05 sur Plasma 6 (session d'Adrien) : fenêtres, activation, processus, monitor (faux Claude ignoré).
 - GNOME : pas d'API sans extension (« Window Calls » : `org.gnome.Shell.Extensions.Windows`), sinon simple clignotement (accepté).
 
+## Verrouillage de l'ordinateur (logind)
+- Source : `screen_lock.rs`, propriétés `LockedHint` et `Active` de la session de l'utilisateur sur le bus **système** (`org.freedesktop.login1`) : verrouillé = `LockedHint` ou session non active (changement rapide d'utilisateur). La session est obtenue par `Manager.GetSession("auto")` (le service systemd utilisateur n'est dans aucune session : `GetSessionByPID` échouerait) ; on écoute `PropertiesChanged` sur son vrai chemin (un alias comme `session/auto` n'émet pas de signal). KDE et GNOME posent le `LockedHint`.
+- Sans logind, ou connexion perdue : non verrouillé (journalisé), reconnexion avec attente croissante (1 s à 30 s) ; un verrou dont la fin n'est plus annoncée est levé. `--demo` n'écoute pas logind.
+- Moteur (`device_engine/lock.rs`) : verrouillé, seuls les modules `usable_when_locked` agissent (contrôle dans `run_handler`), tout le reste porte un cadenas ; éteint = luminosité 0, plus de dessin ni de minuteries ; réveil = luminosité de la configuration + bande réécrite en entier. Délai 0 : jamais éteint, mais toujours verrouillé.
+- À valider sur le vrai Stream Deck+ (verrou KDE/GNOME réel).
+
 ## zbus 6
 - `Value` → `Variant`/`OwnedVariant` ; plus d'API bloquante. Les builders (`connection::Builder::session()`, `proxy::Builder::path()`, `Message::method_call()`) ne renvoient plus de `Result` : l'erreur sort au `build()`.
 - Proxies : zbus dérive les membres en PascalCase (`unload_script` → `UnloadScript`) ; les API KDE sont en lowerCamelCase → `#[zbus(name = "unloadScript")]` obligatoire, sinon « no slot matched » dans le journal de KWin. Features utilisées : `default-features = false`, `tokio`, `proxy`, `service`. Nouvelles dépendances (`zruntime`, `zcheapstr`, `zbus_utils`) à passer dans `cargo deny`.

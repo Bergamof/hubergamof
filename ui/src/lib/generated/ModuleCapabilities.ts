@@ -17,4 +17,11 @@ key: boolean,
  * and a dial with separate settings). Otherwise the device holds at most
  * one instance of the module, shared by its key and its dials.
  */
-multipleInstances: boolean, };
+multipleInstances: boolean, 
+/**
+ * Keeps working while the computer is locked: only for what stays inside
+ * the device (reading notifications, a timer), never what runs a
+ * command or acts on the computer. Otherwise the keys and dials of the
+ * module are refused while locked.
+ */
+usableWhenLocked: boolean, };
