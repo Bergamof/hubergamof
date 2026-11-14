@@ -17,7 +17,7 @@
 //! - Removing and every `down` need a second press within
 //!   [`CONFIRM_TIMEOUT`]. Pressing a variant of `up` or `down` goes back to
 //!   the page of the project, where the entries the operation works on show
-//!   what it does (`Build…`, `Pull…`, `Up…`, `Down…`).
+//!   what it does (`Build…`, `Up…`, `Down…`).
 //!
 //! Docker is reached through a [`DockerBackend`]: the Docker Engine of the
 //! session ([`DockerEngine`]) or an in-memory host ([`SimulatedDocker`],
