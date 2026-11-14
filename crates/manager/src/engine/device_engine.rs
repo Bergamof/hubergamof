@@ -438,8 +438,7 @@ impl DeviceEngine {
     }
 
     async fn handle_input(&mut self, event: InputEvent) {
-        if self.lock.is_locked() && event != InputEvent::Disconnected {
-            self.input_while_locked().await;
+        if event != InputEvent::Disconnected && self.absorbed_while_locked().await {
             return;
         }
         match event {
@@ -461,11 +460,6 @@ impl DeviceEngine {
     /// A simulated input of the web UI: a key press is complete (pressed
     /// and released at once), as nothing holds a key or a dial there.
     async fn handle_simulated_input(&mut self, event: InputEvent) {
-        // Refused, not applied: a simulated input is only accepted in the demo,
-        // which never locks; the web UI is told nothing either way.
-        if self.lock.is_locked() {
-            return;
-        }
         match event {
             InputEvent::KeyDown(index) => self.press_key(index).await,
             InputEvent::DialDown(index) => self.dial_input(index, DialInput::Press).await,
@@ -582,6 +576,9 @@ impl DeviceEngine {
             return;
         }
         let (id, source) = (shown.notification.id, shown.notification.source.clone());
+        if !self.may_act(&source) {
+            return;
+        }
         let surfaces = self.failure_surfaces(&source);
         let Some(outcome) = self
             .instances
@@ -719,7 +716,7 @@ impl DeviceEngine {
         }
         if self.notifications.shown().is_some() {
             self.notifications.read(Instant::now());
-        } else if !long && is_system_panel(point.x) {
+        } else if !long && is_system_panel(point.x) && !self.lock.is_locked() {
             self.toggle_history().await;
         }
     }
@@ -742,6 +739,9 @@ impl DeviceEngine {
 
     /// Runs a handler of `module`; `surfaces` show its outcome.
     async fn run_handler(&mut self, module: &ModuleInstanceId, call: Call, surfaces: Vec<Surface>) {
+        if !self.may_act(module) {
+            return;
+        }
         if let Some(outcome) = self.instances.call(module, call).await {
             self.conclude(module, &surfaces, outcome);
         }
@@ -1037,7 +1037,9 @@ impl DeviceEngine {
             .enumerate()
             .filter_map(|(dial, assignment)| {
                 let text = match assignment {
-                    DialAssignment::Contextual => contextual.clone()?,
+                    DialAssignment::Contextual if self.may_act(&notification.source) => {
+                        contextual.clone()?
+                    }
                     DialAssignment::Navigation => HIDE_NOTIFICATION.to_owned(),
                     _ => return None,
                 };
@@ -1141,6 +1143,10 @@ impl DeviceEngine {
     }
 
     fn marked(&self, mut key: FrameKey) -> FrameKey {
+        key.face.locked = key
+            .target
+            .as_ref()
+            .is_some_and(|target| !self.may_act(target.module()));
         key.face.feedback = key
             .target
             .as_ref()

@@ -5,11 +5,16 @@ use std::time::Duration;
 
 use hubergamof_protocol::LOCK_SLEEP_RANGE;
 
+use serde_json::json;
+
 use super::support::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
 use crate::device::{InputEvent, TouchPoint};
 use crate::engine::HOME_PAGE_ID;
 
+/// The pomodoro dial of the default layout.
+const POMODORO_DIAL: u8 = 1;
+const VOLUME_DIAL: u8 = 0;
 const SLEEP_SECONDS: u16 = 2;
 const SLEEP: Duration = Duration::from_secs(SLEEP_SECONDS as u64);
 /// Time for the engine to handle what it was sent.
@@ -23,7 +28,7 @@ async fn locking_fixture(sleep_seconds: u16) -> Fixture {
         &["list"],
         &[Some(NAVIGATION_DIAL), None, None, None],
     );
-    config.strip.lock_sleep_seconds = sleep_seconds;
+    config.lock_sleep_seconds = sleep_seconds;
     fixture.engine.apply_config(config).await.unwrap();
     fixture
 }
@@ -94,19 +99,47 @@ async fn an_input_wakes_the_dark_device_without_an_action_then_it_goes_dark_agai
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_dial_wakes_the_dark_device_without_going_back() {
-    let fixture = locking_fixture(SLEEP_SECONDS).await;
-    fixture.engine.press_key(0).await.unwrap();
-    assert_eq!(fixture.page().id, "list/list");
+async fn a_dial_wakes_the_dark_device_without_acting() {
+    // The pomodoro dial of the default layout works on a locked computer.
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let mut config = fixture.config();
+    config.lock_sleep_seconds = SLEEP_SECONDS;
+    fixture.engine.apply_config(config).await.unwrap();
     fixture.lock(true).await;
     tokio::time::sleep(SLEEP + SETTLE).await;
+    assert_eq!(fixture.brightness(), 0);
 
-    fixture.deck.inner.inject(InputEvent::DialDown(0)).unwrap();
-    fixture.deck.inner.inject(InputEvent::DialUp(0)).unwrap();
+    fixture
+        .deck
+        .inner
+        .inject(InputEvent::DialDown(POMODORO_DIAL))
+        .unwrap();
+    fixture
+        .deck
+        .inner
+        .inject(InputEvent::DialUp(POMODORO_DIAL))
+        .unwrap();
     tokio::time::sleep(SETTLE).await;
 
     assert_eq!(fixture.brightness(), fixture.config().brightness);
-    assert_eq!(fixture.page().id, "list/list", "the press did not go back");
+    assert!(
+        fixture.strip().popup.is_none(),
+        "the waking press opened nothing"
+    );
+
+    // Pressed again, lit, it acts.
+    fixture
+        .deck
+        .inner
+        .inject(InputEvent::DialDown(POMODORO_DIAL))
+        .unwrap();
+    fixture
+        .deck
+        .inner
+        .inject(InputEvent::DialUp(POMODORO_DIAL))
+        .unwrap();
+    tokio::time::sleep(SETTLE).await;
+    assert!(fixture.strip().popup.is_some());
 }
 
 #[tokio::test(start_paused = true)]
@@ -123,28 +156,79 @@ async fn an_input_keeps_the_lit_device_lit_for_another_delay() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn no_action_runs_while_locked_even_from_the_web_ui() {
+async fn the_keys_of_a_module_not_usable_when_locked_do_nothing() {
     let fixture = locking_fixture(SLEEP_SECONDS).await;
     fixture.engine.press_key(0).await.unwrap();
     assert_eq!(fixture.page().id, "list/list");
+
+    // Locking goes back home: the page of a refused module is not left shown.
+    fixture.lock(true).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.tap_first_key().await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+
+    // Unlocked, the same press works again.
+    fixture.lock(false).await;
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.page().id, "list/list");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_key_wears_a_padlock_only_while_locked() {
+    let fixture = locking_fixture(60).await;
+    let open = fixture.deck.inner.key_image(0).unwrap();
+
+    fixture.lock(true).await;
+    let locked = fixture.deck.inner.key_image(0).unwrap();
+    assert_ne!(open, locked, "a padlock is drawn");
+
+    fixture.lock(false).await;
+    assert_eq!(fixture.deck.inner.key_image(0).unwrap(), open);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_module_usable_when_locked_keeps_its_key() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let config = fixture.with(
+        vec![list(4), instance("inbox", "notifications", json!({}))],
+        &["list", "inbox"],
+        &[None; 4],
+    );
+    fixture.engine.apply_config(config).await.unwrap();
+    let open = fixture.deck.inner.key_image(1).unwrap();
     fixture.lock(true).await;
 
-    // The navigation dial would go back; the key would open the list again.
-    fixture.engine.press_dial(0).await.unwrap();
-    fixture.deck.inner.inject(InputEvent::DialDown(0)).unwrap();
-    fixture.deck.inner.inject(InputEvent::DialUp(0)).unwrap();
-    fixture
-        .deck
-        .inner
-        .inject(InputEvent::DialRotate { index: 0, ticks: 1 })
-        .unwrap();
-    tokio::time::sleep(SETTLE).await;
-    assert_eq!(fixture.page().id, "list/list");
+    assert_eq!(fixture.deck.inner.key_image(1).unwrap(), open, "no padlock");
+    fixture.engine.press_key(1).await.unwrap();
+    assert_ne!(fixture.page().id, HOME_PAGE_ID, "the notifications open");
+}
 
-    // Unlocked, the same press goes back.
+#[tokio::test(start_paused = true)]
+async fn dials_are_refused_with_a_padlock_unless_their_module_is_usable_when_locked() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture.wait_for(|f| f.strip().volume.is_some()).await;
+    assert!(!fixture.hint(usize::from(VOLUME_DIAL)).locked);
+
+    fixture.lock(true).await;
+
+    assert!(
+        fixture.hint(usize::from(VOLUME_DIAL)).locked,
+        "the volume is refused"
+    );
+    assert!(
+        !fixture.hint(usize::from(POMODORO_DIAL)).locked,
+        "the pomodoro is not"
+    );
+    // The refused volume dial does nothing, the pomodoro dial opens its menu.
+    fixture.engine.press_dial(VOLUME_DIAL).await.unwrap();
+    assert!(!fixture.strip().volume.unwrap().muted);
+    fixture.engine.press_dial(POMODORO_DIAL).await.unwrap();
+    assert!(fixture.strip().popup.is_some());
+
     fixture.lock(false).await;
-    fixture.engine.press_dial(0).await.unwrap();
-    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+    assert!(!fixture.hint(usize::from(VOLUME_DIAL)).locked);
 }
 
 #[tokio::test(start_paused = true)]
@@ -171,7 +255,7 @@ async fn tapping_the_strip_while_locked_changes_nothing() {
 async fn a_device_started_on_a_locked_computer_ignores_inputs_then_goes_dark() {
     let fixture = start_locked(virtual_plus_info(DEMO_SERIAL)).await;
     let mut config = fixture.with(vec![list(4)], &["list"], &[None; 4]);
-    config.strip.lock_sleep_seconds = SLEEP_SECONDS;
+    config.lock_sleep_seconds = SLEEP_SECONDS;
     fixture.engine.apply_config(config).await.unwrap();
     let lit = fixture.config().brightness;
 
@@ -236,7 +320,7 @@ async fn a_new_delay_does_not_light_a_dark_device() {
     tokio::time::sleep(SLEEP + SETTLE).await;
 
     let mut config = fixture.config();
-    config.strip.lock_sleep_seconds = 60;
+    config.lock_sleep_seconds = 60;
     fixture.engine.apply_config(config).await.unwrap();
 
     assert_eq!(fixture.brightness(), 0);
@@ -291,14 +375,14 @@ async fn a_new_delay_applies_to_a_device_already_locked() {
     assert_eq!(fixture.brightness(), lit);
 
     let mut config = fixture.config();
-    config.strip.lock_sleep_seconds = SLEEP_SECONDS;
+    config.lock_sleep_seconds = SLEEP_SECONDS;
     fixture.engine.apply_config(config).await.unwrap();
     tokio::time::sleep(SLEEP + SETTLE).await;
     assert_eq!(fixture.brightness(), 0);
 
     // Switching the feature off lights it again.
     let mut config = fixture.config();
-    config.strip.lock_sleep_seconds = 0;
+    config.lock_sleep_seconds = 0;
     fixture.engine.apply_config(config).await.unwrap();
     assert_eq!(fixture.brightness(), lit);
 }

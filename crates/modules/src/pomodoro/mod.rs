@@ -99,7 +99,11 @@ fn descriptor() -> ModuleDescriptor {
         description: "Sessions de travail et pauses, avec un minuteur affiché sur la bande \
                       tactile. Se pilote depuis une molette."
             .into(),
-        capabilities: ModuleCapabilities::default(),
+        // A timer: nothing it does leaves the device.
+        capabilities: ModuleCapabilities {
+            usable_when_locked: true,
+            ..Default::default()
+        },
         dial_functions: vec![DialFunctionDescriptor {
             id: CONTROL_FUNCTION.into(),
             name: "Contrôle du pomodoro".into(),

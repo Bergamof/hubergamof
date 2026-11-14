@@ -23,7 +23,7 @@ pub use config::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceTheme, DialAssignment,
     LOAD_ALERT_RANGE, LOCK_SLEEP_RANGE, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS,
     MAX_IDENTIFIER_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance,
-    SYSTEM_REFRESH_CHOICES, StripConfig, is_identifier,
+    SYSTEM_REFRESH_CHOICES, StripConfig, default_lock_sleep_seconds, is_identifier,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{KeyView, LiveState, PageView};

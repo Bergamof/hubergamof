@@ -48,6 +48,7 @@ impl Face for KeyFace {
             state,
             focused,
             checked,
+            locked,
             feedback: _,
         } = self;
         *image == other.image
@@ -55,6 +56,7 @@ impl Face for KeyFace {
             && *state == other.state
             && *focused == other.focused
             && *checked == other.checked
+            && *locked == other.locked
     }
 }
 
@@ -416,6 +418,7 @@ fn render_key(
             .in_state(face.state)
             .focused(face.focused)
             .checked(face.checked)
+            .locked(face.locked)
     };
     match renderer.render_key(&request(face.image.as_ref())) {
         Err(error) if face.image.is_some() => {

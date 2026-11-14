@@ -24,10 +24,4 @@ showHistory: boolean,
  * Load, in percent (within [`LOAD_ALERT_RANGE`]), from which a measure
  * is drawn in the alert colour.
  */
-loadAlertPercent: number, 
-/**
- * Seconds after which the device goes dark while the computer is locked
- * (within [`LOCK_SLEEP_RANGE`]); `0` never turns it off. A locked device
- * triggers no action either way.
- */
-lockSleepSeconds: number, };
+loadAlertPercent: number, };

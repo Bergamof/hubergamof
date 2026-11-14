@@ -9,7 +9,7 @@ function module(kind: string, name: string): CatalogModule {
 		kind,
 		name,
 		description: `Description de ${name}.`,
-		capabilities: { key: true, multipleInstances: false },
+		capabilities: { key: true, multipleInstances: false, usableWhenLocked: false },
 		dialFunctions: [],
 		icon: null,
 		settingIcons: {},

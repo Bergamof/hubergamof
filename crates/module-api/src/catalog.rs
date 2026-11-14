@@ -52,6 +52,12 @@ pub struct ModuleCapabilities {
     /// and a dial with separate settings). Otherwise the device holds at most
     /// one instance of the module, shared by its key and its dials.
     pub multiple_instances: bool,
+    /// Keeps working while the computer is locked: only for what stays inside
+    /// the device (reading notifications, a timer), never what runs a
+    /// command or acts on the computer. Otherwise the keys and dials of the
+    /// module are refused while locked.
+    #[serde(default)]
+    pub usable_when_locked: bool,
 }
 
 /// A function a module offers to a dial.

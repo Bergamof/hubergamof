@@ -372,19 +372,33 @@ mod tests {
         };
         let on_a_key = ModuleCapabilities {
             key: true,
-            multiple_instances: false,
+            ..Default::default()
         };
-        assert_eq!(capabilities("pomodoro"), ModuleCapabilities::default());
+        assert_eq!(
+            capabilities("pomodoro"),
+            ModuleCapabilities {
+                usable_when_locked: true,
+                ..Default::default()
+            }
+        );
         assert_eq!(
             capabilities("docker"),
             ModuleCapabilities {
                 key: true,
-                multiple_instances: true
+                multiple_instances: true,
+                usable_when_locked: false
             }
         );
-        for kind in ["audio", "intellij", "claude", "notifications"] {
+        for kind in ["audio", "intellij", "claude"] {
             assert_eq!(capabilities(kind), on_a_key, "{kind}");
         }
+        assert_eq!(
+            capabilities("notifications"),
+            ModuleCapabilities {
+                usable_when_locked: true,
+                ..on_a_key
+            }
+        );
     }
 
     #[test]

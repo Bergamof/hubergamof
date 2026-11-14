@@ -120,6 +120,7 @@ fn descriptor() -> ModuleDescriptor {
         capabilities: ModuleCapabilities {
             key: true,
             multiple_instances: true,
+            usable_when_locked: false,
         },
         dial_functions: Vec::new(),
         settings: vec![settings::compose_files_field()],

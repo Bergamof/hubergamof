@@ -270,6 +270,7 @@ mod tests {
             serial: "ABC".into(),
             model: DeviceModel::Plus,
             brightness: 40,
+            lock_sleep_seconds: 5,
             home: Vec::new(),
             modules: Vec::new(),
             dials: vec![DialAssignment::None; 4],

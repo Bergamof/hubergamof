@@ -11,7 +11,7 @@ const POMODORO: CatalogModule = {
 	kind: 'pomodoro',
 	name: 'Pomodoro',
 	description: '',
-	capabilities: { key: true, multipleInstances: false },
+	capabilities: { key: true, multipleInstances: false, usableWhenLocked: false },
 	dialFunctions: [],
 	icon: null,
 	settingIcons: {},

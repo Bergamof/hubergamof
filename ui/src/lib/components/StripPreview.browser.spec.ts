@@ -10,8 +10,7 @@ const STRIP: StripConfig = {
 	showPomodoroProgress: true,
 	systemRefreshSeconds: 2,
 	showHistory: true,
-	loadAlertPercent: 85,
-	lockSleepSeconds: 5
+	loadAlertPercent: 85
 };
 
 const DIALS: readonly DialSummary[] = [

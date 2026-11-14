@@ -236,6 +236,8 @@ enum Glyph {
     Pause,
     Skip,
     Reset,
+    /// Padlock: what a locked computer refuses.
+    Lock,
 }
 
 impl Glyph {
@@ -275,6 +277,10 @@ impl Glyph {
             Self::Reset => format!(
                 r#"<g {}><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v5h5"/></g>"#,
                 stroke("2.6")
+            ),
+            Self::Lock => format!(
+                r#"<g {}><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></g>"#,
+                stroke("2.4")
             ),
         }
     }
@@ -682,6 +688,15 @@ impl Renderer {
                 draw_mark(canvas, feedback, left, palette);
                 continue;
             }
+            if hint.locked {
+                canvas.glyph(
+                    Glyph::Lock,
+                    (left, HINT_ICON_Y),
+                    HINT_ICON_SIZE,
+                    palette.muted,
+                );
+                continue;
+            }
             // The parts share the room of the cell: the turn part takes at most
             // half of it when both are there, the click part what is left. A
             // long text is shortened, never drawn over the next dial.
@@ -1047,6 +1062,7 @@ mod tests {
                     rotate: Some(rotate.into()),
                     press: Some("Muet".into()),
                     feedback: None,
+                    locked: false,
                 })
                 .chain([HintFace::default(), HintFace::default()])
                 .collect(),
@@ -1260,6 +1276,18 @@ mod tests {
             assert_eq!(drawn_in(image.image(), background, (40, 86, 150, 12)), 0);
         }
         assert!(drawn_in(plain.image(), background, cell) > 0);
+    }
+
+    #[test]
+    fn a_locked_reminder_is_a_padlock_in_place_of_its_text() {
+        let background = LIGHT.background;
+        let mut locked = face();
+        locked.hints[0].locked = true;
+        let image = render(&locked);
+
+        assert_ne!(render(&face()).image().as_ref(), image.image().as_ref());
+        assert!(drawn_in(image.image(), background, (16, 84, 12, 14)) > 0);
+        assert_eq!(drawn_in(image.image(), background, (40, 86, 150, 12)), 0);
     }
 
     fn popup_face(dial: Option<usize>, selected: usize) -> StripFace {

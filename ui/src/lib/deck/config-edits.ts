@@ -26,6 +26,8 @@ export interface InstanceChanges {
 
 /** Highest brightness, in percent: `MAX_BRIGHTNESS` of `hubergamof_protocol` (constants are not exported to TS). */
 export const MAX_BRIGHTNESS = 100;
+/** Longest delay before a locked device goes dark: `LOCK_SLEEP_RANGE` of `hubergamof_protocol`. */
+export const MAX_LOCK_SLEEP_SECONDS = 300;
 
 /**
  * Identifier for a new instance of `kind`: the kind itself when free (like the default
@@ -118,6 +120,12 @@ export function removedInstance(
 export function setBrightness(brightness: number): ConfigEdit {
 	const clamped = Math.min(MAX_BRIGHTNESS, Math.max(0, Math.round(brightness)));
 	return (config) => ({ ...config, brightness: clamped });
+}
+
+/** Sets the delay before a locked computer turns the device off, in seconds (whole, within bounds). */
+export function setLockSleepSeconds(seconds: number): ConfigEdit {
+	const bounded = Math.min(MAX_LOCK_SLEEP_SECONDS, Math.max(0, Math.round(seconds)));
+	return (config) => ({ ...config, lockSleepSeconds: bounded });
 }
 
 /** Sets the theme of the device: keys and touch strip. */

@@ -29,6 +29,7 @@ fn valid_config() -> DeviceConfig {
         serial: "ABC123".into(),
         model: DeviceModel::Plus,
         brightness: MAX_BRIGHTNESS,
+        lock_sleep_seconds: 5,
         home: vec!["clock".into(), "volume".into()],
         modules: vec![module("clock"), module("volume")],
         dials: vec![
@@ -164,11 +165,11 @@ fn the_strip_accepts_only_known_refresh_periods_and_alert_loads() {
 
     for seconds in [*LOCK_SLEEP_RANGE.start(), *LOCK_SLEEP_RANGE.end()] {
         let mut config = valid_config();
-        config.strip.lock_sleep_seconds = seconds;
+        config.lock_sleep_seconds = seconds;
         assert_eq!(config.validate(), Ok(()), "{seconds}");
     }
     let mut config = valid_config();
-    config.strip.lock_sleep_seconds = LOCK_SLEEP_RANGE.end() + 1;
+    config.lock_sleep_seconds = LOCK_SLEEP_RANGE.end() + 1;
     assert_eq!(
         config.validate(),
         Err(ConfigError::InvalidLockSleep(LOCK_SLEEP_RANGE.end() + 1))

@@ -63,8 +63,10 @@ impl ModuleFactory for InboxFactory {
             description: "Cloche avec le nombre de notifications non lues ; appuyer les liste, \
                           en choisir une l'affiche de nouveau sur la bande tactile."
                 .into(),
+            // Reading notifications stays inside the device.
             capabilities: ModuleCapabilities {
                 key: true,
+                usable_when_locked: true,
                 ..Default::default()
             },
             dial_functions: Vec::new(),

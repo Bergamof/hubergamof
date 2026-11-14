@@ -188,6 +188,15 @@ impl Instances {
         self.registry.get(&instance.kind)?.icon()
     }
 
+    /// Whether instance `id` keeps working while the computer is locked: its
+    /// module declares it. An unknown instance does not.
+    pub(crate) fn usable_when_locked(&self, id: &ModuleInstanceId) -> bool {
+        self.live
+            .get(id)
+            .and_then(|instance| self.registry.get(&instance.kind))
+            .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
+    }
+
     /// Page `page` of instance `id`, if it exists.
     pub(crate) fn page(&mut self, id: &ModuleInstanceId, page: &PageId) -> Option<PageContent> {
         self.inspect(id, "page", |module| module.page(page))
