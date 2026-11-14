@@ -286,7 +286,7 @@ impl DeviceEngine {
             engine.strip_settle = Some(Instant::now() + STRIP_SETTLE_DELAY);
             engine.sample_system().await;
         }
-        engine.start_locked();
+        engine.schedule_initial_sleep();
         engine.refresh().await?;
         Ok((engine, handle))
     }
@@ -369,6 +369,8 @@ impl DeviceEngine {
         loop {
             let clock_tick = self.next_clock_tick();
             let lock_sleep = self.lock.sleep_at();
+            // Nothing is drawn on a dark device: its timers wait for it to wake.
+            let lit = !self.lock.is_asleep();
             let wake = tokio::select! {
                 request = recv_request(self.requests.as_mut()) => {
                     Some(request.map_or(Wake::RequestsClosed, Wake::Request))
@@ -384,17 +386,17 @@ impl DeviceEngine {
                 // The instances keep a sender: the queue never closes.
                 Some(routed) = self.events.recv() => Some(Wake::ModuleEvent(routed)),
                 () = self.redraw.notified() => Some(Wake::Redraw),
-                () = sleep_until(self.marks.next_expiry()) => Some(Wake::FeedbackExpired),
-                () = sleep_until(self.notifications.next_step()) => Some(Wake::NotificationStep),
+                () = sleep_until(self.marks.next_expiry().filter(|_| lit)) => Some(Wake::FeedbackExpired),
+                () = sleep_until(self.notifications.next_step().filter(|_| lit)) => Some(Wake::NotificationStep),
                 () = sleep_until(self.held.as_ref().and_then(HeldKey::label_due)) => {
                     Some(Wake::HoldElapsed)
                 }
                 () = sleep_until(self.held_dial.as_ref().map(HeldDial::due)) => {
                     Some(Wake::DialHoldElapsed)
                 }
-                () = sleep_until(self.strip_settle) => Some(Wake::StripSettled),
-                () = sleep_until(clock_tick) => Some(Wake::ClockTick),
-                () = sleep_until(self.next_system_sample) => Some(Wake::SystemSample),
+                () = sleep_until(self.strip_settle.filter(|_| lit)) => Some(Wake::StripSettled),
+                () = sleep_until(clock_tick.filter(|_| lit)) => Some(Wake::ClockTick),
+                () = sleep_until(self.next_system_sample.filter(|_| lit)) => Some(Wake::SystemSample),
                 () = self.lock.changed() => Some(Wake::LockChanged),
                 () = sleep_until(lock_sleep) => Some(Wake::LockSleep),
             };
@@ -459,6 +461,8 @@ impl DeviceEngine {
     /// A simulated input of the web UI: a key press is complete (pressed
     /// and released at once), as nothing holds a key or a dial there.
     async fn handle_simulated_input(&mut self, event: InputEvent) {
+        // Refused, not applied: a simulated input is only accepted in the demo,
+        // which never locks; the web UI is told nothing either way.
         if self.lock.is_locked() {
             return;
         }

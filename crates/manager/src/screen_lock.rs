@@ -30,12 +30,14 @@ impl ScreenLock for NoScreenLock {
     }
 }
 
-/// A lock driven by hand: demo, tests. Clones share the state.
+/// A lock driven by hand, for the tests. Clones share the state.
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct SimulatedScreenLock {
     state: Arc<watch::Sender<bool>>,
 }
 
+#[cfg(test)]
 impl Default for SimulatedScreenLock {
     fn default() -> Self {
         Self {
@@ -44,6 +46,7 @@ impl Default for SimulatedScreenLock {
     }
 }
 
+#[cfg(test)]
 impl SimulatedScreenLock {
     /// Locks or unlocks the computer.
     pub fn set(&self, locked: bool) {
@@ -51,6 +54,7 @@ impl SimulatedScreenLock {
     }
 }
 
+#[cfg(test)]
 impl ScreenLock for SimulatedScreenLock {
     fn watch(&self) -> watch::Receiver<bool> {
         self.state.subscribe()
@@ -84,6 +88,10 @@ pub struct LogindScreenLock {
 impl LogindScreenLock {
     /// Starts following the session in the background. Without logind the
     /// computer is considered never locked (reported once in the logs).
+    ///
+    /// # Panics
+    ///
+    /// Outside a Tokio runtime.
     #[must_use]
     pub fn start() -> Self {
         let state = Arc::new(watch::Sender::new(false));

@@ -656,7 +656,12 @@ pub(super) async fn start_settled(info: DeviceInfo) -> Fixture {
 
 /// Starts an engine on a deck whose brightness fails if `fail_brightness`.
 pub(super) async fn start_with(info: DeviceInfo, fail_brightness: bool) -> Fixture {
-    start_after(info, fail_brightness, |_| {}).await
+    start_after(info, fail_brightness, false, |_| {}).await
+}
+
+/// Starts an engine on a computer that is already locked.
+pub(super) async fn start_locked(info: DeviceInfo) -> Fixture {
+    start_after(info, false, true, |_| {}).await
 }
 
 /// Starts an engine on a device whose configuration `prepare` stored first.
@@ -665,16 +670,18 @@ pub(super) async fn start_with_stored(
     prepare: impl FnOnce(&DeviceInfo, &ConfigStore),
 ) -> Fixture {
     let stored_for = info.clone();
-    start_after(info, false, move |store| prepare(&stored_for, store)).await
+    start_after(info, false, false, move |store| prepare(&stored_for, store)).await
 }
 
 async fn start_after(
     info: DeviceInfo,
     fail_brightness: bool,
+    locked: bool,
     prepare: impl FnOnce(&ConfigStore),
 ) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let probe = Probe::default();
+    probe.screen_lock.set(locked);
     let services = services(&dir, &probe);
     let store = services.store.clone();
     prepare(&store);

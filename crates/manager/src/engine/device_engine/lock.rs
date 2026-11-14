@@ -32,9 +32,11 @@ impl LockState {
         }
     }
 
-    /// Whether the computer is locked: the device triggers no action.
+    /// Whether the computer is locked: the device triggers no action. Read
+    /// from the source itself, not from what the engine handled so far: an
+    /// input queued with the lock must not slip through.
     pub(super) fn is_locked(&self) -> bool {
-        self.locked
+        *self.screen.borrow()
     }
 
     /// Whether the device is dark: nothing is drawn on it.
@@ -57,8 +59,8 @@ impl LockState {
 }
 
 impl DeviceEngine {
-    /// The device starts locked (the manager started on a locked computer).
-    pub(super) fn start_locked(&mut self) {
+    /// Plans the extinction of a device starting on a locked computer.
+    pub(super) fn schedule_initial_sleep(&mut self) {
         self.schedule_sleep();
     }
 
@@ -105,16 +107,22 @@ impl DeviceEngine {
     /// The delay before going dark expired.
     pub(super) async fn fall_asleep(&mut self) {
         self.lock.sleep_at = None;
+        self.applied_brightness = apply_brightness(self.deck.as_ref(), DARK_BRIGHTNESS).await;
+        if self.applied_brightness.is_none() {
+            // Still lit: try again at the next input or configuration.
+            tracing::warn!(serial = %self.serial(), "cannot turn the device off");
+            return;
+        }
         self.lock.asleep = true;
         tracing::debug!(serial = %self.serial(), "device dark while locked");
-        self.applied_brightness = apply_brightness(self.deck.as_ref(), DARK_BRIGHTNESS).await;
     }
 
     async fn wake_up(&mut self) {
         self.lock.asleep = false;
         self.applied_brightness =
             apply_brightness(self.deck.as_ref(), self.config.brightness).await;
-        // The strip is written meanwhile only in the engine's mind.
+        // The device loses writes right after its brightness changes (as after
+        // connecting): the strip is written again in full.
         self.painter.forget_strip();
         self.schedule_sleep();
     }
