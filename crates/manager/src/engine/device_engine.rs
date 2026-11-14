@@ -743,7 +743,7 @@ impl DeviceEngine {
         }
         if self.notifications.shown().is_some() {
             self.notifications.read(Instant::now());
-        } else if !long && is_system_panel(point.x) && !self.lock.is_locked() {
+        } else if !long && is_system_panel(point.x) {
             self.toggle_history().await;
         }
     }

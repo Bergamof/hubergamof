@@ -231,13 +231,7 @@ async fn dials_are_refused_with_a_padlock_unless_their_module_is_usable_when_loc
     assert!(!fixture.hint(usize::from(VOLUME_DIAL)).locked);
 }
 
-#[tokio::test(start_paused = true)]
-async fn tapping_the_strip_while_locked_changes_nothing() {
-    let fixture = locking_fixture(SLEEP_SECONDS).await;
-    let before = fixture.config();
-    fixture.lock(true).await;
-
-    // The system measures panel toggles the history when the computer is unlocked.
+fn tap_measures(fixture: &Fixture) {
     fixture
         .deck
         .inner
@@ -246,9 +240,32 @@ async fn tapping_the_strip_while_locked_changes_nothing() {
             long: false,
         })
         .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn tapping_the_measures_while_locked_and_lit_still_swaps_history_and_values() {
+    let fixture = locking_fixture(SLEEP_SECONDS).await;
+    let before = fixture.config().strip.show_history;
+    fixture.lock(true).await;
+
+    tap_measures(&fixture);
     tokio::time::sleep(SETTLE).await;
 
-    assert_eq!(fixture.config(), before);
+    assert_eq!(fixture.config().strip.show_history, !before);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_tap_that_wakes_a_dark_device_does_not_swap_the_measures() {
+    let fixture = locking_fixture(SLEEP_SECONDS).await;
+    let before = fixture.config().strip.show_history;
+    fixture.lock(true).await;
+    tokio::time::sleep(SLEEP + SETTLE).await;
+
+    tap_measures(&fixture);
+    tokio::time::sleep(SETTLE).await;
+
+    assert_eq!(fixture.brightness(), fixture.config().brightness);
+    assert_eq!(fixture.config().strip.show_history, before);
 }
 
 #[tokio::test(start_paused = true)]
