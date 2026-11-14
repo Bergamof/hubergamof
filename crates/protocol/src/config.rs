@@ -33,6 +33,10 @@ pub const SYSTEM_REFRESH_CHOICES: [u8; 4] = [1, 2, 5, 10];
 /// Lowest and highest load, in percent, from which the touch strip warns.
 pub const LOAD_ALERT_RANGE: std::ops::RangeInclusive<u8> = 50..=100;
 
+/// Delay, in seconds, after which the device goes dark once the computer is
+/// locked; `0` keeps it lit.
+pub const LOCK_SLEEP_RANGE: std::ops::RangeInclusive<u16> = 0..=300;
+
 /// Longest key label, in characters (a few words fit on a key).
 pub const MAX_LABEL_CHARS: usize = 64;
 
@@ -142,6 +146,10 @@ pub struct StripConfig {
     /// Load, in percent (within [`LOAD_ALERT_RANGE`]), from which a measure
     /// is drawn in the alert colour.
     pub load_alert_percent: u8,
+    /// Seconds after which the device goes dark while the computer is locked
+    /// (within [`LOCK_SLEEP_RANGE`]); `0` never turns it off. A locked device
+    /// triggers no action either way.
+    pub lock_sleep_seconds: u16,
 }
 
 impl Default for StripConfig {
@@ -152,6 +160,7 @@ impl Default for StripConfig {
             system_refresh_seconds: 2,
             show_history: true,
             load_alert_percent: 85,
+            lock_sleep_seconds: 5,
         }
     }
 }
@@ -222,6 +231,9 @@ pub enum ConfigError {
     /// An alert load outside [`LOAD_ALERT_RANGE`].
     #[error("load alert of {0} % is outside {LOAD_ALERT_RANGE:?}")]
     InvalidLoadAlert(u8),
+    /// A lock sleep delay outside [`LOCK_SLEEP_RANGE`].
+    #[error("lock sleep delay of {0} s is outside {LOCK_SLEEP_RANGE:?}")]
+    InvalidLockSleep(u16),
     /// More of something than a configuration may hold.
     #[error("too many {what}: {count} (at most {max})")]
     TooMany {
@@ -397,6 +409,9 @@ impl StripConfig {
         }
         if !LOAD_ALERT_RANGE.contains(&self.load_alert_percent) {
             return Err(ConfigError::InvalidLoadAlert(self.load_alert_percent));
+        }
+        if !LOCK_SLEEP_RANGE.contains(&self.lock_sleep_seconds) {
+            return Err(ConfigError::InvalidLockSleep(self.lock_sleep_seconds));
         }
         Ok(())
     }

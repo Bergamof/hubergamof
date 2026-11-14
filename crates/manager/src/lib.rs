@@ -25,6 +25,7 @@ pub mod file_chooser;
 pub mod launcher;
 pub mod placement;
 pub mod render;
+pub mod screen_lock;
 pub mod server;
 pub mod strip;
 #[cfg(test)]

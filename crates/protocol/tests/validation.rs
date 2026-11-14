@@ -6,9 +6,10 @@ use std::path::Path;
 
 use hubergamof_protocol::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceModel, DeviceTheme, DialAssignment,
-    LOAD_ALERT_RANGE, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS, MAX_IDENTIFIER_LENGTH,
-    MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES, ModuleInstance,
-    ModuleInstanceId, SYSTEM_REFRESH_CHOICES, StripConfig, is_identifier, is_safe_image_name,
+    LOAD_ALERT_RANGE, LOCK_SLEEP_RANGE, MAX_BRIGHTNESS, MAX_DIALS, MAX_HOME_KEYS,
+    MAX_IDENTIFIER_LENGTH, MAX_IMAGE_NAME_LENGTH, MAX_LABEL_CHARS, MAX_MODULES, MAX_SETTINGS_BYTES,
+    ModuleInstance, ModuleInstanceId, SYSTEM_REFRESH_CHOICES, StripConfig, is_identifier,
+    is_safe_image_name,
 };
 use serde_json::json;
 
@@ -160,6 +161,18 @@ fn the_strip_accepts_only_known_refresh_periods_and_alert_loads() {
         config.strip.load_alert_percent = load;
         assert_eq!(config.validate(), Err(ConfigError::InvalidLoadAlert(load)));
     }
+
+    for seconds in [*LOCK_SLEEP_RANGE.start(), *LOCK_SLEEP_RANGE.end()] {
+        let mut config = valid_config();
+        config.strip.lock_sleep_seconds = seconds;
+        assert_eq!(config.validate(), Ok(()), "{seconds}");
+    }
+    let mut config = valid_config();
+    config.strip.lock_sleep_seconds = LOCK_SLEEP_RANGE.end() + 1;
+    assert_eq!(
+        config.validate(),
+        Err(ConfigError::InvalidLockSleep(LOCK_SLEEP_RANGE.end() + 1))
+    );
 }
 
 #[test]

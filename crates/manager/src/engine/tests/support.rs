@@ -28,6 +28,7 @@ use crate::config_store::ConfigStore;
 use crate::device::virtual_deck::VirtualDeck;
 use crate::device::{DeckBackend, DeviceError, InputEvent};
 use crate::engine::*;
+use crate::screen_lock::SimulatedScreenLock;
 use crate::strip::{HintFace, SimulatedProbe, StripFace, SystemProbe, SystemSample, WallClock};
 use crate::testing::builtin_registry;
 
@@ -64,6 +65,8 @@ pub(super) struct Probe {
     pub(super) system_samples: Arc<AtomicUsize>,
     /// Local time of the engines.
     pub(super) clock: SettableClock,
+    /// Lock of the computer, driven by the tests.
+    pub(super) screen_lock: SimulatedScreenLock,
     /// Volume shown on the strip by fragile instances.
     pub(super) volume: Arc<Mutex<Option<VolumeWidget>>>,
     /// Page the list instances no longer have (removed by an event).
@@ -626,6 +629,7 @@ pub(super) fn services(dir: &TempDir, probe: &Probe) -> EngineServices {
             samples: Arc::clone(&probe.system_samples),
             inner: SimulatedProbe::demo(),
         }),
+        screen_lock: Arc::new(probe.screen_lock.clone()),
     }
 }
 

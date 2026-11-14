@@ -51,6 +51,7 @@ fn sample_config() -> DeviceConfig {
             system_refresh_seconds: 5,
             show_history: false,
             load_alert_percent: 90,
+            lock_sleep_seconds: 30,
         },
         theme: DeviceTheme::Dark,
         revision: 7,
@@ -82,7 +83,8 @@ fn sample_config_json() -> Value {
             "showPomodoroProgress": true,
             "systemRefreshSeconds": 5,
             "showHistory": false,
-            "loadAlertPercent": 90
+            "loadAlertPercent": 90,
+            "lockSleepSeconds": 30
         },
         "theme": "dark",
         "revision": 7

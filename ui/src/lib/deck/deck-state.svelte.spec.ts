@@ -77,7 +77,8 @@ function config(serial: string, revision: number, brightness = 50): DeviceConfig
 			showPomodoroProgress: true,
 			systemRefreshSeconds: 2,
 			showHistory: true,
-			loadAlertPercent: 85
+			loadAlertPercent: 85,
+			lockSleepSeconds: 5
 		},
 		theme: 'light',
 		revision

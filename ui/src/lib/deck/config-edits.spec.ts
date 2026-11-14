@@ -41,7 +41,8 @@ function config(overrides: Partial<DeviceConfig> = {}): DeviceConfig {
 			showPomodoroProgress: true,
 			systemRefreshSeconds: 2,
 			showHistory: true,
-			loadAlertPercent: 85
+			loadAlertPercent: 85,
+			lockSleepSeconds: 5
 		},
 		theme: 'light',
 		revision: 7,
