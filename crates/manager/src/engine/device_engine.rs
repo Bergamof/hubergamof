@@ -92,12 +92,19 @@ impl HeldKey {
     }
 }
 
-/// The contextual dial held pressed on a page that declares a long press:
-/// its action waits for the hold to last, or for the release.
+/// What a dial held pressed acts on.
+enum HeldDialKind {
+    /// The contextual dial, on the page displayed when it was pressed.
+    Context(ContextFace),
+    /// The navigation dial: a press goes back, a long press goes home.
+    Navigation,
+}
+
+/// A dial held pressed that has a long press: its action waits for the hold
+/// to last, or for the release.
 struct HeldDial {
     dial: u8,
-    /// What the dial acts on, as displayed when it was pressed.
-    context: ContextFace,
+    kind: HeldDialKind,
     since: Instant,
 }
 
@@ -325,7 +332,7 @@ impl DeviceEngine {
                     self.refresh_or_log().await;
                 }
                 Wake::DialHoldElapsed => {
-                    self.long_press_context().await;
+                    self.long_press_dial().await;
                     self.refresh_or_log().await;
                 }
                 Wake::FeedbackExpired => {
@@ -589,9 +596,10 @@ impl DeviceEngine {
         }
     }
 
-    /// A press of a dial of the device. The contextual dial starts holding
-    /// when the page displayed declares a long press, its press then waiting
-    /// for the release; otherwise the press acts at once.
+    /// A press of a dial of the device. The navigation dial always starts
+    /// holding; the contextual dial does when the page displayed declares a
+    /// long press. Their press then waits for the release; otherwise the
+    /// press acts at once.
     async fn dial_down(&mut self, dial: u8) {
         if let Some(held) = self.start_holding_dial(dial) {
             self.held_dial = Some(held);
@@ -601,15 +609,23 @@ impl DeviceEngine {
     }
 
     fn start_holding_dial(&self, dial: u8) -> Option<HeldDial> {
-        if self.dial_assignment(dial) != DialAssignment::Contextual
-            || self.notifications.shown().is_some()
-        {
+        if self.notifications.shown().is_some() {
             return None;
         }
-        let context = self.last_frame.as_ref()?.context.clone()?;
-        context.dial.reacts_to_long_press().then(|| HeldDial {
+        let kind = match self.dial_assignment(dial) {
+            DialAssignment::Navigation => HeldDialKind::Navigation,
+            DialAssignment::Contextual => {
+                let context = self.last_frame.as_ref()?.context.clone()?;
+                if !context.dial.reacts_to_long_press() {
+                    return None;
+                }
+                HeldDialKind::Context(context)
+            }
+            _ => return None,
+        };
+        Some(HeldDial {
             dial,
-            context,
+            kind,
             since: Instant::now(),
         })
     }
@@ -620,22 +636,32 @@ impl DeviceEngine {
         let Some(held) = self.held_dial.take_if(|held| held.dial == dial) else {
             return;
         };
-        if self.notifications.shown().is_none() {
-            self.run_context(dial, &held.context, ContextGesture::Press)
-                .await;
+        if self.notifications.shown().is_some() {
+            return;
+        }
+        match &held.kind {
+            HeldDialKind::Context(context) => {
+                self.run_context(dial, context, ContextGesture::Press).await;
+            }
+            HeldDialKind::Navigation => self.navigate(DialInput::Press),
         }
     }
 
-    /// The long press of the contextual dial held until it is due.
-    async fn long_press_context(&mut self) {
+    /// The long press of a dial held until it is due.
+    async fn long_press_dial(&mut self) {
         let Some(held) = self.held_dial.take() else {
             return;
         };
         if self.notifications.shown().is_some() {
             return;
         }
-        self.run_context(held.dial, &held.context, ContextGesture::LongPress)
-            .await;
+        match &held.kind {
+            HeldDialKind::Context(context) => {
+                self.run_context(held.dial, context, ContextGesture::LongPress)
+                    .await;
+            }
+            HeldDialKind::Navigation => self.nav.home(),
+        }
     }
 
     /// A rotation or a press of the contextual dial: handled by the module
@@ -661,7 +687,8 @@ impl DeviceEngine {
     }
 
     /// The navigation dial: turning scrolls the rows of the displayed page,
-    /// pressing goes back one page.
+    /// pressing goes back one page (holding it goes home, see
+    /// `long_press_dial`).
     fn navigate(&mut self, input: DialInput) {
         match input {
             DialInput::Rotate(ticks) => self.scroll_rows(ticks),

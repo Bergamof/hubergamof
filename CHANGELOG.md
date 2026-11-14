@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Ajouté
+
+- Un appui long (400 ms) sur la molette de navigation ramène à la page d’accueil ; l’appui court revient toujours en arrière, au relâchement.
+
 ### Supprimé
 
 - Module Docker, page « Up » : l'entrée « Pull » (`up --pull=always`) disparaît (#42).
