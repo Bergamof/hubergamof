@@ -19,13 +19,16 @@ Delay before the device goes dark while the computer is locked.
 	const MAX_SECONDS = MAX_LOCK_SLEEP_SECONDS;
 </script>
 
-<IntegerField
-	label="Extinction quand l’ordinateur est verrouillé"
-	value={seconds}
-	min={MIN_SECONDS}
-	max={MAX_SECONDS}
-	unit="s"
-	hint="Le Stream Deck s’éteint après ce délai, entre {MIN_SECONDS} et {MAX_SECONDS} s ; 0 le laisse allumé. Une touche ou une molette le rallume sans rien déclencher. Verrouillé, seuls les modules prévus pour (notifications, pomodoro) restent utilisables ; les autres touches et molettes portent un cadenas."
-	error="Saisissez un nombre entier de secondes entre {MIN_SECONDS} et {MAX_SECONDS}."
-	{onchange}
-/>
+<!-- Capped: the column of the device is as wide as its widest content, and the hint is long. -->
+<div class="max-w-sm">
+	<IntegerField
+		label="Extinction quand l’ordinateur est verrouillé"
+		value={seconds}
+		min={MIN_SECONDS}
+		max={MAX_SECONDS}
+		unit="s"
+		hint="Le Stream Deck s’éteint après ce délai, entre {MIN_SECONDS} et {MAX_SECONDS} s ; 0 le laisse allumé. Une touche ou une molette le rallume sans rien déclencher. Verrouillé, seuls les modules prévus pour (notifications, pomodoro) restent utilisables ; les autres touches et molettes portent un cadenas."
+		error="Saisissez un nombre entier de secondes entre {MIN_SECONDS} et {MAX_SECONDS}."
+		{onchange}
+	/>
+</div>
