@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Supprimé
+
+- Module Docker, page « Up » : l'entrée « Pull » (`up --pull=always`) disparaît (#42).
+
 ### Modifié
 
 - Disposition par défaut d'un nouvel appareil : touches Audio, Docker, IntelliJ, Claude, Notifications.

@@ -35,7 +35,7 @@ const DOCKER: &str = "docker";
 /// Environment variable selecting a Docker context, removed for compose.
 const CONTEXT_VARIABLE: &str = "DOCKER_CONTEXT";
 
-/// Longest wait for a compose command: `up` may pull or build images.
+/// Longest wait for a compose command: `up` may build images.
 const COMPOSE_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// Longest wait for the list of services: it only reads the files.
@@ -228,7 +228,6 @@ fn compose_args(
             match variant {
                 UpVariant::Plain => args.push("--detach".into()),
                 UpVariant::Build => args.extend(["--detach".into(), "--build".into()]),
-                UpVariant::Pull => args.extend(["--detach".into(), "--pull=always".into()]),
                 // Nothing runs, so there is nothing to detach from.
                 UpVariant::NoStart => args.push("--no-start".into()),
             }
@@ -428,13 +427,12 @@ mod tests {
         );
         let blog = declared("/home/me/-blog/compose.yaml");
         assert_eq!(
-            line(&blog, ComposeAction::Up(UpVariant::Pull)),
+            line(&blog, ComposeAction::Up(UpVariant::Plain)),
             format!(
                 "--host={HOST} compose --ansi=never --file=/home/me/-blog/compose.yaml \
-                 up --detach --pull=always"
+                 up --detach"
             )
         );
-        assert!(line(&blog, ComposeAction::Up(UpVariant::Plain)).ends_with(" up --detach"));
         assert!(line(&blog, ComposeAction::Up(UpVariant::NoStart)).ends_with(" up --no-start"));
         // A project whose labels name no file can still be taken down.
         let unknown_files = ComposeTarget::new(Some("--rm".into()), None, Vec::new());
