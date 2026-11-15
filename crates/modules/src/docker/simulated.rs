@@ -274,6 +274,7 @@ impl SimulatedDocker {
                 let scope = scope_suffix(scope);
                 Ok(format!("up {}{suffix}{scope}", project.name))
             }
+            ComposeAction::Pull => Ok(format!("pull {}{}", project.name, scope_suffix(scope))),
             ComposeAction::Down { volumes } => {
                 state.containers.retain(|container| {
                     let service = container

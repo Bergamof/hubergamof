@@ -7,7 +7,8 @@
 //!   containers, plus the compose files declared in the settings, so that
 //!   a project taken down can be brought up again), then the other
 //!   containers.
-//! - Project page: start all, stop all, `up` and `down` (each opening a
+//! - Project page: start all, stop all, « Monter » (`up`, `up --build`,
+//!   `up --no-start` and `pull`) and « Démonter » (`down`; each opening a
 //!   page of variants), then its containers and, drawn apart, the services
 //!   its files define that have no container yet (read with `docker compose
 //!   config --services`, in the background).
@@ -17,7 +18,7 @@
 //! - Removing and every `down` need a second press within
 //!   [`CONFIRM_TIMEOUT`]. Pressing a variant of `up` or `down` goes back to
 //!   the page of the project, where the entries the operation works on show
-//!   what it does (`Build…`, `Up…`, `Down…`).
+//!   what it does (`Build…`, `Up…`, `Pull…`, `Down…`).
 //!
 //! Docker is reached through a [`DockerBackend`]: the Docker Engine of the
 //! session ([`DockerEngine`]) or an in-memory host ([`SimulatedDocker`],
@@ -84,9 +85,9 @@ pub const DOCKER_KIND: &str = "docker";
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
 
 const MODULE_LABEL: &str = "Docker";
-const UP_LABEL: &str = "Up";
+const UP_LABEL: &str = "Monter";
 const NOT_BUILT_LABEL: &str = "Non créé";
-const DOWN_LABEL: &str = "Down";
+const DOWN_LABEL: &str = "Démonter";
 const UNAVAILABLE_TEXT: &str = "Docker indisponible";
 const CONFIRM_LABEL: &str = "Confirmer ?";
 /// Separates a name from its state in page titles.
@@ -477,7 +478,7 @@ impl Docker {
         let services = operation.scope.services();
         if services.is_empty() {
             let key = match operation.kind {
-                OperationKind::Up(_) => UP_ITEM,
+                OperationKind::Up(_) | OperationKind::Pull => UP_ITEM,
                 OperationKind::Down => DOWN_ITEM,
             };
             return vec![key.to_owned()];

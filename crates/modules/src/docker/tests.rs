@@ -305,8 +305,8 @@ async fn the_project_page_shows_its_actions_then_its_containers() {
         [
             ("start-all".into(), "Tout démarrer".into()),
             ("stop-all".into(), "Tout arrêter".into()),
-            ("up".into(), "Up".into()),
-            ("down".into(), "Down".into()),
+            ("up".into(), "Monter".into()),
+            ("down".into(), "Démonter".into()),
             ("container/boutique-api-1".into(), "api-1".into()),
             ("container/boutique-db-1".into(), "db-1".into()),
             ("container/boutique-web-1".into(), "web-1".into()),
@@ -376,8 +376,8 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
         .into_iter()
         .map(|(_, l, _)| l)
         .collect();
-    assert_eq!(labels, ["Up", "Rebuild", "No start"]);
-    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique");
+    assert_eq!(labels, ["Up", "Up build", "Up no start", "Pull"]);
+    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Monter · boutique");
     // Pressing a variant goes back to the project page, where the work shows.
     assert_eq!(
         harness.press(SHOP_UP, "up-build").await,
@@ -395,6 +395,21 @@ async fn up_variants_are_offered_and_run_without_confirmation() {
         "web-1",
         "the work is over"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn pull_fetches_the_images_without_confirmation_and_marks_the_up_key() {
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(
+        harness.press(SHOP_UP, "pull").await,
+        [Command::BackTo(SHOP.into())]
+    );
+    assert_eq!(
+        label(&harness.item(SHOP, "container/boutique-web-1")),
+        "web-1 Pull…"
+    );
+    assert_eq!(harness.settle().await, [feedback(SHOP, "up", Feedback::Ok)]);
+    assert_eq!(harness.docker.actions(), ["pull boutique"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1025,13 +1040,13 @@ async fn a_service_without_container_can_only_be_brought_up() {
     assert_eq!(page.title, "web · Non créé");
     assert_eq!(
         harness.items(WEB_PLANNED),
-        [("up".into(), "Up".into(), KeyState::Normal)]
+        [("up".into(), "Monter".into(), KeyState::Normal)]
     );
     assert_eq!(
         harness.press(WEB_PLANNED, "up").await,
         [Command::OpenPage(WEB_UP.into())]
     );
-    assert_eq!(harness.page(WEB_UP).unwrap().title, "Up · web");
+    assert_eq!(harness.page(WEB_UP).unwrap().title, "Monter · web");
 
     assert_eq!(
         harness.press(WEB_UP, "up-build").await,
@@ -1076,7 +1091,7 @@ async fn a_container_has_its_own_up_and_down_for_its_service_only() {
         harness.press(WEB, "down").await,
         [Command::OpenPage(WEB_DOWN.into())]
     );
-    assert_eq!(harness.page(WEB_DOWN).unwrap().title, "Down · web");
+    assert_eq!(harness.page(WEB_DOWN).unwrap().title, "Démonter · web");
 
     // A down asks twice, then goes back to the project page.
     assert_eq!(
@@ -1339,7 +1354,10 @@ async fn an_up_works_on_the_ticked_services_only_and_spends_the_selection() {
     harness.press(MAIN_PAGE, SHOP).await;
     harness.toggle_item(WEB).await;
     harness.toggle_item(API).await;
-    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique (2)");
+    assert_eq!(
+        harness.page(SHOP_UP).unwrap().title,
+        "Monter · boutique (2)"
+    );
 
     assert_eq!(
         harness.press(SHOP_UP, "up-build").await,
@@ -1349,7 +1367,7 @@ async fn an_up_works_on_the_ticked_services_only_and_spends_the_selection() {
     assert_eq!(harness.ticked(SHOP), Vec::<String>::new());
     assert_eq!(harness.focused(SHOP), Vec::<String>::new());
     assert_eq!(label(&harness.item(SHOP, "start-all")), "Tout démarrer");
-    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Up · boutique");
+    assert_eq!(harness.page(SHOP_UP).unwrap().title, "Monter · boutique");
     // Only the services it works on show it; the outcome marks each of them.
     assert_eq!(label(&harness.item(SHOP, API)), "api-1 Build…");
     assert_eq!(label(&harness.item(SHOP, WEB)), "web-1 Build…");
@@ -1383,7 +1401,7 @@ async fn a_down_works_on_the_ticked_services_once_confirmed() {
     harness.toggle_item(DB).await;
     assert_eq!(
         harness.page(SHOP_DOWN).unwrap().title,
-        "Down · boutique (1)"
+        "Démonter · boutique (1)"
     );
     assert_eq!(harness.press(SHOP_DOWN, "down-keep").await, []);
     assert_eq!(
@@ -1404,7 +1422,7 @@ async fn the_pages_of_a_service_ignore_the_selection() {
     let mut harness = Harness::start(&json!({})).await;
     harness.toggle_item(API).await;
     harness.toggle_item(DB).await;
-    assert_eq!(harness.page(WEB_UP).unwrap().title, "Up · web");
+    assert_eq!(harness.page(WEB_UP).unwrap().title, "Monter · web");
     harness.press(WEB_UP, "up-plain").await;
     harness.settle().await;
     assert_eq!(harness.docker.actions().last().unwrap(), "up boutique web");

@@ -10,6 +10,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 ### Ajouté
 
 - Un appui long (400 ms) sur la molette de navigation ramène à la page d’accueil ; l’appui court revient toujours en arrière, au relâchement.
+- Module Docker, page « Monter » : l'entrée « Pull » lance `docker compose pull` (tout le projet, ou les services cochés/le service de la page).
 
 ### Supprimé
 
@@ -17,6 +18,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Module Docker : les touches « Up » et « Down » du projet (et du conteneur) deviennent « Monter » et « Démonter » ; les entrées de la page « Monter » se nomment « Up », « Up build » et « Up no start » ; la page « Démonter » ne change pas.
+- Module Docker : les commandes `docker compose` (up, pull, down) n'ont plus de délai maximal (l'ancien plafond de 15 minutes faisait échouer un `up` qui tire de grosses images) ; seule la lecture des services garde 30 s.
 - Disposition par défaut d'un nouvel appareil : touches Audio, Docker, IntelliJ, Claude, Notifications.
 - Libellé d'une touche maintenue sur la bande : couleurs du thème de l'appareil (encre sur le fond de la bande) au lieu de blanc sur noir.
 - Module Audio : « Entrées » et « Sorties » (choisir le périphérique) ont leur propre icône, distincte du micro ; la touche du micro dit son état (« Micro activé » / « Micro coupé ») et n'est plus en attention une fois coupé (l'icône barrée suffit) ; l'appareil sélectionné garde la taille et la place de son icône, la coche en recouvre un coin.

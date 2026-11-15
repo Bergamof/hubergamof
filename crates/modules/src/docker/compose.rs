@@ -35,9 +35,6 @@ const DOCKER: &str = "docker";
 /// Environment variable selecting a Docker context, removed for compose.
 const CONTEXT_VARIABLE: &str = "DOCKER_CONTEXT";
 
-/// Longest wait for a compose command: `up` may build images.
-const COMPOSE_TIMEOUT: Duration = Duration::from_mins(15);
-
 /// Longest wait for the list of services: it only reads the files.
 const SERVICES_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -68,7 +65,10 @@ pub(super) struct ComposeCli {
     leading_args: Vec<OsString>,
     /// Docker host, `unix://…`; `None` when the API reaches none.
     host: Option<String>,
-    timeout: Duration,
+    /// Longest wait for an action; `None` for the real tool: `up` and `pull`
+    /// fetch and build images for as long as it takes, and the user chose to
+    /// run them.
+    timeout: Option<Duration>,
     /// Whether the files must be trusted ([`check_trusted`]).
     check_files: bool,
 }
@@ -81,7 +81,7 @@ impl ComposeCli {
             program: DOCKER.into(),
             leading_args: Vec::new(),
             host,
-            timeout: COMPOSE_TIMEOUT,
+            timeout: None,
             check_files: true,
         }
     }
@@ -95,7 +95,7 @@ impl ComposeCli {
             program: "/bin/sh".into(),
             leading_args: vec![script.into()],
             host: Some("unix:///run/test.sock".into()),
-            timeout,
+            timeout: Some(timeout),
             check_files: false,
         }
     }
@@ -128,8 +128,12 @@ impl ComposeCli {
             stdout: Some(MAX_SERVICES_BYTES),
             stderr: MAX_ERROR_BYTES,
         };
-        let timeout = self.timeout.min(SERVICES_TIMEOUT);
-        let finished = self.invoke(target, limits, timeout, services_args).await?;
+        let timeout = self
+            .timeout
+            .map_or(SERVICES_TIMEOUT, |t| t.min(SERVICES_TIMEOUT));
+        let finished = self
+            .invoke(target, limits, Some(timeout), services_args)
+            .await?;
         let listed = String::from_utf8_lossy(&finished.stdout);
         listed
             .lines()
@@ -155,7 +159,7 @@ impl ComposeCli {
         &self,
         target: &ComposeTarget,
         limits: OutputLimits,
-        timeout: Duration,
+        timeout: Option<Duration>,
         arguments: impl FnOnce(&str, &ComposeTarget) -> Result<Vec<OsString>, DockerError>,
     ) -> Result<process::Finished, DockerError> {
         let host = self
@@ -180,7 +184,7 @@ impl ComposeCli {
                         program: self.program.to_string_lossy().into_owned(),
                         source,
                     },
-                    RunError::Timeout => DockerError::Timeout {
+                    RunError::Timeout(timeout) => DockerError::Timeout {
                         command: line(),
                         timeout,
                     },
@@ -220,7 +224,8 @@ fn compose_args(
     scope: &ComposeScope,
     action: ComposeAction,
 ) -> Result<Vec<OsString>, DockerError> {
-    let needs_files = target.project.is_none() || matches!(action, ComposeAction::Up(_));
+    let needs_files =
+        target.project.is_none() || matches!(action, ComposeAction::Up(_) | ComposeAction::Pull);
     let mut args = base_args(host, target, needs_files)?;
     match action {
         ComposeAction::Up(variant) => {
@@ -232,6 +237,7 @@ fn compose_args(
                 UpVariant::NoStart => args.push("--no-start".into()),
             }
         }
+        ComposeAction::Pull => args.push("pull".into()),
         ComposeAction::Down { volumes } => {
             args.push("down".into());
             if volumes {
@@ -441,6 +447,27 @@ mod tests {
             format!("--host={HOST} compose --ansi=never --project-name=--rm down --volumes")
         );
         assert!(line(&running("shop"), ComposeAction::Down { volumes: false }).ends_with(" down"));
+        assert!(line(&blog, ComposeAction::Pull).ends_with("/compose.yaml pull"));
+    }
+
+    #[test]
+    fn pull_needs_the_files_and_takes_services_after_the_separator() {
+        let without_files = ComposeTarget::new(Some("shop".into()), None, Vec::new());
+        assert!(
+            compose_args(
+                HOST,
+                &without_files,
+                &ComposeScope::Project,
+                ComposeAction::Pull
+            )
+            .is_err()
+        );
+        assert!(line_for("web", ComposeAction::Pull).ends_with(" pull -- web"));
+    }
+
+    #[test]
+    fn the_real_tool_has_no_time_limit() {
+        assert_eq!(ComposeCli::new(None).timeout, None);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! The `up` and `down` under way, shown on the entries they work on.
+//! The `up`, `pull` and `down` under way, shown on the entries they work on.
 
 use super::{ComposeScope, UpVariant};
 
@@ -6,6 +6,7 @@ use super::{ComposeScope, UpVariant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum OperationKind {
     Up(UpVariant),
+    Pull,
     Down,
 }
 
@@ -15,12 +16,13 @@ impl OperationKind {
         match self {
             Self::Up(UpVariant::Build) => "Build…",
             Self::Up(_) => "Up…",
+            Self::Pull => "Pull…",
             Self::Down => "Down…",
         }
     }
 }
 
-/// An `up` or a `down` of a project, or of some of its services, under way.
+/// An `up`, a `pull` or a `down` of a project, or of some of its services, under way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Operation {
     pub(super) id: u64,
