@@ -127,11 +127,11 @@ impl PactlBackend {
             stdout: Some(MAX_OUTPUT_BYTES),
             stderr: MAX_ERROR_BYTES,
         };
-        let output = process::run(self.command(args), COMMAND_TIMEOUT, limits)
+        let output = process::run(self.command(args), Some(COMMAND_TIMEOUT), limits)
             .await
             .map_err(|error| match error {
                 RunError::Spawn(source) => self.spawn_error(source),
-                RunError::Timeout => AudioError::Timeout {
+                RunError::Timeout(_) => AudioError::Timeout {
                     command: command_line(args),
                     timeout: COMMAND_TIMEOUT,
                 },

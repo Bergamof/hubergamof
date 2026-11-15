@@ -92,6 +92,8 @@ impl ComposeScope {
 pub enum ComposeAction {
     /// `docker compose up`.
     Up(UpVariant),
+    /// `docker compose pull`: fetches the images, creates and starts nothing.
+    Pull,
     /// `docker compose down`, with `--volumes` when `volumes` is set
     /// (removes the data of the named volumes of the project).
     Down {

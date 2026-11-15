@@ -40,17 +40,18 @@ pub(crate) struct Finished {
 pub(crate) enum RunError {
     /// It could not be started.
     Spawn(std::io::Error),
-    /// It did not end in time; it was killed.
-    Timeout,
+    /// It did not end within the time given; it was killed.
+    Timeout(Duration),
     /// Its output is unusable (too long, unreadable).
     Output(String),
 }
 
-/// Runs `command` to its end, within `timeout`, stdin closed; the process
-/// is killed on timeout or when the future is dropped.
+/// Runs `command` to its end, within `timeout` (`None`: as long as it
+/// takes), stdin closed; the process is killed on timeout or when the future
+/// is dropped.
 pub(crate) async fn run(
     mut command: Command,
-    timeout: Duration,
+    timeout: Option<Duration>,
     limits: OutputLimits,
 ) -> Result<Finished, RunError> {
     let stdout = if limits.stdout.is_some() {
@@ -65,10 +66,13 @@ pub(crate) async fn run(
         .kill_on_drop(true)
         .spawn()
         .map_err(RunError::Spawn)?;
-    match tokio::time::timeout(timeout, collect(&mut child, limits)).await {
-        Err(_) => Err(RunError::Timeout),
-        Ok(collected) => collected.map_err(RunError::Output),
-    }
+    let collected = match timeout {
+        Some(limit) => tokio::time::timeout(limit, collect(&mut child, limits))
+            .await
+            .map_err(|_| RunError::Timeout(limit))?,
+        None => collect(&mut child, limits).await,
+    };
+    collected.map_err(RunError::Output)
 }
 
 /// Waits for `child` while reading its outputs within their bounds.
@@ -161,7 +165,7 @@ mod tests {
     async fn outputs_and_status_are_collected() {
         let finished = run(
             sh("printf out; printf ' err ' >&2; exit 3"),
-            PATIENCE,
+            Some(PATIENCE),
             LIMITS,
         )
         .await
@@ -173,9 +177,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_long_output_fails_and_a_long_error_keeps_its_end() {
-        let flood = run(sh("head -c 17 /dev/zero"), PATIENCE, LIMITS).await;
+        let flood = run(sh("head -c 17 /dev/zero"), Some(PATIENCE), LIMITS).await;
         assert!(matches!(flood, Err(RunError::Output(_))), "{flood:?}");
-        let finished = run(sh("printf 0123456789 >&2"), PATIENCE, LIMITS)
+        let finished = run(sh("printf 0123456789 >&2"), Some(PATIENCE), LIMITS)
             .await
             .unwrap();
         assert_eq!(finished.stderr, format!("{TRUNCATION_MARK}23456789"));
@@ -185,7 +189,7 @@ mod tests {
             stdout: None,
             stderr: 7,
         };
-        let long = run(sh(script), PATIENCE, limits).await.unwrap();
+        let long = run(sh(script), Some(PATIENCE), limits).await.unwrap();
         assert_eq!(long.stderr, format!("{TRUNCATION_MARK}the end"));
     }
 
@@ -195,7 +199,7 @@ mod tests {
             stdout: None,
             ..LIMITS
         };
-        let finished = run(sh("head -c 100000 /dev/zero"), PATIENCE, limits)
+        let finished = run(sh("head -c 100000 /dev/zero"), Some(PATIENCE), limits)
             .await
             .unwrap();
         assert!(finished.status.success());
@@ -204,9 +208,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_stuck_program_times_out_and_a_missing_one_fails_to_start() {
-        let stuck = run(sh("sleep 30"), Duration::from_millis(50), LIMITS).await;
-        assert!(matches!(stuck, Err(RunError::Timeout)), "{stuck:?}");
-        let missing = run(Command::new("/nonexistent/program"), PATIENCE, LIMITS).await;
+        let stuck = run(sh("sleep 30"), Some(Duration::from_millis(50)), LIMITS).await;
+        assert!(matches!(stuck, Err(RunError::Timeout(_))), "{stuck:?}");
+        let missing = run(Command::new("/nonexistent/program"), Some(PATIENCE), LIMITS).await;
         assert!(matches!(missing, Err(RunError::Spawn(_))), "{missing:?}");
+    }
+
+    #[tokio::test]
+    async fn without_a_limit_a_slow_program_runs_to_its_end() {
+        let finished = run(sh("sleep 0.3; printf done"), None, LIMITS)
+            .await
+            .unwrap();
+        assert!(finished.status.success());
+        assert_eq!(finished.stdout, b"done");
     }
 }

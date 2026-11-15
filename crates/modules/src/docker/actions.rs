@@ -5,9 +5,8 @@ use hubergamof_module_api::Command;
 use super::pages::{compose_service, container_id, container_parent};
 use super::selection::with_count;
 use super::{
-    ComposeAction, ComposeScope, ContainerAction, DOWN_LABEL, Docker, DockerEvent, Feedback,
-    ImageData, ItemKey, Operation, OperationKind, Page, Request, Scope, UP_LABEL, UpVariant, icons,
-    project_id,
+    ComposeAction, ComposeScope, ContainerAction, Docker, DockerEvent, Feedback, ImageData,
+    ItemKey, Operation, OperationKind, Page, Request, Scope, UpVariant, icons, project_id,
 };
 
 /// What an action key does.
@@ -20,15 +19,17 @@ pub(super) enum Action {
     Restart,
     Remove,
     Up(UpVariant),
+    Pull,
     Down { volumes: bool },
 }
 
 pub(super) const PROJECT_ACTIONS: [Action; 2] = [Action::StartAll, Action::StopAll];
 
-pub(super) const UP_ACTIONS: [Action; 3] = [
+pub(super) const UP_ACTIONS: [Action; 4] = [
     Action::Up(UpVariant::Plain),
     Action::Up(UpVariant::Build),
     Action::Up(UpVariant::NoStart),
+    Action::Pull,
 ];
 
 pub(super) const DOWN_ACTIONS: [Action; 2] = [
@@ -53,6 +54,7 @@ impl Action {
             Self::Up(UpVariant::Plain) => "up-plain",
             Self::Up(UpVariant::Build) => "up-build",
             Self::Up(UpVariant::NoStart) => "up-no-start",
+            Self::Pull => "pull",
             Self::Down { volumes: false } => "down-keep",
             Self::Down { volumes: true } => "down-volumes",
         }
@@ -66,10 +68,11 @@ impl Action {
             Self::Stop => "Arrêter",
             Self::Restart => "Redémarrer",
             Self::Remove => "Supprimer",
-            Self::Up(UpVariant::Plain) => UP_LABEL,
-            Self::Up(UpVariant::Build) => "Rebuild",
-            Self::Up(UpVariant::NoStart) => "No start",
-            Self::Down { volumes: false } => DOWN_LABEL,
+            Self::Up(UpVariant::Plain) => "Up",
+            Self::Up(UpVariant::Build) => "Up build",
+            Self::Up(UpVariant::NoStart) => "Up no start",
+            Self::Pull => "Pull",
+            Self::Down { volumes: false } => "Down",
             Self::Down { volumes: true } => "Avec volumes",
         }
     }
@@ -91,7 +94,7 @@ impl Action {
             Self::StopAll | Self::Stop => "Arrêt…",
             Self::Restart => "Redémarrage…",
             Self::Remove => "Suppression…",
-            Self::Up(_) | Self::Down { .. } => {
+            Self::Up(_) | Self::Pull | Self::Down { .. } => {
                 self.operation().map_or("", OperationKind::working_label)
             }
         }
@@ -101,6 +104,7 @@ impl Action {
     pub(super) fn operation(self) -> Option<OperationKind> {
         match self {
             Self::Up(variant) => Some(OperationKind::Up(variant)),
+            Self::Pull => Some(OperationKind::Pull),
             Self::Down { .. } => Some(OperationKind::Down),
             _ => None,
         }
@@ -112,7 +116,7 @@ impl Action {
             Self::StopAll | Self::Stop => &icons::STOP,
             Self::Restart => &icons::RESTART,
             Self::Remove => &icons::REMOVE,
-            Self::Up(_) => &icons::UP,
+            Self::Up(_) | Self::Pull => &icons::UP,
             Self::Down { .. } => &icons::DOWN,
         }
     }
@@ -348,6 +352,7 @@ impl Docker {
                 Plan::Run(Request::Containers { ids, action })
             }
             (Page::Up(scope), Action::Up(variant)) => compose(scope, ComposeAction::Up(variant)),
+            (Page::Up(scope), Action::Pull) => compose(scope, ComposeAction::Pull),
             (Page::Down(scope), Action::Down { volumes }) => {
                 compose(scope, ComposeAction::Down { volumes })
             }
