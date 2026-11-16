@@ -216,7 +216,7 @@ impl Module for List {
                 .collect();
             PageContent::new(format!("{} ({page})", self.settings.label), items)
                 .with_context_dial(self.probe.context_dial.lock().unwrap().clone())
-                .keeping_device_lit(self.settings.keeps_lit)
+                .keeps_device_lit(self.settings.keeps_lit)
         })
     }
 
@@ -248,8 +248,13 @@ impl Module for List {
         self.probe.list_events.fetch_add(1, Ordering::SeqCst);
         if event.is::<Bump>() {
             self.presses += 10;
+            return vec![Command::Feedback(Feedback::Ok)];
         }
-        vec![Command::Feedback(Feedback::Ok)]
+        // An event carrying commands asks for exactly those.
+        match event.downcast::<Vec<Command>>() {
+            Ok(commands) => *commands,
+            Err(_) => vec![Command::Feedback(Feedback::Ok)],
+        }
     }
 
     fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {

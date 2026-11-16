@@ -94,6 +94,30 @@ impl DeviceEngine {
         !self.lock.is_locked() || self.instances.usable_when_locked(module)
     }
 
+    /// Whether a press may reach `module`: as `may_act`, or because the key
+    /// pressed declares itself usable when locked. The one rule, shared by
+    /// the call and by the padlock drawn on keys.
+    pub(super) fn may_press(&self, module: &ModuleInstanceId, declared_by_key: bool) -> bool {
+        declared_by_key || self.may_act(module)
+    }
+
+    /// While locked, a page of a module that may not act is not left on
+    /// display (nor reached again by going back, by the end of a page or by
+    /// an event), except one the module keeps lit for the user to act on.
+    /// Read from the page itself, not from what was last drawn.
+    pub(super) fn close_refused_page(&mut self) {
+        if !self.lock.is_locked() {
+            return;
+        }
+        let page = self.displayed_page();
+        let refused = page.context.is_some_and(|context| {
+            !page.keeps_lit && !self.instances.usable_when_locked(&context.module)
+        });
+        if refused {
+            self.nav = Navigation::default();
+        }
+    }
+
     /// An input on a locked computer: it lights a dark device and does
     /// nothing else (`true`), or restarts the delay before the device goes
     /// dark and goes on to act where the module allows it (`false`).
@@ -126,11 +150,9 @@ impl DeviceEngine {
         self.held = None;
         self.held_dial = None;
         if locked {
-            // Pages of the modules refused while locked are not left on
-            // display, except one the module keeps lit for the user to act on.
-            if !self.lock.page_keeps_lit {
-                self.nav = Navigation::default();
-            }
+            self.close_refused_page();
+            let keeps_lit = self.displayed_page().keeps_lit;
+            self.lock.page_keeps_lit = keeps_lit;
             self.lock.phase = Phase::Lit { sleep_at: None };
             self.schedule_sleep();
         } else {
@@ -150,6 +172,17 @@ impl DeviceEngine {
         }
         self.lock.page_keeps_lit = keeps_lit;
         self.schedule_sleep();
+    }
+
+    /// Whether the page displayed while the device is dark has just started
+    /// to keep it lit (an incoming call): the device is then lit again.
+    pub(super) async fn page_now_keeps_lit(&mut self) -> bool {
+        let keeps_lit = self.displayed_page().keeps_lit;
+        self.page_keeps_lit_changed(keeps_lit);
+        if keeps_lit {
+            self.wake_up().await;
+        }
+        keeps_lit
     }
 
     /// The configuration may have changed the delay.

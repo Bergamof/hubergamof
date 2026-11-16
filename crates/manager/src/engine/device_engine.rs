@@ -789,7 +789,7 @@ impl DeviceEngine {
         surfaces: Vec<Surface>,
         declared_by_key: bool,
     ) {
-        if !declared_by_key && !self.may_act(module) {
+        if !self.may_press(module, declared_by_key) {
             return;
         }
         if let Some(outcome) = self.instances.call(module, call).await {
@@ -996,7 +996,8 @@ impl DeviceEngine {
 
     /// Draws what changed and publishes the live state if anything did.
     async fn refresh(&mut self) -> Result<(), EngineError> {
-        if self.lock.is_asleep() {
+        self.close_refused_page();
+        if self.lock.is_asleep() && !self.page_now_keeps_lit().await {
             return Ok(());
         }
         let frame = self.next_frame();
@@ -1198,11 +1199,10 @@ impl DeviceEngine {
     }
 
     fn marked(&self, mut key: FrameKey) -> FrameKey {
-        key.face.locked = !key.usable_when_locked
-            && key
-                .target
-                .as_ref()
-                .is_some_and(|target| !self.may_act(target.module()));
+        key.face.locked = key
+            .target
+            .as_ref()
+            .is_some_and(|target| !self.may_press(target.module(), key.usable_when_locked));
         key.face.feedback = key
             .target
             .as_ref()

@@ -173,7 +173,7 @@ impl PageContent {
 
     /// The same page, keeping the device lit on a locked computer or not.
     #[must_use]
-    pub fn keeping_device_lit(self, keeps_device_lit: bool) -> Self {
+    pub fn keeps_device_lit(self, keeps_device_lit: bool) -> Self {
         Self {
             keeps_device_lit,
             ..self
@@ -221,11 +221,11 @@ mod tests {
 
         let page = PageContent::new("Titre", Vec::new());
         assert!(!page.keeps_device_lit);
-        assert!(page.clone().keeping_device_lit(true).keeps_device_lit);
+        assert!(page.clone().keeps_device_lit(true).keeps_device_lit);
         assert!(
             !page
-                .keeping_device_lit(true)
-                .keeping_device_lit(false)
+                .keeps_device_lit(true)
+                .keeps_device_lit(false)
                 .keeps_device_lit
         );
     }

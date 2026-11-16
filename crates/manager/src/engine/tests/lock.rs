@@ -3,6 +3,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use hubergamof_module_api::Command;
 use hubergamof_protocol::LOCK_SLEEP_RANGE;
 
 use serde_json::json;
@@ -310,6 +311,39 @@ async fn a_page_that_does_not_keep_the_device_lit_is_closed_and_the_device_goes_
     assert_eq!(fixture.page().id, HOME_PAGE_ID);
     tokio::time::sleep(SLEEP + SETTLE * 2).await;
     assert_eq!(fixture.brightness(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dark_device_lights_up_when_a_page_that_keeps_it_lit_opens() {
+    let fixture = declaring_fixture(true, true).await;
+    let lit = fixture.config().brightness;
+    fixture.lock(true).await;
+    tokio::time::sleep(SLEEP + SETTLE * 2).await;
+    assert_eq!(fixture.brightness(), 0, "dark on the home page");
+
+    // An incoming call, say: the module opens its page while the device is dark.
+    let events = fixture.probe.events.lock().unwrap().clone().unwrap();
+    assert!(events.send(vec![Command::OpenPage(LIST_PAGE.into())]));
+    tokio::time::sleep(SETTLE).await;
+    assert_eq!(fixture.brightness(), lit);
+    assert_eq!(fixture.page().id, "list/list");
+    tokio::time::sleep(SLEEP * 3).await;
+    assert_eq!(fixture.brightness(), lit, "and stays lit");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_page_refused_while_locked_does_not_come_back_by_navigation() {
+    let fixture = declaring_fixture(false, false).await;
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.page().id, "list/list");
+    fixture.lock(true).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+
+    // A page opened by an event of its module is closed at once.
+    let events = fixture.probe.events.lock().unwrap().clone().unwrap();
+    assert!(events.send(vec![Command::OpenPage(LIST_PAGE.into())]));
+    tokio::time::sleep(SETTLE).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
 }
 
 fn tap_measures(fixture: &Fixture) {
