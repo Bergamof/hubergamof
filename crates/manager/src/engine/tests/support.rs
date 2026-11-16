@@ -145,6 +145,10 @@ pub(super) struct Bump;
 struct ListSettings {
     label: String,
     items: usize,
+    /// The items declare their press usable on a locked computer.
+    lock_safe: bool,
+    /// The pages keep the device lit on a locked computer.
+    keeps_lit: bool,
 }
 
 impl Default for ListSettings {
@@ -152,6 +156,8 @@ impl Default for ListSettings {
         Self {
             label: "list".into(),
             items: 0,
+            lock_safe: false,
+            keeps_lit: false,
         }
     }
 }
@@ -204,11 +210,13 @@ impl Module for List {
                     id: ItemId(format!("i{}", index + shift)),
                     key: KeyContent::with_label(format!("item {index}"))
                         .focused(focus == Some(index))
-                        .checked(checked.contains(&index)),
+                        .checked(checked.contains(&index))
+                        .usable_when_locked(self.settings.lock_safe),
                 })
                 .collect();
             PageContent::new(format!("{} ({page})", self.settings.label), items)
                 .with_context_dial(self.probe.context_dial.lock().unwrap().clone())
+                .keeping_device_lit(self.settings.keeps_lit)
         })
     }
 
@@ -283,6 +291,18 @@ impl ModuleFactory for ListFactory {
                         max: Some(MAX_LIST_ITEMS),
                         unit: None,
                     },
+                },
+                SettingField {
+                    key: "lockSafe".into(),
+                    label: "Lock safe".into(),
+                    help: None,
+                    kind: SettingKind::Boolean { default: false },
+                },
+                SettingField {
+                    key: "keepsLit".into(),
+                    label: "Keeps lit".into(),
+                    help: None,
+                    kind: SettingKind::Boolean { default: false },
                 },
             ],
         }

@@ -66,6 +66,8 @@ struct HeldKey {
     key: u8,
     /// What the key showed when it was pressed.
     target: KeyTarget,
+    /// Whether the key declared its press harmless on a locked computer.
+    usable_when_locked: bool,
     label: Option<String>,
     since: Instant,
     /// Whether it was held long enough for its label to show: releasing it
@@ -133,6 +135,7 @@ struct DisplayedPage {
     title: String,
     keys: Vec<FrameKey>,
     context: Option<ContextFace>,
+    keeps_lit: bool,
 }
 
 /// What woke the engine up.
@@ -483,6 +486,7 @@ impl DeviceEngine {
         let Some(target) = frame.target(key).cloned() else {
             return;
         };
+        let usable_when_locked = frame.usable_when_locked(key);
         let label = frame
             .keys
             .get(usize::from(key))
@@ -493,6 +497,7 @@ impl DeviceEngine {
         self.held = Some(HeldKey {
             key,
             target,
+            usable_when_locked,
             label,
             since: Instant::now(),
             long: false,
@@ -508,31 +513,36 @@ impl DeviceEngine {
         if held.is_hold(Instant::now()) {
             return;
         }
-        self.press_target(held.target).await;
+        self.press_target(held.target, held.usable_when_locked)
+            .await;
     }
 
     /// Hands the press to what the key shows on the last drawn frame, even
     /// if the module content changed since.
     async fn press_key(&mut self, key: u8) {
-        let Some(target) = self
-            .last_frame
-            .as_ref()
-            .and_then(|frame| frame.target(key))
-            .cloned()
-        else {
+        let Some(frame) = &self.last_frame else {
             return;
         };
-        self.press_target(target).await;
+        let Some(target) = frame.target(key).cloned() else {
+            return;
+        };
+        let usable_when_locked = frame.usable_when_locked(key);
+        self.press_target(target, usable_when_locked).await;
     }
 
-    async fn press_target(&mut self, target: KeyTarget) {
+    async fn press_target(&mut self, target: KeyTarget, usable_when_locked: bool) {
         let call = match &target {
             KeyTarget::Home(_) => Call::KeyPress,
             KeyTarget::Item { page, item, .. } => Call::ItemPress(page.clone(), item.clone()),
         };
         let module = target.module().clone();
-        self.run_handler(&module, call, vec![Surface::Key(target)])
-            .await;
+        self.dispatch(
+            &module,
+            call,
+            vec![Surface::Key(target)],
+            usable_when_locked,
+        )
+        .await;
     }
 
     async fn dial_input(&mut self, dial: u8, input: DialInput) {
@@ -766,7 +776,20 @@ impl DeviceEngine {
 
     /// Runs a handler of `module`; `surfaces` show its outcome.
     async fn run_handler(&mut self, module: &ModuleInstanceId, call: Call, surfaces: Vec<Surface>) {
-        if !self.may_act(module) {
+        self.dispatch(module, call, surfaces, false).await;
+    }
+
+    /// The one place where a call reaches a module: refused while the
+    /// computer is locked unless the module, or the key pressed
+    /// (`declared_by_key`), declares it usable then.
+    async fn dispatch(
+        &mut self,
+        module: &ModuleInstanceId,
+        call: Call,
+        surfaces: Vec<Surface>,
+        declared_by_key: bool,
+    ) {
+        if !declared_by_key && !self.may_act(module) {
             return;
         }
         if let Some(outcome) = self.instances.call(module, call).await {
@@ -977,6 +1000,7 @@ impl DeviceEngine {
             return Ok(());
         }
         let frame = self.next_frame();
+        self.page_keeps_lit_changed(frame.keeps_lit);
         let written = self
             .painter
             .paint(self.deck.as_ref(), &self.services.renderer, &frame)
@@ -1105,6 +1129,7 @@ impl DeviceEngine {
                 title: HOME_PAGE_TITLE.to_owned(),
                 keys: self.home_keys(),
                 context: None,
+                keeps_lit: false,
             },
             PageModel::Module {
                 module,
@@ -1118,10 +1143,12 @@ impl DeviceEngine {
                     page: page.clone(),
                     dial: content.context_dial,
                 }),
+                keeps_lit: content.keeps_device_lit,
                 keys: content
                     .items
                     .into_iter()
                     .map(|item| FrameKey {
+                        usable_when_locked: item.key.usable_when_locked,
                         face: KeyFace::from_content(item.key),
                         target: Some(KeyTarget::Item {
                             module: module.clone(),
@@ -1166,14 +1193,16 @@ impl DeviceEngine {
             overlay: self.strip_overlay(),
             context: page.context,
             theme: self.config.theme,
+            keeps_lit: page.keeps_lit,
         }
     }
 
     fn marked(&self, mut key: FrameKey) -> FrameKey {
-        key.face.locked = key
-            .target
-            .as_ref()
-            .is_some_and(|target| !self.may_act(target.module()));
+        key.face.locked = !key.usable_when_locked
+            && key
+                .target
+                .as_ref()
+                .is_some_and(|target| !self.may_act(target.module()));
         key.face.feedback = key
             .target
             .as_ref()
@@ -1215,6 +1244,7 @@ impl DeviceEngine {
             keys.push(FrameKey {
                 face,
                 target: Some(KeyTarget::Home(id.clone())),
+                usable_when_locked: false,
             });
         }
         keys

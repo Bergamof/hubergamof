@@ -1,6 +1,8 @@
 //! The device while the computer is locked: nothing it receives triggers an
 //! action, and it goes dark after the configured delay. An input wakes it up
-//! (and does nothing else); unlocking lights it at once.
+//! (and does nothing else); unlocking lights it at once. Two things a module
+//! can declare lift this: a key whose press acts anyway, and a page that
+//! keeps the device lit (and open) for as long as it is displayed.
 
 use std::time::Duration;
 
@@ -29,6 +31,9 @@ enum Phase {
 pub(super) struct LockState {
     screen: watch::Receiver<bool>,
     phase: Phase,
+    /// The page displayed keeps the device lit: it does not go dark, and the
+    /// lock does not close the page.
+    page_keeps_lit: bool,
 }
 
 impl LockState {
@@ -38,7 +43,11 @@ impl LockState {
         } else {
             Phase::Unlocked
         };
-        Self { screen, phase }
+        Self {
+            screen,
+            phase,
+            page_keeps_lit: false,
+        }
     }
 
     /// Whether the computer is locked: only what modules declare usable when
@@ -117,8 +126,11 @@ impl DeviceEngine {
         self.held = None;
         self.held_dial = None;
         if locked {
-            // Pages of the modules refused while locked are not left on display.
-            self.nav = Navigation::default();
+            // Pages of the modules refused while locked are not left on
+            // display, except one the module keeps lit for the user to act on.
+            if !self.lock.page_keeps_lit {
+                self.nav = Navigation::default();
+            }
             self.lock.phase = Phase::Lit { sleep_at: None };
             self.schedule_sleep();
         } else {
@@ -128,6 +140,16 @@ impl DeviceEngine {
                 self.restore_brightness().await;
             }
         }
+    }
+
+    /// The page displayed now keeps the device lit on a locked computer, or
+    /// no longer does: the delay before going dark starts again or stops.
+    pub(super) fn page_keeps_lit_changed(&mut self, keeps_lit: bool) {
+        if self.lock.page_keeps_lit == keeps_lit {
+            return;
+        }
+        self.lock.page_keeps_lit = keeps_lit;
+        self.schedule_sleep();
     }
 
     /// The configuration may have changed the delay.
@@ -180,6 +202,6 @@ impl DeviceEngine {
     /// Delay before going dark, `None` when the device stays lit.
     fn sleep_delay(&self) -> Option<Duration> {
         let seconds = self.config.lock_sleep_seconds;
-        (seconds > 0).then(|| Duration::from_secs(u64::from(seconds)))
+        (seconds > 0 && !self.lock.page_keeps_lit).then(|| Duration::from_secs(u64::from(seconds)))
     }
 }
