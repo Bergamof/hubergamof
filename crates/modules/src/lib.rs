@@ -26,6 +26,7 @@ mod paths;
 pub mod pomodoro;
 mod process;
 pub mod session_bus;
+pub mod teams;
 pub mod time;
 mod trust;
 
