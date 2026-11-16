@@ -3,6 +3,7 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use hubergamof_module_api::Command;
 use hubergamof_protocol::LOCK_SLEEP_RANGE;
 
 use serde_json::json;
@@ -229,6 +230,120 @@ async fn dials_are_refused_with_a_padlock_unless_their_module_is_usable_when_loc
 
     fixture.lock(false).await;
     assert!(!fixture.hint(usize::from(VOLUME_DIAL)).locked);
+}
+
+/// A device with a list of four items on its first key, whose page declares
+/// what the arguments say, going dark `SLEEP_SECONDS` after a lock.
+async fn declaring_fixture(lock_safe: bool, keeps_lit: bool) -> Fixture {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let mut module = list(4);
+    module.settings = json!({ "items": 4, "lockSafe": lock_safe, "keepsLit": keeps_lit });
+    let mut config = fixture.with(vec![module], &["list"], &[None; 4]);
+    config.lock_sleep_seconds = SLEEP_SECONDS;
+    fixture.engine.apply_config(config).await.unwrap();
+    fixture
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_key_declared_usable_when_locked_acts_and_has_no_padlock() {
+    let fixture = declaring_fixture(true, true).await;
+    fixture.engine.press_key(0).await.unwrap();
+    let open = fixture.deck.inner.key_image(1).unwrap();
+    fixture.lock(true).await;
+    // The page stays open, without padlock, and its first item (`i0`, which
+    // goes back) acts.
+    assert_eq!(fixture.page().id, "list/list");
+    assert!(
+        fixture.deck.inner.key_image(1).unwrap() == open,
+        "no padlock"
+    );
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.page().id, HOME_PAGE_ID, "the declared press acted");
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_item_not_declared_is_refused_with_a_padlock_even_on_a_page_kept_lit() {
+    let fixture = declaring_fixture(false, true).await;
+    fixture.engine.press_key(0).await.unwrap();
+    let open = fixture.deck.inner.key_image(1).unwrap();
+    fixture.lock(true).await;
+
+    assert_eq!(fixture.page().id, "list/list", "the page is kept");
+    assert!(fixture.deck.inner.key_image(1).unwrap() != open, "padlock");
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.tap_first_key().await;
+    assert_eq!(fixture.page().id, "list/list", "nothing acted");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_page_that_keeps_the_device_lit_is_neither_closed_nor_darkened_by_the_lock() {
+    let fixture = declaring_fixture(true, true).await;
+    let lit = fixture.config().brightness;
+    fixture.engine.press_key(0).await.unwrap();
+
+    fixture.lock(true).await;
+    tokio::time::sleep(SLEEP * 3).await;
+    assert_eq!(fixture.brightness(), lit, "still lit long after the delay");
+    assert_eq!(fixture.page().id, "list/list");
+}
+
+#[tokio::test(start_paused = true)]
+async fn leaving_the_page_kept_lit_restarts_the_delay_before_going_dark() {
+    let fixture = declaring_fixture(true, true).await;
+    let lit = fixture.config().brightness;
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.lock(true).await;
+    tokio::time::sleep(SLEEP * 3).await;
+
+    // Back home (the first item goes back): the device goes dark after the delay.
+    fixture.engine.press_key(0).await.unwrap();
+    tokio::time::sleep(SLEEP.saturating_sub(SETTLE * 2)).await;
+    assert_eq!(fixture.brightness(), lit, "the delay restarted");
+    tokio::time::sleep(SETTLE * 4).await;
+    assert_eq!(fixture.brightness(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_page_that_does_not_keep_the_device_lit_is_closed_and_the_device_goes_dark() {
+    let fixture = declaring_fixture(true, false).await;
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.lock(true).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+    tokio::time::sleep(SLEEP + SETTLE * 2).await;
+    assert_eq!(fixture.brightness(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dark_device_lights_up_when_a_page_that_keeps_it_lit_opens() {
+    let fixture = declaring_fixture(true, true).await;
+    let lit = fixture.config().brightness;
+    fixture.lock(true).await;
+    tokio::time::sleep(SLEEP + SETTLE * 2).await;
+    assert_eq!(fixture.brightness(), 0, "dark on the home page");
+
+    // An incoming call, say: the module opens its page while the device is dark.
+    let events = fixture.probe.events.lock().unwrap().clone().unwrap();
+    assert!(events.send(vec![Command::OpenPage(LIST_PAGE.into())]));
+    tokio::time::sleep(SETTLE).await;
+    assert_eq!(fixture.brightness(), lit);
+    assert_eq!(fixture.page().id, "list/list");
+    tokio::time::sleep(SLEEP * 3).await;
+    assert_eq!(fixture.brightness(), lit, "and stays lit");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_page_refused_while_locked_does_not_come_back_by_navigation() {
+    let fixture = declaring_fixture(false, false).await;
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.page().id, "list/list");
+    fixture.lock(true).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+
+    // A page opened by an event of its module is closed at once.
+    let events = fixture.probe.events.lock().unwrap().clone().unwrap();
+    assert!(events.send(vec![Command::OpenPage(LIST_PAGE.into())]));
+    tokio::time::sleep(SETTLE).await;
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
 }
 
 fn tap_measures(fixture: &Fixture) {

@@ -84,6 +84,10 @@ impl KeyTarget {
 pub(crate) struct FrameKey {
     pub(crate) face: KeyFace,
     pub(crate) target: Option<KeyTarget>,
+    /// The module declares pressing this key harmless on a locked computer,
+    /// whatever it declares as a whole. Apart from the target: a mark is
+    /// matched on the target alone.
+    pub(crate) usable_when_locked: bool,
 }
 
 /// What the contextual dial acts on: the module page displayed, which says
@@ -184,12 +188,22 @@ pub(crate) struct Frame {
     pub(crate) context: Option<ContextFace>,
     /// Colours of the surface the keys are drawn on.
     pub(crate) theme: DeviceTheme,
+    /// The displayed page keeps the device lit on a locked computer.
+    pub(crate) keeps_lit: bool,
 }
 
 impl Frame {
     /// What key `key` acts on, if anything.
     pub(crate) fn target(&self, key: u8) -> Option<&KeyTarget> {
         self.keys.get(usize::from(key))?.target.as_ref()
+    }
+
+    /// Whether pressing key `key` acts on a locked computer by its own
+    /// declaration.
+    pub(crate) fn usable_when_locked(&self, key: u8) -> bool {
+        self.keys
+            .get(usize::from(key))
+            .is_some_and(|key| key.usable_when_locked)
     }
 }
 

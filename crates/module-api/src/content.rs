@@ -63,6 +63,11 @@ pub struct KeyContent {
     /// The key is ticked (a selection): the host draws a check mark in a
     /// corner.
     pub checked: bool,
+    /// Pressing this key of a page acts even while the computer is locked.
+    /// Declared by the module for what is harmless to run on a locked
+    /// computer; the module-wide `usable_when_locked` capability still
+    /// applies to its home key, which ignores this flag.
+    pub usable_when_locked: bool,
 }
 
 impl KeyContent {
@@ -102,6 +107,15 @@ impl KeyContent {
     pub fn checked(self, checked: bool) -> Self {
         Self { checked, ..self }
     }
+
+    /// The same key, acting while the computer is locked or not.
+    #[must_use]
+    pub fn usable_when_locked(self, usable_when_locked: bool) -> Self {
+        Self {
+            usable_when_locked,
+            ..self
+        }
+    }
 }
 
 /// One key of a module page.
@@ -128,6 +142,11 @@ pub struct PageContent {
     /// What the contextual dial does while this page is displayed; nothing
     /// by default.
     pub context_dial: ContextDial,
+    /// The device stays lit on a locked computer while this page is
+    /// displayed, instead of going dark after the configured delay, and the
+    /// page is not closed by the lock. Nothing by default: a module declares
+    /// it for pages the user must keep acting on, such as a call in progress.
+    pub keeps_device_lit: bool,
 }
 
 impl PageContent {
@@ -139,6 +158,7 @@ impl PageContent {
             title: title.into(),
             items,
             context_dial: ContextDial::none(),
+            keeps_device_lit: false,
         }
     }
 
@@ -147,6 +167,15 @@ impl PageContent {
     pub fn with_context_dial(self, context_dial: ContextDial) -> Self {
         Self {
             context_dial,
+            ..self
+        }
+    }
+
+    /// The same page, keeping the device lit on a locked computer or not.
+    #[must_use]
+    pub fn keeps_device_lit(self, keeps_device_lit: bool) -> Self {
+        Self {
+            keeps_device_lit,
             ..self
         }
     }
@@ -177,6 +206,28 @@ mod tests {
         assert!(key.focused && key.checked);
         assert!(!key.clone().checked(false).checked);
         assert!(!key.focused(false).focused);
+    }
+
+    #[test]
+    fn nothing_acts_on_a_locked_computer_unless_declared() {
+        let key = KeyContent::with_label("x");
+        assert!(!key.usable_when_locked);
+        assert!(key.clone().usable_when_locked(true).usable_when_locked);
+        assert!(
+            !key.usable_when_locked(true)
+                .usable_when_locked(false)
+                .usable_when_locked
+        );
+
+        let page = PageContent::new("Titre", Vec::new());
+        assert!(!page.keeps_device_lit);
+        assert!(page.clone().keeps_device_lit(true).keeps_device_lit);
+        assert!(
+            !page
+                .keeps_device_lit(true)
+                .keeps_device_lit(false)
+                .keeps_device_lit
+        );
     }
 
     #[test]
