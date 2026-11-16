@@ -402,7 +402,7 @@ impl Audio {
 }
 
 fn item(id: &str, key: KeyContent) -> PageItem {
-    PageItem { id: id.into(), key }
+    PageItem::new(id.into(), key)
 }
 
 fn direction_of(page: &PageId) -> Option<Direction> {

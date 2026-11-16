@@ -116,10 +116,10 @@ impl Module for Inbox {
                 .map(item_of)
                 .collect();
             if items.is_empty() {
-                items.push(PageItem {
-                    id: ItemId(EMPTY_ITEM.into()),
-                    key: KeyContent::with_icon(&BELL, EMPTY_LABEL),
-                });
+                items.push(PageItem::new(
+                    ItemId(EMPTY_ITEM.into()),
+                    KeyContent::with_icon(&BELL, EMPTY_LABEL),
+                ));
             }
             PageContent::new(NAME, items)
         })
@@ -140,10 +140,10 @@ impl Module for Inbox {
 /// The key of `notification` on the list: its sender's icon over its message.
 fn item_of(notification: &UnreadNotification) -> PageItem {
     let icon = notification.icon.as_ref().unwrap_or(&BELL);
-    PageItem {
-        id: ItemId(format!("{ITEM_PREFIX}{}", notification.id.0)),
-        key: KeyContent::with_icon(icon, notification.message.clone()),
-    }
+    PageItem::new(
+        ItemId(format!("{ITEM_PREFIX}{}", notification.id.0)),
+        KeyContent::with_icon(icon, notification.message.clone()),
+    )
 }
 
 fn notification_id(item: &ItemId) -> Option<NotificationId> {

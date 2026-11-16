@@ -94,11 +94,28 @@ impl DeviceEngine {
         !self.lock.is_locked() || self.instances.usable_when_locked(module)
     }
 
-    /// Whether a press may reach `module`: as `may_act`, or because the key
-    /// pressed declares itself usable when locked. The one rule, shared by
-    /// the call and by the padlock drawn on keys.
-    pub(super) fn may_press(&self, module: &ModuleInstanceId, declared_by_key: bool) -> bool {
-        declared_by_key || self.may_act(module)
+    /// Whether a press may reach `module`: as `may_act`, or because the page
+    /// declares it usable when locked and the module may declare that. The
+    /// one rule, shared by the call, the padlock drawn on keys and the
+    /// reminders of the dials.
+    pub(super) fn may_press(&self, module: &ModuleInstanceId, declared: bool) -> bool {
+        self.may_act(module) || (declared && self.instances.lock_safe_pages(module))
+    }
+
+    /// Leaves a trace, for audit, of what runs on a locked computer only
+    /// because a page declared it.
+    pub(super) fn trace_declared_while_locked(&self, module: &ModuleInstanceId, declared: bool) {
+        if declared
+            && self.lock.is_locked()
+            && self.instances.lock_safe_pages(module)
+            && !self.instances.usable_when_locked(module)
+        {
+            tracing::info!(
+                serial = %self.serial(),
+                %module,
+                "action run on a locked computer by page declaration"
+            );
+        }
     }
 
     /// While locked, a page of a module that may not act is not left on

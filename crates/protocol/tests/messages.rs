@@ -103,6 +103,7 @@ fn catalog_module_without_icon() {
                     key: false,
                     multiple_instances: true,
                     usable_when_locked: true,
+                    lock_safe_pages: false,
                 },
                 dial_functions: vec![DialFunctionDescriptor {
                     id: "volume".into(),
@@ -119,7 +120,7 @@ fn catalog_module_without_icon() {
             "kind": "audio",
             "name": "Audio",
             "description": "Volume",
-            "capabilities": { "key": false, "multipleInstances": true, "usableWhenLocked": true },
+            "capabilities": { "key": false, "multipleInstances": true, "usableWhenLocked": true, "lockSafePages": false },
             "dialFunctions": [{
                 "id": "volume",
                 "name": "Contrôle du volume",
@@ -297,7 +298,7 @@ fn server_module_catalog() {
                 "kind": "pomodoro",
                 "name": "Pomodoro",
                 "description": "Focus timer",
-                "capabilities": { "key": true, "multipleInstances": false, "usableWhenLocked": false },
+                "capabilities": { "key": true, "multipleInstances": false, "usableWhenLocked": false, "lockSafePages": false },
                 "dialFunctions": [],
                 "settings": [
                     {

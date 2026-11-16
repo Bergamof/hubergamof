@@ -388,10 +388,7 @@ impl Module for Intellij {
             let items = self
                 .entries()
                 .into_iter()
-                .map(|entry| PageItem {
-                    id: entry.item(),
-                    key: self.entry_key(entry),
-                })
+                .map(|entry| PageItem::new(entry.item(), self.entry_key(entry)))
                 .collect();
             PageContent::new(MODULE_LABEL, items)
         })

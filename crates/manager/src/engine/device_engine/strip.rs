@@ -154,9 +154,9 @@ impl DeviceEngine {
                 .unwrap_or(DialAssignment::None);
             let refused = match &assignment {
                 DialAssignment::Module { instance, .. } => !self.may_act(instance),
-                DialAssignment::Contextual => {
-                    context.is_some_and(|context| !self.may_act(&context.module))
-                }
+                DialAssignment::Contextual => context.is_some_and(|context| {
+                    !self.may_press(&context.module, context.dial.usable_when_locked)
+                }),
                 DialAssignment::None | DialAssignment::Navigation => false,
             };
             let (rotate, press) = match assignment {

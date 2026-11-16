@@ -386,7 +386,7 @@ mod tests {
             ModuleCapabilities {
                 key: true,
                 multiple_instances: true,
-                usable_when_locked: false
+                ..Default::default()
             }
         );
         for kind in ["audio", "intellij", "claude"] {

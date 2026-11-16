@@ -62,6 +62,13 @@ pub struct ContextDial {
     pub hint: DialHint,
     /// What holding the dial pressed does.
     pub long_press: Option<String>,
+    /// The dial acts even while the computer is locked: rotation, press and
+    /// long press alike, and, in a [`crate::Notification`], the action of its
+    /// press. Only for what is harmless to run on a locked computer, and
+    /// honoured only for a module whose descriptor declares
+    /// [`crate::ModuleCapabilities::lock_safe_pages`]. Never derive it from
+    /// settings that the web UI or an import can change.
+    pub usable_when_locked: bool,
 }
 
 impl ContextDial {
@@ -94,6 +101,15 @@ impl ContextDial {
     pub fn long_pressing(self, long_press: impl Into<String>) -> Self {
         Self {
             long_press: Some(long_press.into()),
+            ..self
+        }
+    }
+
+    /// The same dial, acting while the computer is locked or not.
+    #[must_use]
+    pub fn usable_when_locked(self, usable_when_locked: bool) -> Self {
+        Self {
+            usable_when_locked,
             ..self
         }
     }

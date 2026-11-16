@@ -593,19 +593,11 @@ impl DeviceEngine {
             return;
         }
         let (id, source) = (shown.notification.id, shown.notification.source.clone());
-        if !self.may_act(&source) {
-            return;
-        }
+        let declared = shown.notification.context_dial.usable_when_locked;
         let surfaces = self.failure_surfaces(&source);
-        let Some(outcome) = self
-            .instances
-            .call(&source, Call::NotificationPress(id))
-            .await
-        else {
-            return;
-        };
-        let done = matches!(outcome, Outcome::Done(_));
-        self.conclude(&source, &surfaces, outcome);
+        let done = self
+            .dispatch(&source, Call::NotificationPress(id), surfaces, declared)
+            .await;
         if done
             && self
                 .notifications
@@ -720,7 +712,13 @@ impl DeviceEngine {
             return;
         };
         let surfaces = self.pressed_dial_surfaces(dial);
-        self.run_handler(&context.module, call, surfaces).await;
+        self.dispatch(
+            &context.module,
+            call,
+            surfaces,
+            context.dial.usable_when_locked,
+        )
+        .await;
     }
 
     /// The navigation dial: turning scrolls the rows of the displayed page,
@@ -780,21 +778,26 @@ impl DeviceEngine {
     }
 
     /// The one place where a call reaches a module: refused while the
-    /// computer is locked unless the module, or the key pressed
-    /// (`declared_by_key`), declares it usable then.
+    /// computer is locked unless the module is usable then, or the page
+    /// (`declared`) declares it and the module may declare that. Tells
+    /// whether the handler completed.
     async fn dispatch(
         &mut self,
         module: &ModuleInstanceId,
         call: Call,
         surfaces: Vec<Surface>,
-        declared_by_key: bool,
-    ) {
-        if !self.may_press(module, declared_by_key) {
-            return;
+        declared: bool,
+    ) -> bool {
+        if !self.may_press(module, declared) {
+            return false;
         }
-        if let Some(outcome) = self.instances.call(module, call).await {
-            self.conclude(module, &surfaces, outcome);
-        }
+        self.trace_declared_while_locked(module, declared);
+        let Some(outcome) = self.instances.call(module, call).await else {
+            return false;
+        };
+        let done = matches!(outcome, Outcome::Done(_));
+        self.conclude(module, &surfaces, outcome);
+        done
     }
 
     fn conclude(&mut self, module: &ModuleInstanceId, surfaces: &[Surface], outcome: Outcome) {
@@ -1089,7 +1092,12 @@ impl DeviceEngine {
             .enumerate()
             .filter_map(|(dial, assignment)| {
                 let text = match assignment {
-                    DialAssignment::Contextual if self.may_act(&notification.source) => {
+                    DialAssignment::Contextual
+                        if self.may_press(
+                            &notification.source,
+                            notification.context_dial.usable_when_locked,
+                        ) =>
+                    {
                         contextual.clone()?
                     }
                     DialAssignment::Navigation => HIDE_NOTIFICATION.to_owned(),
@@ -1136,29 +1144,34 @@ impl DeviceEngine {
                 module,
                 page,
                 content,
-            } => DisplayedPage {
-                id: format!("{module}/{page}"),
-                title: content.title,
-                context: Some(ContextFace {
-                    module: module.clone(),
-                    page: page.clone(),
-                    dial: content.context_dial,
-                }),
-                keeps_lit: content.keeps_device_lit,
-                keys: content
-                    .items
-                    .into_iter()
-                    .map(|item| FrameKey {
-                        usable_when_locked: item.key.usable_when_locked,
-                        face: KeyFace::from_content(item.key),
-                        target: Some(KeyTarget::Item {
-                            module: module.clone(),
-                            page: page.clone(),
-                            item: item.id,
-                        }),
-                    })
-                    .collect(),
-            },
+            } => {
+                // What a page declares keeps the device lit only for a module
+                // that declares it may (what a press does: `may_press`).
+                let lock_safe = self.instances.lock_safe_pages(&module);
+                DisplayedPage {
+                    id: format!("{module}/{page}"),
+                    title: content.title,
+                    keeps_lit: lock_safe && content.keeps_device_lit,
+                    keys: content
+                        .items
+                        .into_iter()
+                        .map(|item| FrameKey {
+                            usable_when_locked: item.usable_when_locked,
+                            face: KeyFace::from_content(item.key),
+                            target: Some(KeyTarget::Item {
+                                module: module.clone(),
+                                page: page.clone(),
+                                item: item.id,
+                            }),
+                        })
+                        .collect(),
+                    context: Some(ContextFace {
+                        module,
+                        page,
+                        dial: content.context_dial,
+                    }),
+                }
+            }
         }
     }
 

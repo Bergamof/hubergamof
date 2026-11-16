@@ -71,6 +71,11 @@ pub(super) struct Probe {
     pub(super) volume: Arc<Mutex<Option<VolumeWidget>>>,
     /// Page the list instances no longer have (removed by an event).
     pub(super) gone_page: Arc<Mutex<Option<String>>>,
+    /// The list module declares that its pages may declare what stays usable
+    /// while the computer is locked.
+    pub(super) list_lock_safe_pages: Arc<AtomicBool>,
+    /// The same for the fragile module, which sends notifications in tests.
+    pub(super) fragile_lock_safe_pages: Arc<AtomicBool>,
     /// Added to the index in the ids of page items.
     pub(super) item_shift: Arc<AtomicUsize>,
     /// Items pressed, in order.
@@ -206,12 +211,14 @@ impl Module for List {
         let checked = self.probe.checked.lock().unwrap().clone();
         exists.then(|| {
             let items = (0..self.settings.items)
-                .map(|index| PageItem {
-                    id: ItemId(format!("i{}", index + shift)),
-                    key: KeyContent::with_label(format!("item {index}"))
-                        .focused(focus == Some(index))
-                        .checked(checked.contains(&index))
-                        .usable_when_locked(self.settings.lock_safe),
+                .map(|index| {
+                    PageItem::new(
+                        ItemId(format!("i{}", index + shift)),
+                        KeyContent::with_label(format!("item {index}"))
+                            .focused(focus == Some(index))
+                            .checked(checked.contains(&index)),
+                    )
+                    .usable_when_locked(self.settings.lock_safe)
                 })
                 .collect();
             PageContent::new(format!("{} ({page})", self.settings.label), items)
@@ -274,6 +281,7 @@ impl ModuleFactory for ListFactory {
             description: String::new(),
             capabilities: ModuleCapabilities {
                 key: true,
+                lock_safe_pages: self.0.list_lock_safe_pages.load(Ordering::SeqCst),
                 ..Default::default()
             },
             dial_functions: Vec::new(),
@@ -409,10 +417,7 @@ impl Module for Fragile {
     fn page(&self, page: &PageId) -> Option<PageContent> {
         assert_ne!(self.failure, Failure::Page, "fragile page");
         (page.0 == FRAGILE_PAGE).then(|| {
-            let item = PageItem {
-                id: "x".into(),
-                key: KeyContent::with_label("x"),
-            };
+            let item = PageItem::new("x".into(), KeyContent::with_label("x"));
             PageContent::new(FRAGILE_KIND, vec![item])
         })
     }
@@ -499,6 +504,7 @@ impl ModuleFactory for FragileFactory {
             description: String::new(),
             capabilities: ModuleCapabilities {
                 key: true,
+                lock_safe_pages: self.0.fragile_lock_safe_pages.load(Ordering::SeqCst),
                 ..Default::default()
             },
             dial_functions: vec![DialFunctionDescriptor {

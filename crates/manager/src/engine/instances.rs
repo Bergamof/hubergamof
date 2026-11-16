@@ -197,6 +197,16 @@ impl Instances {
             .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
     }
 
+    /// Whether the pages of instance `id` may declare what stays usable
+    /// while the computer is locked: its module declares it. An unknown
+    /// instance does not.
+    pub(crate) fn lock_safe_pages(&self, id: &ModuleInstanceId) -> bool {
+        self.live
+            .get(id)
+            .and_then(|instance| self.registry.get(&instance.kind))
+            .is_some_and(|factory| factory.descriptor().capabilities.lock_safe_pages)
+    }
+
     /// Page `page` of instance `id`, if it exists.
     pub(crate) fn page(&mut self, id: &ModuleInstanceId, page: &PageId) -> Option<PageContent> {
         self.inspect(id, "page", |module| module.page(page))

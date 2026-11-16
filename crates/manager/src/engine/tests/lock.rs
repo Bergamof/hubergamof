@@ -3,8 +3,8 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use hubergamof_module_api::Command;
-use hubergamof_protocol::LOCK_SLEEP_RANGE;
+use hubergamof_module_api::{Command, ContextDial};
+use hubergamof_protocol::{DialAssignment, LOCK_SLEEP_RANGE};
 
 use serde_json::json;
 
@@ -235,7 +235,16 @@ async fn dials_are_refused_with_a_padlock_unless_their_module_is_usable_when_loc
 /// A device with a list of four items on its first key, whose page declares
 /// what the arguments say, going dark `SLEEP_SECONDS` after a lock.
 async fn declaring_fixture(lock_safe: bool, keeps_lit: bool) -> Fixture {
+    declaring_fixture_of(lock_safe, keeps_lit, true).await
+}
+
+/// The same, the module declaring or not that its pages may declare.
+async fn declaring_fixture_of(lock_safe: bool, keeps_lit: bool, module_allows: bool) -> Fixture {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .probe
+        .list_lock_safe_pages
+        .store(module_allows, Ordering::SeqCst);
     let mut module = list(4);
     module.settings = json!({ "items": 4, "lockSafe": lock_safe, "keepsLit": keeps_lit });
     let mut config = fixture.with(vec![module], &["list"], &[None; 4]);
@@ -548,4 +557,70 @@ async fn a_device_that_refuses_to_go_dark_keeps_drawing_and_tries_again() {
     fixture.tap_first_key().await;
     tokio::time::sleep(SLEEP + SETTLE).await;
     assert_eq!(fixture.brightness(), 0, "dark at the next try");
+}
+
+#[tokio::test(start_paused = true)]
+async fn what_a_page_declares_is_ignored_for_a_module_that_may_not() {
+    let fixture = declaring_fixture_of(true, true, false).await;
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.lock(true).await;
+    // Neither kept open nor acting: the page is closed, then the device dark.
+    assert_eq!(fixture.page().id, HOME_PAGE_ID);
+    tokio::time::sleep(SLEEP + SETTLE * 2).await;
+    assert_eq!(fixture.brightness(), 0);
+}
+
+/// Contextual dial on dial 0, on the page of a list that declares `dial`.
+async fn contextual_dial_fixture(dial: ContextDial) -> Fixture {
+    contextual_dial_fixture_of(dial, true).await
+}
+
+async fn contextual_dial_fixture_of(dial: ContextDial, module_allows: bool) -> Fixture {
+    let fixture = declaring_fixture_of(false, true, module_allows).await;
+    let mut config = fixture.config();
+    config.dials[0] = DialAssignment::Contextual;
+    fixture.engine.apply_config(config).await.unwrap();
+    *fixture.probe.context_dial.lock().unwrap() = dial;
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.lock(true).await;
+    fixture
+}
+
+fn context_calls(fixture: &Fixture) -> Vec<String> {
+    fixture.probe.context_calls.lock().unwrap().clone()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_contextual_dial_declared_usable_when_locked_acts_without_padlock() {
+    let fixture = contextual_dial_fixture(
+        ContextDial::none()
+            .pressing("Répondre")
+            .usable_when_locked(true),
+    )
+    .await;
+    fixture.engine.press_dial(0).await.unwrap();
+    assert_eq!(context_calls(&fixture), ["press list"]);
+    assert!(!fixture.hint(0).locked);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_contextual_dial_not_declared_is_refused_with_a_padlock_when_locked() {
+    let fixture = contextual_dial_fixture(ContextDial::none().pressing("Répondre")).await;
+    fixture.engine.press_dial(0).await.unwrap();
+    assert_eq!(context_calls(&fixture), Vec::<String>::new());
+    assert!(fixture.hint(0).locked);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_contextual_dial_declaration_is_ignored_for_a_module_that_may_not() {
+    let fixture = contextual_dial_fixture_of(
+        ContextDial::none()
+            .pressing("Répondre")
+            .usable_when_locked(true),
+        false,
+    )
+    .await;
+    // Not even kept open: the page of a module that may not declare is closed.
+    fixture.engine.press_dial(0).await.unwrap();
+    assert_eq!(context_calls(&fixture), Vec::<String>::new());
 }
