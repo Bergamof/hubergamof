@@ -15,7 +15,7 @@
 # L'interface est alors sur http://127.0.0.1:7878/ (ou le port choisi).
 
 # --------------------------------------------------------------------------- UI
-FROM node:24-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d AS ui
+FROM node:24-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0 AS ui
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=true
