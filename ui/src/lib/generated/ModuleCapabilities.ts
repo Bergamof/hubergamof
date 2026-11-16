@@ -24,4 +24,11 @@ multipleInstances: boolean,
  * command or acts on the computer. Otherwise the keys and dials of the
  * module are refused while locked.
  */
-usableWhenLocked: boolean, };
+usableWhenLocked: boolean, 
+/**
+ * Its pages may declare what stays usable while the computer is locked
+ * (keys, contextual dial, notification action) and keep the device lit.
+ * Otherwise those declarations are ignored: refused by default like the
+ * other capabilities.
+ */
+lockSafePages: boolean, };

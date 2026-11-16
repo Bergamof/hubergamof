@@ -33,10 +33,10 @@ impl Docker {
         } else {
             (action.label_for(ticked), KeyState::Normal)
         };
-        PageItem {
-            id: key.item,
-            key: KeyContent::with_icon(action.icon(), label).in_state(state),
-        }
+        PageItem::new(
+            key.item,
+            KeyContent::with_icon(action.icon(), label).in_state(state),
+        )
     }
 
     pub(super) fn project_page(&self, page: &PageId, project: &Project) -> PageContent {
@@ -99,14 +99,14 @@ impl Docker {
             return entry.item;
         };
         let focused = selection.cursor() == Some(entry.item.id.0.as_str());
-        PageItem {
-            id: entry.item.id,
-            key: entry
+        PageItem::new(
+            entry.item.id,
+            entry
                 .item
                 .key
                 .checked(selection.is_ticked(&service))
                 .focused(focused),
-        }
+        )
     }
 
     /// The key of an entry of `project` (a container, or a service without
@@ -176,10 +176,10 @@ impl Docker {
             project.running(),
             project.total()
         );
-        PageItem {
-            id: project_id(&project.name).into(),
-            key: KeyContent::with_icon(icon, &label).in_state(state),
-        }
+        PageItem::new(
+            project_id(&project.name).into(),
+            KeyContent::with_icon(icon, &label).in_state(state),
+        )
     }
 
     pub(super) fn variants_page(
@@ -235,26 +235,23 @@ impl Docker {
 
 /// Key `id` of something being worked on: `label` and what is `done`.
 fn working_item(id: String, label: &str, done: &str) -> PageItem {
-    PageItem {
-        id: id.into(),
-        key: KeyContent::with_icon(&icons::WORKING, format!("{label} {done}")),
-    }
+    PageItem::new(
+        id.into(),
+        KeyContent::with_icon(&icons::WORKING, format!("{label} {done}")),
+    )
 }
 
 /// The key opening the page of the variants of `up`.
 pub(super) fn up_item() -> PageItem {
-    PageItem {
-        id: UP_ITEM.into(),
-        key: KeyContent::with_icon(&icons::UP, UP_LABEL),
-    }
+    PageItem::new(UP_ITEM.into(), KeyContent::with_icon(&icons::UP, UP_LABEL))
 }
 
 /// The key opening the page of the variants of `down`.
 pub(super) fn down_item() -> PageItem {
-    PageItem {
-        id: DOWN_ITEM.into(),
-        key: KeyContent::with_icon(&icons::DOWN, DOWN_LABEL),
-    }
+    PageItem::new(
+        DOWN_ITEM.into(),
+        KeyContent::with_icon(&icons::DOWN, DOWN_LABEL),
+    )
 }
 
 /// Title of an `up` or `down` page: `label` and what it is about, with the
@@ -271,10 +268,10 @@ pub(super) fn variants_title(
 
 /// Key of a service of a project that has no container.
 pub(super) fn planned_item(project: &str, service: &str) -> PageItem {
-    PageItem {
-        id: service_id(project, service).into(),
-        key: KeyContent::with_icon(&icons::SERVICE_PLANNED, service),
-    }
+    PageItem::new(
+        service_id(project, service).into(),
+        KeyContent::with_icon(&icons::SERVICE_PLANNED, service),
+    )
 }
 
 /// Key of a container, labelled `label`, opening its page.
@@ -286,10 +283,10 @@ pub(super) fn container_item(container: &Container, label: &str) -> PageItem {
     } else {
         (&icons::STOPPED, KeyState::Normal)
     };
-    PageItem {
-        id: container_id(&container.name).into(),
-        key: KeyContent::with_icon(icon, label).in_state(state),
-    }
+    PageItem::new(
+        container_id(&container.name).into(),
+        KeyContent::with_icon(icon, label).in_state(state),
+    )
 }
 
 pub(super) fn status_label(container: &Container) -> &'static str {

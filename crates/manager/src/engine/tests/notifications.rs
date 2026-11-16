@@ -555,3 +555,60 @@ async fn a_navigation_dial_reminds_that_it_hides_the_notification() {
     assert_eq!(fixture.reminder_ink(0, 200), 0);
     assert_eq!(fixture.reminder_ink(400, 800), 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_notification_action_declared_usable_when_locked_runs_on_a_locked_computer() {
+    let fixture = contextual_fixture().await;
+    fixture
+        .probe
+        .fragile_lock_safe_pages
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.notify(
+        permanent("Appel").with_context_dial(
+            ContextDial::none()
+                .pressing("Répondre")
+                .usable_when_locked(true),
+        ),
+    );
+    fixture.wait_for_notification(true).await;
+    let id = fixture.unread_ids()[0];
+
+    fixture.probe.screen_lock.set(true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fixture.press_dial(2).await;
+    assert_eq!(fixture.notification_presses(), [id]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_notification_action_not_declared_is_refused_on_a_locked_computer() {
+    let fixture = contextual_fixture().await;
+    fixture
+        .probe
+        .fragile_lock_safe_pages
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.notify(with_action("Appel", "Répondre"));
+    fixture.wait_for_notification(true).await;
+
+    fixture.probe.screen_lock.set(true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fixture.press_dial(2).await;
+    assert_eq!(fixture.notification_presses(), []);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_notification_action_declaration_is_ignored_for_a_module_that_may_not() {
+    let fixture = contextual_fixture().await;
+    fixture.notify(
+        permanent("Appel").with_context_dial(
+            ContextDial::none()
+                .pressing("Répondre")
+                .usable_when_locked(true),
+        ),
+    );
+    fixture.wait_for_notification(true).await;
+
+    fixture.probe.screen_lock.set(true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    fixture.press_dial(2).await;
+    assert_eq!(fixture.notification_presses(), []);
+}

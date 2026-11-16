@@ -165,7 +165,12 @@ describe('device selection', () => {
 			kind: 'audio',
 			name: 'Audio',
 			description: '',
-			capabilities: { key: false, multipleInstances: false, usableWhenLocked: false },
+			capabilities: {
+				key: false,
+				multipleInstances: false,
+				usableWhenLocked: false,
+				lockSafePages: false
+			},
 			dialFunctions: [],
 			settings: [],
 			icon: null,
@@ -224,7 +229,12 @@ describe('configuration updates', () => {
 			kind: 'clock',
 			name: 'Horloge',
 			description: '',
-			capabilities: { key: true, multipleInstances: true, usableWhenLocked: false },
+			capabilities: {
+				key: true,
+				multipleInstances: true,
+				usableWhenLocked: false,
+				lockSafePages: false
+			},
 			dialFunctions: [],
 			settings: [],
 			icon: null,

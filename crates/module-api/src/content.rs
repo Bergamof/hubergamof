@@ -63,11 +63,6 @@ pub struct KeyContent {
     /// The key is ticked (a selection): the host draws a check mark in a
     /// corner.
     pub checked: bool,
-    /// Pressing this key of a page acts even while the computer is locked.
-    /// Declared by the module for what is harmless to run on a locked
-    /// computer; the module-wide `usable_when_locked` capability still
-    /// applies to its home key, which ignores this flag.
-    pub usable_when_locked: bool,
 }
 
 impl KeyContent {
@@ -107,6 +102,35 @@ impl KeyContent {
     pub fn checked(self, checked: bool) -> Self {
         Self { checked, ..self }
     }
+}
+
+/// One key of a module page. Built with [`PageItem::new`]: fields may be
+/// added without breaking modules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PageItem {
+    /// Identifier passed back to [`crate::Module::on_item_press`].
+    pub id: ItemId,
+    /// What the key shows.
+    pub key: KeyContent,
+    /// Pressing this key acts even while the computer is locked. Only for
+    /// what is harmless to run on a locked computer, and honoured only for
+    /// a module whose descriptor declares
+    /// [`crate::ModuleCapabilities::lock_safe_pages`]. Never derive it from
+    /// settings that the web UI or an import can change.
+    pub usable_when_locked: bool,
+}
+
+impl PageItem {
+    /// A key `key` identified by `id`, refused while the computer is locked.
+    #[must_use]
+    pub fn new(id: ItemId, key: KeyContent) -> Self {
+        Self {
+            id,
+            key,
+            usable_when_locked: false,
+        }
+    }
 
     /// The same key, acting while the computer is locked or not.
     #[must_use]
@@ -116,15 +140,6 @@ impl KeyContent {
             ..self
         }
     }
-}
-
-/// One key of a module page.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageItem {
-    /// Identifier passed back to [`crate::Module::on_item_press`].
-    pub id: ItemId,
-    /// What the key shows.
-    pub key: KeyContent,
 }
 
 /// A page opened by a module with [`crate::Command::OpenPage`].
@@ -210,11 +225,12 @@ mod tests {
 
     #[test]
     fn nothing_acts_on_a_locked_computer_unless_declared() {
-        let key = KeyContent::with_label("x");
-        assert!(!key.usable_when_locked);
-        assert!(key.clone().usable_when_locked(true).usable_when_locked);
+        let item = PageItem::new(ItemId("x".into()), KeyContent::with_label("x"));
+        assert!(!item.usable_when_locked);
+        assert!(item.clone().usable_when_locked(true).usable_when_locked);
         assert!(
-            !key.usable_when_locked(true)
+            !item
+                .usable_when_locked(true)
                 .usable_when_locked(false)
                 .usable_when_locked
         );

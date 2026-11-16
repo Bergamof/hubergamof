@@ -45,6 +45,10 @@ pub struct ModuleDescriptor {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent permissions, each refused by default: a set of flags by design"
+)]
 pub struct ModuleCapabilities {
     /// Can be placed on a key.
     pub key: bool,
@@ -58,6 +62,12 @@ pub struct ModuleCapabilities {
     /// module are refused while locked.
     #[serde(default)]
     pub usable_when_locked: bool,
+    /// Its pages may declare what stays usable while the computer is locked
+    /// (keys, contextual dial, notification action) and keep the device lit.
+    /// Otherwise those declarations are ignored: refused by default like the
+    /// other capabilities.
+    #[serde(default)]
+    pub lock_safe_pages: bool,
 }
 
 /// A function a module offers to a dial.

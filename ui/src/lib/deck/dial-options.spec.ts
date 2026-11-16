@@ -16,7 +16,12 @@ const audio: CatalogModule = {
 	kind: 'audio',
 	name: 'Audio',
 	description: '',
-	capabilities: { key: true, multipleInstances: false, usableWhenLocked: false },
+	capabilities: {
+		key: true,
+		multipleInstances: false,
+		usableWhenLocked: false,
+		lockSafePages: false
+	},
 	dialFunctions: [volume],
 	settings: [],
 	icon: null,

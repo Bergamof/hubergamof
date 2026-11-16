@@ -55,7 +55,12 @@ const pomodoro: CatalogModule = {
 	kind: 'pomodoro',
 	name: 'Pomodoro',
 	description: '',
-	capabilities: { key: true, multipleInstances: true, usableWhenLocked: false },
+	capabilities: {
+		key: true,
+		multipleInstances: true,
+		usableWhenLocked: false,
+		lockSafePages: false
+	},
 	dialFunctions: [],
 	icon: null,
 	settingIcons: {},
@@ -76,7 +81,12 @@ const audio: CatalogModule = {
 	...pomodoro,
 	kind: 'audio',
 	name: 'Audio',
-	capabilities: { key: true, multipleInstances: false, usableWhenLocked: false },
+	capabilities: {
+		key: true,
+		multipleInstances: false,
+		usableWhenLocked: false,
+		lockSafePages: false
+	},
 	dialFunctions: [{ id: 'volume', name: 'Volume', description: '' }]
 };
 
@@ -85,7 +95,12 @@ const dialOnly: CatalogModule = {
 	...audio,
 	kind: 'timer',
 	name: 'Minuteur',
-	capabilities: { key: false, multipleInstances: false, usableWhenLocked: false }
+	capabilities: {
+		key: false,
+		multipleInstances: false,
+		usableWhenLocked: false,
+		lockSafePages: false
+	}
 };
 
 describe('newInstanceId', () => {
