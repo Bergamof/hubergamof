@@ -8,6 +8,7 @@
 
 use std::ffi::OsString;
 use std::io;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
@@ -110,6 +111,10 @@ pub enum InstallError {
     /// The binary has no absolute path, which the browser requires.
     #[error("the path of the hubergamof binary must be absolute: {0}")]
     RelativeBinary(PathBuf),
+    /// The binary, or a folder above it, could be replaced by someone else:
+    /// the browser would run whatever is there.
+    #[error("{0} is writable by, or owned by, another account: install hubergamof elsewhere")]
+    BinaryNotPrivate(PathBuf),
     /// The embedded manifest has no usable `key`.
     #[error("the extension's manifest has no valid key")]
     BadKey,
@@ -161,6 +166,39 @@ pub fn embedded_extension_id() -> Result<String, InstallError> {
     extension_id(manifest["key"].as_str().ok_or(InstallError::BadKey)?)
 }
 
+/// Sticky bit of a folder: others cannot replace what they do not own.
+const STICKY: u32 = 0o1000;
+/// Write bits of the group and of others.
+const WRITABLE_BY_OTHERS: u32 = 0o022;
+
+/// Refuses a `binary` the browser would run on trust if it, or a folder above
+/// it, is owned by neither `user` nor root, or is writable by the group or
+/// others (a sticky folder only protects what its user owns).
+fn check_binary_is_private(binary: &Path, user: u32) -> Result<(), InstallError> {
+    for path in binary.ancestors() {
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(io_error(path)(error)),
+        };
+        let open_to_others =
+            metadata.mode() & WRITABLE_BY_OTHERS != 0 && metadata.mode() & STICKY == 0;
+        if open_to_others || (metadata.uid() != user && metadata.uid() != 0) {
+            return Err(InstallError::BinaryNotPrivate(path.to_owned()));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `origin`, passed by the browser to the host, is the extension's.
+///
+/// # Errors
+///
+/// Fails when the embedded manifest has no valid `key`.
+pub fn is_own_origin(origin: &str) -> Result<bool, InstallError> {
+    Ok(origin == format!("{BROWSER_ORIGIN_PREFIX}{}/", embedded_extension_id()?))
+}
+
 fn io_error(path: &Path) -> impl FnOnce(io::Error) -> InstallError + '_ {
     |source| InstallError::Io {
         path: path.to_owned(),
@@ -202,6 +240,10 @@ pub fn install(
     if !binary.is_absolute() {
         return Err(InstallError::RelativeBinary(binary.to_owned()));
     }
+    let user = std::fs::metadata("/proc/self")
+        .map_err(io_error(Path::new("/proc/self")))?
+        .uid();
+    check_binary_is_private(binary, user)?;
     let extension_id = embedded_extension_id()?;
     let extension_dir = locations.data_dir.join(EXTENSION_FOLDER);
     write_extension(&extension_dir)?;
@@ -313,6 +355,29 @@ mod tests {
         let second = install(&locations(root.path()), binary, Browser::Chromium).unwrap();
         assert_eq!(first, second);
         assert!(!second.extension_dir.join("stale.js").exists());
+    }
+
+    #[test]
+    fn a_binary_in_a_folder_open_to_others_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("bin");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let outcome = install(
+            &locations(root.path()),
+            &folder.join("hubergamof"),
+            Browser::Brave,
+        );
+        assert!(matches!(outcome, Err(InstallError::BinaryNotPrivate(path)) if path == folder));
+        assert!(!root.path().join("config").exists());
+    }
+
+    #[test]
+    fn only_the_embedded_origin_is_ours() {
+        assert!(is_own_origin(&format!("chrome-extension://{EXPECTED_ID}/")).unwrap());
+        assert!(!is_own_origin("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/").unwrap());
+        assert!(!is_own_origin("").unwrap());
     }
 
     #[test]

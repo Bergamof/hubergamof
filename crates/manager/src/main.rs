@@ -94,7 +94,7 @@ enum Command {
 
     /// Relay the browser extension to the manager's Teams module (native
     /// messaging host, started by the browser, not by hand). Speaks frames
-    /// on stdin and stdout; the origin the browser passes is ignored.
+    /// on stdin and stdout; the origin the browser passes must be the extension's.
     NativeHost {
         /// Extension origin passed by the browser.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
     });
     match cli.command {
         Some(Command::Open) => run_open(cli.port).await,
-        Some(Command::NativeHost { .. }) => run_native_host().await,
+        Some(Command::NativeHost { origin }) => run_native_host(&origin).await,
         Some(Command::InstallExtension { browser }) => install_extension(browser),
         None => run_manager(cli).await,
     }
@@ -161,7 +161,14 @@ fn install_extension(browser: Browser) -> Result<()> {
 }
 
 /// Relays the browser's frames on stdio to the manager's Teams socket.
-async fn run_native_host() -> Result<()> {
+async fn run_native_host(origin: &[String]) -> Result<()> {
+    // The browser already enforces `allowed_origins`; this is a second lock.
+    if let Some(origin) = origin.first() {
+        anyhow::ensure!(
+            teams_extension::is_own_origin(origin)?,
+            "started for an origin that is not the HuBergamof extension's"
+        );
+    }
     let path = teams::socket_path().context("no runtime directory for the manager's socket")?;
     let stream = tokio::net::UnixStream::connect(&path)
         .await

@@ -25,11 +25,16 @@ const MAX_ITEMS = 100;
 export const FrameRole = Object.freeze({ Teams: 'teams', Calendar: 'calendar', Other: 'other' });
 
 /**
+ * What a frame is for. Teams only counts as the top frame of its tab, the
+ * calendar only when Teams itself embeds it (the mail tabs of Outlook are
+ * never read).
+ * @typedef {{ top: boolean, underTeams: boolean }} FrameContext
  * @param {string} hostname
+ * @param {FrameContext} context
  */
-export function frameRole(hostname) {
-	if (hostname === 'teams.cloud.microsoft') return FrameRole.Teams;
-	if (hostname === 'outlook.office.com') return FrameRole.Calendar;
+export function frameRole(hostname, context) {
+	if (hostname === 'teams.cloud.microsoft' && context.top) return FrameRole.Teams;
+	if (hostname === 'outlook.office.com' && context.underTeams) return FrameRole.Calendar;
 	return FrameRole.Other;
 }
 
@@ -107,9 +112,10 @@ export function readMeetings(doc, nowSeconds) {
  * @param {Document} doc
  * @param {string} hostname
  * @param {number} nowSeconds
+ * @param {FrameContext} context
  */
-export function readReports(doc, hostname, nowSeconds) {
-	const role = frameRole(hostname);
+export function readReports(doc, hostname, nowSeconds, context) {
+	const role = frameRole(hostname, context);
 	if (role === FrameRole.Calendar) {
 		const items = readMeetings(doc, nowSeconds);
 		return items ? [{ type: 'meetings', items }] : [];
@@ -131,12 +137,12 @@ export function readReports(doc, hostname, nowSeconds) {
  * @param {string} action
  */
 export function performAction(doc, action) {
-	const selectors = {
-		toggleMute: [MICROPHONE, PREJOIN_MICROPHONE],
-		toggleCamera: [CAMERA, PREJOIN_CAMERA],
-		hangUp: [HANGUP]
-	};
-	const candidates = selectors[/** @type {keyof typeof selectors} */ (action)] ?? [];
+	const selectors = new Map([
+		['toggleMute', [MICROPHONE, PREJOIN_MICROPHONE]],
+		['toggleCamera', [CAMERA, PREJOIN_CAMERA]],
+		['hangUp', [HANGUP]]
+	]);
+	const candidates = selectors.get(action) ?? [];
 	for (const selector of candidates) {
 		const control = doc.querySelector(selector);
 		if (control instanceof HTMLElement) {

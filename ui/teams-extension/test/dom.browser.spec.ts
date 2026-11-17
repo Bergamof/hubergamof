@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { FrameContext } from '../lib/teams-dom.js';
 import { start } from '../lib/content-main.js';
 import {
 	frameRole,
@@ -70,32 +71,43 @@ describe('readMeetings', () => {
 	});
 });
 
+const TOP: FrameContext = { top: true, underTeams: false };
+const CALENDAR: FrameContext = { top: false, underTeams: true };
+
 describe('readReports', () => {
 	it('reports the count, the names and the call of Teams', () => {
 		const doc = page(CONVERSATIONS, '(2) Chat');
-		expect(readReports(doc, 'teams.cloud.microsoft', 0).map((r) => r.type)).toEqual([
+		expect(readReports(doc, 'teams.cloud.microsoft', 0, TOP).map((r) => r.type)).toEqual([
 			'unread',
 			'conversations',
 			'call'
 		]);
 	});
 	it('says nobody is unread without reading the list when the count is zero', () => {
-		const reports = readReports(page(CONVERSATIONS, 'Chat'), 'teams.cloud.microsoft', 0);
+		const reports = readReports(page(CONVERSATIONS, 'Chat'), 'teams.cloud.microsoft', 0, TOP);
 		expect(reports[1]).toEqual({ type: 'conversations', unread: [] });
 	});
 	it('keeps the previous names when the list is hidden', () => {
-		const reports = readReports(page('<p/>', '(2) Calendrier'), 'teams.cloud.microsoft', 0);
+		const reports = readReports(page('<p/>', '(2) Calendrier'), 'teams.cloud.microsoft', 0, TOP);
 		expect(reports.map((r) => r.type)).toEqual(['unread', 'call']);
 	});
 	it('reads only meetings in the calendar frame', () => {
 		const doc = page(
 			'<div role="button" aria-label="X, 10:00 à 11:00, lundi 17 novembre 2026"></div>'
 		);
-		expect(readReports(doc, 'outlook.office.com', 0).map((r) => r.type)).toEqual(['meetings']);
+		expect(readReports(doc, 'outlook.office.com', 0, CALENDAR).map((r) => r.type)).toEqual([
+			'meetings'
+		]);
+	});
+	it('ignores a Teams sub-frame and Outlook outside of Teams', () => {
+		const sub = { top: false, underTeams: false };
+		expect(readReports(page('<p/>', '(1) x'), 'teams.cloud.microsoft', 0, sub)).toEqual([]);
+		const slot = '<div role="button" aria-label="X, 10:00 à 11:00, lundi 17 novembre 2026"></div>';
+		expect(readReports(page(slot), 'outlook.office.com', 0, TOP)).toEqual([]);
 	});
 	it('reads nothing elsewhere', () => {
-		expect(readReports(page('<p/>'), 'example.org', 0)).toEqual([]);
-		expect(frameRole('example.org')).toBe('other');
+		expect(readReports(page('<p/>'), 'example.org', 0, TOP)).toEqual([]);
+		expect(frameRole('example.org', TOP)).toBe('other');
 	});
 });
 
@@ -119,6 +131,7 @@ describe('performAction', () => {
 		const doc = page('<p/>');
 		expect(performAction(doc, 'hangUp')).toBe(false);
 		expect(performAction(doc, 'accept')).toBe(false);
+		expect(performAction(doc, 'constructor')).toBe(false);
 	});
 });
 
@@ -140,6 +153,7 @@ describe('start', () => {
 		let tick = () => {};
 		start(doc, rt, {
 			hostname: 'teams.cloud.microsoft',
+			context: TOP,
 			now: () => 0,
 			setInterval: ((f: () => void) => (tick = f)) as never
 		});
@@ -151,14 +165,32 @@ describe('start', () => {
 		expect(rt.sendMessage).toHaveBeenLastCalledWith({ report: { type: 'unread', count: 2 } });
 	});
 
+	it('does not click in a sub-frame', () => {
+		const doc = page('<button data-tid="hangup-main-btn"></button>');
+		const click = vi.fn();
+		doc.querySelector('button')!.addEventListener('click', click);
+		const rt = runtime();
+		start(doc, rt, {
+			hostname: 'teams.cloud.microsoft',
+			context: { top: false, underTeams: false },
+			setInterval: (() => 0) as never
+		});
+		rt.deliver({ type: 'do', action: 'hangUp' });
+		expect(click).not.toHaveBeenCalled();
+	});
+
 	it('clicks on request in the top frame only', () => {
 		const doc = page('<button data-tid="hangup-main-btn"></button>');
 		const click = vi.fn();
 		doc.querySelector('button')!.addEventListener('click', click);
 		const rt = runtime();
-		start(doc, rt, { hostname: 'teams.cloud.microsoft', setInterval: (() => 0) as never });
+		start(doc, rt, {
+			hostname: 'teams.cloud.microsoft',
+			context: TOP,
+			setInterval: (() => 0) as never
+		});
 		rt.deliver({ type: 'do', action: 'hangUp' });
 		rt.deliver({ nonsense: true });
-		expect(click).toHaveBeenCalledTimes(window === window.top ? 1 : 0);
+		expect(click).toHaveBeenCalledOnce();
 	});
 });

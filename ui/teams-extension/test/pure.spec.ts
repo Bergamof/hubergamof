@@ -1,3 +1,4 @@
+import manifest from '../manifest.json';
 import { describe, expect, it, vi } from 'vitest';
 import { reconnectDelay } from '../lib/backoff.js';
 import { cameraOnFromLabel, mutedFromLabel } from '../lib/labels.js';
@@ -158,5 +159,19 @@ describe('Relay', () => {
 		ports[0].drop();
 		expect(relay.connect()).toBe(true);
 		expect(ports).toHaveLength(2);
+	});
+});
+
+describe('the manifest', () => {
+	// A change of privileges must show as a diff of this test in review.
+	it('asks for nothing beyond what the extension needs', () => {
+		const origins = ['https://teams.cloud.microsoft/*', 'https://outlook.office.com/*'];
+		expect(manifest.permissions).toEqual(['nativeMessaging', 'alarms']);
+		expect(manifest.host_permissions).toEqual(['https://teams.cloud.microsoft/*']);
+		expect(manifest.content_scripts.map((script) => script.matches)).toEqual([origins]);
+		expect(manifest.web_accessible_resources).toEqual([
+			{ resources: ['lib/*.js'], matches: origins, use_dynamic_url: true }
+		]);
+		expect(manifest).not.toHaveProperty('externally_connectable');
 	});
 });
