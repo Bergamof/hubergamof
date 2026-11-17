@@ -165,7 +165,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Fait aussi : molette contextuelle + sélection de services Docker (cadre/pastille, appui long, `ComposeScope::Services`) ; à valider sur le vrai Stream Deck+ (appui long de la molette, lisibilité du cadre sur les touches).
 - Fait aussi : extinction au verrouillage (#43, logind) ; à valider sur le vrai Stream Deck+ avec un vrai verrouillage KDE/GNOME.
 - Fait aussi : lanceur de bureau (`hubergamof open`, `.desktop` + icônes) ; à valider sur le poste d'Adrien.
-- Fait aussi : verrouillage par action (#54, #55 : `lock_safe_pages`) et module Teams, volet 2a (pont, `native-host`, module) et 2b (extension, `install-extension`, tests dans la CI de l'UI) ; reste 2c : sonnerie (Répondre/Refuser), rappels de réunions, validation réelle de l'extension dans Brave.
+- Fait aussi : verrouillage par action (#54, #55 : `lock_safe_pages`) et module Teams, volet 2a (pont, `native-host`, module) et 2b (extension, `install-extension`, tests dans la CI de l'UI) ; 2c partiel : rappels de réunions et notification d'appel entrant (côté module) faits ; restent la détection de la sonnerie par l'extension (sélecteurs à relever avec le spike), les noms des non lus par D-Bus et la validation réelle de l'extension dans Brave (non testée).
 - Tests navigateur des composants de l'UI : tous les composants de réglages le sont désormais ; planchers de couverture UI relevés (`ui/vite.config.ts`).
 
 ## Licence

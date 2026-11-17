@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use hubergamof_module_api::testing::TestContext;
-use hubergamof_module_api::{Command, Feedback, KeyState, TaskScope};
+use hubergamof_module_api::{Command, Feedback, KeyState, Notification, NotificationId, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -9,6 +9,9 @@ use super::wire::{BrowserReport, Meeting};
 use super::*;
 
 const PATIENCE: Duration = Duration::from_secs(5);
+
+/// Simulated time to wait for a reminder.
+const MEETING_WAIT: Duration = Duration::from_secs(600);
 
 struct Harness {
     bridge: Arc<SimulatedBridge>,
@@ -19,10 +22,14 @@ struct Harness {
 
 impl Harness {
     fn new(bridge: SimulatedBridge) -> Self {
+        Self::with(bridge, WallClock::system(), &json!({}))
+    }
+
+    fn with(bridge: SimulatedBridge, clock: WallClock, settings: &Value) -> Self {
         let bridge = Arc::new(bridge);
         let TestContext { ctx, events, scope } = TestContext::new(TEAMS_KIND);
-        let module = TeamsFactory::new(Arc::clone(&bridge) as _)
-            .create(ctx, &json!({}))
+        let module = TeamsFactory::with_clock(Arc::clone(&bridge) as _, clock)
+            .create(ctx, settings)
             .unwrap();
         Self {
             bridge,
@@ -39,7 +46,11 @@ impl Harness {
     }
 
     async fn next_event(&mut self) -> Vec<Command> {
-        let event = tokio::time::timeout(PATIENCE, self.events.recv())
+        self.next_event_within(PATIENCE).await
+    }
+
+    async fn next_event_within(&mut self, patience: Duration) -> Vec<Command> {
+        let event = tokio::time::timeout(patience, self.events.recv())
             .await
             .expect("an event")
             .expect("the instance is alive");
@@ -283,4 +294,143 @@ async fn an_event_lost_in_a_full_queue_costs_nothing_but_the_page_opening() {
     harness.bridge.report(BrowserReport::Unread { count: 8 });
     let commands = harness.next_event().await;
     assert!(open_page(&commands, CALL_PAGE));
+}
+
+fn notification(commands: &[Command]) -> Option<&Notification> {
+    commands.iter().find_map(|command| match command {
+        Command::Notify(notification) => Some(notification),
+        _ => None,
+    })
+}
+
+fn meeting(subject: &str, starts_at: i64) -> Meeting {
+    Meeting {
+        subject: subject.into(),
+        starts_at,
+        ends_at: starts_at + 1800,
+    }
+}
+
+/// A clock that starts at `origin` and follows the (simulated) tokio time.
+fn clock_from(origin: i64) -> WallClock {
+    let start = tokio::time::Instant::now();
+    WallClock::from_fn(move || origin + i64::try_from(start.elapsed().as_secs()).unwrap())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_meeting_is_announced_on_the_strip_when_it_comes_within_the_lead_time() {
+    let mut harness = Harness::with(
+        SimulatedBridge::new(),
+        clock_from(10_000),
+        &json!({ "reminderMinutes": 5 }),
+    );
+    // Starts in ten minutes: nothing yet; the report itself is only a change.
+    harness.bridge.report(BrowserReport::Meetings {
+        items: vec![meeting("Point d'équipe", 10_600)],
+    });
+    harness.next_event().await;
+    // Five minutes later the reminder comes by itself.
+    let commands = harness.next_event_within(MEETING_WAIT).await;
+    let notification = notification(&commands).expect("a reminder");
+    assert_eq!(notification.message, "Réunion dans 5 min : Point d'équipe");
+    assert!(notification.timeout.is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn no_reminder_when_the_lead_time_is_zero() {
+    let mut harness = Harness::with(
+        SimulatedBridge::new(),
+        clock_from(10_000),
+        &json!({ "reminderMinutes": 0 }),
+    );
+    harness.bridge.report(BrowserReport::Meetings {
+        items: vec![meeting("Point", 10_100)],
+    });
+    harness.next_event().await;
+    let nothing = tokio::time::timeout(Duration::from_secs(600), harness.events.recv()).await;
+    assert!(nothing.is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_lead_time_can_change_while_the_module_runs() {
+    let mut harness = Harness::with(
+        SimulatedBridge::new(),
+        clock_from(10_000),
+        &json!({ "reminderMinutes": 0 }),
+    );
+    harness.bridge.report(BrowserReport::Meetings {
+        items: vec![meeting("Point", 10_100)],
+    });
+    harness.next_event().await;
+    harness
+        .module
+        .update_settings(&json!({ "reminderMinutes": 10 }))
+        .unwrap();
+    let commands = harness.next_event().await;
+    assert!(notification(&commands).is_some());
+}
+
+#[test]
+fn a_lead_time_out_of_range_is_refused() {
+    let TestContext { ctx, .. } = TestContext::new(TEAMS_KIND);
+    let factory = TeamsFactory::new(Arc::new(SimulatedBridge::new()));
+    assert!(
+        factory
+            .create(ctx, &json!({ "reminderMinutes": 61 }))
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn an_incoming_call_is_announced_and_its_notification_answers_it() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    let commands = harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: Some("Alice".into()),
+        })
+        .await;
+    let announced = notification(&commands).expect("a notification");
+    assert_eq!(announced.message, "Appel : Alice");
+    assert!(announced.context_dial.hint.press.is_some());
+    // Answering is not something to do on a locked computer.
+    assert!(!announced.context_dial.usable_when_locked);
+    assert!(open_page(&commands, CALL_PAGE));
+
+    let answer = harness
+        .module
+        .on_notification_press(NotificationId(1))
+        .await;
+    assert!(matches!(
+        answer.as_slice(),
+        [Command::Feedback(Feedback::Ok)]
+    ));
+    assert_eq!(harness.bridge.requests(), [CallAction::Accept]);
+}
+
+#[tokio::test]
+async fn a_call_that_stopped_ringing_is_not_answered() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.in_call().await;
+    let answer = harness
+        .module
+        .on_notification_press(NotificationId(1))
+        .await;
+    assert_eq!(answer, []);
+    assert_eq!(harness.bridge.requests(), []);
+}
+
+#[tokio::test]
+async fn a_ringing_call_is_announced_once() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    let ringing = |caller: &str| BrowserReport::Call {
+        phase: CallPhase::Ringing,
+        muted: None,
+        camera_on: None,
+        caller: Some(caller.into()),
+    };
+    assert!(notification(&harness.report(ringing("Alice")).await).is_some());
+    assert!(notification(&harness.report(ringing("Alice B.")).await).is_none());
 }

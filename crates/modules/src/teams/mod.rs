@@ -10,15 +10,17 @@
 
 mod bridge;
 pub mod native_host;
+mod reminders;
 pub mod wire;
 
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, Feedback, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, PageContent, PageId,
-    PageItem,
+    Command, ContextDial, Feedback, ImageData, ItemId, KeyContent, KeyState, Module,
+    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
+    Notification, NotificationId, PageContent, PageId, PageItem, Rgb,
 };
 use serde_json::Value;
 use tokio::sync::watch;
@@ -27,6 +29,8 @@ pub use bridge::{
     CallState, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState, is_same_user,
     socket_path,
 };
+use reminders::MeetingSoon;
+pub use reminders::{TeamsSettings, WallClock};
 use wire::{CallAction, CallPhase};
 
 use crate::icons::{asset, svg};
@@ -44,6 +48,14 @@ const MODULE_LABEL: &str = "Teams";
 const UNREAD_TITLE: &str = "Teams · non lus";
 const IN_CALL_LABEL: &str = "En appel";
 const RINGING_LABEL: &str = "Appel";
+const ANSWER_LABEL: &str = "Répondre";
+
+/// Background of the notifications of a meeting and of an incoming call.
+const MEETING_BACKGROUND: Rgb = Rgb(0x46, 0x4E, 0xB8);
+const CALL_BACKGROUND: Rgb = Rgb(0x16, 0xA0, 0x6E);
+
+/// How long the notification of a meeting stays on the strip.
+const MEETING_NOTICE: Duration = Duration::from_secs(60);
 
 /// Key icon: two speech bubbles (a generic drawing: no trademark).
 static MODULE_ICON: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams")));
@@ -56,44 +68,53 @@ struct TeamsChanged;
 #[derive(Debug, Clone)]
 pub struct TeamsFactory {
     bridge: Arc<dyn TeamsBridge>,
+    clock: WallClock,
 }
 
 impl TeamsFactory {
     /// Factory of instances reading and driving Teams through `bridge`.
     #[must_use]
     pub fn new(bridge: Arc<dyn TeamsBridge>) -> Self {
-        Self { bridge }
+        Self::with_clock(bridge, WallClock::system())
+    }
+
+    /// Factory whose reminders read the time of day from `clock`.
+    #[must_use]
+    pub fn with_clock(bridge: Arc<dyn TeamsBridge>, clock: WallClock) -> Self {
+        Self { bridge, clock }
+    }
+}
+
+fn descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        kind: TEAMS_KIND.into(),
+        name: MODULE_LABEL.into(),
+        description: "Teams (navigateur, extension HuBergamof) : conversations non lues, \
+                      appel en cours (micro, caméra, raccrocher), rappel des réunions."
+            .into(),
+        capabilities: ModuleCapabilities {
+            key: true,
+            // The call page declares what stays usable while locked.
+            lock_safe_pages: true,
+            ..Default::default()
+        },
+        dial_functions: Vec::new(),
+        settings: reminders::fields(),
     }
 }
 
 impl ModuleFactory for TeamsFactory {
     fn descriptor(&self) -> ModuleDescriptor {
-        ModuleDescriptor {
-            kind: TEAMS_KIND.into(),
-            name: MODULE_LABEL.into(),
-            description: "Teams (navigateur, extension HuBergamof) : conversations non lues, \
-                          appel en cours (micro, caméra, raccrocher)."
-                .into(),
-            capabilities: ModuleCapabilities {
-                key: true,
-                // The call page declares what stays usable while locked.
-                lock_safe_pages: true,
-                ..Default::default()
-            },
-            dial_functions: Vec::new(),
-            settings: Vec::new(),
-        }
+        descriptor()
     }
 
     fn icon(&self) -> Option<ImageData> {
         Some(MODULE_ICON.clone())
     }
 
-    fn create(
-        &self,
-        ctx: ModuleContext,
-        _settings: &Value,
-    ) -> Result<Box<dyn Module>, ModuleError> {
+    fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
+        let settings: TeamsSettings = descriptor().parse_settings(settings)?;
+        let (lead, lead_changes) = watch::channel(settings.reminder_minutes);
         let changes = self.bridge.state();
         let mut watched = changes.clone();
         let events = ctx.events().clone();
@@ -105,10 +126,18 @@ impl ModuleFactory for TeamsFactory {
                 events.send(TeamsChanged);
             }
         });
+        ctx.tasks().spawn(reminders::run(
+            changes.clone(),
+            lead_changes,
+            self.clock.clone(),
+            ctx.events().clone(),
+        ));
         Ok(Box::new(Teams {
             bridge: Arc::clone(&self.bridge),
             changes,
+            lead,
             call_announced: false,
+            ringing_announced: false,
         }))
     }
 }
@@ -117,8 +146,12 @@ impl ModuleFactory for TeamsFactory {
 pub(crate) struct Teams {
     bridge: Arc<dyn TeamsBridge>,
     changes: watch::Receiver<TeamsState>,
+    /// Lead time of the meeting reminders, read by their task.
+    lead: watch::Sender<u32>,
     /// The page of the call was opened for the call in progress.
     call_announced: bool,
+    /// The ringing call was announced on the strip.
+    ringing_announced: bool,
 }
 
 /// A key of the call page.
@@ -212,7 +245,7 @@ impl Teams {
             let caller = call.caller.clone().unwrap_or_else(|| "?".to_owned());
             vec![
                 PageItem::new(ItemId("caller".into()), KeyContent::with_label(caller)),
-                CallItem::Accept.item(KeyContent::with_label("Répondre")),
+                CallItem::Accept.item(KeyContent::with_label(ANSWER_LABEL)),
                 CallItem::Decline.item(KeyContent::with_label("Refuser")),
             ]
         } else {
@@ -236,6 +269,19 @@ impl Teams {
             }
         }
     }
+}
+
+/// The notification of a ringing call; its press answers.
+///
+/// The caller is on the strip, which is not logged; answering is not usable
+/// while the computer is locked (unlike muting and hanging up).
+fn call_notification(caller: Option<&str>) -> Notification {
+    let message = caller.map_or_else(
+        || "Appel entrant".to_owned(),
+        |name| format!("Appel : {name}"),
+    );
+    Notification::new(message, CALL_BACKGROUND)
+        .with_context_dial(ContextDial::none().pressing(ANSWER_LABEL))
 }
 
 fn mute_key(muted: Option<bool>) -> KeyContent {
@@ -303,21 +349,47 @@ impl Module for Teams {
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
+        if let Some(meeting) = event.downcast_ref::<MeetingSoon>() {
+            let notification = Notification::new(meeting.message.clone(), MEETING_BACKGROUND)
+                .with_timeout(MEETING_NOTICE);
+            return vec![Command::Notify(notification)];
+        }
         if !event.is::<TeamsChanged>() {
             return Vec::new();
         }
-        let active = self.changes.borrow().call.phase.is_active();
+        let (phase, caller) = {
+            let state = self.changes.borrow();
+            (state.call.phase, state.call.caller.clone())
+        };
+        let mut commands = Vec::new();
+        let ringing = phase == CallPhase::Ringing;
+        if ringing && !self.ringing_announced {
+            commands.push(Command::Notify(call_notification(caller.as_deref())));
+        }
+        self.ringing_announced = ringing;
+        let active = phase.is_active();
         let call_starts = active && !self.call_announced;
         self.call_announced = active;
         if call_starts {
             // A call on the device wakes it and shows its page.
-            vec![Command::OpenPage(CALL_PAGE.into())]
+            commands.push(Command::OpenPage(CALL_PAGE.into()));
+        }
+        commands
+    }
+
+    async fn on_notification_press(&mut self, _id: NotificationId) -> Vec<Command> {
+        // Only the notification of a ringing call has a press; one that
+        // stopped ringing meanwhile is left alone.
+        if self.changes.borrow().call.phase == CallPhase::Ringing {
+            self.ask(CallAction::Accept)
         } else {
             Vec::new()
         }
     }
 
-    fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
+    fn update_settings(&mut self, settings: &Value) -> Result<(), ModuleError> {
+        let settings: TeamsSettings = descriptor().parse_settings(settings)?;
+        self.lead.send_replace(settings.reminder_minutes);
         Ok(())
     }
 }
