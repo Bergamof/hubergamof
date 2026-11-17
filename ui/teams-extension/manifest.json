@@ -1,0 +1,26 @@
+{
+	"manifest_version": 3,
+	"name": "HuBergamof",
+	"version": "0.1.0",
+	"description": "Relaie à HuBergamof l'état de Teams (non lus, appel, calendrier) et ses commandes d'appel.",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8cQE+yQ+z0V2wB/ghSrT/x7D73rjswICVwHXHleUcnBmhaLBmdYSwdZjB8quY5DNMQcezarNaIyNtut0xob8nZ9ArxsVlnKndgxy1gCXa0/BcSJ+6/VgFQk1mRo9gywErEh/gFqfucbSTimQy5CjHdhueVya12tda6TCp8GEwR453lxVhe25kwz4CLNGkJpRKlKKdQyM1fqJHtV21DEmspa5N6Y+drBI+xI6pjGFCBeBJG+rJE2tXYFnW/1zAH2WOFVqOH4VtearnHKsU++eQvjlHjLGKO5is53K/KZ7hFEAKLKiNfs4i94MbMhoZdz+sD/e/V+drSGB3WaTt9Y8pwIDAQAB",
+	"icons": { "48": "icons/hubergamof-48.png", "128": "icons/hubergamof-64.png" },
+	"permissions": ["nativeMessaging", "alarms"],
+	"host_permissions": ["https://teams.cloud.microsoft/*", "https://outlook.office.com/*"],
+	"background": { "service_worker": "background.js", "type": "module" },
+	"content_scripts": [
+		{
+			"matches": ["https://teams.cloud.microsoft/*", "https://outlook.office.com/*"],
+			"js": ["content.js"],
+			"run_at": "document_idle",
+			"all_frames": true
+		}
+	],
+	"web_accessible_resources": [
+		{
+			"resources": ["lib/*.js"],
+			"matches": ["https://teams.cloud.microsoft/*", "https://outlook.office.com/*"],
+			"use_dynamic_url": true
+		}
+	]
+}

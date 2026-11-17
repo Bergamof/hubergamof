@@ -28,6 +28,7 @@ pub mod render;
 pub mod screen_lock;
 pub mod server;
 pub mod strip;
+pub mod teams_extension;
 #[cfg(test)]
 mod testing;
 pub mod tray;

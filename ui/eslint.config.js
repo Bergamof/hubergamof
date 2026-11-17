@@ -29,6 +29,11 @@ export default defineConfig(
 		}
 	},
 	{
+		// The Teams browser extension: runs in the browser, not in Node.
+		files: ['teams-extension/**/*.js'],
+		languageOptions: { globals: { ...globals.browser, ...globals.webextensions } }
+	},
+	{
 		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
 		languageOptions: {
 			parserOptions: {

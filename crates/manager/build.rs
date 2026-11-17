@@ -9,9 +9,13 @@
 /// UI build output, relative to this crate.
 const UI_BUILD_DIR: &str = "../../ui/build";
 
+/// Teams browser extension, embedded by `teams_extension.rs`.
+const EXTENSION_DIR: &str = "../../ui/teams-extension";
+
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     if std::env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_none() {
         println!("cargo::rerun-if-changed={UI_BUILD_DIR}");
+        println!("cargo::rerun-if-changed={EXTENSION_DIR}");
     }
 }

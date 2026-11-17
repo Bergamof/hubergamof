@@ -48,7 +48,7 @@ mime_guess = "2.0.5"
 # SVG rendering without system fonts nor embedded raster images (untrusted input).
 resvg = { version = "0.49.0", default-features = false, features = ["text"] }
 # `allow_missing`: the UI build (`ui/build/`) may be absent (Rust-only CI jobs).
-rust-embed = "8.13.0"
+rust-embed = { version = "8.13.0", features = ["include-exclude"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.1"

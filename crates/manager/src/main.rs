@@ -6,6 +6,7 @@
 //! screens. `hubergamof open` (desktop launcher) starts the service when it
 //! is not running and opens the web interface.
 
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +26,7 @@ use hubergamof_manager::server::{
     DevOrigin, EmbeddedUi, Server, ServerContext, SimulatedInput, local_address, module_catalog,
 };
 use hubergamof_manager::strip::{ProcProbe, SimulatedProbe, SystemClock, SystemProbe};
+use hubergamof_manager::teams_extension::{self, Browser, Locations};
 use hubergamof_manager::tray::{TrayIcon, quit_on};
 use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
@@ -98,6 +100,16 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
         origin: Vec<String>,
     },
+
+    /// Install the Teams browser extension for the current user: copies it
+    /// to the data directory and declares the native messaging host to the
+    /// browser. The extension is then loaded once from `brave://extensions`
+    /// ("Load unpacked").
+    InstallExtension {
+        /// Browser to declare the host to.
+        #[arg(long, value_enum, default_value_t = Browser::Brave)]
+        browser: Browser,
+    },
 }
 
 /// Where devices come from.
@@ -108,17 +120,44 @@ enum DeviceSource {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(teams_extension::with_browser_launch_command(
+        std::env::args(),
+    ));
     init_tracing(match cli.command {
         // The native host owns stdout: its frames, nothing else.
         Some(Command::NativeHost { .. }) => LogOutput::Stderr,
-        Some(Command::Open) | None => LogOutput::Stdout,
+        Some(Command::Open | Command::InstallExtension { .. }) | None => LogOutput::Stdout,
     });
     match cli.command {
         Some(Command::Open) => run_open(cli.port).await,
         Some(Command::NativeHost { .. }) => run_native_host().await,
+        Some(Command::InstallExtension { browser }) => install_extension(browser),
         None => run_manager(cli).await,
     }
+}
+
+/// Installs the Teams extension and its native messaging host.
+fn install_extension(browser: Browser) -> Result<()> {
+    let binary = std::env::current_exe().context("cannot find the path of this program")?;
+    let installed = teams_extension::install(&Locations::from_env()?, &binary, browser)?;
+    let mut out = std::io::stdout().lock();
+    writeln!(
+        out,
+        "Extension written to {}",
+        installed.extension_dir.display()
+    )?;
+    writeln!(
+        out,
+        "Native host declared in {}",
+        installed.host_manifest.display()
+    )?;
+    writeln!(out, "Extension id: {}", installed.extension_id)?;
+    writeln!(
+        out,
+        "Last step, once: open the browser's extensions page, turn on developer mode, \
+         choose \"Load unpacked\" and select the extension folder above."
+    )?;
+    Ok(())
 }
 
 /// Relays the browser's frames on stdio to the manager's Teams socket.
@@ -497,6 +536,25 @@ mod tests {
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
         let cli = Cli::try_parse_from(["hubergamof", "native-host"]).unwrap();
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
+    }
+
+    #[test]
+    fn install_extension_defaults_to_brave() {
+        let cli = Cli::try_parse_from(["hubergamof", "install-extension"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::InstallExtension {
+                browser: Browser::Brave
+            })
+        ));
+        let cli = Cli::try_parse_from(["hubergamof", "install-extension", "--browser", "chromium"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::InstallExtension {
+                browser: Browser::Chromium
+            })
+        ));
     }
 
     #[test]

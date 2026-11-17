@@ -39,8 +39,8 @@ export default defineConfig({
 				test: {
 					name: 'unit',
 					environment: 'node',
-					include: ['src/**/*.{test,spec}.{js,ts}'],
-					exclude: ['src/**/*.browser.spec.ts']
+					include: ['src/**/*.{test,spec}.{js,ts}', 'teams-extension/test/**/*.spec.ts'],
+					exclude: ['src/**/*.browser.spec.ts', 'teams-extension/test/**/*.browser.spec.ts']
 				}
 			},
 			{
@@ -48,7 +48,7 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: 'components',
-					include: ['src/**/*.browser.spec.ts'],
+					include: ['src/**/*.browser.spec.ts', 'teams-extension/test/**/*.browser.spec.ts'],
 					browser: {
 						enabled: true,
 						headless: true,
@@ -60,7 +60,7 @@ export default defineConfig({
 		],
 		coverage: {
 			provider: 'v8',
-			include: ['src/**/*.{ts,svelte}'],
+			include: ['src/**/*.{ts,svelte}', 'teams-extension/lib/**/*.js'],
 			exclude: ['src/lib/generated/**', 'src/**/*.spec.ts', 'src/**/*.d.ts'],
 			reporter: ['text-summary', 'json-summary'],
 			// Ratchet: measured coverage minus 2 points, raised as tests are added.
