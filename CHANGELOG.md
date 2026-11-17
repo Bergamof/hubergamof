@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Module Teams (premier volet) : touche, page des conversations non lues, page d'appel (micro, caméra, raccrocher ; répondre/refuser quand ça sonne) lues et pilotées par une extension de navigateur via `hubergamof native-host` et un socket Unix privé. L'extension elle-même vient dans un volet suivant.
 - Une page de module peut déclarer des touches (`PageItem::usable_when_locked`), la molette contextuelle et l'action de sa notification (`ContextDial::usable_when_locked`) utilisables ordinateur verrouillé, et garder le deck allumé tant qu'elle est affichée (`PageContent::keeps_device_lit`). Ces déclarations ne valent que pour un module déclarant la capacité `lock_safe_pages` ; chaque action ainsi exécutée est journalisée.
 - Un appui long (400 ms) sur la molette de navigation ramène à la page d’accueil ; l’appui court revient toujours en arrière, au relâchement.
 - Module Docker, page « Monter » : l'entrée « Pull » lance `docker compose pull` (tout le projet, ou les services cochés/le service de la page).
