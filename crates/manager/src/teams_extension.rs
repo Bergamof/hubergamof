@@ -317,8 +317,8 @@ mod tests {
     #[test]
     fn install_writes_the_extension_and_a_host_manifest_that_allows_only_it() {
         let root = tempfile::tempdir().unwrap();
-        let binary = Path::new("/opt/hubergamof/bin/hubergamof");
-        let installed = install(&locations(root.path()), binary, Browser::Brave).unwrap();
+        let binary = root.path().join("bin/hubergamof");
+        let installed = install(&locations(root.path()), &binary, Browser::Brave).unwrap();
 
         for file in [
             "manifest.json",

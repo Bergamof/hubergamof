@@ -43,7 +43,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo/ .cargo/
 COPY crates/ crates/
-# L'UI est embarquée dans le binaire : elle doit exister avant la compilation.
+# L'extension Teams est embarquée dans le binaire, comme l'UI : elles doivent
+# exister avant la compilation.
+COPY ui/teams-extension/ ui/teams-extension/
 COPY --from=ui /src/ui/build/ ui/build/
 
 RUN --mount=type=cache,id=hubergamof-cargo-registry,target=/usr/local/cargo/registry \
