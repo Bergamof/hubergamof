@@ -57,7 +57,7 @@ const CALL_BACKGROUND: Rgb = Rgb(0x16, 0xA0, 0x6E);
 /// How long the notification of a meeting stays on the strip.
 const MEETING_NOTICE: Duration = Duration::from_secs(60);
 
-/// Key icon: two speech bubbles (a generic drawing: no trademark).
+/// Key icon: the Teams tile with two soft-serve mascots (drawn by Adrien).
 static MODULE_ICON: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams")));
 
 /// Teams changed, as the bridge reports: the new state is read from the
