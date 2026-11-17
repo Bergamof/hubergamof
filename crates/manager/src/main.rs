@@ -26,6 +26,7 @@ use hubergamof_manager::server::{
 };
 use hubergamof_manager::strip::{ProcProbe, SimulatedProbe, SystemClock, SystemProbe};
 use hubergamof_manager::tray::{TrayIcon, quit_on};
+use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::CatalogModule;
 use tokio::signal::unix::{SignalKind, signal};
@@ -88,6 +89,15 @@ enum Command {
     /// Open the web interface on `--port`, starting the manager's systemd
     /// user service first when it is not running (desktop launcher).
     Open,
+
+    /// Relay the browser extension to the manager's Teams module (native
+    /// messaging host, started by the browser, not by hand). Speaks frames
+    /// on stdin and stdout; the origin the browser passes is ignored.
+    NativeHost {
+        /// Extension origin passed by the browser.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        origin: Vec<String>,
+    },
 }
 
 /// Where devices come from.
@@ -99,11 +109,39 @@ enum DeviceSource {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing();
+    init_tracing(match cli.command {
+        // The native host owns stdout: its frames, nothing else.
+        Some(Command::NativeHost { .. }) => LogOutput::Stderr,
+        Some(Command::Open) | None => LogOutput::Stdout,
+    });
     match cli.command {
         Some(Command::Open) => run_open(cli.port).await,
+        Some(Command::NativeHost { .. }) => run_native_host().await,
         None => run_manager(cli).await,
     }
+}
+
+/// Relays the browser's frames on stdio to the manager's Teams socket.
+async fn run_native_host() -> Result<()> {
+    let path = teams::socket_path().context("no runtime directory for the manager's socket")?;
+    let stream = tokio::net::UnixStream::connect(&path)
+        .await
+        .with_context(|| format!("the manager is not listening on {}", path.display()))?;
+    // The reports carry names: only a manager of this user gets them.
+    anyhow::ensure!(
+        teams::is_same_user(&stream),
+        "the socket {} is served by another user",
+        path.display()
+    );
+    let (manager_in, manager_out) = stream.into_split();
+    teams::native_host::relay(
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+        manager_in,
+        manager_out,
+    )
+    .await
+    .context("the relay to the manager failed")
 }
 
 /// Opens the web interface, bringing the service back first if needed.
@@ -350,10 +388,22 @@ async fn shutdown_devices(discovery: &DeviceDiscovery, source: DeviceSource) {
     }
 }
 
-fn init_tracing() {
+/// Where the logs go.
+#[derive(Debug, Clone, Copy)]
+enum LogOutput {
+    Stdout,
+    /// For a command whose stdout carries something else.
+    Stderr,
+}
+
+fn init_tracing(output: LogOutput) {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    match output {
+        LogOutput::Stdout => builder.init(),
+        LogOutput::Stderr => builder.with_writer(std::io::stderr).init(),
+    }
 }
 
 #[cfg(test)]
@@ -434,6 +484,19 @@ mod tests {
         assert_eq!(cli.port, DEFAULT_PORT);
         let cli = Cli::try_parse_from(["hubergamof", "open", "--port", "9000"]).unwrap();
         assert_eq!(cli.port, 9000);
+    }
+
+    #[test]
+    fn the_native_host_accepts_the_origin_the_browser_passes() {
+        let cli = Cli::try_parse_from([
+            "hubergamof",
+            "native-host",
+            "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
+        let cli = Cli::try_parse_from(["hubergamof", "native-host"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
     }
 
     #[test]

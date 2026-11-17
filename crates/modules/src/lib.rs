@@ -26,6 +26,7 @@ mod paths;
 pub mod pomodoro;
 mod process;
 pub mod session_bus;
+mod sync;
 pub mod teams;
 pub mod time;
 mod trust;
@@ -175,6 +176,8 @@ pub struct BuiltinServices {
     pub desktop: Arc<dyn desktop::DesktopBackend>,
     /// Installation and recent projects of IntelliJ.
     pub intellij: Arc<dyn intellij::ProjectCatalog>,
+    /// Browser extension reading and driving Teams.
+    pub teams: Arc<dyn teams::TeamsBridge>,
 }
 
 impl BuiltinServices {
@@ -192,6 +195,7 @@ impl BuiltinServices {
             pomodoro_clock: Arc::new(time::BootClock),
             desktop: Arc::new(desktop::SystemDesktop::new(session_bus)),
             intellij: Arc::new(intellij::SystemCatalog::new()),
+            teams: Arc::new(teams::SocketBridge::new(teams::socket_path())),
         }
     }
 
@@ -208,6 +212,7 @@ impl BuiltinServices {
             pomodoro_clock: Arc::new(time::BootClock),
             desktop: Arc::new(desktop::SimulatedDesktop::demo()),
             intellij: Arc::new(intellij::SimulatedCatalog::demo()),
+            teams: Arc::new(teams::SimulatedBridge::demo()),
         }
     }
 }
@@ -236,6 +241,7 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
         services.notifier,
         services.pomodoro_clock,
     )));
+    registry.register(Arc::new(teams::TeamsFactory::new(services.teams)));
     registry
 }
 
@@ -281,7 +287,8 @@ mod tests {
                 docker::DOCKER_KIND,
                 intellij::INTELLIJ_KIND,
                 inbox::INBOX_KIND,
-                pomodoro::POMODORO_KIND
+                pomodoro::POMODORO_KIND,
+                teams::TEAMS_KIND
             ]
         );
         assert!(registry.get(&"audio".into()).is_some());
@@ -500,6 +507,7 @@ mod tests {
             pomodoro_clock: Arc::new(SimulatedClock::new()),
             desktop: Arc::new(desktop::SimulatedDesktop::empty()),
             intellij: Arc::new(intellij::SimulatedCatalog::default()),
+            teams: Arc::new(teams::SimulatedBridge::new()),
         });
         let minute = Duration::from_secs(60);
 

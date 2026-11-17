@@ -7,6 +7,7 @@
 
 use std::io;
 
+use hubergamof_module_api::is_hidden_control;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -114,14 +115,24 @@ pub enum ManagerRequest {
     },
 }
 
-/// `text` without control characters, cut to [`MAX_TEXT_CHARS`] characters.
+/// `text` without control characters nor bidirectional overrides (which
+/// could dress one name up as another), cut to [`MAX_TEXT_CHARS`]
+/// characters.
 fn bounded_text(text: &str) -> String {
     text.chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !is_hidden_control(*c))
         .take(MAX_TEXT_CHARS)
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+impl CallPhase {
+    /// A call the user acts on: ringing, or joined.
+    #[must_use]
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Ringing | Self::InCall)
+    }
 }
 
 impl BrowserReport {
@@ -180,11 +191,11 @@ pub async fn read_frame<R: AsyncRead + Unpin>(
     max: usize,
 ) -> io::Result<Option<Vec<u8>>> {
     let mut length = [0_u8; 4];
-    match reader.read_exact(&mut length).await {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error),
+    // No byte at all is the clean end of the stream; a header cut short is not.
+    if reader.read(&mut length[..1]).await? == 0 {
+        return Ok(None);
     }
+    reader.read_exact(&mut length[1..]).await?;
     let length = usize::try_from(u32::from_ne_bytes(length))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "frame length"))?;
     if length > max {
@@ -279,6 +290,21 @@ mod tests {
     }
 
     #[test]
+    fn names_cannot_hide_behind_bidirectional_overrides() {
+        let report = BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: Some("Ali\u{202E}ce\u{2066}".into()),
+        }
+        .sanitized();
+        assert!(matches!(
+            report,
+            BrowserReport::Call { caller: Some(ref caller), .. } if caller == "Alice"
+        ));
+    }
+
+    #[test]
     fn a_caller_that_is_blank_is_unknown() {
         let report = BrowserReport::Call {
             phase: CallPhase::Ringing,
@@ -323,6 +349,12 @@ mod tests {
             Some(&b"[1]"[..])
         );
         assert_eq!(read_frame(&mut reader, 16).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_header_cut_short_is_an_error_not_an_end() {
+        let mut reader: &[u8] = &[1, 0];
+        assert!(read_frame(&mut reader, 16).await.is_err());
     }
 
     #[tokio::test]
