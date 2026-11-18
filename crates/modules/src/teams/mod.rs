@@ -299,8 +299,11 @@ impl CallItem {
 }
 
 impl Teams {
-    fn unread_page(&self) -> PageContent {
-        PageContent::new(UNREAD_TITLE, unread_items(&self.changes.borrow()))
+    /// The unread conversations; no page once nothing is unread, which takes
+    /// the host back to the page below (the home page).
+    fn unread_page(&self) -> Option<PageContent> {
+        let items = unread_items(&self.changes.borrow());
+        (!items.is_empty()).then(|| PageContent::new(UNREAD_TITLE, items))
     }
 
     fn call_page(&self) -> PageContent {
@@ -528,7 +531,7 @@ impl Module for Teams {
 
     fn page(&self, page: &PageId) -> Option<PageContent> {
         match page.0.as_str() {
-            UNREAD_PAGE => Some(self.unread_page()),
+            UNREAD_PAGE => self.unread_page(),
             CALL_PAGE if self.changes.borrow().call.phase.is_active() => Some(self.call_page()),
             _ => None,
         }

@@ -409,6 +409,24 @@ async fn return_to_the_call_without_extension_still_brings_the_window_and_warns(
 }
 
 #[tokio::test]
+async fn the_unread_page_is_gone_once_nothing_is_unread() {
+    let mut harness = Harness::new(SimulatedBridge::demo());
+    assert!(harness.module.page(&UNREAD_PAGE.into()).is_some());
+
+    // The last conversation is read: the page no longer exists, so that the
+    // host leaves it for the page below.
+    harness.report(BrowserReport::Unread { count: 0 }).await;
+    harness
+        .report(BrowserReport::Conversations { unread: Vec::new() })
+        .await;
+    assert!(harness.module.page(&UNREAD_PAGE.into()).is_none());
+
+    // Unread conversations whose names are unknown keep it.
+    harness.report(BrowserReport::Unread { count: 2 }).await;
+    assert!(harness.module.page(&UNREAD_PAGE.into()).is_some());
+}
+
+#[tokio::test]
 async fn unread_conversations_without_a_name_are_counted() {
     let mut harness = Harness::new(SimulatedBridge::new());
     harness.report(BrowserReport::Unread { count: 4 }).await;

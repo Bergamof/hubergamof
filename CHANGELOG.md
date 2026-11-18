@@ -22,6 +22,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Module Teams : la page des non lus se ferme d'elle-même quand il n'y a plus de conversation non lue (retour à l'accueil, ou à la page d'appel si un appel est en cours).
 - Module Teams : « Revenir à l'appel » demande à Teams d'agrandir l'appel depuis son affichage compact (bouton « Agrandir la fenêtre de réunion »), avant de mettre la fenêtre au premier plan, au lieu de seulement passer la fenêtre devant.
 - Module Teams : ordinateur verrouillé, la touche d'accueil, « Revenir à l'appel » et l'ouverture d'une conversation ne mettent plus jamais une fenêtre au premier plan et ne lancent rien, même si l'appel se termine (ou l'extension part) entre le dessin de la touche et l'appui : le module relit l'état de verrouillage (`ModuleContext::screen_lock`, nouveau). La fenêtre du profil `Default` de Brave est préférée, et un seul `openConversation` tourne à la fois dans la page.
 - Module Teams : micro, caméra, raccrocher et répondre n'affichent plus de ✓ (l'icône change quand l'action a marché) ; ⚠ reste affiché si l'extension est absente.
