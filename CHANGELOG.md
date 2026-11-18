@@ -24,6 +24,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Documentation : `CLAUDE.md` allégé (50 Ko → 19 Ko, détail déplacé dans `docs/architecture.md` et `docs/decisions.md`), README restructuré avec table des matières, doublons et incohérences corrigés (Playwright 1.65, dossier de configuration, phrase périmée sur l'état du projet).
 - Réglages : un chemin contenant un caractère de contrôle ou une surcharge bidirectionnelle est refusé (Rust et UI), et la sortie des commandes externes en est nettoyée avant d'atteindre les journaux.
 - Moteur : `device_engine.rs` découpé en `gestures`, `surfaces` et `compose` (sans changement de comportement) ; la détection de doublons des fichiers est partagée dans `settings-form.ts`.
 - UI : le bouton « Fermer le message » a une cible de 36 px et les touches glissables un curseur de saisie.
