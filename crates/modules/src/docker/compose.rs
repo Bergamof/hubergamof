@@ -382,7 +382,7 @@ async fn check_trusted(path: &Path) -> Result<PathBuf, DockerError> {
 /// The arguments of a call as one line, for errors.
 fn command_line(args: &[OsString]) -> String {
     args.iter()
-        .map(|arg| arg.to_string_lossy())
+        .map(|arg| arg.to_string_lossy().escape_debug().to_string())
         .collect::<Vec<_>>()
         .join(" ")
 }

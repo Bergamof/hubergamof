@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SettingField, SettingKind } from '#lib/generated/index.js';
 import {
+	duplicateEntryError,
+	fileEntryError,
 	parseDraft,
 	parseLabel,
 	sameDraftValue,
@@ -178,6 +180,21 @@ describe('file lists', () => {
 		path,
 		name,
 		icon
+	});
+
+	it('refuses paths with control characters, which could forge log lines', () => {
+		const kind = files[0].kind;
+		if (kind.type !== 'fileEntryList') throw new Error('unexpected kind');
+		for (const path of ['/a\nb', '/a\u001b[31mb', '~/a\u202Eb']) {
+			expect(fileEntryError(entry(path), kind), JSON.stringify(path)).toBeDefined();
+		}
+	});
+
+	it('names the file already in the list, except at the position being edited', () => {
+		const list = [entry('/a.yaml'), entry('/b.yaml')];
+		expect(duplicateEntryError(list, '/b.yaml')).toBe('« /b.yaml » est déjà dans la liste.');
+		expect(duplicateEntryError(list, '/b.yaml', 1)).toBeUndefined();
+		expect(duplicateEntryError(list, '/c.yaml')).toBeUndefined();
 	});
 
 	it('shows files with their name and icon, and plain paths saved by older versions', () => {

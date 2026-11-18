@@ -151,6 +151,23 @@ function parseField(kind: SettingKind, draft: DraftValue): FieldResult {
 	}
 }
 
+/**
+ * Control characters and bidirectional overrides: they scramble what a name shows and
+ * forge log lines. Same rule as `is_hidden_control` in the module API.
+ */
+const HIDDEN_CONTROL = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
+
+/** The refusal of a path or name already in `entries`, `undefined` when it is new. */
+export function duplicateEntryError(
+	entries: readonly FileEntryDraft[],
+	path: string,
+	exceptIndex?: number
+): string | undefined {
+	return entries.some((other, index) => index !== exceptIndex && other.path.trim() === path)
+		? `« ${path} » est déjà dans la liste.`
+		: undefined;
+}
+
 /** Why `entry` cannot be saved, `undefined` when it can (same rules as the module API). */
 export function fileEntryError(entry: FileEntryDraft, kind: FileEntryListKind): string | undefined {
 	const path = entry.path.trim();
@@ -159,8 +176,7 @@ export function fileEntryError(entry: FileEntryDraft, kind: FileEntryListKind): 
 	if ([...entry.name.trim()].length > kind.maxNameChars) {
 		return `Nom trop long : ${kind.maxNameChars} caractères au plus.`;
 	}
-	// Same refusal as the module API: such characters scramble what the name shows.
-	if (/[\p{Cc}\u202A-\u202E\u2066-\u2069]/u.test(entry.name)) {
+	if (HIDDEN_CONTROL.test(entry.name)) {
 		return 'Le nom ne peut pas contenir de caractère de contrôle.';
 	}
 	return undefined;
@@ -174,13 +190,12 @@ function parseFileEntries(
 		return { ok: false, error: `${kind.maxEntries} fichiers au plus.` };
 	}
 	const files: JsonValue[] = [];
-	const seen = new Set<string>();
-	for (const entry of entries) {
+	for (const [index, entry] of entries.entries()) {
 		const error = fileEntryError(entry, kind);
 		if (error) return { ok: false, error };
 		const path = entry.path.trim();
-		if (seen.has(path)) return { ok: false, error: `« ${path} » est déjà dans la liste.` };
-		seen.add(path);
+		const duplicate = duplicateEntryError(entries.slice(0, index), path);
+		if (duplicate) return { ok: false, error: duplicate };
 		files.push({ path, name: entry.name.trim() || null, icon: entry.icon });
 	}
 	return { ok: true, value: files };
@@ -207,6 +222,7 @@ export function sameDraftValue(a: DraftValue | undefined, b: DraftValue | undefi
  * home directory (same rule as `is_setting_path` in the module API).
  */
 function isResolvablePath(path: string): boolean {
+	if (HIDDEN_CONTROL.test(path)) return false;
 	if (path.startsWith('/')) return true;
 	if (!path.startsWith('~/')) return false;
 	// Like Rust's `Path::components`: empty and `.` segments are ignored, so `~/.` is `~`.

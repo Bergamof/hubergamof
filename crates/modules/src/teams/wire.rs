@@ -117,9 +117,7 @@ impl From<UnreadConversation> for WireConversation {
 /// control characters (it is compared with an attribute of the page, never
 /// used as a selector).
 fn is_valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.chars().count() <= MAX_ID_CHARS
-        && !id.chars().any(|c| c.is_control() || is_hidden_control(c))
+    !id.is_empty() && id.chars().count() <= MAX_ID_CHARS && !id.chars().any(is_hidden_control)
 }
 
 /// The avatar `base64` holds, if it is a PNG or a JPEG that is not too big,
@@ -295,7 +293,7 @@ pub enum ManagerRequest {
 /// characters.
 fn bounded_text(text: &str) -> String {
     text.chars()
-        .filter(|c| !c.is_control() && !is_hidden_control(*c))
+        .filter(|c| !is_hidden_control(*c))
         .take(MAX_TEXT_CHARS)
         .collect::<String>()
         .trim()

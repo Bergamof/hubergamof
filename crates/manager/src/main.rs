@@ -348,8 +348,6 @@ async fn stop_server(server_task: JoinHandle<std::io::Result<()>>) {
     }
 }
 
-/// What the modules act on: the demo is hermetic (simulated audio…), so that
-/// the UI, its tests and Lighthouse never touch the machine.
 /// Only the demo, on virtual devices, accepts presses from the web
 /// interface: on real devices, input comes from the device only.
 fn simulated_input(demo: bool) -> SimulatedInput {
@@ -369,6 +367,8 @@ fn file_picker(answer: Option<PathBuf>) -> Arc<dyn FilePicker> {
     }
 }
 
+/// What the modules act on: the demo is hermetic (simulated audio…), so that
+/// the UI, its tests and Lighthouse never touch the machine.
 fn builtin_services(demo: bool) -> BuiltinServices {
     if demo {
         BuiltinServices::simulated()

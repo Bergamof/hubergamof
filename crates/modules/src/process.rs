@@ -137,7 +137,7 @@ async fn read_tail(mut reader: impl AsyncRead + Unpin, limit: usize) -> Result<S
             cut = true;
         }
     }
-    let text = String::from_utf8_lossy(&kept).trim().to_owned();
+    let text = neutralize_controls(String::from_utf8_lossy(&kept).trim());
     Ok(if cut {
         format!("{TRUNCATION_MARK}{text}")
     } else {
@@ -145,9 +145,28 @@ async fn read_tail(mut reader: impl AsyncRead + Unpin, limit: usize) -> Result<S
     })
 }
 
+/// `text` with control characters other than line breaks replaced, so that
+/// output relayed to the logs cannot carry terminal escape sequences.
+fn neutralize_controls(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() && c != '\n' {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn captured_output_loses_its_escape_sequences_but_keeps_its_lines() {
+        assert_eq!(neutralize_controls("a\u{1b}[31mb\nc"), "a\u{FFFD}[31mb\nc");
+    }
 
     const LIMITS: OutputLimits = OutputLimits {
         stdout: Some(16),

@@ -69,7 +69,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		<li
 			draggable="true"
 			class={[
-				'w-24 justify-self-center rounded-2xl',
+				'w-24 cursor-grab justify-self-center rounded-2xl active:cursor-grabbing',
 				dropTarget === position && 'outline-2 outline-offset-2 outline-device-ring outline-dashed'
 			]}
 			ondragstart={(event) => startDrag(event, position)}

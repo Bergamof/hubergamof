@@ -17,6 +17,7 @@ confirmed (« Ajouter à la liste », « Valider ») or removed, never while bei
 	import { Operation } from '#lib/deck/operation.svelte.js';
 	import type { Problem } from '#lib/deck/problems.js';
 	import {
+		duplicateEntryError,
 		fileEntryError,
 		type FileEntryDraft,
 		type FileEntryListKind
@@ -138,8 +139,9 @@ confirmed (« Ajouter à la liste », « Valider ») or removed, never while bei
 		}
 		const path = await chooseFile();
 		if (path !== null) {
-			if (entries.some((entry) => entry.path.trim() === path)) {
-				chooserProblem = { text: `« ${path} » est déjà dans la liste.`, detail: null };
+			const duplicate = duplicateEntryError(entries, path);
+			if (duplicate) {
+				chooserProblem = { text: duplicate, detail: null };
 				return;
 			}
 			openEditor(null, { path, name: '', icon: null });
@@ -168,10 +170,7 @@ confirmed (« Ajouter à la liste », « Valider ») or removed, never while bei
 		const { index } = editing;
 		chooserProblem = undefined;
 		const error =
-			fileEntryError(file, kind) ??
-			(entries.some((other, position) => position !== index && other.path.trim() === file.path)
-				? `« ${file.path} » est déjà dans la liste.`
-				: undefined);
+			fileEntryError(file, kind) ?? duplicateEntryError(entries, file.path, index ?? undefined);
 		if (error) {
 			editError = error;
 			void focusOn('[data-field="path"]');
