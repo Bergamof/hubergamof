@@ -12,13 +12,12 @@ pub struct StripLayout {
 }
 
 impl StripLayout {
-    /// Layout of the device touch strip, `None` when the device has no strip
-    /// or no dial to remind under it.
+    /// Layout of the device touch strip, `None` when the device has no strip.
+    /// A strip without dials is still drawn: it shows the time, the measures
+    /// and the notifications, only without reminders.
     #[must_use]
     pub fn for_device(info: &DeviceInfo) -> Option<Self> {
-        let capabilities = &info.capabilities;
-        let strip = capabilities.touch_strip?;
-        (capabilities.dial_count > 0).then_some(Self { strip })
+        info.capabilities.touch_strip.map(|strip| Self { strip })
     }
 
     /// Size of the whole strip.
@@ -111,9 +110,15 @@ mod tests {
     }
 
     #[test]
-    fn devices_without_strip_or_dials_have_no_layout() {
+    fn devices_without_strip_have_no_layout() {
         assert!(StripLayout::for_device(&info(4, None)).is_none());
-        assert!(StripLayout::for_device(&info(0, Some(PLUS_STRIP))).is_none());
+        assert!(StripLayout::for_device(&info(0, None)).is_none());
+    }
+
+    #[test]
+    fn a_strip_without_dials_still_has_a_layout() {
+        let layout = StripLayout::for_device(&info(0, Some(PLUS_STRIP))).unwrap();
+        assert_eq!(layout.strip_size(), PLUS_STRIP);
     }
 
     #[test]

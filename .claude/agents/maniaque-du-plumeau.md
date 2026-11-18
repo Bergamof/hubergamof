@@ -1,7 +1,7 @@
 ---
 name: maniaque-du-plumeau
 description: Spécialiste architecture et clean code du projet HuBergamof. À solliciter après la conception ou la modification du trait Module, du moteur de pages ou de la structure des crates ; rend un rapport, ne modifie rien.
-model: opus
+model: sonnet
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 ---
 

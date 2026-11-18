@@ -191,6 +191,19 @@ describe('configuration updates', () => {
 		vi.useRealTimers();
 	});
 
+	it('drops the edits in flight and queued when the device goes away, and refuses new ones', async () => {
+		const { connection, state } = following();
+		const inFlight = state.edit(setBrightness(60));
+		const queued = state.edit(setBrightness(70));
+		connection.receive({ type: 'devices', devices: [] });
+		const [first, second] = await Promise.all([inFlight, queued]);
+		expect(first.saved).toBe(false);
+		expect(second.saved).toBe(false);
+		expect(state.config).toBeUndefined();
+		const late = await state.edit(setBrightness(80));
+		expect(late.saved).toBe(false);
+	});
+
 	it('send the edited configuration with the saved revision and show it at once', async () => {
 		const { connection, state } = following();
 		const outcome = state.edit(setBrightness(80));

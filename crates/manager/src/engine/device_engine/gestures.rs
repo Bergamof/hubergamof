@@ -9,20 +9,18 @@ impl DeviceEngine {
     /// Starts holding `key`: its action waits for the release, and is
     /// dropped if the key is held until its label shows.
     pub(super) fn hold_key(&mut self, key: u8) {
-        let Some(frame) = &self.last_frame else {
+        let Some((target, usable_when_locked)) = self.pressed_key(key) else {
             return;
         };
-        let Some(target) = frame.target(key).cloned() else {
-            return;
-        };
-        let usable_when_locked = frame.usable_when_locked(key);
-        let label = frame
-            .keys
-            .get(usize::from(key))
-            .and_then(|key| key.face.label.as_deref())
-            .map(str::trim)
-            .filter(|label| !label.is_empty())
-            .map(str::to_owned);
+        let label = self.last_frame.as_ref().and_then(|frame| {
+            frame
+                .keys
+                .get(usize::from(key))
+                .and_then(|key| key.face.label.as_deref())
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+        });
         self.held = Some(HeldKey {
             key,
             target,

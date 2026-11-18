@@ -38,6 +38,19 @@ const drawn = (svg: SVGSVGElement, text: string) =>
 	[...svg.querySelectorAll('text')].some((node) => node.textContent?.includes(text));
 
 describe('StripPreview', () => {
+	it('is drawn without reminders when the device has no dial', async () => {
+		const { container } = await render(StripPreview, {
+			strip: STRIP,
+			theme: 'light',
+			dials: [],
+			selected: false,
+			onselect: vi.fn()
+		});
+		const svg = container.querySelector('svg') as SVGSVGElement;
+		expect(svg).not.toBeNull();
+		expect(drawn(svg, 'Navigation')).toBe(false);
+	});
+
 	it('is a button that opens the options and tells it is only a preview', async () => {
 		const { onselect } = await renderStrip();
 		const button = page.getByRole('button', { name: /Bande tactile : aperçu/ });

@@ -4,6 +4,7 @@ use hubergamof_protocol::{
 };
 use tempfile::TempDir;
 
+use super::files::PRIVATE_DIR_MODE;
 use super::*;
 use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
 use crate::placement::PlacementChange;
@@ -508,6 +509,22 @@ fn imports_need_every_image_they_use_drawable_and_a_valid_config() {
         ),
         Err(ConfigStoreError::Invalid(_))
     ));
+}
+
+#[test]
+fn imports_refuse_a_lock_sleep_delay_out_of_range_and_write_nothing() {
+    let (_dir, store) = store();
+    let mut config = with_first_key_image(&store, "a.png");
+    config.lock_sleep_seconds = u16::MAX;
+    let archive = archive_of(&config, &[("a.png", png_image())]);
+    assert!(matches!(
+        store.prepare_import(&archive, &plus(), 0, sniffed),
+        Err(ConfigStoreError::Invalid(ConfigError::InvalidLockSleep(
+            u16::MAX
+        )))
+    ));
+    let name = image_name(&png_image(), ImageKind::Png);
+    assert!(!store.image_path(DEMO_SERIAL, &name).unwrap().exists());
 }
 
 #[test]

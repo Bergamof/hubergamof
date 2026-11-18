@@ -802,6 +802,17 @@ pub(super) fn dials_without_strip_info() -> DeviceInfo {
     info
 }
 
+/// A device with a touch strip but no dials (like the Stream Deck Neo).
+pub(super) fn strip_without_dials_info() -> DeviceInfo {
+    let mut info = no_dial_info();
+    info.serial = "NODIALSTRIP".into();
+    info.capabilities.touch_strip = Some(ImageSize {
+        width: 800,
+        height: 100,
+    });
+    info
+}
+
 pub(super) fn instance(id: &str, kind: &str, settings: Value) -> ModuleInstance {
     ModuleInstance {
         id: id.into(),

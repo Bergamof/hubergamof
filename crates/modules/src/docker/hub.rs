@@ -18,7 +18,7 @@
 //! down). Their effect comes back as changes of the containers.
 
 use std::future::Future;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use futures_util::future::join_all;
@@ -33,6 +33,7 @@ use crate::background::{
     Backoff, Listener, ReadPacer, WorkerControl, catch_panic, sleep_until, spawn_action,
     spawn_worker,
 };
+use crate::sync::lock_unpoisoned;
 
 /// Time from the first change of a burst to the list that covers it.
 const READ_COALESCE_DELAY: Duration = Duration::from_millis(100);
@@ -119,9 +120,7 @@ impl DockerHub {
     }
 
     fn lock(&self) -> MutexGuard<'_, WorkerControl> {
-        // Every update keeps the control consistent: a poisoned lock is
-        // still valid.
-        self.control.lock().unwrap_or_else(PoisonError::into_inner)
+        lock_unpoisoned(&self.control)
     }
 }
 

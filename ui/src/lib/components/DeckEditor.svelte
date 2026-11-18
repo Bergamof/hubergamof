@@ -75,6 +75,8 @@ selected key or dial.
 	const dials = $derived(
 		config.dials.map((assignment) => dialSummary(assignment, instancesById, moduleOf))
 	);
+	/** The strip comes from the device capabilities, as for the host: a strip may have no dial. */
+	const hasStrip = $derived(device.capabilities.touchStrip !== null);
 	const keyModules = $derived(deck.catalog.filter((module) => canAddKey(config, module)));
 	const dialModules = $derived(
 		deck.catalog.filter(
@@ -92,7 +94,7 @@ selected key or dial.
 			return selection;
 		}
 		if (selection?.surface === 'dial' && selection.index < dials.length) return selection;
-		if (selection?.surface === 'strip' && dials.length > 0) return selection;
+		if (selection?.surface === 'strip' && hasStrip) return selection;
 		return undefined;
 	});
 
@@ -256,21 +258,23 @@ selected key or dial.
 					/>
 				</section>
 
-				{#if dials.length > 0}
+				{#if hasStrip || dials.length > 0}
 					<section aria-labelledby="{uid}-dials" class="flex flex-col gap-3">
 						<h2
 							id="{uid}-dials"
 							class="font-mono text-xs font-medium tracking-widest text-device-muted uppercase"
 						>
-							Molettes
+							{dials.length > 0 ? 'Molettes' : 'Bande tactile'}
 						</h2>
-						<StripPreview
-							strip={config.strip}
-							theme={config.theme}
-							{dials}
-							selected={selected?.surface === 'strip'}
-							onselect={selectStrip}
-						/>
+						{#if hasStrip}
+							<StripPreview
+								strip={config.strip}
+								theme={config.theme}
+								{dials}
+								selected={selected?.surface === 'strip'}
+								onselect={selectStrip}
+							/>
+						{/if}
 						<DialRow
 							{dials}
 							selected={selected?.surface === 'dial' ? selected.index : undefined}

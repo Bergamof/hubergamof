@@ -190,31 +190,7 @@ impl Session {
             }
             ClientMessage::Ping => return self.send(&ServerMessage::Pong).await,
             ClientMessage::UpdateConfig { serial, config } => {
-                // Sent back to the author even if a later update overtakes it
-                // in the engine's `config` channel (which keeps the latest
-                // only): the UI recognises its own update by it. Other
-                // subscribers get it through the channel.
-                let saved = with_engine(engines, &serial, async |engine| {
-                    Ok(engine.apply_config(config).await?)
-                })
-                .await;
-                return match saved {
-                    Ok(config) => {
-                        let newer = self.take_newer_config(&serial, &config);
-                        self.send(&ServerMessage::Config {
-                            serial: serial.clone(),
-                            config,
-                        })
-                        .await?;
-                        match newer {
-                            Some(config) => {
-                                self.send(&ServerMessage::Config { serial, config }).await
-                            }
-                            None => Ok(()),
-                        }
-                    }
-                    Err(failure) => self.send_error(failure.code, &failure.message).await,
-                };
+                return self.update_config(serial, config).await;
             }
             ClientMessage::PressKey { .. }
             | ClientMessage::RotateDial { .. }
@@ -248,6 +224,35 @@ impl Session {
         };
         match outcome {
             Ok(()) => Ok(()),
+            Err(failure) => self.send_error(failure.code, &failure.message).await,
+        }
+    }
+
+    /// Applies a configuration sent by the client and answers with the saved one.
+    ///
+    /// Sent back to the author even if a later update overtakes it in the
+    /// engine's `config` channel (which keeps the latest only): the UI
+    /// recognises its own update by it. Other subscribers get it through the
+    /// channel.
+    async fn update_config(&mut self, serial: String, config: DeviceConfig) -> Result<(), Closed> {
+        let engines = &self.state.context.engines;
+        let saved = with_engine(engines, &serial, async |engine| {
+            Ok(engine.apply_config(config).await?)
+        })
+        .await;
+        match saved {
+            Ok(config) => {
+                let newer = self.take_newer_config(&serial, &config);
+                self.send(&ServerMessage::Config {
+                    serial: serial.clone(),
+                    config,
+                })
+                .await?;
+                match newer {
+                    Some(config) => self.send(&ServerMessage::Config { serial, config }).await,
+                    None => Ok(()),
+                }
+            }
             Err(failure) => self.send_error(failure.code, &failure.message).await,
         }
     }

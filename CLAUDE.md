@@ -4,7 +4,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 
 ## Stack
 - Gestionnaire : Rust 1.99.1 (édition 2024), tokio, axum (HTTP + WebSocket), `elgato-streamdeck` (+ `hidapi`), tray SNI/dbusmenu maison sur `zbus` 6, `zbus` (D-Bus), `bollard` (Docker), `image` + `resvg`, `zip` (Deflate seul, export), `rust-embed`, `ts-rs`.
-- Interface : SvelteKit 3.1 (`adapter-static`), Svelte 5.57, Vite 8, Tailwind 4.3 (polices embarquées `@fontsource-variable/*`), TypeScript 6 (TS 7 exclu par svelte-check/typescript-eslint), pnpm 12.16 (Corepack), Node 24 LTS ; ESLint 10 + Prettier 3, Vitest 5 (+ mode navigateur, couverture v8), Playwright 1.65.
+- Interface : SvelteKit 3.1 (`adapter-static`), Svelte 5.57, Vite 8, Tailwind 4.3 (polices embarquées `@fontsource-variable/*`), TypeScript 6 (TS 7 exclu par svelte-check/typescript-eslint), pnpm 12.16 (Corepack), Node 24 LTS ; ESLint 10 + Prettier 3, Vitest 5 (+ mode navigateur, couverture v8), Playwright 1.65 (planchers de couverture UI : lignes 86, fonctions 85, branches 77, instructions 89).
 - Persistance : fichiers JSON par appareil (`config/devices/<serial>/`), pas de base de données.
 - Déploiement : un seul binaire `hubergamof` (UI embarquée), service utilisateur systemd + règle udev.
 
@@ -27,7 +27,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - pnpm : `PNPM ?= corepack pnpm` lancé depuis `ui/` (Corepack lit `packageManager` du dossier courant) ; `make PNPM=pnpm …` en CI.
 
 ## CI
-- `.github/workflows/ci.yml` : sur chaque PR, push sur `main` et chaque semaine → `lint` (+ actionlint, shellcheck, zizmor bloquant), `test` (tests instrumentés + couverture), `contract`, `e2e` (`failOnFlakyTests`), `build`, `package` (paquets + installation en conteneurs), `docker` (+ Trivy image), `docker-it` (vrai Docker, sur PR seulement si le module est touché), `security` (cargo-deny, pnpm audit, gitleaks, Trivy fs), `lighthouse` (A11y, Bonnes pratiques, Perf ≥ 0,9) → job `report` (`if: always()`) qui commente la PR. Actions composites : `.github/actions/setup-rust|setup-ui`.
+- `.github/workflows/ci.yml` : sur chaque PR, push sur `main` et chaque semaine → `lint` (+ actionlint, shellcheck, zizmor bloquant), `test` (tests instrumentés + couverture), `contract`, `e2e` (`failOnFlakyTests`), `build`, `package` (paquets + installation en conteneurs), `docker` (+ Trivy image, HIGH/CRITICAL sans correctif publiés en information), `docker-it` (vrai Docker, sur PR seulement si le module est touché), `security` (cargo-deny, pnpm audit, gitleaks, Trivy fs), `lighthouse` (A11y, Bonnes pratiques, Perf ≥ 0,9) → job `report` (`if: always()`) qui commente la PR. Actions composites : `.github/actions/setup-rust|setup-ui`.
 - Toutes les actions épinglées par SHA ; Dependabot ne suit pas `LHCI_VERSION`, gitleaks, actionlint (SHA-256 épinglé), zizmor ni cargo-llvm-cov (à la main, variables `env` du workflow).
 - Toute nouvelle vérification est ajoutée à la CI ET aux `needs` du job `report`.
 - Dépôt GitHub `Bergamof/hubergamof` : la CI s'exécute sur chaque PR (en session cloud, suivi via les outils MCP GitHub, pas de `gh`). « Terminé localement, CI non vérifiée » seulement si les runs sont inaccessibles.
@@ -42,7 +42,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 | `gardien-du-phare` | sonnet | non | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) |
 | `turbo-escargot` | sonnet | non | performances |
 | `cerbere-le-paranoiaque` | opus | non | sécurité & CVE |
-| `maniaque-du-plumeau` | opus | non | architecture & clean code |
+| `maniaque-du-plumeau` | sonnet | non | architecture & clean code |
 | `capitaine-assertion` | sonnet | non | stratégie de tests |
 
 ## Méthode de travail
@@ -50,7 +50,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Les spécialistes rendent des rapports (sévérité, localisation, recommandation) que la session principale doit suivre.
 - Boucle : dev → rapports des spécialistes concernés → corrections → nouvelle passe, jusqu'à zéro bloquant/majeur. Désaccord avec un spécialiste : enjeu significatif → Adrien.
 - Ne solliciter que les spécialistes concernés par la modification (chaque appel repart de zéro et coûte des tokens). Garder le contexte léger : filtrer les sorties de build/tests (erreurs, résumé) plutôt que les afficher en entier.
-- Réutiliser les spécialistes existants ; jamais de suppression d'agent sans accord d'Adrien. Modèle fixé dans le frontmatter (`model:`) : opus là où une omission coûte cher (sécurité, architecture), sonnet pour le reste. Piège appris → l'ajouter au fichier `.claude/rules/` de la techno (ou à la définition du spécialiste concerné).
+- Réutiliser les spécialistes existants ; jamais de suppression d'agent sans accord d'Adrien. Modèle fixé dans le frontmatter (`model:`) : opus seulement là où une omission coûte cher et se voit mal ensuite (sécurité), sonnet pour le reste (architecture passée de opus à sonnet, décision d'Adrien 2026-11-18). Piège appris → l'ajouter au fichier `.claude/rules/` de la techno (ou à la définition du spécialiste concerné).
 
 ## Définition de « done » (sauf indication contraire d'Adrien)
 - Terminé seulement quand toutes les CI déclenchées par les modifications sont vertes sur le dernier commit poussé. Des tests locaux verts ne suffisent pas.
@@ -66,7 +66,7 @@ Détail complet (par crate, flux, API) : `docs/architecture.md` ; modules : `doc
 - `crates/protocol/` (`hubergamof-protocol`) — contrat WebSocket (`ClientMessage`/`ServerMessage`, taggés `type`, camelCase), configuration + `DeviceConfig::validate`, catalogue, `LiveState`. Source unique du contrat, exportée en TS par `ts-rs` vers `ui/src/lib/generated/`.
 - `crates/module-api/` (`hubergamof-module-api`, MPL-2.0, **aucune dépendance GPL**) — traits `ModuleFactory`/`Module` (ne jamais bloquer, `HANDLER_BUDGET` 500 ms), `Command`, `ModuleContext`, descripteurs et réglages (`SettingField`/`SettingKind`), capacités `ModuleCapabilities`, structs `#[non_exhaustive]` construites par constructeurs.
 - `crates/modules/` (`hubergamof-modules`) — modules intégrés : audio, pomodoro, docker, intellij, claude, notifications, teams ; `builtin_registry_with(BuiltinServices)` (`system()` ou `simulated()` pour `--demo` et **tous** les tests) ; briques communes (`background.rs`, `process.rs`, `paths.rs`, `trust.rs`), couche `desktop/`.
-- `crates/manager/` (`hubergamof`, lib `hubergamof_manager` + binaire) — `device/` (backends, matériel : un thread par appareil), `render/` (PNG/JPEG/SVG → RGBA, bande, caches), `strip/`, `config_store/` (JSON, zip d'export/import, migrations), `engine/` (`Supervisor` → une tâche `DeviceEngine` par appareil ; `device_engine.rs` + `compose|gestures|surfaces|lock|strip.rs`, `Painter`, `notifications.rs`), `server/` (axum `127.0.0.1`, `security.rs`, `api.rs`, `session.rs`), `tray/`, `launcher.rs`, `screen_lock.rs`, `file_chooser.rs`.
+- `crates/manager/` (`hubergamof`, lib `hubergamof_manager` + binaire) — `device/` (backends, matériel : un thread par appareil), `render/` (PNG/JPEG/SVG → RGBA, bande, caches), `strip/`, `config_store/` (JSON, `files.rs` écritures atomiques et privées, zip d'export/import, migrations), `engine/` (`Supervisor` → une tâche `DeviceEngine` par appareil ; `device_engine.rs` + `compose|gestures|surfaces|lock|strip.rs`, `Painter`, `notifications.rs`), `server/` (axum `127.0.0.1`, `security.rs`, `api.rs`, `session.rs`), `tray/`, `launcher.rs`, `screen_lock.rs`, `file_chooser.rs`.
 - `ui/` — SvelteKit statique (`ui/build/`, fallback `200.html`) ; client WebSocket `lib/connection/`, état `lib/deck/` (`DeckState`, `config-edits.ts`, `settings-form.ts`), composants `lib/components/` (`DeckEditor` orchestre), design « thé et bergamote » (`routes/layout.css`, jetons sémantiques sans variante `dark:`) ; e2e `ui/e2e/` (fixture `demo-manager.ts`, axe WCAG 2.2 AA).
 - `packaging/` — unité systemd utilisateur, règle udev, lanceur de bureau, `install.sh`, `package/` (`.deb`, pacman) ; release : `docs/release.md`.
 
@@ -78,11 +78,11 @@ Détail complet (par crate, flux, API) : `docs/architecture.md` ; modules : `doc
 
 ## Décisions techniques
 Journal complet et daté : `docs/decisions.md` (y ajouter toute décision) ; sécurité : `docs/security.md`. Structurantes :
-- Rust, un seul binaire servant UI statique + WebSocket sur `127.0.0.1:7878` ; `Origin`/`Host` stricts sans jeton de session (CSRF WebSocket, DNS rebinding).
+- Rust (profil release `lto = "thin"` + `codegen-units = 1` : binaire −18 % pour le même temps de build) ; un seul binaire servant UI statique + WebSocket sur `127.0.0.1:7878` ; `Origin`/`Host` stricts sans jeton de session (CSRF WebSocket, DNS rebinding).
 - Appuis simulés refusés hors `--demo` (`SimulatedInput`) : sur matériel réel, les actions ne viennent que de l'appareil, l'UI configure et affiche.
 - `DeckBackend` virtuel (`--demo`) pour tests, dev UI, Playwright, Lighthouse. Un thread par appareil (pas de feature `async` d'`elgato-streamdeck`).
 - Pas d'API REST publique (routes HTTP internes) ; export en zip (`config.json` + `images/`).
-- Bande tactile globale dessinée par l'hôte ; molettes = fonctions (hôte : navigation, contextuelle, rien ; modules : volume, pomodoro…) ; thème Clair/Sombre par appareil ; plus aucun cadre sur les touches (sauf curseur/pastille de la molette contextuelle).
+- Bande tactile globale dessinée par l'hôte, présente dès que l'appareil la déclare (`capabilities.touchStrip`, règle partagée hôte et UI : une bande sans molette, type Stream Deck Neo, est dessinée sans rappels) ; molettes = fonctions (hôte : navigation, contextuelle, rien ; modules : volume, pomodoro…) ; thème Clair/Sombre par appareil ; plus aucun cadre sur les touches (sauf curseur/pastille de la molette contextuelle).
 - Placement : un module n'est assignable à une touche que s'il le déclare (`key`), multi-instances seulement si `multiple_instances` (`placement.rs`).
 - Verrouillage de l'ordinateur : deck inerte sauf `usable_when_locked` ; exceptions par page (`lock_safe_pages`, Teams) ; limites dans `docs/security.md`.
 - Teams : extension de navigateur + hôte natif `hubergamof native-host` → socket Unix privé ; aucune connexion tierce.
