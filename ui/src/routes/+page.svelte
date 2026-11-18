@@ -5,6 +5,7 @@
 	import { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
+	import UpdatePanel from '#lib/components/UpdatePanel.svelte';
 	import Notices from '#lib/components/Notices.svelte';
 	import BrandWordmark from '#lib/components/BrandWordmark.svelte';
 
@@ -128,4 +129,15 @@
 			<p class="m-auto text-muted">Chargement de la configuration…</p>
 		{/if}
 	</main>
+
+	<!-- Only while connected: the version and the check belong to the manager answering. -->
+	{#if deck && isOnline}
+		<footer>
+			<UpdatePanel
+				version={deck.managerVersion}
+				status={deck.updateStatus}
+				oncheck={() => deck?.checkForUpdates()}
+			/>
+		</footer>
+	{/if}
 </div>

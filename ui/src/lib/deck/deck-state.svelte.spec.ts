@@ -353,6 +353,20 @@ describe('configuration updates', () => {
 		expect(state.notices).toEqual([]);
 	});
 
+	it('keeps the manager version and the update status, and asks for a check', () => {
+		const { connection, state } = following();
+		expect(state.updateStatus).toEqual({ type: 'unknown' });
+		connection.receive({ type: 'hello', version: '1.0.0' });
+		expect(state.managerVersion).toBe('1.0.0');
+		connection.receive({
+			type: 'updateStatus',
+			status: { type: 'available', version: '1.1.0', notesUrl: 'https://example.org/n' }
+		});
+		expect(state.updateStatus).toMatchObject({ type: 'available', version: '1.1.0' });
+		state.checkForUpdates();
+		expect(connection.lastSent()).toEqual({ type: 'checkForUpdates' });
+	});
+
 	it('start again after a reconnection', async () => {
 		const { connection, state } = following();
 		const lost = state.edit(setBrightness(60));

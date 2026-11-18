@@ -28,6 +28,10 @@ use hubergamof_manager::server::{
 use hubergamof_manager::strip::{ProcProbe, SimulatedProbe, SystemClock, SystemProbe};
 use hubergamof_manager::teams_extension::{self, Browser, Locations};
 use hubergamof_manager::tray::{TrayIcon, quit_on};
+use hubergamof_manager::update::{
+    self, FIRST_CHECK_DELAY, GithubReleases, ReleaseSource, SimulatedReleases, UpdateHandle,
+    Version,
+};
 use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::CatalogModule;
@@ -245,6 +249,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
+    let updates = start_update_check(cli.demo, stopping.clone());
     let context = ServerContext {
         discovery: discovery.clone(),
         engines: supervisor.engines(),
@@ -253,6 +258,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         store,
         renderer,
         file_picker: file_picker(cli.file_chooser_answer.clone()),
+        updates: updates.clone(),
     };
     let server = match Server::bind(
         cli.port,
@@ -291,6 +297,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
             url,
             &discovery,
             supervisor.engines(),
+            updates,
             quit_on(shutdown.clone()),
         )
         .await
@@ -312,6 +319,38 @@ async fn run_manager(cli: Cli) -> Result<()> {
     }
     tracing::info!("bye");
     outcome
+}
+
+/// Release announced by `--demo`: far above any real one, so the interface
+/// always shows an available update.
+const DEMO_RELEASE: Version = Version::new(999, 0, 0);
+
+/// Starts the periodic check for a newer release. `--demo` never touches the
+/// network: it announces [`DEMO_RELEASE`] at once.
+fn start_update_check(demo: bool, stopping: watch::Receiver<bool>) -> UpdateHandle {
+    let current = match Version::current() {
+        Ok(current) => current,
+        Err(error) => {
+            tracing::warn!(%error, "update check disabled");
+            return UpdateHandle::inactive();
+        }
+    };
+    let (source, first_delay): (Arc<dyn ReleaseSource>, Duration) = if demo {
+        (
+            Arc::new(SimulatedReleases::announcing(DEMO_RELEASE)),
+            Duration::ZERO,
+        )
+    } else {
+        match GithubReleases::new() {
+            Ok(source) => (Arc::new(source), FIRST_CHECK_DELAY),
+            Err(error) => {
+                tracing::warn!(%error, "update check disabled");
+                return UpdateHandle::inactive();
+            }
+        }
+    };
+    // The task ends with the shutdown signal; nothing to wait for.
+    update::start(source, current, first_delay, stopping).0
 }
 
 /// Resolves when the tray's « Quitter » (or anything else) requests shutdown.

@@ -45,6 +45,7 @@ use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
 use crate::file_chooser::FilePicker;
 use crate::render::Renderer;
+use crate::update::UpdateHandle;
 
 /// Size of the images drawn for the UI (module icons, key images): large
 /// enough for the biggest keys on a high-density screen.
@@ -86,6 +87,8 @@ pub struct ServerContext {
     pub renderer: Arc<Renderer>,
     /// Opens the desktop's file dialog for the UI.
     pub file_picker: Arc<dyn FilePicker>,
+    /// Check for a newer release.
+    pub updates: UpdateHandle,
 }
 
 /// Shared by every request handler.

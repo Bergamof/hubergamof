@@ -20,6 +20,7 @@ use hubergamof_manager::server::{
     AccessPolicy, AssetSource, ServerContext, SimulatedInput, module_catalog, router,
 };
 use hubergamof_manager::strip::{FixedClock, SimulatedProbe};
+use hubergamof_manager::update::UpdateHandle;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
     ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DialAssignment, ErrorCode,
@@ -92,6 +93,7 @@ impl Api {
             store,
             renderer,
             file_picker,
+            updates: UpdateHandle::inactive(),
         };
         let decks = VirtualDevices::new(discovery);
         for serial in [FIRST, SECOND] {

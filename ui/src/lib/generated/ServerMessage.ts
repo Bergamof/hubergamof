@@ -4,6 +4,7 @@ import type { DeviceConfig } from "./DeviceConfig";
 import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
 import type { LiveState } from "./LiveState";
+import type { UpdateStatus } from "./UpdateStatus";
 
 /**
  * Message sent by the manager to the UI.
@@ -32,7 +33,11 @@ config: DeviceConfig, } | { "type": "liveState",
 /**
  * Live state.
  */
-state: LiveState, } | { "type": "error", 
+state: LiveState, } | { "type": "updateStatus", 
+/**
+ * Current status.
+ */
+status: UpdateStatus, } | { "type": "error", 
 /**
  * Machine-readable error code.
  */

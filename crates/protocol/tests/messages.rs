@@ -6,7 +6,7 @@ use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
     DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode, ImageSize,
     KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView,
-    ServerMessage, SettingField, SettingKind, StripConfig,
+    ServerMessage, SettingField, SettingKind, StripConfig, UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -185,6 +185,51 @@ fn client_simulated_inputs() {
 #[test]
 fn client_ping() {
     assert_wire_format(&ClientMessage::Ping, &json!({ "type": "ping" }));
+}
+
+#[test]
+fn client_check_for_updates() {
+    assert_wire_format(
+        &ClientMessage::CheckForUpdates,
+        &json!({ "type": "checkForUpdates" }),
+    );
+}
+
+#[test]
+fn server_update_status() {
+    assert_wire_format(
+        &ServerMessage::UpdateStatus {
+            status: UpdateStatus::Available {
+                version: "1.2.0".into(),
+                notes_url: "https://example.org/notes".into(),
+            },
+        },
+        &json!({
+            "type": "updateStatus",
+            "status": {
+                "type": "available",
+                "version": "1.2.0",
+                "notesUrl": "https://example.org/notes"
+            }
+        }),
+    );
+    assert_wire_format(
+        &ServerMessage::UpdateStatus {
+            status: UpdateStatus::CheckFailed {
+                message: "offline".into(),
+            },
+        },
+        &json!({
+            "type": "updateStatus",
+            "status": { "type": "checkFailed", "message": "offline" }
+        }),
+    );
+    assert_wire_format(
+        &ServerMessage::UpdateStatus {
+            status: UpdateStatus::UpToDate,
+        },
+        &json!({ "type": "updateStatus", "status": { "type": "upToDate" } }),
+    );
 }
 
 #[test]

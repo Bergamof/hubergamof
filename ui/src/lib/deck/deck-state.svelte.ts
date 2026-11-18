@@ -3,7 +3,8 @@ import type {
 	ClientMessage,
 	DeviceConfig,
 	DeviceInfo,
-	ServerMessage
+	ServerMessage,
+	UpdateStatus
 } from '#lib/generated/index.js';
 import type { ConfigEdit } from './config-edits.js';
 import { browserDevicePreference, type DevicePreference } from './device-preference.js';
@@ -93,6 +94,10 @@ export class DeckState {
 	catalog: CatalogModule[] = $state([]);
 	selectedSerial: string | undefined = $state();
 	notices: Notice[] = $state([]);
+	/** Version of the running manager, known once it has greeted us. */
+	managerVersion: string | undefined = $state();
+	/** Outcome of the manager's check for a newer release. */
+	updateStatus: UpdateStatus = $state({ type: 'unknown' });
 
 	/** Last configuration of the selected device sent by the manager. */
 	#saved: DeviceConfig | undefined = $state();
@@ -150,6 +155,11 @@ export class DeckState {
 		});
 	}
 
+	/** Asks the manager to look for a newer release now; the answer arrives as `updateStatus`. */
+	checkForUpdates(): void {
+		this.#connection.send({ type: 'checkForUpdates' });
+	}
+
 	dismiss(id: number): void {
 		this.notices = this.notices.filter((notice) => notice.id !== id);
 	}
@@ -159,6 +169,7 @@ export class DeckState {
 			case 'hello':
 				// New connection: whatever was pending died with the previous one.
 				this.#dropPending(CONNECTION_LOST);
+				this.managerVersion = message.version;
 				break;
 			case 'devices':
 				this.devices = message.devices;
@@ -172,6 +183,9 @@ export class DeckState {
 				break;
 			case 'error':
 				this.#receiveError(problemOf(message.code, message.message));
+				break;
+			case 'updateStatus':
+				this.updateStatus = message.status;
 				break;
 			case 'liveState':
 			case 'pong':

@@ -48,4 +48,4 @@ serial: string,
 /**
  * Dial index.
  */
-index: number, } | { "type": "ping" };
+index: number, } | { "type": "checkForUpdates" } | { "type": "ping" };

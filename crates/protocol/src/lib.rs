@@ -16,6 +16,7 @@ mod config;
 mod device;
 mod live;
 mod messages;
+mod update;
 
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
 pub use catalog::CatalogModule;
@@ -28,6 +29,7 @@ pub use config::{
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{KeyView, LiveState, PageView};
 pub use messages::{ClientMessage, ErrorCode, ServerMessage};
+pub use update::UpdateStatus;
 
 // Defined in the MPL-2.0 module API so that modules do not link GPL code;
 // re-exported here because they are part of the wire contract.

@@ -11,7 +11,9 @@ use std::time::Duration;
 
 use super::errors::client_message;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
-use hubergamof_protocol::{ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage};
+use hubergamof_protocol::{
+    ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage, UpdateStatus,
+};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
@@ -64,6 +66,7 @@ enum Event {
     ConfigChanged(Result<(), watch::error::RecvError>),
     LiveChanged(Result<(), watch::error::RecvError>),
     LiveDue,
+    UpdateChanged(Result<(), watch::error::RecvError>),
     Shutdown,
 }
 
@@ -75,11 +78,13 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let (devices, discovery) = state.context.discovery.subscribe();
     let engine_changes = state.context.engines.changes();
     let shutdown = state.shutdown.clone();
+    let updates = state.context.updates.subscribe();
     let mut session = Session {
         socket,
         state,
         discovery,
         engine_changes,
+        updates,
         shutdown,
         selection: Selection::None,
     };
@@ -91,6 +96,7 @@ struct Session {
     state: AppState,
     discovery: broadcast::Receiver<DiscoveryEvent>,
     engine_changes: watch::Receiver<()>,
+    updates: watch::Receiver<UpdateStatus>,
     shutdown: watch::Receiver<bool>,
     selection: Selection,
 }
@@ -106,6 +112,9 @@ impl Session {
             modules: self.state.context.catalog.to_vec(),
         })
         .await?;
+        if *self.updates.borrow() != UpdateStatus::Unknown {
+            self.send_update_status().await?;
+        }
         loop {
             match self.next_event().await {
                 Event::Client(Some(Ok(message))) => self.on_client_message(message).await?,
@@ -120,6 +129,10 @@ impl Session {
                     self.selection = Selection::None;
                 }
                 Event::LiveDue => self.send_live_state().await?,
+                Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
+                // Unreachable while the context holds its handle (it keeps the
+                // channel open); harmless if it ever happens.
+                Event::UpdateChanged(Err(_)) => {}
                 Event::Shutdown => {
                     self.close().await;
                     return Err(Closed);
@@ -155,6 +168,7 @@ impl Session {
             result = changed_or_pending(config) => Event::ConfigChanged(result),
             result = changed_or_pending(live) => Event::LiveChanged(result),
             () = sleep_until_some(live_due) => Event::LiveDue,
+            result = self.updates.changed() => Event::UpdateChanged(result),
         }
     }
 
@@ -189,6 +203,10 @@ impl Session {
                 return self.select(serial, live_state).await;
             }
             ClientMessage::Ping => return self.send(&ServerMessage::Pong).await,
+            ClientMessage::CheckForUpdates => {
+                self.state.context.updates.check_now();
+                return Ok(());
+            }
             ClientMessage::UpdateConfig { serial, config } => {
                 return self.update_config(serial, config).await;
             }
@@ -406,6 +424,11 @@ impl Session {
             message: client_message(code, message, "WebSocket request"),
         })
         .await
+    }
+
+    async fn send_update_status(&mut self) -> Result<(), Closed> {
+        let status = self.updates.borrow_and_update().clone();
+        self.send(&ServerMessage::UpdateStatus { status }).await
     }
 
     async fn send(&mut self, message: &ServerMessage) -> Result<(), Closed> {

@@ -22,13 +22,14 @@ use hubergamof_manager::server::{
     MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH, module_catalog, router,
 };
 use hubergamof_manager::strip::{FixedClock, SimulatedProbe};
+use hubergamof_manager::update::{self, SimulatedReleases, UpdateHandle, Version};
 use hubergamof_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory,
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, ErrorCode, LiveState, ModuleInstance, ServerMessage,
+    ClientMessage, DeviceConfig, ErrorCode, LiveState, ModuleInstance, ServerMessage, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -163,6 +164,7 @@ impl Devices {
             store,
             renderer,
             file_picker: Arc::new(NoFilePicker),
+            updates: UpdateHandle::inactive(),
         };
         Self {
             _dir: dir,
@@ -191,6 +193,10 @@ impl Running {
     async fn accepting(simulated_input: SimulatedInput) -> Self {
         let mut devices = Devices::start();
         devices.context.simulated_input = simulated_input;
+        Self::with_devices(devices).await
+    }
+
+    async fn with_devices(devices: Devices) -> Self {
         let (shutdown, stopping) = watch::channel(false);
         let dev_origins = [DEV_ORIGIN.parse::<DevOrigin>().unwrap()];
         let server = Server::bind(
@@ -902,5 +908,50 @@ async fn shutdown_closes_websocket_sessions() {
         matches!(close, Some(Ok(Message::Close(Some(_))))),
         "{close:?}"
     );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn clients_follow_the_update_check_and_can_ask_for_one() {
+    let mut devices = Devices::start();
+    let (stop, stopping) = watch::channel(false);
+    let source = SimulatedReleases::announcing(Version::new(999, 0, 0));
+    let (updates, _task) = update::start(
+        Arc::new(source),
+        Version::new(1, 0, 0),
+        Duration::from_secs(3600),
+        stopping,
+    );
+    devices.context.updates = updates;
+    let server = Running::with_devices(devices).await;
+    let mut client = server.connect().await;
+
+    // Nothing is known before the first check: no message at greeting.
+    client.ping().await;
+    client.send(&ClientMessage::CheckForUpdates).await;
+    let available = client
+        .receive_until(|message| match message {
+            ServerMessage::UpdateStatus {
+                status: status @ UpdateStatus::Available { .. },
+            } => Some(status),
+            ServerMessage::UpdateStatus { .. } => None,
+            other => panic!("expected an update status, got {other:?}"),
+        })
+        .await;
+    assert!(
+        matches!(&available, UpdateStatus::Available { version, .. } if version == "999.0.0"),
+        "{available:?}"
+    );
+
+    // A client connecting later is told right after the catalog.
+    let mut late = server.connect().await;
+    let status = late
+        .receive_until(|message| match message {
+            ServerMessage::UpdateStatus { status } => Some(status),
+            _ => None,
+        })
+        .await;
+    assert_eq!(status, available);
+    stop.send_replace(true);
     server.stop().await;
 }

@@ -54,6 +54,17 @@ test('nomme la page d’après l’appareil affiché', async ({ page }) => {
 	await expect(page).toHaveTitle('Stream Deck+ (virtual) · HuBergamof');
 });
 
+test('annonce une version plus récente et permet de relancer la recherche', async ({ page }) => {
+	await open(page);
+	// `--demo` announces a fake release, without network.
+	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
+	const notes = page.getByRole('link', { name: /Notes de version/ });
+	await expect(notes).toHaveAttribute('href', /^https:\/\//);
+	await expect(notes).toHaveAttribute('rel', 'noopener noreferrer');
+	await page.getByRole('button', { name: 'Rechercher des mises à jour' }).click();
+	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
+});
+
 test('explique comment déplacer une touche, à la souris comme au clavier', async ({ page }) => {
 	await open(page);
 	await expect(page.getByText(/Glissez une touche pour la déplacer/)).toBeVisible();
