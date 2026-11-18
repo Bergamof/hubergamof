@@ -378,6 +378,9 @@ jobs:
       - name: Trivy findings
         if: ${{ !cancelled() && hashFiles('trivy-image.json') != '' }}
         run: jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName) \(.InstalledVersion) → \(.FixedVersion)\t\($t)"' trivy-image.json
+      - name: Trivy findings without a published fix
+        if: ${{ !cancelled() && hashFiles('trivy-image-all.json') != '' }}
+        run: jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | select(.FixedVersion == null or .FixedVersion == "") | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName) \(.InstalledVersion)\t\($t)"' trivy-image-all.json | sort -u
       - name: Summary
         id: summary
         if: always()
