@@ -118,6 +118,9 @@ pub enum InstallError {
     /// The embedded manifest has no usable `key`.
     #[error("the extension's manifest has no valid key")]
     BadKey,
+    /// The embedded manifest has no version.
+    #[error("the extension's manifest has no version")]
+    BadManifest,
     /// A file could not be written.
     #[error("{path}: {source}")]
     Io {
@@ -138,6 +141,8 @@ pub struct Installed {
     pub host_manifest: PathBuf,
     /// Identifier of the extension, which the host manifest allows.
     pub extension_id: String,
+    /// Version of the extension written, the one of this program.
+    pub version: String,
 }
 
 /// Identifier a browser derives from the public key of an extension: the
@@ -164,6 +169,22 @@ pub fn embedded_extension_id() -> Result<String, InstallError> {
     let manifest: serde_json::Value =
         serde_json::from_slice(&manifest.data).map_err(|_| InstallError::BadKey)?;
     extension_id(manifest["key"].as_str().ok_or(InstallError::BadKey)?)
+}
+
+/// Version of the embedded extension, which a release sets to the one of the
+/// program (`set-version.sh`).
+///
+/// # Errors
+///
+/// Fails when the embedded manifest has no version.
+pub fn embedded_extension_version() -> Result<String, InstallError> {
+    let manifest = EmbeddedExtension::get("manifest.json").ok_or(InstallError::BadManifest)?;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&manifest.data).map_err(|_| InstallError::BadManifest)?;
+    manifest["version"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or(InstallError::BadManifest)
 }
 
 /// Sticky bit of a folder: others cannot replace what they do not own.
@@ -245,6 +266,7 @@ pub fn install(
         .uid();
     check_binary_is_private(binary, user)?;
     let extension_id = embedded_extension_id()?;
+    let version = embedded_extension_version()?;
     let extension_dir = locations.data_dir.join(EXTENSION_FOLDER);
     write_extension(&extension_dir)?;
 
@@ -266,6 +288,7 @@ pub fn install(
         extension_dir,
         host_manifest,
         extension_id,
+        version,
     })
 }
 
@@ -344,6 +367,12 @@ mod tests {
             manifest["allowed_origins"],
             json!([format!("chrome-extension://{EXPECTED_ID}/")])
         );
+        let written: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(installed.extension_dir.join("manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(written["version"], installed.version.as_str());
+        assert_eq!(installed.version, embedded_extension_version().unwrap());
     }
 
     #[test]

@@ -8,7 +8,7 @@ Choix « Niveau de version » : `auto` (par défaut, d'après les commits), `pat
 Le workflow `.github/workflows/release.yml` enchaîne trois jobs :
 
 1. **gate** — fige le SHA de `main` ; attend la fin du dernier run de `CI` sur ce SHA et sur `main` (événements `push` et planification ; jamais un run de PR) et échoue s'il est en erreur, annulé ou introuvable ; calcule la version.
-2. **build** (Ubuntu 24.04, sans cache) — fixe la version dans `Cargo.toml`/`Cargo.lock` (copie de travail, jamais committée), `make build`, `make package`, `lintian`, puis installe chaque paquet dans un conteneur propre (`make package-smoke`) ; produit `SHA256SUMS`.
+2. **build** (Ubuntu 24.04, sans cache) — fixe la version dans `Cargo.toml`/`Cargo.lock` et dans le manifeste de l'extension Teams `ui/teams-extension/manifest.json` (copie de travail, jamais committée ; l'extension embarquée porte ainsi celle du paquet), `make build`, `make package`, `lintian`, puis installe chaque paquet dans un conteneur propre (`make package-smoke`) ; produit `SHA256SUMS`.
 3. **publish** — crée d'abord le tag `vX.Y.Z` au SHA vérifié par l'API (échec s'il existe déjà), puis la release avec `--verify-tag` : livrables, `SHA256SUMS` et note.
 
 ## Numéro de version

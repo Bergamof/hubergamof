@@ -233,8 +233,11 @@ expect_verdict success '{"workflow_runs":[{"event":"schedule","created_at":"2026
 expect_verdict missing '{"workflow_runs":[{"event":"pull_request","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}' "run de PR ignoré"
 expect_verdict success '{"workflow_runs":[{"event":"push","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"},{"event":"pull_request","created_at":"2026-01-02T00:00:00Z","status":"completed","conclusion":"failure"}]}' "un run de PR plus récent ne compte pas"
 
-# set-version.sh : Cargo.toml et Cargo.lock, rien d'autre.
+# set-version.sh : Cargo.toml, Cargo.lock et le manifeste de l'extension, rien d'autre.
 version_dir="$(mktemp -d)"
+mkdir -p "$version_dir/ui/teams-extension"
+printf '{\n\t"manifest_version": 3,\n\t"name": "HuBergamof",\n\t"version": "0.1.0",\n\t"description": "x"\n}\n' \
+	>"$version_dir/ui/teams-extension/manifest.json"
 cat >"$version_dir/Cargo.toml" <<'TOML'
 [workspace.package]
 version = "0.1.0"
@@ -267,6 +270,18 @@ untouched="$(grep -c 'version = "0.1.0"' "$version_dir/Cargo.lock")"
 if [[ "$toml_versions" != 1 || "$lock_versions" != 3 || "$untouched" != 1 ]] \
 	|| ! grep -q 'serde = { version = "0.1.0" }' "$version_dir/Cargo.toml"; then
 	echo "ÉCHEC : set-version.sh (toml=$toml_versions, lock=$lock_versions, intacts=$untouched)" >&2
+	failures=$((failures + 1))
+fi
+manifest="$version_dir/ui/teams-extension/manifest.json"
+if ! grep -q '^	"version": "3.4.5",$' "$manifest" \
+	|| ! grep -q '"manifest_version": 3,' "$manifest" \
+	|| [[ "$(grep -c '"3.4.5"' "$manifest")" != 1 ]]; then
+	echo "ÉCHEC : set-version.sh ne fixe pas la version du manifeste de l'extension" >&2
+	failures=$((failures + 1))
+fi
+rm "$manifest"
+if (cd "$version_dir" && "$here/set-version.sh" 3.4.6 >/dev/null 2>&1); then
+	echo "ÉCHEC : set-version.sh accepte un manifeste d'extension absent" >&2
 	failures=$((failures + 1))
 fi
 if (cd "$version_dir" && "$here/set-version.sh" "1.0" >/dev/null 2>&1); then

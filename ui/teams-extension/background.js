@@ -59,6 +59,10 @@ const relay = new Relay({
 	onRequest: forwardToTeams
 });
 
+// The manager tells the user when the extension is not of its version: sent at
+// every connection (the relay replays it).
+relay.report({ type: 'hello', version: chrome.runtime.getManifest().version });
+
 /** Which frame may report what: Teams itself its own state, the calendar the meetings. */
 function mayReport(report, sender) {
 	if (sender.id !== chrome.runtime.id) return false;

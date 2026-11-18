@@ -160,7 +160,8 @@ fn install_extension(browser: Browser) -> Result<()> {
     let mut out = std::io::stdout().lock();
     writeln!(
         out,
-        "Extension written to {}",
+        "Extension {} written to {}",
+        installed.version,
         installed.extension_dir.display()
     )?;
     writeln!(

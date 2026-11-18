@@ -82,6 +82,8 @@ impl TeamsState {
     pub(crate) fn apply(&mut self, report: BrowserReport) -> bool {
         let before = self.clone();
         match report.sanitized() {
+            // Not a state: the bridge logs it when it arrives.
+            BrowserReport::Hello { .. } => {}
             BrowserReport::Unread { count } => self.unread = count,
             BrowserReport::Conversations { unread } => self.conversations = unread,
             BrowserReport::Call {
@@ -418,9 +420,39 @@ async fn serve(stream: UnixStream, shared: Arc<Shared>) {
     tracing::info!("Teams extension disconnected");
 }
 
+/// The version of this program, which the extension in the browser must be
+/// (a release sets the one of its manifest to it).
+const MANAGER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Whether an extension of `version` is the one of this program.
+fn is_current_extension(version: &str) -> bool {
+    version == MANAGER_VERSION
+}
+
+/// Logs the version of the extension, with the way to update it when it is
+/// not the one of this program.
+fn announce_extension_version(hello: &BrowserReport) {
+    let BrowserReport::Hello { version } = hello else {
+        return;
+    };
+    if is_current_extension(version) {
+        tracing::info!(%version, "Teams extension version");
+    } else {
+        tracing::warn!(
+            extension = %version,
+            manager = MANAGER_VERSION,
+            "the Teams extension is not the version of this program: run `hubergamof \
+             install-extension`, then reload the extension in the browser"
+        );
+    }
+}
+
 /// A frame of the extension: a report, or garbage that is ignored.
 fn handle_frame(shared: &Shared, generation: u64, frame: &[u8]) {
     match serde_json::from_slice::<BrowserReport>(frame) {
+        Ok(BrowserReport::Hello { version }) => {
+            announce_extension_version(&BrowserReport::Hello { version }.sanitized());
+        }
         Ok(report) => shared.apply_if_current(generation, report),
         // Only where the error is, never what it quotes: that is text of the
         // page.
@@ -623,6 +655,28 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(frame, br#"{"type":"do","action":"toggleMute"}"#);
+    }
+
+    #[test]
+    fn only_the_version_of_the_program_is_current() {
+        assert!(is_current_extension(MANAGER_VERSION));
+        assert!(!is_current_extension("0.0.0-old"));
+        assert!(!is_current_extension(""));
+    }
+
+    #[tokio::test]
+    async fn the_version_of_the_extension_is_not_a_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_bridge, mut state) = bridge_in(&dir).await;
+        let mut stream = extension(&dir).await;
+        state_where(&mut state, |state| state.connected).await;
+
+        send_report(&mut stream, r#"{"type":"hello","version":"0.0.0-old"}"#).await;
+        send_report(&mut stream, r#"{"type":"unread","count":4}"#).await;
+        let seen = state_where(&mut state, |state| state.unread == 4).await;
+        // Nothing else changed: the hello is read and logged, not kept.
+        assert_eq!(seen.conversations, []);
+        assert!(seen.connected);
     }
 
     #[tokio::test]

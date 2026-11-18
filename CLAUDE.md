@@ -143,6 +143,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Applications lancées par le gestionnaire : toujours via `desktop::Launch` (scope systemd), sinon elles meurent avec le service ; contraintes sur les valeurs lancées dans `docs/integrations-desktop.md`.
 - Attentes des streams du bureau (`WindowChanges`/`NotificationStream::next`) : sûres à l'annulation (lues dans un `select!`) ; tout travail lent va dans une tâche dédiée.
 - Notification animée (≈ 15 images/s) : tout ce qui coûte (SVG des rappels des molettes → couche mise en cache dans `Renderer::notification_reminders`, texte → `notification_text`) est dessiné une fois et seulement composité à chaque pas ; la bande couverte puis découverte est réécrite depuis l'image gardée (`PaintedStrip`) sans re-rendu si son contenu n'a pas changé. Ne jamais rasteriser de SVG à chaque pas.
+- Version de l'extension Teams = celle du workspace : `set-version.sh` fixe `ui/teams-extension/manifest.json` à la release (copie de travail), l'extension l'annonce par `BrowserReport::Hello` et le pont journalise un `warn` si elle diffère de `CARGO_PKG_VERSION` ; en local les deux valent `0.1.0` (les monter ensemble, `set-version.sh` est strict : il échoue sans ligne `"version"` indentée d'une tabulation).
 - Les tests de panique des modules écrivent le message du panic hook sur stderr (`fragile …`) : attendu.
 
 ## État du projet
