@@ -223,6 +223,13 @@ pub enum BrowserReport {
         /// The count; `0` when everything is read.
         count: u32,
     },
+    /// The version of the extension, sent at every connection: the manager
+    /// tells the user when it is not its own.
+    #[serde(rename_all = "camelCase")]
+    Hello {
+        /// The version in the manifest of the extension.
+        version: String,
+    },
     /// Names of the unread conversations, read from the conversation list.
     #[serde(rename_all = "camelCase")]
     Conversations {
@@ -311,6 +318,9 @@ impl BrowserReport {
     pub fn sanitized(self) -> Self {
         match self {
             Self::Unread { count } => Self::Unread { count },
+            Self::Hello { version } => Self::Hello {
+                version: bounded_text(&version),
+            },
             Self::Conversations { unread } => Self::Conversations {
                 unread: unread
                     .into_iter()
@@ -618,6 +628,25 @@ mod tests {
             serde_json::to_string(&act).unwrap(),
             r#"{"type":"do","action":"hangUp"}"#
         );
+    }
+
+    #[test]
+    fn the_version_of_the_extension_is_bounded_like_any_text() {
+        let report: BrowserReport =
+            serde_json::from_str(r#"{"type":"hello","version":"1.2\n3"}"#).unwrap();
+        assert_eq!(
+            report.sanitized(),
+            BrowserReport::Hello {
+                version: "1.23".into()
+            }
+        );
+        let long = BrowserReport::Hello {
+            version: "9".repeat(MAX_TEXT_CHARS * 2),
+        };
+        let BrowserReport::Hello { version } = long.sanitized() else {
+            panic!("a hello stays one");
+        };
+        assert_eq!(version.chars().count(), MAX_TEXT_CHARS);
     }
 
     #[test]

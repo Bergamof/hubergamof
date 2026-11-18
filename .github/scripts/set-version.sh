@@ -30,4 +30,19 @@ awk -v version="$version" -v prefix="$CRATE_PREFIX" '
 	{ print }
 ' Cargo.lock >Cargo.lock.new
 mv Cargo.lock.new Cargo.lock
-echo "Version du workspace fixée à $version."
+
+# Manifeste de l'extension Teams (embarquée dans le binaire) : elle annonce au
+# gestionnaire la version qu'elle porte, qui doit être la sienne.
+readonly EXTENSION_MANIFEST="ui/teams-extension/manifest.json"
+if [[ ! -f "$EXTENSION_MANIFEST" ]]; then
+	echo "$EXTENSION_MANIFEST introuvable (le script se lance depuis la racine du dépôt)." >&2
+	exit 1
+fi
+sed -E 's/^(\t"version": ")[^"]*(",)$/\1'"$version"'\2/' "$EXTENSION_MANIFEST" >"$EXTENSION_MANIFEST.new"
+if ! grep -q "^	\"version\": \"$version\",\$" "$EXTENSION_MANIFEST.new"; then
+	rm -f "$EXTENSION_MANIFEST.new"
+	echo "Ligne « version » introuvable dans $EXTENSION_MANIFEST." >&2
+	exit 1
+fi
+mv "$EXTENSION_MANIFEST.new" "$EXTENSION_MANIFEST"
+echo "Version du workspace et de l'extension fixée à $version."

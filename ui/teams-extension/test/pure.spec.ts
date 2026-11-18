@@ -167,6 +167,9 @@ describe('the manifest', () => {
 	// No `use_dynamic_url`: the modules a content script imports resolve against
 	// the static extension URL, which that option makes unreachable (the import
 	// fails and nothing is ever reported).
+	it('carries a version a release can set (dotted numbers)', () => {
+		expect(manifest.version).toMatch(/^\d+(\.\d+){1,3}$/);
+	});
 	it('asks for nothing beyond what the extension needs', () => {
 		const origins = ['https://teams.cloud.microsoft/*', 'https://outlook.office.com/*'];
 		expect(manifest.permissions).toEqual(['nativeMessaging', 'alarms']);
