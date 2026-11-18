@@ -46,6 +46,14 @@ async fn the_pomodoro_menu_is_a_popup_over_its_dial() {
 }
 
 #[tokio::test]
+async fn a_strip_without_dials_is_drawn_without_reminders() {
+    let fixture = start(strip_without_dials_info()).await;
+    let strip = fixture.strip();
+    assert!(strip.hints.is_empty());
+    assert!(strip.popup.is_none());
+}
+
+#[tokio::test]
 async fn the_volume_reminder_follows_the_mute() {
     let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
     // Once the (simulated) audio server was read.
