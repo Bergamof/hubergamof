@@ -17,6 +17,10 @@
 	let deck = $state<DeckState>();
 
 	const isOnline = $derived(connection?.status === 'open');
+	/** The page then shows its own alert about the lost connection: the header does not repeat it. */
+	const offlineAlertShown = $derived(
+		!isOnline && deck?.device !== undefined && deck.config !== undefined
+	);
 
 	let editor: HTMLDivElement | undefined = $state();
 	/** Focused control of the editor when the connection was lost, focused again once back. */
@@ -55,7 +59,7 @@
 </script>
 
 <svelte:head>
-	<title>HuBergamof</title>
+	<title>{deck?.device ? `${deck.device.displayName} · HuBergamof` : 'HuBergamof'}</title>
 </svelte:head>
 
 {#snippet hero(message: string, detail?: string)}
@@ -75,7 +79,7 @@
 		</h1>
 		<p
 			role="status"
-			aria-live="polite"
+			aria-live={offlineAlertShown ? 'off' : 'polite'}
 			class="flex min-h-9 items-center gap-2 rounded-full border border-line bg-surface px-3.5 text-sm"
 		>
 			<span aria-hidden="true" class={['size-2.5 rounded-full', isOnline ? 'bg-ok' : 'bg-warning']}

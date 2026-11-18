@@ -32,7 +32,7 @@ Dials of the device, left to right: a knob drawing and the name of the function 
 					{dial.name}
 				</span>
 				{#if dial.missing}
-					<span class="text-xs text-device-muted">indisponible</span>
+					<span class="text-sm text-device-muted">indisponible</span>
 				{/if}
 			</button>
 		</li>

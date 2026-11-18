@@ -49,6 +49,26 @@ test('affiche les touches et les molettes de la configuration', async ({ page })
 	await expect(page.getByRole('button', { name: /^Bande tactile/ })).toBeVisible();
 });
 
+test('nomme la page d’après l’appareil affiché', async ({ page }) => {
+	await open(page);
+	await expect(page).toHaveTitle('Stream Deck+ (virtual) · HuBergamof');
+});
+
+test('explique comment déplacer une touche, à la souris comme au clavier', async ({ page }) => {
+	await open(page);
+	await expect(page.getByText(/Glissez une touche pour la déplacer/)).toBeVisible();
+});
+
+test('tient sans défilement horizontal sur un écran de 320 px', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 800 });
+	await open(page);
+	const overflow = await page.evaluate(
+		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+	);
+	expect(overflow).toBeLessThanOrEqual(0);
+	await expect(key(page, '1 : Audio')).toBeVisible();
+});
+
 test('ajoute une touche depuis le catalogue, sans proposer ce qui ne s’y place pas', async ({
 	page
 }) => {
@@ -256,6 +276,34 @@ test('supprime une touche après confirmation et place le focus sur sa voisine',
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 	await expect(key(page, /^Touche 4 : Claude/)).toBeFocused();
 	await expect(page.getByText('Touche supprimée.')).toBeAttached();
+});
+
+test('annonce de nouveau deux suppressions identiques de suite', async ({ page }) => {
+	await open(page);
+	const status = page.getByRole('status').filter({ hasText: /Touche supprimée/ });
+	await key(page, /^Touche 5 : Notifications/).click();
+	await removeSelectedKey(page);
+	await expect(status).toHaveText('Touche supprimée.');
+	// Cleared before the next one: a screen reader hears the second as new.
+	await key(page, /^Touche 4 : Claude/).click();
+	const cleared = page.evaluate(
+		() =>
+			new Promise<boolean>((resolve) => {
+				const region = [...document.querySelectorAll('[role="status"]')].find((node) =>
+					node.textContent?.includes('Touche supprimée')
+				);
+				if (!region) return resolve(false);
+				new MutationObserver((_, observer) => {
+					if (region.textContent === '') {
+						observer.disconnect();
+						resolve(true);
+					}
+				}).observe(region, { childList: true, characterData: true, subtree: true });
+			})
+	);
+	await removeSelectedKey(page);
+	expect(await cleared).toBe(true);
+	await expect(status).toHaveText('Touche supprimée.');
 });
 
 test('change la fonction d’une molette seulement sur « Affecter »', async ({ page }) => {
