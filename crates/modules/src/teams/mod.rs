@@ -48,6 +48,7 @@ const MODULE_LABEL: &str = "Teams";
 const UNREAD_TITLE: &str = "Teams · non lus";
 const IN_CALL_LABEL: &str = "En appel";
 const RINGING_LABEL: &str = "Appel";
+const OFFLINE_LABEL: &str = "Hors ligne";
 const ANSWER_LABEL: &str = "Répondre";
 
 /// Background of the notifications of a meeting and of an incoming call.
@@ -304,6 +305,11 @@ fn camera_key(camera_on: Option<bool>) -> KeyContent {
 impl Module for Teams {
     fn key(&self) -> KeyContent {
         let teams = self.changes.borrow();
+        if !teams.connected {
+            // Nothing below is current without the extension: say so rather
+            // than showing a quiet "Teams" that hides the missing link.
+            return KeyContent::with_icon(&MODULE_ICON, OFFLINE_LABEL);
+        }
         let (label, state) = match teams.call.phase {
             CallPhase::InCall => (IN_CALL_LABEL.to_owned(), KeyState::Active),
             CallPhase::Ringing => (RINGING_LABEL.to_owned(), KeyState::Attention),
@@ -316,16 +322,19 @@ impl Module for Teams {
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
-        let (active, unread) = {
+        let (connected, active, unread) = {
             let state = self.changes.borrow();
-            (state.call.phase.is_active(), state.unread)
+            (state.connected, state.call.phase.is_active(), state.unread)
         };
-        if active {
+        if !connected {
+            Command::alert()
+        } else if active {
             vec![Command::OpenPage(CALL_PAGE.into())]
         } else if unread > 0 {
             vec![Command::OpenPage(UNREAD_PAGE.into())]
         } else {
-            Command::alert()
+            // Connected with nothing to show: not a failure.
+            Vec::new()
         }
     }
 

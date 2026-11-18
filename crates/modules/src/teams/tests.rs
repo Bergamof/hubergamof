@@ -100,7 +100,7 @@ async fn the_key_counts_the_unread_conversations() {
 }
 
 #[tokio::test]
-async fn pressing_the_key_opens_the_unread_page_or_alerts_when_there_is_nothing() {
+async fn pressing_the_key_opens_the_unread_page_and_does_nothing_when_there_is_nothing() {
     let mut harness = Harness::new(SimulatedBridge::demo());
     assert!(open_page(&harness.module.on_key_press().await, UNREAD_PAGE));
     let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
@@ -112,7 +112,18 @@ async fn pressing_the_key_opens_the_unread_page_or_alerts_when_there_is_nothing(
     assert_eq!(labels, ["Équipe produit", "Camille"]);
 
     let mut quiet = Harness::new(SimulatedBridge::new());
-    assert_eq!(quiet.module.on_key_press().await, Command::alert());
+    assert_eq!(quiet.module.on_key_press().await, []);
+}
+
+#[tokio::test]
+async fn without_an_extension_the_key_says_so_and_alerts() {
+    let mut harness = Harness::new(SimulatedBridge::demo());
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    let key = harness.module.key();
+    assert_eq!(key.label.as_deref(), Some("Hors ligne"));
+    assert_eq!(key.state, KeyState::Normal);
+    assert_eq!(harness.module.on_key_press().await, Command::alert());
 }
 
 #[tokio::test]

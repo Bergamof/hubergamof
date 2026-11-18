@@ -75,6 +75,25 @@ async fn the_extension_reaches_the_bridge_and_the_bridge_the_extension() {
 }
 
 #[tokio::test]
+async fn the_host_ends_when_the_manager_goes_away_though_the_browser_stays() {
+    let runtime = tempfile::tempdir().unwrap();
+    let directory = runtime.path().join("hubergamof");
+    std::fs::create_dir(&directory).unwrap();
+    let listener = tokio::net::UnixListener::bind(directory.join("teams.sock")).unwrap();
+
+    let mut host = native_host(runtime.path());
+    // The browser keeps its end of the pipe open, as it does while it runs.
+    let _browser_pipe = host.stdin.take().unwrap();
+    let (manager_side, _) = timeout(WAIT, listener.accept()).await.unwrap().unwrap();
+    drop(manager_side);
+
+    timeout(WAIT, host.wait())
+        .await
+        .expect("the host must end, so that the browser starts a new one")
+        .unwrap();
+}
+
+#[tokio::test]
 async fn without_a_manager_the_host_fails_instead_of_hanging() {
     let runtime = tempfile::tempdir().unwrap();
     let mut host = native_host(runtime.path());

@@ -17,6 +17,15 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Un appui long (400 ms) sur la molette de navigation ramène à la page d’accueil ; l’appui court revient toujours en arrière, au relâchement.
 - Module Docker, page « Monter » : l'entrée « Pull » lance `docker compose pull` (tout le projet, ou les services cochés/le service de la page).
 
+### Corrigé
+
+- Module Teams : l'hôte natif ne reste plus en vie, sans lien avec le gestionnaire, quand celui-ci redémarre (le navigateur en relance un) ; la touche affiche « Hors ligne » sans extension connectée, et un appui sans rien à montrer ne fait plus ⚠.
+
+### Corrigé
+
+- Module Teams : la touche affiche « Hors ligne » (et ⚠ à l'appui) tant que l'extension n'est pas connectée ; connectée sans rien à montrer, l'appui ne fait plus rien au lieu d'afficher ⚠.
+- `hubergamof native-host` se termine quand le gestionnaire s'arrête ou redémarre, au lieu de rester vivant sans rien relayer (le thread de lecture de stdin retenait l'arrêt du runtime) : le navigateur en relance un et l'extension se reconnecte.
+
 ### Supprimé
 
 - Module Docker, page « Up » : l'entrée « Pull » (`up --pull=always`) disparaît (#42).
