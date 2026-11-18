@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::file_entries::is_hidden_control;
+
 /// Prefix standing for the home directory of the user.
 const HOME_PREFIX: &str = "~";
 
@@ -20,10 +22,12 @@ pub fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
-/// Whether a setting may hold `path`: absolute once [`expand_home`]d.
+/// Whether a setting may hold `path`: absolute once [`expand_home`]d, and free
+/// of characters that could forge lines in the logs where it is reported.
 #[must_use]
 pub fn is_setting_path(path: &str) -> bool {
-    expand_home(Path::new(path), Some(Path::new("/"))).is_some_and(|path| path.is_absolute())
+    !path.chars().any(is_hidden_control)
+        && expand_home(Path::new(path), Some(Path::new("/"))).is_some_and(|path| path.is_absolute())
 }
 
 #[cfg(test)]
@@ -58,6 +62,13 @@ mod tests {
         }
         for path in ["", "app", "./app", "~", "~/", "~/.", "~/./", "~other/app"] {
             assert!(!is_setting_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn settings_refuse_paths_that_could_forge_log_lines() {
+        for path in ["/a\nb", "/a\u{1b}[31mb", "~/a\u{202E}b", "/a\u{2066}b"] {
+            assert!(!is_setting_path(path), "{path:?}");
         }
     }
 }

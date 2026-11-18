@@ -39,7 +39,7 @@ next message, or to a fallback element, rather than losing it.
 			</div>
 			<button
 				type="button"
-				class="min-h-6 shrink-0 rounded px-2 py-0.5 font-medium underline focus-ring"
+				class="min-h-9 shrink-0 rounded px-2 py-0.5 font-medium underline focus-ring"
 				onclick={() => dismiss(notice.id)}
 			>
 				Fermer le message
