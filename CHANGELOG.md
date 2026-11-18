@@ -9,6 +9,9 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Bande tactile : dessinée dès que l'appareil la déclare, même sans molette (UI et hôte partagent la règle) ; test du moteur et de l'aperçu.
+- Tests : import avec un délai d'extinction hors bornes, plusieurs appareils sous le `Supervisor`, retrait d'un appareil pendant une édition, composants `ExportImport`, `KeyImagePicker`, `BrightnessControl`, `ProblemAlert`, worker de fond de l'extension Teams ; planchers de couverture de l'UI relevés (lignes 86, fonctions 85, branches 77, instructions 89).
+- CI : le compte rendu de l'image Docker indique le nombre de HIGH/CRITICAL sans correctif publié (information).
 - Extension Teams : sa version suit celle du gestionnaire (la release fixe le manifeste comme `Cargo.toml`) ; `hubergamof install-extension` affiche la version posée et l'extension l'annonce à chaque connexion : le gestionnaire journalise un avertissement quand elle n'est pas la sienne (extension à recharger).
 - README : section « Module Teams » (installation de l'extension, `hubergamof install-extension`, chargement non empaqueté dans Brave, ce qui est lu) ; le paquet rappelle à son installation que l'extension n'est pas posée automatiquement.
 - Module Teams : la touche de l'accueil met Teams au premier plan (ou le lance) quand il n'y a ni non lu ni appel ; appuyer sur une conversation non lue l'affiche dans Teams (retour à la liste par le rail au besoin, sans jamais recharger la page : cela couperait un appel) et met sa fenêtre au premier plan ; la page d'appel a une action « Revenir à l'appel » (non utilisable verrouillé) qui met la fenêtre de Teams au premier plan. Teams est suivi comme application du bureau : sa fenêtre est la PWA Brave (`ClassMatch::Contains`).
@@ -24,6 +27,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Release : `lto = "thin"` et `codegen-units = 1` (binaire de 18,1 à 14,8 Mo, même temps de build).
+- Module Audio : la file de requêtes du worker est bornée (256) ; au-delà, la requête est refusée (⚠) au lieu de s'empiler.
+- Notifications : les non lues sont une `VecDeque` ; `config_store/files.rs` et les sous-modules `render/strip.rs` extraits ; `lock_unpoisoned` partagé par les hubs ; `plan` de Docker et `update_config` du serveur découpés.
+- Équipe : `maniaque-du-plumeau` passe de `opus` à `sonnet`.
 - Documentation : `CLAUDE.md` allégé (50 Ko → 19 Ko, détail déplacé dans `docs/architecture.md` et `docs/decisions.md`), README restructuré avec table des matières, doublons et incohérences corrigés (Playwright 1.65, dossier de configuration, phrase périmée sur l'état du projet).
 - Réglages : un chemin contenant un caractère de contrôle ou une surcharge bidirectionnelle est refusé (Rust et UI), et la sortie des commandes externes en est nettoyée avant d'atteindre les journaux.
 - Moteur : `device_engine.rs` découpé en `gestures`, `surfaces` et `compose` (sans changement de comportement) ; la détection de doublons des fichiers est partagée dans `settings-form.ts`.

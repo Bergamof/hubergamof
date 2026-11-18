@@ -23,7 +23,7 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::{Notify, broadcast, watch};
@@ -41,6 +41,7 @@ use super::model::{
 use crate::background::{
     Backoff, Listener, WorkerControl, catch_panic, sleep_until, spawn_action, spawn_worker,
 };
+use crate::sync::lock_unpoisoned;
 
 /// Time between two looks at the processes.
 const PROCESS_PROBE_INTERVAL: Duration = Duration::from_secs(2);
@@ -186,9 +187,7 @@ impl DesktopHub {
     }
 
     fn lock(&self) -> MutexGuard<'_, WorkerControl> {
-        // Every update keeps the control consistent: a poisoned lock is
-        // still valid.
-        self.control.lock().unwrap_or_else(PoisonError::into_inner)
+        lock_unpoisoned(&self.control)
     }
 }
 

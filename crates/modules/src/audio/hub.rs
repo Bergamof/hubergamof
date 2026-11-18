@@ -21,17 +21,19 @@
 //!   own changes.
 
 use std::future::Future;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use hubergamof_module_api::{EventSender, Feedback, ModuleSurface};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
 use super::backend::{AudioBackend, AudioChange, AudioChanges, AudioError, AudioFault, ReadScope};
 use super::state::AudioSnapshot;
 use crate::background::{Backoff, Listener, ReadPacer, catch_panic, sleep_until};
+use crate::sync::lock_unpoisoned;
 
 /// Time from the first change of a burst (one change produces several
 /// notifications, and the server echoes the changes of the worker) to the
@@ -45,6 +47,11 @@ pub(super) const READ_COALESCE_DELAY: Duration = Duration::from_millis(50);
 pub(super) const MIN_READ_INTERVAL: Duration = Duration::from_millis(150);
 
 /// First wait before listening to changes again after it stopped.
+/// Requests queued for the worker while a `pactl` call is blocking it: past
+/// it, new ones are dropped (the change is reported as failed) rather than
+/// piling up without limit.
+const REQUEST_CAPACITY: usize = 256;
+
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Longest wait between two attempts to listen to changes.
@@ -119,7 +126,7 @@ enum Request {
 #[derive(Debug)]
 struct WorkerHandle {
     generation: u64,
-    requests: UnboundedSender<Request>,
+    requests: Sender<Request>,
     task: AbortHandle,
 }
 
@@ -178,7 +185,7 @@ impl AudioHub {
         };
         control.generations += 1;
         let generation = control.generations;
-        let (requests, receiver) = mpsc::unbounded_channel();
+        let (requests, receiver) = mpsc::channel(REQUEST_CAPACITY);
         let worker = Worker::new(Arc::clone(self), generation, control.last_seq);
         let task = runtime.spawn(worker.run(receiver)).abort_handle();
         control.worker = Some(WorkerHandle {
@@ -209,7 +216,10 @@ impl AudioHub {
         control.subscribers = control.subscribers.saturating_sub(1);
         if control.subscribers == 0
             && let Some(worker) = &control.worker
-            && worker.requests.send(Request::Stop).is_err()
+            && matches!(
+                worker.requests.try_send(Request::Stop),
+                Err(TrySendError::Closed(_))
+            )
         {
             control.worker = None;
         }
@@ -219,7 +229,7 @@ impl AudioHub {
     /// subscribed again and nothing is left to serve (requests are sent
     /// under the same lock), or it was replaced. It is then forgotten, so
     /// that the next subscription starts a new one.
-    fn retire(&self, generation: u64, requests: &UnboundedReceiver<Request>) -> bool {
+    fn retire(&self, generation: u64, requests: &Receiver<Request>) -> bool {
         let mut control = self.lock();
         let current = control
             .worker
@@ -253,9 +263,13 @@ impl AudioHub {
     /// to start one on.
     fn send(self: &Arc<Self>, control: &mut Control, request: Request) -> bool {
         let refused = match &control.worker {
-            Some(worker) => match worker.requests.send(request) {
+            Some(worker) => match worker.requests.try_send(request) {
                 Ok(()) => return true,
-                Err(refused) => refused.0,
+                Err(TrySendError::Full(_)) => {
+                    tracing::warn!("the audio worker is busy: request dropped");
+                    return false;
+                }
+                Err(TrySendError::Closed(refused)) => refused,
             },
             None => request,
         };
@@ -263,7 +277,7 @@ impl AudioHub {
         control
             .worker
             .as_ref()
-            .is_some_and(|worker| worker.requests.send(refused).is_ok())
+            .is_some_and(|worker| worker.requests.try_send(refused).is_ok())
     }
 
     /// Publishes `state` unless the worker `generation` was replaced.
@@ -287,9 +301,7 @@ impl AudioHub {
     }
 
     fn lock(&self) -> MutexGuard<'_, Control> {
-        // Every update keeps the control consistent: a poisoned lock is
-        // still valid.
-        self.control.lock().unwrap_or_else(PoisonError::into_inner)
+        lock_unpoisoned(&self.control)
     }
 }
 
@@ -364,7 +376,7 @@ impl Worker {
 
     /// Serves until asked to stop for good (see [`AudioHub::retire`]) or
     /// until replaced.
-    async fn run(mut self, mut requests: UnboundedReceiver<Request>) {
+    async fn run(mut self, mut requests: Receiver<Request>) {
         loop {
             let (read_due, listen_due) = (self.pacer.due(), self.listener.due());
             // Requests first: a change is applied before a read that would

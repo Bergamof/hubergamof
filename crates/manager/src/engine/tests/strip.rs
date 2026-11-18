@@ -49,7 +49,7 @@ async fn the_pomodoro_menu_is_a_popup_over_its_dial() {
 async fn a_strip_without_dials_is_drawn_without_reminders() {
     let fixture = start(strip_without_dials_info()).await;
     let strip = fixture.strip();
-    assert!(strip.hints.is_empty());
+    assert_eq!(strip.hints, Vec::new());
     assert!(strip.popup.is_none());
 }
 

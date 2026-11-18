@@ -362,6 +362,19 @@ jobs:
           exit-code: "1"
           format: json
           output: trivy-image.json
+      # Information seulement : les HIGH/CRITICAL sans correctif ne bloquent pas, mais leur
+      # nombre est publié dans le compte rendu (à consigner dans docs/security.md si > 0).
+      - name: Scan image, CVE sans correctif (Trivy, information)
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
+          format: json
+          output: trivy-image-all.json
       - name: Trivy findings
         if: ${{ !cancelled() && hashFiles('trivy-image.json') != '' }}
         run: jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | "\(.Severity)\t\(.VulnerabilityID)\t\(.PkgName) \(.InstalledVersion) → \(.FixedVersion)\t\($t)"' trivy-image.json
@@ -376,7 +389,8 @@ jobs:
           size=$(docker image inspect "$IMAGE" --format '{{.Size}}' 2>/dev/null | numfmt --to=iec || true)
           http=$(cat http.txt 2>/dev/null || true)
           cves=$(jq -r '[.Results[]?.Vulnerabilities[]?.Severity] | "\(map(select(. == "CRITICAL")) | length) CRITICAL, \(map(select(. == "HIGH")) | length) HIGH"' trivy-image.json 2>/dev/null || true)
-          echo "summary=image ${size:-non construite} · --version $(icon "$VERSION") · --demo $(icon "$HTTP") ${http:-—} · CVE corrigeables : ${cves:-—}" >> "$GITHUB_OUTPUT"
+          unfixed=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.FixedVersion == null or .FixedVersion == "")] | length' trivy-image-all.json 2>/dev/null || true)
+          echo "summary=image ${size:-non construite} · --version $(icon "$VERSION") · --demo $(icon "$HTTP") ${http:-—} · CVE corrigeables : ${cves:-—} · HIGH/CRITICAL sans correctif : ${unfixed:-—}" >> "$GITHUB_OUTPUT"
 
   security:
     name: Sécurité

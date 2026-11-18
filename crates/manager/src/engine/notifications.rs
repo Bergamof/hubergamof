@@ -63,7 +63,7 @@ impl Shown {
 pub(crate) struct NotificationCenter {
     /// Whether the device has a strip to show them on.
     on_strip: bool,
-    unread: Arc<Mutex<Vec<UnreadNotification>>>,
+    unread: Arc<Mutex<VecDeque<UnreadNotification>>>,
     queue: VecDeque<Pending>,
     shown: Option<Shown>,
     next_id: u64,
@@ -89,7 +89,10 @@ impl NotificationCenter {
     pub(crate) fn handle(&self) -> UnreadNotifications {
         let listed = Arc::clone(&self.unread);
         let counted = Arc::clone(&self.unread);
-        UnreadNotifications::with_count(move || lock(&listed).clone(), move || lock(&counted).len())
+        UnreadNotifications::with_count(
+            move || lock(&listed).iter().cloned().collect(),
+            move || lock(&counted).len(),
+        )
     }
 
     /// The notification on the strip.
@@ -117,8 +120,10 @@ impl NotificationCenter {
         self.next_id += 1;
         let overflow = {
             let mut unread = lock(&self.unread);
-            unread.push(UnreadNotification::new(id, source, icon, notification));
-            (unread.len() > MAX_UNREAD).then(|| unread.remove(0).id)
+            unread.push_back(UnreadNotification::new(id, source, icon, notification));
+            (unread.len() > MAX_UNREAD)
+                .then(|| unread.pop_front().map(|oldest| oldest.id))
+                .flatten()
         };
         if let Some(forgotten) = overflow {
             self.forget(forgotten);
@@ -217,7 +222,9 @@ impl NotificationCenter {
     }
 }
 
-fn lock(unread: &Mutex<Vec<UnreadNotification>>) -> MutexGuard<'_, Vec<UnreadNotification>> {
+fn lock(
+    unread: &Mutex<VecDeque<UnreadNotification>>,
+) -> MutexGuard<'_, VecDeque<UnreadNotification>> {
     // The list is never left half-updated: a poisoned lock is still valid.
     unread.lock().unwrap_or_else(PoisonError::into_inner)
 }

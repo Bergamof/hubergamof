@@ -6,7 +6,8 @@ use super::pages::{compose_service, container_id, container_parent};
 use super::selection::with_count;
 use super::{
     ComposeAction, ComposeScope, ContainerAction, Docker, DockerEvent, Feedback, ImageData,
-    ItemKey, Operation, OperationKind, Page, Request, Scope, UpVariant, icons, project_id,
+    ItemKey, Operation, OperationKind, Overview, Page, Request, Scope, UpVariant, icons,
+    project_id,
 };
 
 /// What an action key does.
@@ -298,81 +299,93 @@ impl Docker {
         let Some(overview) = self.overview() else {
             return Plan::Refused;
         };
-        let compose = |scope: Scope<'_>, action| {
-            if scope.service.is_none() && self.selection.is_lost(scope.project) {
-                return Plan::Refused;
-            }
-            let target = overview
-                .project(scope.project)
-                .and_then(|p| p.target.clone());
-            // The services ticked on the page of the project, unless the page
-            // is about one service.
-            let worked_on = match scope.service {
-                Some(service) => ComposeScope::of(Some(service)),
-                None => ComposeScope::of_services(self.ticked_services(scope.project)),
-            };
-            target.map_or(Plan::Refused, |target| {
-                Plan::Run(Request::Compose {
-                    target,
-                    scope: worked_on,
-                    action,
-                })
-            })
-        };
         match (page, action) {
             (Page::Project(name), Action::StartAll | Action::StopAll) => {
-                let Some(project) = overview.project(name) else {
-                    return Plan::Refused;
-                };
-                if self.selection.is_lost(name) {
-                    return Plan::Refused;
-                }
-                let start = action == Action::StartAll;
-                let ticked = self.ticked_services(name);
-                let ids: Vec<String> = project
-                    .containers
-                    .iter()
-                    .filter(|c| {
-                        ticked.is_empty()
-                            || compose_service(c).is_some_and(|(_, service)| {
-                                ticked.iter().any(|name| name == service)
-                            })
-                    })
-                    .filter(|c| c.is_running() != start)
-                    .map(|c| c.id.clone())
-                    .collect();
-                if ids.is_empty() {
-                    return Plan::Nothing;
-                }
-                let action = if start {
-                    ContainerAction::Start
-                } else {
-                    ContainerAction::Stop
-                };
-                Plan::Run(Request::Containers { ids, action })
+                self.plan_project_bulk(overview, name, action == Action::StartAll)
             }
-            (Page::Up(scope), Action::Up(variant)) => compose(scope, ComposeAction::Up(variant)),
-            (Page::Up(scope), Action::Pull) => compose(scope, ComposeAction::Pull),
+            (Page::Up(scope), Action::Up(variant)) => {
+                self.plan_compose(overview, scope, ComposeAction::Up(variant))
+            }
+            (Page::Up(scope), Action::Pull) => {
+                self.plan_compose(overview, scope, ComposeAction::Pull)
+            }
             (Page::Down(scope), Action::Down { volumes }) => {
-                compose(scope, ComposeAction::Down { volumes })
+                self.plan_compose(overview, scope, ComposeAction::Down { volumes })
             }
-            (Page::Container(name), _) => {
-                let Some(container) = overview.container(name) else {
-                    return Plan::Refused;
-                };
-                let action = match action {
-                    Action::Start => ContainerAction::Start,
-                    Action::Stop => ContainerAction::Stop,
-                    Action::Restart => ContainerAction::Restart,
-                    Action::Remove if container.is_removable() => ContainerAction::Remove,
-                    _ => return Plan::Refused,
-                };
-                Plan::Run(Request::Containers {
-                    ids: vec![container.id.clone()],
-                    action,
-                })
-            }
+            (Page::Container(name), _) => Self::plan_container(overview, name, action),
             _ => Plan::Refused,
         }
+    }
+
+    /// A compose command on the project of `scope`: the services ticked on
+    /// the page of the project, unless the page is about one service.
+    fn plan_compose(&self, overview: &Overview, scope: Scope<'_>, action: ComposeAction) -> Plan {
+        if scope.service.is_none() && self.selection.is_lost(scope.project) {
+            return Plan::Refused;
+        }
+        let target = overview
+            .project(scope.project)
+            .and_then(|project| project.target.clone());
+        let worked_on = match scope.service {
+            Some(service) => ComposeScope::of(Some(service)),
+            None => ComposeScope::of_services(self.ticked_services(scope.project)),
+        };
+        target.map_or(Plan::Refused, |target| {
+            Plan::Run(Request::Compose {
+                target,
+                scope: worked_on,
+                action,
+            })
+        })
+    }
+
+    /// Starting or stopping the containers of a project (the ticked services
+    /// only, when some are) that are not already in that state.
+    fn plan_project_bulk(&self, overview: &Overview, name: &str, start: bool) -> Plan {
+        let Some(project) = overview.project(name) else {
+            return Plan::Refused;
+        };
+        if self.selection.is_lost(name) {
+            return Plan::Refused;
+        }
+        let ticked = self.ticked_services(name);
+        let ids: Vec<String> = project
+            .containers
+            .iter()
+            .filter(|c| {
+                ticked.is_empty()
+                    || compose_service(c)
+                        .is_some_and(|(_, service)| ticked.iter().any(|name| name == service))
+            })
+            .filter(|c| c.is_running() != start)
+            .map(|c| c.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return Plan::Nothing;
+        }
+        let action = if start {
+            ContainerAction::Start
+        } else {
+            ContainerAction::Stop
+        };
+        Plan::Run(Request::Containers { ids, action })
+    }
+
+    /// One action on one container, when it allows it.
+    fn plan_container(overview: &Overview, name: &str, action: Action) -> Plan {
+        let Some(container) = overview.container(name) else {
+            return Plan::Refused;
+        };
+        let action = match action {
+            Action::Start => ContainerAction::Start,
+            Action::Stop => ContainerAction::Stop,
+            Action::Restart => ContainerAction::Restart,
+            Action::Remove if container.is_removable() => ContainerAction::Remove,
+            _ => return Plan::Refused,
+        };
+        Plan::Run(Request::Containers {
+            ids: vec![container.id.clone()],
+            action,
+        })
     }
 }

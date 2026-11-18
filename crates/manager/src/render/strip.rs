@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use hubergamof_module_api::{Feedback, PomodoroState, PopupIcon, VolumeWidget};
+use hubergamof_module_api::{Feedback, PomodoroState, PopupEntry, PopupIcon, VolumeWidget};
 use hubergamof_protocol::{DeviceTheme, ImageSize};
 use image::{Rgba, RgbaImage};
 
@@ -207,6 +207,8 @@ const POPUP_HEIGHT: f32 = 70.0;
 const POPUP_PADDING: f32 = 10.0;
 const POPUP_CELL_WIDTH: f32 = 130.0;
 const POPUP_CELL_GAP: f32 = 6.0;
+/// Corner radius of the selected entry of the popup.
+const POPUP_CELL_RADIUS: f32 = 10.0;
 const POPUP_CELL_TOP: f32 = 14.0;
 const POPUP_CELL_HEIGHT: f32 = 58.0;
 const POPUP_ICON_SIZE: f32 = 18.0;
@@ -453,7 +455,7 @@ impl Renderer {
             draw_volume(&mut canvas, volume, palette);
         }
         if let Some(pomodoro) = &face.pomodoro {
-            draw_pomodoro(&mut canvas, pomodoro, palette);
+            draw_pomodoro(&mut canvas, pomodoro, size, palette);
         }
         self.draw_hints(&mut canvas, &face.hints, size, palette)?;
         if let Some(popup) = &face.popup {
@@ -752,6 +754,72 @@ impl Renderer {
         size: ImageSize,
         palette: &Palette,
     ) -> Result<(), RenderError> {
+        let geometry = PopupGeometry::of(popup, dial_count, size);
+        draw_popup_card(canvas, &geometry, f32_from(size.width), palette);
+        for ((entry, index), step) in popup.entries.iter().zip(0_usize..).zip(0_u32..) {
+            let x = geometry.left
+                + POPUP_PADDING
+                + f32_from(step) * (POPUP_CELL_WIDTH + POPUP_CELL_GAP);
+            self.draw_popup_cell(canvas, entry, x, index == popup.selected, palette)?;
+        }
+        Ok(())
+    }
+
+    fn draw_popup_cell(
+        &self,
+        canvas: &mut Canvas,
+        entry: &PopupEntry,
+        x: f32,
+        selected: bool,
+        palette: &Palette,
+    ) -> Result<(), RenderError> {
+        let (foreground, icon_color) = if selected {
+            (WHITE, WHITE)
+        } else {
+            (palette.ink, palette.muted)
+        };
+        if selected {
+            canvas.rect(
+                (x, POPUP_CELL_TOP, POPUP_CELL_WIDTH, POPUP_CELL_HEIGHT),
+                POPUP_CELL_RADIUS,
+                palette.working,
+            );
+        }
+        canvas.glyph(
+            entry.icon.into(),
+            (x + (POPUP_CELL_WIDTH - POPUP_ICON_SIZE) / 2.0, POPUP_ICON_Y),
+            POPUP_ICON_SIZE,
+            icon_color,
+        );
+        let label = self.text.fit(
+            &entry.label,
+            POPUP_LABEL_SIZE,
+            FontWeight::SemiBold,
+            POPUP_CELL_WIDTH - 2.0 * POPUP_LABEL_MARGIN,
+        )?;
+        canvas.text(
+            &Label::new(
+                &label,
+                x + POPUP_CELL_WIDTH / 2.0,
+                POPUP_LABEL_BASELINE,
+                POPUP_LABEL_SIZE,
+                foreground,
+            )
+            .anchored(Anchor::Middle),
+        );
+        Ok(())
+    }
+}
+
+/// Where the popup card sits on the strip.
+struct PopupGeometry {
+    left: f32,
+    card_width: f32,
+    pointer_x: f32,
+}
+
+impl PopupGeometry {
+    fn of(popup: &PopupFace, dial_count: usize, size: ImageSize) -> Self {
         let strip_width = f32_from(size.width);
         let entries = u32::try_from(popup.entries.len()).unwrap_or(0).max(1);
         let cells_width =
@@ -769,86 +837,54 @@ impl Renderer {
         let left =
             (target - card_width / 2.0).clamp(POPUP_EDGE, strip_width - POPUP_EDGE - card_width);
         let pointer_x = target.clamp(left + POPUP_PADDING, left + card_width - POPUP_PADDING);
-
-        push_svg!(
-            canvas.svg,
-            r#"<rect width="{strip_width}" height="{POPUP_DIMMED_HEIGHT}" fill="{}" fill-opacity="{POPUP_DIM_OPACITY}"/>"#,
-            svg_color(palette.background)
-        );
-        // A few translucent layers fake the shadow: a blur filter costs more than
-        // the rest of the strip together, and the menu is redrawn at each notch.
-        for layer in 1..=POPUP_SHADOW_LAYERS {
-            let spread = f32_from(layer) * POPUP_SHADOW_STEP;
-            push_svg!(
-                canvas.svg,
-                r#"<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="{radius}" fill="black" fill-opacity="{POPUP_SHADOW_OPACITY}"/>"#,
-                x = left - spread,
-                y = POPUP_TOP - spread + POPUP_SHADOW_OFFSET,
-                width = card_width + 2.0 * spread,
-                height = POPUP_HEIGHT + 2.0 * spread,
-                radius = POPUP_RADIUS + spread,
-            );
+        Self {
+            left,
+            card_width,
+            pointer_x,
         }
-        push_svg!(
-            canvas.svg,
-            r#"<rect x="{left}" y="{POPUP_TOP}" width="{card_width}" height="{POPUP_HEIGHT}" rx="{POPUP_RADIUS}" fill="{card}"/><path d="M{a} {y} L{pointer_x} {tip} L{b} {y} Z" fill="{card}"/>"#,
-            card = svg_color(palette.card),
-            a = pointer_x - POPUP_POINTER_HALF,
-            b = pointer_x + POPUP_POINTER_HALF,
-            y = POPUP_TOP + POPUP_HEIGHT - 1.0,
-            tip = POPUP_TOP + POPUP_HEIGHT + POPUP_POINTER_HEIGHT - 1.0,
-        );
-        for ((entry, index), x) in
-            popup
-                .entries
-                .iter()
-                .zip(0_usize..)
-                .zip(0_u32..)
-                .map(|((entry, index), step)| {
-                    (
-                        (entry, index),
-                        left + POPUP_PADDING + f32_from(step) * (POPUP_CELL_WIDTH + POPUP_CELL_GAP),
-                    )
-                })
-        {
-            let selected = index == popup.selected;
-            let (foreground, icon_color) = if selected {
-                (WHITE, WHITE)
-            } else {
-                (palette.ink, palette.muted)
-            };
-            if selected {
-                canvas.rect(
-                    (x, POPUP_CELL_TOP, POPUP_CELL_WIDTH, POPUP_CELL_HEIGHT),
-                    10.0,
-                    palette.working,
-                );
-            }
-            canvas.glyph(
-                entry.icon.into(),
-                (x + (POPUP_CELL_WIDTH - POPUP_ICON_SIZE) / 2.0, POPUP_ICON_Y),
-                POPUP_ICON_SIZE,
-                icon_color,
-            );
-            let label = self.text.fit(
-                &entry.label,
-                POPUP_LABEL_SIZE,
-                FontWeight::SemiBold,
-                POPUP_CELL_WIDTH - 2.0 * POPUP_LABEL_MARGIN,
-            )?;
-            canvas.text(
-                &Label::new(
-                    &label,
-                    x + POPUP_CELL_WIDTH / 2.0,
-                    POPUP_LABEL_BASELINE,
-                    POPUP_LABEL_SIZE,
-                    foreground,
-                )
-                .anchored(Anchor::Middle),
-            );
-        }
-        Ok(())
     }
+}
+
+/// The dimmed strip, the shadow and the card with its pointer.
+fn draw_popup_card(
+    canvas: &mut Canvas,
+    geometry: &PopupGeometry,
+    strip_width: f32,
+    palette: &Palette,
+) {
+    let PopupGeometry {
+        left,
+        card_width,
+        pointer_x,
+    } = *geometry;
+    push_svg!(
+        canvas.svg,
+        r#"<rect width="{strip_width}" height="{POPUP_DIMMED_HEIGHT}" fill="{}" fill-opacity="{POPUP_DIM_OPACITY}"/>"#,
+        svg_color(palette.background)
+    );
+    // A few translucent layers fake the shadow: a blur filter costs more than
+    // the rest of the strip together, and the menu is redrawn at each notch.
+    for layer in 1..=POPUP_SHADOW_LAYERS {
+        let spread = f32_from(layer) * POPUP_SHADOW_STEP;
+        push_svg!(
+            canvas.svg,
+            r#"<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="{radius}" fill="black" fill-opacity="{POPUP_SHADOW_OPACITY}"/>"#,
+            x = left - spread,
+            y = POPUP_TOP - spread + POPUP_SHADOW_OFFSET,
+            width = card_width + 2.0 * spread,
+            height = POPUP_HEIGHT + 2.0 * spread,
+            radius = POPUP_RADIUS + spread,
+        );
+    }
+    push_svg!(
+        canvas.svg,
+        r#"<rect x="{left}" y="{POPUP_TOP}" width="{card_width}" height="{POPUP_HEIGHT}" rx="{POPUP_RADIUS}" fill="{card}"/><path d="M{a} {y} L{pointer_x} {tip} L{b} {y} Z" fill="{card}"/>"#,
+        card = svg_color(palette.card),
+        a = pointer_x - POPUP_POINTER_HALF,
+        b = pointer_x + POPUP_POINTER_HALF,
+        y = POPUP_TOP + POPUP_HEIGHT - 1.0,
+        tip = POPUP_TOP + POPUP_HEIGHT + POPUP_POINTER_HEIGHT - 1.0,
+    );
 }
 
 fn draw_curve(canvas: &mut Canvas, history: &[u8], baseline: f32, color: Rgba<u8>) {
@@ -927,7 +963,7 @@ fn draw_volume(canvas: &mut Canvas, volume: VolumeWidget, palette: &Palette) {
     );
 }
 
-fn draw_pomodoro(canvas: &mut Canvas, pomodoro: &PomodoroFace, palette: &Palette) {
+fn draw_pomodoro(canvas: &mut Canvas, pomodoro: &PomodoroFace, size: ImageSize, palette: &Palette) {
     let widget = &pomodoro.widget;
     let color = palette.pomodoro(widget.state);
     let ready = matches!(widget.state, PomodoroState::Ready);
@@ -961,7 +997,7 @@ fn draw_pomodoro(canvas: &mut Canvas, pomodoro: &PomodoroFace, palette: &Palette
             (
                 PROGRESS_X,
                 PROGRESS_Y,
-                800.0 - 2.0 * PROGRESS_X,
+                f32_from(size.width) - 2.0 * PROGRESS_X,
                 PROGRESS_HEIGHT,
             ),
             fraction,
@@ -1017,7 +1053,7 @@ mod tests {
         assert!(!is_system_panel(528));
     }
 
-    use hubergamof_module_api::{PomodoroWidget, PopupEntry};
+    use hubergamof_module_api::PomodoroWidget;
 
     use super::*;
     use crate::strip::ClockReading;

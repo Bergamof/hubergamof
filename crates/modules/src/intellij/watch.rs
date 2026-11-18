@@ -7,7 +7,7 @@
 //! mount) is given up after [`READ_TIMEOUT`] and never doubled: the next
 //! read waits for it to end.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::watch;
@@ -15,6 +15,7 @@ use tokio::task::{AbortHandle, JoinHandle};
 
 use super::catalog::{Catalog, ProjectCatalog};
 use crate::background::{WorkerControl, spawn_worker};
+use crate::sync::lock_unpoisoned;
 
 /// Time between two reads of the installation (cached by the catalog while
 /// its files do not change).
@@ -59,9 +60,7 @@ impl CatalogHub {
     }
 
     fn lock(&self) -> MutexGuard<'_, WorkerControl> {
-        // Every update keeps the control consistent: a poisoned lock is
-        // still valid.
-        self.control.lock().unwrap_or_else(PoisonError::into_inner)
+        lock_unpoisoned(&self.control)
     }
 }
 

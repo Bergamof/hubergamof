@@ -491,14 +491,17 @@ impl DeviceEngine {
     /// Hands the press to what the key shows on the last drawn frame, even
     /// if the module content changed since.
     async fn press_key(&mut self, key: u8) {
-        let Some(frame) = &self.last_frame else {
-            return;
-        };
-        let Some(target) = frame.target(key).cloned() else {
-            return;
-        };
-        let usable_when_locked = frame.usable_when_locked(key);
-        self.press_target(target, usable_when_locked).await;
+        if let Some((target, usable_when_locked)) = self.pressed_key(key) {
+            self.press_target(target, usable_when_locked).await;
+        }
+    }
+
+    /// What `key` does on the last drawn frame, and whether it may be pressed
+    /// while the computer is locked; `None` for a key showing nothing.
+    fn pressed_key(&self, key: u8) -> Option<(KeyTarget, bool)> {
+        let frame = self.last_frame.as_ref()?;
+        let target = frame.target(key).cloned()?;
+        Some((target, frame.usable_when_locked(key)))
     }
 
     async fn press_target(&mut self, target: KeyTarget, usable_when_locked: bool) {
@@ -527,7 +530,7 @@ impl DeviceEngine {
             DialAssignment::Navigation => self.navigate(input),
             DialAssignment::Module { instance, function } => {
                 let surfaces = self.pressed_dial_surfaces(dial);
-                self.run_handler(&instance, input.into_call(function), surfaces)
+                self.dispatch(&instance, input.into_call(function), surfaces, false)
                     .await;
             }
             DialAssignment::Contextual => self.context_input(dial, input).await,
@@ -664,11 +667,6 @@ impl DeviceEngine {
         if let Some(outcome) = self.instances.dispatch(routed).await {
             self.conclude(&module, &surfaces, outcome);
         }
-    }
-
-    /// Runs a handler of `module`; `surfaces` show its outcome.
-    async fn run_handler(&mut self, module: &ModuleInstanceId, call: Call, surfaces: Vec<Surface>) {
-        self.dispatch(module, call, surfaces, false).await;
     }
 
     /// The one place where a call reaches a module: refused while the
