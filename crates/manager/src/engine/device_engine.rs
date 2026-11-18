@@ -134,9 +134,10 @@ struct DisplayedPage {
     id: String,
     title: String,
     keys: Vec<FrameKey>,
-    /// How many of the first keys stay in place while the rest scrolls
-    /// (blank keys included: they fill whole rows).
-    pinned: usize,
+    /// The key grid with the rows this page pins: the first keys stay in
+    /// place while the rest scrolls (blank keys included: they fill whole
+    /// rows).
+    grid: KeyGrid,
     context: Option<ContextFace>,
     keeps_lit: bool,
 }
@@ -736,8 +737,7 @@ impl DeviceEngine {
 
     fn scroll_rows(&mut self, delta: i32) {
         let page = self.displayed_page();
-        let grid = self.grid.pinning(page.pinned);
-        let row = grid.scroll(self.nav.row(), delta, page.keys.len());
+        let row = page.grid.scroll(self.nav.row(), delta, page.keys.len());
         self.nav.set_row(row);
     }
 
@@ -1045,9 +1045,8 @@ impl DeviceEngine {
         }
         loop {
             let page = self.displayed_page();
-            let grid = self.grid.pinning(page.pinned);
-            self.follow_focus(&page.keys, grid);
-            self.clamp_row(page.keys.len(), grid);
+            self.follow_focus(&page.keys, page.grid);
+            self.clamp_row(page.keys.len(), page.grid);
             let frame = self.compose(page);
             let failed = self.instances.take_failures();
             if failed.is_empty() {
@@ -1135,7 +1134,7 @@ impl DeviceEngine {
                 id: HOME_PAGE_ID.to_owned(),
                 title: HOME_PAGE_TITLE.to_owned(),
                 keys: self.home_keys(),
-                pinned: 0,
+                grid: self.grid,
                 context: None,
                 keeps_lit: false,
             },
@@ -1147,7 +1146,7 @@ impl DeviceEngine {
                 // What a page declares keeps the device lit only for a module
                 // that declares it may (what a press does: `may_press`).
                 let lock_safe = self.instances.lock_safe_pages(&module);
-                let (items, pinned) = self.placed_items(content.items, content.pinned_items);
+                let (items, grid) = self.placed_items(content.items, content.pinned_items);
                 DisplayedPage {
                     id: format!("{module}/{page}"),
                     title: content.title,
@@ -1156,7 +1155,7 @@ impl DeviceEngine {
                         .into_iter()
                         .map(|item| {
                             item.map(|item| FrameKey {
-                                usable_when_locked: item.usable_when_locked,
+                                usable_when_locked: item.key.usable_when_locked,
                                 face: KeyFace::from_content(item.key),
                                 target: Some(KeyTarget::Item {
                                     module: module.clone(),
@@ -1167,7 +1166,7 @@ impl DeviceEngine {
                             .unwrap_or_default()
                         })
                         .collect(),
-                    pinned,
+                    grid,
                     context: Some(ContextFace {
                         module,
                         page,
@@ -1181,8 +1180,12 @@ impl DeviceEngine {
     /// The items of a module page as they are placed: the ones hidden on a
     /// locked computer left out, and the pinned ones (the first `pinned`
     /// declared) completed with blanks (`None`) to whole rows. Returns them
-    /// with the number of pinned positions.
-    fn placed_items(&self, items: Vec<PageItem>, pinned: usize) -> (Vec<Option<PageItem>>, usize) {
+    /// with the grid that pins their rows.
+    fn placed_items(
+        &self,
+        items: Vec<PageItem>,
+        pinned: usize,
+    ) -> (Vec<Option<PageItem>>, KeyGrid) {
         let locked = self.lock.is_locked();
         let mut kept = Vec::with_capacity(items.len());
         let mut pinned_kept = 0;
@@ -1193,16 +1196,16 @@ impl DeviceEngine {
             pinned_kept += usize::from(index < pinned);
             kept.push(Some(item));
         }
-        let pinned_len = self.grid.pinning(pinned_kept).pinned_len();
-        let blanks = pinned_len.saturating_sub(pinned_kept);
+        let grid = self.grid.pinning(pinned_kept);
+        let blanks = grid.pinned_len().saturating_sub(pinned_kept);
         kept.splice(pinned_kept..pinned_kept, std::iter::repeat_n(None, blanks));
-        (kept, pinned_kept + blanks)
+        (kept, grid)
     }
 
     /// Places `page` on the keys from the visible row, with the feedback
     /// marks, and adds the dials.
     fn compose(&mut self, page: DisplayedPage) -> Frame {
-        let grid = self.grid.pinning(page.pinned);
+        let grid = page.grid;
         let row = self.nav.row();
         let row_count = grid.row_count(page.keys.len());
         let keys = (0..self.deck.info().capabilities.key_count())

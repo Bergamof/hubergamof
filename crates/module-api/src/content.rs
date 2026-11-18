@@ -63,13 +63,15 @@ pub struct KeyContent {
     /// The key is ticked (a selection): the host draws a check mark in a
     /// corner.
     pub checked: bool,
-    /// Pressing the home key of the module acts even while the computer is
-    /// locked: for a key that only opens a page the module declares usable
-    /// when locked (a call in progress). Read for the home key only (a page
-    /// item declares it with [`PageItem::usable_when_locked`]), and honoured
-    /// only for a module whose descriptor declares
-    /// [`crate::ModuleCapabilities::lock_safe_pages`]. Never derive it from
-    /// settings that the web UI or an import can change.
+    /// Pressing this key acts even while the computer is locked: for the home
+    /// key of the module and for the keys of its pages alike. Only for what
+    /// is harmless to run on a locked computer, and honoured only for a module
+    /// whose descriptor declares
+    /// [`crate::ModuleCapabilities::lock_safe_pages`]. The host reads it from
+    /// the last drawing, so the handler of a press must check again what it
+    /// is allowed to do (a key that only opens a page of the module is the
+    /// safe use). Never derive it from settings that the web UI or an import
+    /// can change.
     pub usable_when_locked: bool,
 }
 
@@ -111,7 +113,7 @@ impl KeyContent {
         Self { checked, ..self }
     }
 
-    /// The same home key, acting while the computer is locked or not.
+    /// The same key, acting while the computer is locked or not.
     #[must_use]
     pub fn usable_when_locked(self, usable_when_locked: bool) -> Self {
         Self {
@@ -128,16 +130,14 @@ impl KeyContent {
 pub struct PageItem {
     /// Identifier passed back to [`crate::Module::on_item_press`].
     pub id: ItemId,
-    /// What the key shows.
+    /// What the key shows, and whether pressing it acts on a locked computer
+    /// ([`KeyContent::usable_when_locked`]).
     pub key: KeyContent,
-    /// Pressing this key acts even while the computer is locked. Only for
-    /// what is harmless to run on a locked computer, and honoured only for
-    /// a module whose descriptor declares
-    /// [`crate::ModuleCapabilities::lock_safe_pages`]. Never derive it from
-    /// settings that the web UI or an import can change.
-    pub usable_when_locked: bool,
     /// The key is not shown while the computer is locked (what must not be
-    /// read by someone passing by, such as the name of a conversation).
+    /// read by someone passing by, such as the name of a conversation). It
+    /// wins over [`KeyContent::usable_when_locked`]: a key that is not shown
+    /// cannot be pressed, and a contextual dial that stays usable when locked
+    /// must not point at one.
     pub hidden_when_locked: bool,
 }
 
@@ -149,7 +149,6 @@ impl PageItem {
         Self {
             id,
             key,
-            usable_when_locked: false,
             hidden_when_locked: false,
         }
     }
@@ -159,15 +158,6 @@ impl PageItem {
     pub fn hidden_when_locked(self, hidden_when_locked: bool) -> Self {
         Self {
             hidden_when_locked,
-            ..self
-        }
-    }
-
-    /// The same key, acting while the computer is locked or not.
-    #[must_use]
-    pub fn usable_when_locked(self, usable_when_locked: bool) -> Self {
-        Self {
-            usable_when_locked,
             ..self
         }
     }
@@ -195,8 +185,9 @@ pub struct PageContent {
     pub keeps_device_lit: bool,
     /// How many of the first items stay in place while the others scroll:
     /// they fill whole rows (the host completes the last one with blank
-    /// keys), the rest scrolls below them. Nothing is pinned by default. A
-    /// device with a single row of keys pins nothing.
+    /// keys), the rest scrolls below them. Nothing is pinned by default. At
+    /// most all the rows but one are pinned (a device with a single row of
+    /// keys pins nothing): the items beyond them scroll like the others.
     pub pinned_items: usize,
 }
 
@@ -273,14 +264,10 @@ mod tests {
     #[test]
     fn nothing_acts_on_a_locked_computer_unless_declared() {
         let item = PageItem::new(ItemId("x".into()), KeyContent::with_label("x"));
-        assert!(!item.usable_when_locked);
-        assert!(item.clone().usable_when_locked(true).usable_when_locked);
-        assert!(
-            !item
-                .usable_when_locked(true)
-                .usable_when_locked(false)
-                .usable_when_locked
-        );
+        assert!(!item.key.usable_when_locked);
+        let key = item.key.usable_when_locked(true);
+        assert!(key.usable_when_locked);
+        assert!(!key.usable_when_locked(false).usable_when_locked);
 
         let page = PageContent::new("Titre", Vec::new());
         assert!(!page.keeps_device_lit);

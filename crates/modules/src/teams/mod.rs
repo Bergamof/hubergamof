@@ -208,75 +208,43 @@ impl CallItem {
     /// declared usable while the computer is locked.
     fn item(self, key: KeyContent) -> PageItem {
         let lock_safe = matches!(self, Self::Mute | Self::HangUp);
-        PageItem::new(self.id(), key).usable_when_locked(lock_safe)
+        PageItem::new(self.id(), key.usable_when_locked(lock_safe))
     }
 }
 
 impl Teams {
     fn unread_page(&self) -> PageContent {
-        PageContent::new(UNREAD_TITLE, self.unread_items())
-    }
-
-    /// One key per unread conversation, with its avatar or a generic icon,
-    /// then a "+N" key for those whose name is unknown. Hidden while the
-    /// computer is locked: a name must not be read by someone passing by.
-    fn unread_items(&self) -> Vec<PageItem> {
-        let state = self.changes.borrow();
-        let known = state.conversations.len();
-        let hidden = usize::try_from(state.unread)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(known);
-        let mut items: Vec<PageItem> = state
-            .conversations
-            .iter()
-            .enumerate()
-            .map(|(index, conversation)| conversation_item(index, conversation))
-            .collect();
-        if hidden > 0 {
-            items.push(
-                PageItem::new(
-                    ItemId("more".into()),
-                    KeyContent::with_label(format!("+{hidden}")),
-                )
-                .hidden_when_locked(true),
-            );
-        }
-        items
+        PageContent::new(UNREAD_TITLE, unread_items(&self.changes.borrow()))
     }
 
     fn call_page(&self) -> PageContent {
-        let (ringing, in_call, items) = {
-            let state = self.changes.borrow();
-            let call = &state.call;
-            let ringing = call.phase == CallPhase::Ringing;
-            let items = if ringing {
-                // The caller is on a key, not in the title: titles are logged.
-                let caller = call.caller.clone().unwrap_or_else(|| "?".to_owned());
-                vec![
-                    PageItem::new(ItemId("caller".into()), KeyContent::with_label(caller)),
-                    CallItem::Accept.item(KeyContent::with_icon(&ACCEPT, ANSWER_LABEL)),
-                    CallItem::Decline.item(KeyContent::with_icon(&HANG_UP, "Refuser")),
-                ]
-            } else {
-                vec![
-                    CallItem::Mute.item(mute_key(call.muted)),
-                    CallItem::Camera.item(camera_key(call.camera_on)),
-                    CallItem::HangUp.item(KeyContent::with_icon(&HANG_UP, "Raccrocher")),
-                ]
-            };
-            (ringing, call.phase == CallPhase::InCall, items)
-        };
-        // During a call the actions stay in place on the first row and the
-        // unread conversations scroll below them.
-        let pinned = items.len();
-        let items = if ringing {
-            items
-        } else {
-            [items, self.unread_items()].concat()
-        };
+        // One reading of the state: the call and the unread conversations of a
+        // page always belong together.
+        let state = self.changes.borrow();
+        let call = &state.call;
+        if call.phase == CallPhase::Ringing {
+            // The caller is on a key, not in the title: titles are logged.
+            let caller = call.caller.clone().unwrap_or_else(|| "?".to_owned());
+            let items = vec![
+                PageItem::new(ItemId("caller".into()), KeyContent::with_label(caller)),
+                CallItem::Accept.item(KeyContent::with_icon(&ACCEPT, ANSWER_LABEL)),
+                CallItem::Decline.item(KeyContent::with_icon(&HANG_UP, "Refuser")),
+            ];
+            let pinned = items.len();
+            return PageContent::new("Appel", items).with_pinned_items(pinned);
+        }
+        // In a call the actions stay in place on the first row and the unread
+        // conversations scroll below them.
+        let actions = [
+            CallItem::Mute.item(mute_key(call.muted)),
+            CallItem::Camera.item(camera_key(call.camera_on)),
+            CallItem::HangUp.item(KeyContent::with_icon(&HANG_UP, "Raccrocher")),
+        ];
+        let pinned = actions.len();
+        let items = [actions.to_vec(), unread_items(&state)].concat();
         PageContent::new("Appel", items)
             .with_pinned_items(pinned)
-            .keeps_device_lit(in_call)
+            .keeps_device_lit(call.phase == CallPhase::InCall)
     }
 
     /// Asks Teams for `action`: ✓ once sent, ⚠ when no extension is there.
@@ -302,6 +270,31 @@ fn call_notification(caller: Option<&str>) -> Notification {
     );
     Notification::new(message, CALL_BACKGROUND)
         .with_context_dial(ContextDial::none().pressing(ANSWER_LABEL))
+}
+
+/// One key per unread conversation, with its avatar or a generic icon, then a
+/// "+N" key for those whose name is unknown. Hidden while the computer is
+/// locked: a name must not be read by someone passing by.
+fn unread_items(state: &TeamsState) -> Vec<PageItem> {
+    let hidden = usize::try_from(state.unread)
+        .unwrap_or(usize::MAX)
+        .saturating_sub(state.conversations.len());
+    let mut items: Vec<PageItem> = state
+        .conversations
+        .iter()
+        .enumerate()
+        .map(|(index, conversation)| conversation_item(index, conversation))
+        .collect();
+    if hidden > 0 {
+        items.push(
+            PageItem::new(
+                ItemId("more".into()),
+                KeyContent::with_label(format!("+{hidden}")),
+            )
+            .hidden_when_locked(true),
+        );
+    }
+    items
 }
 
 /// A conversation key: its avatar when the extension could read one.
@@ -353,7 +346,7 @@ impl Module for Teams {
         // declare what stays usable.
         KeyContent::with_icon(&MODULE_ICON, label)
             .in_state(state)
-            .usable_when_locked(teams.call.phase.is_active())
+            .usable_when_locked(teams.call.phase == CallPhase::InCall)
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {

@@ -169,7 +169,7 @@ async fn only_muting_and_hanging_up_are_declared_usable_when_locked() {
         .call_page()
         .items
         .iter()
-        .map(|item| (item.id.0.clone(), item.usable_when_locked))
+        .map(|item| (item.id.0.clone(), item.key.usable_when_locked))
         .collect();
     assert_eq!(
         declared,
@@ -391,7 +391,7 @@ async fn a_ringing_call_offers_to_answer_or_decline() {
     let ids: Vec<_> = page.items.iter().map(|item| item.id.0.as_str()).collect();
     assert_eq!(ids, ["caller", "accept", "decline"]);
     assert_eq!(page.items[0].key.label.as_deref(), Some("Camille"));
-    assert!(page.items.iter().all(|item| !item.usable_when_locked));
+    assert!(page.items.iter().all(|item| !item.key.usable_when_locked));
     assert_eq!(harness.module.key().state, KeyState::Attention);
 }
 

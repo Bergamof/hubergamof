@@ -226,9 +226,9 @@ impl Module for List {
                         ItemId(format!("i{}", index + shift)),
                         KeyContent::with_label(format!("item {index}"))
                             .focused(focus == Some(index))
-                            .checked(checked.contains(&index)),
+                            .checked(checked.contains(&index))
+                            .usable_when_locked(self.settings.lock_safe),
                     )
-                    .usable_when_locked(self.settings.lock_safe)
                     .hidden_when_locked(index + self.settings.hidden_last >= self.settings.items)
                 })
                 .collect();

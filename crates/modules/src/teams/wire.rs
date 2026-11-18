@@ -118,7 +118,7 @@ fn announced_size(bytes: &[u8]) -> Option<(u32, u32)> {
         // After the signature: the length and the name of the first chunk (the
         // header), then the width and the height.
         let be = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
-        if bytes.get(12..16)? != b"IHDR" {
+        if bytes.get(8..12)? != 13_u32.to_be_bytes() || bytes.get(12..16)? != b"IHDR" {
             return None;
         }
         return Some((be(16)?, be(20)?));
@@ -129,25 +129,38 @@ fn announced_size(bytes: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
-/// The size in the first start-of-frame segment of a JPEG.
+/// The size of a JPEG, from the one start-of-frame segment of its header.
+///
+/// Strict where decoders are lenient (fill bytes, markers without length,
+/// several frames): anything unusual is refused, because the size must be the
+/// one the decoder will use.
 fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    const START_OF_SCAN: u8 = 0xDA;
+    let mut size = None;
     let mut at = 2;
-    while at + 4 <= bytes.len() {
-        if bytes[at] != 0xFF {
+    loop {
+        let [0xFF, marker, high, low] = *bytes.get(at..at + 4)? else {
             return None;
+        };
+        // Past the header, the frame is known: what follows is entropy-coded.
+        if marker == START_OF_SCAN {
+            return size;
         }
-        let marker = bytes[at + 1];
-        let length = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
         // SOF0..SOF15 except the table markers DHT (C4), JPG (C8) and DAC (CC).
         if (0xC0..=0xCF).contains(&marker) && ![0xC4, 0xC8, 0xCC].contains(&marker) {
             let frame = bytes.get(at + 5..at + 9)?;
             let height = u32::from(u16::from_be_bytes([frame[0], frame[1]]));
             let width = u32::from(u16::from_be_bytes([frame[2], frame[3]]));
-            return Some((width, height));
+            if size.replace((width, height)).is_some() {
+                return None;
+            }
         }
-        at += 2 + length;
+        // Markers without a length, and fill bytes, have no place here.
+        if marker == 0xFF || marker == 0x01 || (0xD0..=0xD9).contains(&marker) {
+            return None;
+        }
+        at += 2 + usize::from(u16::from_be_bytes([high, low]));
     }
-    None
 }
 
 /// Where a call stands.
@@ -439,10 +452,17 @@ mod tests {
         png_of(64)
     }
 
-    /// The start of a JPEG announcing `side` × `side` pixels, after a comment.
+    /// The start of a JPEG announcing `side` × `side` pixels, after a comment,
+    /// up to its scan.
     fn jpeg_of(side: u16) -> Vec<u8> {
         let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xFE, 0x00, 0x04, b'h', b'i'];
-        bytes.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B, 8]);
+        bytes.extend_from_slice(&jpeg_frame(side));
+        bytes.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+        bytes
+    }
+
+    fn jpeg_frame(side: u16) -> Vec<u8> {
+        let mut bytes = vec![0xFF, 0xC0, 0x00, 0x0B, 8];
         bytes.extend_from_slice(&side.to_be_bytes());
         bytes.extend_from_slice(&side.to_be_bytes());
         bytes.extend_from_slice(&[1, 1, 0x11, 0]);
@@ -481,6 +501,28 @@ mod tests {
         let announcing_a_huge_picture = STANDARD.encode(png_of(4096));
         let huge_jpeg = STANDARD.encode(jpeg_of(4096));
         let cut_short = STANDARD.encode(PNG_SIGNATURE);
+        // Two frames: the decoder might use the other one than the first.
+        let two_frames = STANDARD.encode(
+            [
+                vec![0xFF, 0xD8, 0xFF, 0xFE, 0x00, 0x02],
+                jpeg_frame(64),
+                jpeg_frame(4096),
+                vec![0xFF, 0xDA, 0x00, 0x02],
+            ]
+            .concat(),
+        );
+        // A fill byte before a marker, which decoders skip and a parser may not.
+        let fill_bytes = STANDARD.encode(
+            [
+                vec![0xFF, 0xD8, 0xFF, 0xFF, 0xFE, 0x00, 0x02],
+                jpeg_frame(64),
+                vec![0xFF, 0xDA, 0x00, 0x02],
+            ]
+            .concat(),
+        );
+        let mut wrong_header_length = png_of(64);
+        wrong_header_length[8..12].copy_from_slice(&99_u32.to_be_bytes());
+        let wrong_header_length = STANDARD.encode(wrong_header_length);
         for icon in [
             "null".to_owned(),
             r#""not base64 !""#.to_owned(),
@@ -489,6 +531,9 @@ mod tests {
             format!("\"{announcing_a_huge_picture}\""),
             format!("\"{huge_jpeg}\""),
             format!("\"{cut_short}\""),
+            format!("\"{two_frames}\""),
+            format!("\"{fill_bytes}\""),
+            format!("\"{wrong_header_length}\""),
         ] {
             let conversation = only_conversation(&conversation_json(&icon));
             assert_eq!(conversation, UnreadConversation::named("Alice"), "{icon}");
