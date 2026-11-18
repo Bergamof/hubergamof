@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FrameContext } from '../lib/teams-dom.js';
-import { start } from '../lib/content-main.js';
+import { RESEND_AFTER_MS, start } from '../lib/content-main.js';
 import {
 	frameRole,
 	performAction,
@@ -163,6 +163,25 @@ describe('start', () => {
 		doc.title = '(2) Chat';
 		tick();
 		expect(rt.sendMessage).toHaveBeenLastCalledWith({ report: { type: 'unread', count: 2 } });
+	});
+
+	it('sends everything again after a while, for a worker that forgot it', () => {
+		const rt = runtime();
+		let tick = () => {};
+		let time = 0;
+		start(page('<p/>', '(1) Chat'), rt, {
+			hostname: 'teams.cloud.microsoft',
+			context: TOP,
+			now: () => time,
+			setInterval: ((f: () => void) => (tick = f)) as never
+		});
+		expect(rt.sendMessage).toHaveBeenCalledTimes(2);
+		time = RESEND_AFTER_MS - 1;
+		tick();
+		expect(rt.sendMessage).toHaveBeenCalledTimes(2);
+		time = RESEND_AFTER_MS;
+		tick();
+		expect(rt.sendMessage).toHaveBeenCalledTimes(4);
 	});
 
 	it('does not click in a sub-frame', () => {
