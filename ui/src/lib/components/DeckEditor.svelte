@@ -181,18 +181,27 @@ selected key or dial.
 		void deck.edit(addKey(module));
 		pickerOpen = false;
 		selectKey(position);
-		announcement = `Touche ${module.name} ajoutée en position ${position + 1}.${
-			shared ? ' Ses réglages sont partagés avec sa molette.' : ''
-		}`;
+		void announce(
+			`Touche ${module.name} ajoutée en position ${position + 1}.${
+				shared ? ' Ses réglages sont partagés avec sa molette.' : ''
+			}`
+		);
 		// The picker gives the focus back to « Ajouter une touche »: the new key is the next step.
 		await tick();
 		document.getElementById(keyButtonId(position))?.focus();
 	}
 
+	/** Announces `message`, again even if the previous announcement was the same text. */
+	async function announce(message: string) {
+		announcement = '';
+		await tick();
+		announcement = message;
+	}
+
 	function move(from: number, to: number) {
 		void deck.edit(moveKey(from, to));
 		selection = { surface: 'key', position: to, id: config.home[to] };
-		announcement = `Touche déplacée en position ${to + 1} sur ${config.home.length}.`;
+		void announce(`Touche déplacée en position ${to + 1} sur ${config.home.length}.`);
 	}
 
 	/** Removes the key at `position`, once confirmed if its settings would be lost. */
@@ -216,7 +225,7 @@ selected key or dial.
 	async function remove(position: number) {
 		void deck.edit(removeKey(position));
 		selection = undefined;
-		announcement = 'Touche supprimée.';
+		void announce('Touche supprimée.');
 		await tick();
 		const neighbour = Math.min(position, config.home.length - 1);
 		document.getElementById(keyButtonId(neighbour))?.focus();
@@ -224,7 +233,7 @@ selected key or dial.
 
 	function assign(index: number, choice: DialChoice) {
 		void deck.edit(assignDial(index, choice));
-		announcement = `Fonction de la molette ${index + 1} modifiée.`;
+		void announce(`Fonction de la molette ${index + 1} modifiée.`);
 	}
 </script>
 
@@ -240,7 +249,7 @@ selected key or dial.
 				<section aria-labelledby="{uid}-keys" class="flex flex-col gap-3">
 					<h2
 						id="{uid}-keys"
-						class="font-mono text-xs font-medium tracking-widest text-device-muted uppercase"
+						class="font-mono text-sm font-medium tracking-widest text-device-muted uppercase"
 					>
 						Touches
 					</h2>
@@ -256,13 +265,17 @@ selected key or dial.
 						onmove={move}
 						onadd={() => (pickerOpen = true)}
 					/>
+					<p class="text-sm text-device-muted">
+						Glissez une touche pour la déplacer, ou sélectionnez-la puis utilisez « Déplacer avant »
+						et « Déplacer après ».
+					</p>
 				</section>
 
 				{#if hasStrip || dials.length > 0}
 					<section aria-labelledby="{uid}-dials" class="flex flex-col gap-3">
 						<h2
 							id="{uid}-dials"
-							class="font-mono text-xs font-medium tracking-widest text-device-muted uppercase"
+							class="font-mono text-sm font-medium tracking-widest text-device-muted uppercase"
 						>
 							{dials.length > 0 ? 'Molettes' : 'Bande tactile'}
 						</h2>

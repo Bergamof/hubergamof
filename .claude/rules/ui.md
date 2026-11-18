@@ -17,6 +17,8 @@ paths:
 - `adapter-static` : `fallback: '200.html'` (avec `index.html`, la page racine prérendue serait écrasée).
 - pnpm 12 ignore `engine-strict` dans `.npmrc` : le réglage est dans `pnpm-workspace.yaml` (`engineStrict: true`).
 - `$state.snapshot` sur un type contenant `JsonValue` (récursif) : « Type instantiation is excessively deep » → `cloneJson` (`#lib/deck/json.js`).
+- Annonces vocales : un message identique au précédent n'est pas relu par un lecteur d'écran (`announce()` de `DeckEditor` vide la région puis la remplit). `aria-current="true"` marque la tuile (touche, molette, bande) dont les détails sont ouverts : choix assumé, pas `aria-pressed`. Le conteneur `role="alert"` de `Notices` reste dans le DOM même vide (`empty:hidden`) : fiable, à garder.
+- Largeur : les tuiles de touches se réduisent (`w-full max-w-24`, colonnes `minmax(0, 1fr)`), l'éditeur tient sans défilement horizontal à 320 px (test e2e) ; textes d'information en `text-sm` au moins.
 - Identifiants DOM : `$props.id()`, jamais d'id en dur dans un composant.
 - Bouton qui devient inactif sous le focus (déplacer en bout de liste) : `aria-disabled` + action ignorée, pas `disabled` (le focus tomberait sur `body`).
 - Fixture Playwright : le premier paramètre doit être déstructuré ; `({}, use)` est refusé par ESLint (`no-empty-pattern`) → dépendre d'une fixture utilisée (`browserName`…).

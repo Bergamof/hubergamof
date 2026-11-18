@@ -28,6 +28,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- UI (audit UX) : deux annonces identiques de suite sont relues par les lecteurs d'écran ; le titre de la page nomme l'appareil ; le statut de connexion de l'en-tête ne double plus l'alerte de connexion perdue ; textes d'information et titres de section en 14 px ; phrase d'aide sur le déplacement des touches (glisser ou boutons) ; l'éditeur tient sans défilement horizontal à 320 px (tuiles qui se réduisent) ; tests e2e correspondants.
 - Release : `lto = "thin"` et `codegen-units = 1` (binaire de 18,1 à 14,8 Mo, même temps de build).
 - Module Audio : la file de requêtes du worker est bornée (256) ; au-delà, la requête est refusée (⚠) au lieu de s'empiler.
 - Notifications : les non lues sont une `VecDeque` ; `config_store/files.rs` et les sous-modules `render/strip.rs` extraits ; `lock_unpoisoned` partagé par les hubs ; `plan` de Docker et `update_config` du serveur découpés.

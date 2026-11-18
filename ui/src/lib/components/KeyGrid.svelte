@@ -61,7 +61,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 	}
 </script>
 
-<ol class="grid gap-3" style:grid-template-columns="repeat({columns}, minmax(6rem, 1fr))">
+<ol class="grid gap-3" style:grid-template-columns="repeat({columns}, minmax(0, 1fr))">
 	{#each keys as instance, position (position)}
 		{@const module = instance && moduleOf(instance.kind)}
 		{@const name = instance ? instanceName(instance, module) : 'Module manquant'}
@@ -69,7 +69,7 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 		<li
 			draggable="true"
 			class={[
-				'w-24 cursor-grab justify-self-center rounded-2xl active:cursor-grabbing',
+				'w-full max-w-24 cursor-grab justify-self-center rounded-2xl active:cursor-grabbing',
 				dropTarget === position && 'outline-2 outline-offset-2 outline-device-ring outline-dashed'
 			]}
 			ondragstart={(event) => startDrag(event, position)}
@@ -96,12 +96,12 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 					{name}
 				</span>
 				{#if !module}
-					<span class="text-xs text-device-muted">indisponible</span>
+					<span class="text-sm text-device-muted">indisponible</span>
 				{/if}
 			</button>
 		</li>
 	{/each}
-	<li class="w-24 justify-self-center">
+	<li class="w-full max-w-24 justify-self-center">
 		<button
 			id={buttonId(-1)}
 			type="button"
