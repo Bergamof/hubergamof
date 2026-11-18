@@ -11,6 +11,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Bande tactile : dessinée dès que l'appareil la déclare, même sans molette (UI et hôte partagent la règle) ; test du moteur et de l'aperçu.
 - Tests : import avec un délai d'extinction hors bornes, plusieurs appareils sous le `Supervisor`, retrait d'un appareil pendant une édition, composants `ExportImport`, `KeyImagePicker`, `BrightnessControl`, `ProblemAlert`, worker de fond de l'extension Teams ; planchers de couverture de l'UI relevés (lignes 86, fonctions 85, branches 77, instructions 89).
+- CI : le job `docker` imprime la liste des HIGH/CRITICAL sans correctif ; les 46 constatés sont consignés dans `docs/security.md`.
 - CI : le compte rendu de l'image Docker indique le nombre de HIGH/CRITICAL sans correctif publié (information).
 - Extension Teams : sa version suit celle du gestionnaire (la release fixe le manifeste comme `Cargo.toml`) ; `hubergamof install-extension` affiche la version posée et l'extension l'annonce à chaque connexion : le gestionnaire journalise un avertissement quand elle n'est pas la sienne (extension à recharger).
 - README : section « Module Teams » (installation de l'extension, `hubergamof install-extension`, chargement non empaqueté dans Brave, ce qui est lu) ; le paquet rappelle à son installation que l'extension n'est pas posée automatiquement.
