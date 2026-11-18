@@ -624,3 +624,71 @@ async fn a_contextual_dial_declaration_is_ignored_for_a_module_that_may_not() {
     fixture.engine.press_dial(0).await.unwrap();
     assert_eq!(context_calls(&fixture), Vec::<String>::new());
 }
+
+#[tokio::test(start_paused = true)]
+async fn items_hidden_when_locked_are_left_out_and_come_back() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .probe
+        .list_lock_safe_pages
+        .store(true, Ordering::SeqCst);
+    let mut module = list(6);
+    module.settings =
+        json!({ "items": 6, "lockSafe": true, "keepsLit": true, "pinned": 2, "hiddenLast": 4 });
+    let mut config = fixture.with(vec![module], &["list"], &[None; 4]);
+    config.lock_sleep_seconds = SLEEP_SECONDS;
+    fixture.engine.apply_config(config).await.unwrap();
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.labels()[4].as_deref(), Some("item 2"));
+
+    fixture.lock(true).await;
+    let locked = fixture.labels();
+    assert_eq!(fixture.page().id, "list/list", "the page is kept");
+    assert_eq!(locked[0].as_deref(), Some("item 0"), "pinned items stay");
+    assert!(
+        locked[4..].iter().all(Option::is_none),
+        "the others are not shown: {locked:?}"
+    );
+
+    fixture.lock(false).await;
+    assert_eq!(fixture.labels()[4].as_deref(), Some("item 2"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_home_key_declared_usable_when_locked_opens_its_page_without_padlock() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .probe
+        .list_lock_safe_pages
+        .store(true, Ordering::SeqCst);
+    let mut module = list(4);
+    module.settings =
+        json!({ "items": 4, "lockSafe": true, "keepsLit": true, "keyLockSafe": true });
+    let mut config = fixture.with(vec![module], &["list"], &[None; 4]);
+    config.lock_sleep_seconds = SLEEP_SECONDS;
+    fixture.engine.apply_config(config).await.unwrap();
+    let open = fixture.deck.inner.key_image(0).unwrap();
+
+    fixture.lock(true).await;
+    assert_eq!(fixture.deck.inner.key_image(0).unwrap(), open, "no padlock");
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.page().id, "list/list", "the page opened");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_home_key_declaration_is_ignored_without_the_page_capability() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    fixture
+        .probe
+        .list_lock_safe_pages
+        .store(false, Ordering::SeqCst);
+    let mut module = list(4);
+    module.settings = json!({ "items": 4, "keyLockSafe": true });
+    let mut config = fixture.with(vec![module], &["list"], &[None; 4]);
+    config.lock_sleep_seconds = SLEEP_SECONDS;
+    fixture.engine.apply_config(config).await.unwrap();
+
+    fixture.lock(true).await;
+    fixture.engine.press_key(0).await.unwrap();
+    assert_eq!(fixture.page().id, HOME_PAGE_ID, "refused");
+}

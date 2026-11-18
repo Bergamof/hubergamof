@@ -51,6 +51,49 @@ impl fmt::Debug for RedrawHandle {
     }
 }
 
+/// Whether the computer is locked, as the host knows it when asked.
+///
+/// What a module may do on a locked computer is first decided by the host
+/// (what the module declares usable when locked), from the last drawing: a
+/// press held for a while, or an event, may come after the state changed.
+/// A module whose action reaches the computer (a window, a program) asks
+/// again here, at the moment it acts, and does nothing when locked.
+///
+/// Cheap to clone.
+#[derive(Clone)]
+pub struct ScreenLockState {
+    locked: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+impl ScreenLockState {
+    /// State read through `locked`; used by the host (and by tests).
+    #[must_use]
+    pub fn new(locked: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        Self {
+            locked: Arc::new(locked),
+        }
+    }
+
+    /// A computer that is never locked (the default of a context built for
+    /// tests).
+    #[must_use]
+    pub fn never() -> Self {
+        Self::new(|| false)
+    }
+
+    /// Whether the computer is locked now.
+    #[must_use]
+    pub fn is_locked(&self) -> bool {
+        (self.locked)()
+    }
+}
+
+impl fmt::Debug for ScreenLockState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScreenLockState").finish_non_exhaustive()
+    }
+}
+
 /// A value sent to a module instance through its [`EventSender`] and handed
 /// back to [`crate::Module::on_event`]; the module downcasts it to its own
 /// event type.
@@ -274,6 +317,7 @@ pub struct ModuleContext {
     tasks: TaskSpawner,
     unread: UnreadNotifications,
     images: ImageLibrary,
+    screen_lock: ScreenLockState,
 }
 
 impl ModuleContext {
@@ -292,6 +336,7 @@ impl ModuleContext {
             tasks,
             unread: UnreadNotifications::none(),
             images: ImageLibrary::empty(),
+            screen_lock: ScreenLockState::never(),
         }
     }
 
@@ -337,6 +382,22 @@ impl ModuleContext {
     #[must_use]
     pub fn with_images(self, images: ImageLibrary) -> Self {
         Self { images, ..self }
+    }
+
+    /// The same context with `screen_lock`.
+    #[must_use]
+    pub fn with_screen_lock(self, screen_lock: ScreenLockState) -> Self {
+        Self {
+            screen_lock,
+            ..self
+        }
+    }
+
+    /// Whether the computer is locked, read when asked, see
+    /// [`ScreenLockState`].
+    #[must_use]
+    pub fn screen_lock(&self) -> &ScreenLockState {
+        &self.screen_lock
     }
 
     /// Identifier of the instance in the device configuration.

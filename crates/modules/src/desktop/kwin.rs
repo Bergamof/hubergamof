@@ -371,24 +371,31 @@ impl WindowChanges for KwinWindows {
     }
 }
 
-/// The classes a script follows: exact ones and prefixes.
+/// The classes a script follows: exact ones, prefixes and contained texts.
 #[derive(Serialize)]
 struct ScriptFilter<'a> {
     classes: Vec<&'a str>,
     prefixes: Vec<&'a str>,
+    substrings: Vec<&'a str>,
 }
 
 impl<'a> ScriptFilter<'a> {
     fn of(filter: &'a WindowFilter) -> Self {
         let mut classes = Vec::new();
         let mut prefixes = Vec::new();
+        let mut substrings = Vec::new();
         for class_match in filter.classes() {
             match class_match {
                 ClassMatch::Exact(class) => classes.push(class.as_str()),
                 ClassMatch::Prefix(prefix) => prefixes.push(prefix.as_str()),
+                ClassMatch::Contains(text) => substrings.push(text.as_str()),
             }
         }
-        Self { classes, prefixes }
+        Self {
+            classes,
+            prefixes,
+            substrings,
+        }
     }
 }
 
@@ -415,6 +422,7 @@ fn windows_script(bus_name: &str, path: &str, filter: &WindowFilter) -> String {
         ("INTERFACE", literal(&REPORT_INTERFACE)),
         ("CLASSES", literal(&filter.classes)),
         ("PREFIXES", literal(&filter.prefixes)),
+        ("SUBSTRINGS", literal(&filter.substrings)),
     ];
     with_constants(&constants, include_str!("kwin_windows.js"))
 }
@@ -451,6 +459,7 @@ mod tests {
         WindowFilter::of(&[
             app("claude", ClassMatch::Exact("com.anthropic.Claude".into())),
             app("intellij", ClassMatch::Prefix("jetbrains-".into())),
+            app("teams", ClassMatch::Contains("ompifgpm".into())),
         ])
     }
 
@@ -503,6 +512,7 @@ mod tests {
         assert!(script.contains("const BUS = \":1.42\";\n"), "{script}");
         assert!(script.contains(r#"const CLASSES = ["com.anthropic.Claude"];"#));
         assert!(script.contains(r#"const PREFIXES = ["jetbrains-"];"#));
+        assert!(script.contains(r#"const SUBSTRINGS = ["ompifgpm"];"#));
         assert!(script.contains(&format!("const INTERFACE = \"{REPORT_INTERFACE}\";")));
         assert!(script.ends_with(include_str!("kwin_windows.js")));
 

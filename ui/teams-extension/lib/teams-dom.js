@@ -14,12 +14,37 @@ const PREJOIN = '[data-tid="calling-prejoin-screen"]';
 const PREJOIN_MICROPHONE = 'input[data-tid="toggle-mute"]';
 const PREJOIN_CAMERA = 'input[data-tid="toggle-video"]';
 const CALL_DURATION = '[data-tid="call-duration"]';
-const CONVERSATION = '[role="treeitem"][aria-level="2"]';
+/** Enlarges the call from its compact view (labelled "Agrandir la fenêtre de réunion"). */
+const RETURN_TO_CALL = '[data-tid="call-monitor-navigate-cw-button"]';
+// Conversations only: the channels of the Teams view are `data-item-type="channel"`.
+const CONVERSATION = '[role="treeitem"][aria-level="2"][data-item-type="chat"]';
 const UNREAD_MARK = '[data-tid="unread"]';
+const CONVERSATION_TITLE = '[role="text"][id^="title-"]';
+const AVATAR = 'img.fui-Avatar__image';
+/** Attribute of a conversation holding its identifier in Teams, opaque. */
+const CONVERSATION_ID = 'data-fui-tree-item-value';
+/** The Chat application of the left rail: a constant of Teams, in any language. */
+const CHAT_APP = '[data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]';
 const CALENDAR_SLOT = 'div[role="button"][aria-label]';
 
 /** Most unread names and meetings one report may hold (the manager keeps fewer). */
 const MAX_ITEMS = 100;
+
+/** Side of an avatar sent to the manager, in pixels. */
+const ICON_SIZE = 64;
+
+/**
+ * Longest avatar sent, once in base64: a report holds one per conversation and
+ * stays far under the 1 MiB the browser allows a message to the host.
+ */
+const MAX_ICON_BASE64 = 16 * 1024;
+
+/** How long to wait for the conversation list after a click on the rail. */
+const LIST_ATTEMPTS = 20;
+const LIST_POLL_MS = 100;
+
+/** Avatars already encoded, by image element, until Teams changes their source. */
+const ICONS = new WeakMap();
 
 /** The Outlook frame that holds the calendar, and Teams itself. */
 export const FrameRole = Object.freeze({ Teams: 'teams', Calendar: 'calendar', Other: 'other' });
@@ -65,29 +90,80 @@ export function readCall(doc) {
 }
 
 /**
- * Names of the unread conversations; `null` when the conversation list is not
- * on screen (it only is on the Conversation view), so that nothing is learnt.
+ * The unread conversations, with their avatar; `null` when the conversation
+ * list is not on screen (it only is on the Conversation view; the Teams view
+ * lists channels, which are left out), so that nothing is learnt.
  * @param {Document} doc
- * @returns {string[] | null}
+ * @returns {{ name: string, icon: string | null, id: string | null }[] | null}
  */
 export function readUnreadConversations(doc) {
 	const items = [...doc.querySelectorAll(CONVERSATION)];
 	if (items.length === 0) return null;
 	return items
 		.filter((item) => item.querySelector(UNREAD_MARK))
-		.map((item) => conversationName(doc, item))
-		.filter((name) => name !== '')
+		.map((item) => ({
+			name: conversationName(item),
+			icon: conversationIcon(doc, item),
+			id: item.getAttribute(CONVERSATION_ID)
+		}))
+		.filter((conversation) => conversation.name !== '')
 		.slice(0, MAX_ITEMS);
 }
 
+/** @param {Element} item */
+function conversationName(item) {
+	return item.querySelector(CONVERSATION_TITLE)?.textContent?.trim() ?? '';
+}
+
 /**
+ * The avatar of a conversation as base64, `null` when it has none, is not
+ * loaded yet or cannot be read.
  * @param {Document} doc
  * @param {Element} item
  */
-function conversationName(doc, item) {
-	const ids = item.getAttribute('aria-labelledby')?.split(/\s+/) ?? [];
-	const named = ids.map((id) => doc.getElementById(id)?.textContent?.trim()).find(Boolean);
-	return named ?? '';
+function conversationIcon(doc, item) {
+	const image = item.querySelector(AVATAR);
+	if (!(image instanceof HTMLImageElement) || !image.complete || image.naturalWidth === 0) {
+		return null;
+	}
+	const cached = ICONS.get(image);
+	if (cached?.source === image.currentSrc) return cached.icon;
+	const icon = avatarIcon(doc, image);
+	ICONS.set(image, { source: image.currentSrc, icon });
+	return icon;
+}
+
+/**
+ * `image`, square-cropped and scaled to the size of an icon, as base64 (PNG,
+ * or JPEG when the PNG is too big); `null` when the browser refuses to read it
+ * or it stays too big. Only pixels leave the page, never the address of the
+ * image, which carries names.
+ * @param {Document} doc
+ * @param {HTMLImageElement} image
+ */
+export function avatarIcon(doc, image) {
+	const canvas = doc.createElement('canvas');
+	canvas.width = ICON_SIZE;
+	canvas.height = ICON_SIZE;
+	const context = canvas.getContext('2d');
+	if (!context) return null;
+	const side = Math.min(image.naturalWidth, image.naturalHeight);
+	const left = (image.naturalWidth - side) / 2;
+	const top = (image.naturalHeight - side) / 2;
+	try {
+		context.drawImage(image, left, top, side, side, 0, 0, ICON_SIZE, ICON_SIZE);
+		for (const [type, quality] of /** @type {const} */ ([
+			['image/png', undefined],
+			['image/jpeg', 0.85]
+		])) {
+			const url = canvas.toDataURL(type, quality);
+			const base64 = url.slice(url.indexOf(',') + 1);
+			if (base64.length <= MAX_ICON_BASE64) return base64;
+		}
+	} catch {
+		// A tainted canvas: the image is not readable from this page.
+	}
+	return null;
 }
 
 /**
@@ -131,6 +207,44 @@ export function readReports(doc, hostname, nowSeconds, context) {
 }
 
 /**
+ * @param {Document} doc
+ * @param {string} id
+ */
+function findConversation(doc, id) {
+	// Compared with the attribute, never put in a selector.
+	return [...doc.querySelectorAll(CONVERSATION)].find(
+		(item) => item.getAttribute(CONVERSATION_ID) === id
+	);
+}
+
+/**
+ * Shows the conversation `id` (one the extension reported): clicks it in the
+ * list, after a click on the Chat application of the rail when the list is not
+ * on screen (the Teams or the calendar view). Only clicks, never navigates: a
+ * reload would end a call in progress. Whether it was found.
+ * @param {Document} doc
+ * @param {string} id
+ * @param {(ms: number) => Promise<void>} [wait]
+ */
+export async function openConversation(
+	doc,
+	id,
+	wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+) {
+	if (!findConversation(doc, id)) {
+		const rail = doc.querySelector(CHAT_APP);
+		if (rail instanceof HTMLElement) rail.click();
+		for (let attempt = 0; attempt < LIST_ATTEMPTS && !findConversation(doc, id); attempt++) {
+			await wait(LIST_POLL_MS);
+		}
+	}
+	const item = findConversation(doc, id);
+	if (!(item instanceof HTMLElement)) return false;
+	item.click();
+	return true;
+}
+
+/**
  * Clicks the control that does `action`; whether it was there to click.
  * Accepting and declining an incoming call are not supported yet.
  * @param {Document} doc
@@ -140,7 +254,8 @@ export function performAction(doc, action) {
 	const selectors = new Map([
 		['toggleMute', [MICROPHONE, PREJOIN_MICROPHONE]],
 		['toggleCamera', [CAMERA, PREJOIN_CAMERA]],
-		['hangUp', [HANGUP]]
+		['hangUp', [HANGUP]],
+		['returnToCall', [RETURN_TO_CALL]]
 	]);
 	const candidates = selectors.get(action) ?? [];
 	for (const selector of candidates) {

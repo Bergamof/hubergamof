@@ -154,6 +154,12 @@ struct ListSettings {
     lock_safe: bool,
     /// The pages keep the device lit on a locked computer.
     keeps_lit: bool,
+    /// The first items of the pages stay in place while the others scroll.
+    pinned: usize,
+    /// How many of the last items are hidden on a locked computer.
+    hidden_last: usize,
+    /// The home key of the module acts on a locked computer.
+    key_lock_safe: bool,
 }
 
 impl Default for ListSettings {
@@ -163,6 +169,9 @@ impl Default for ListSettings {
             items: 0,
             lock_safe: false,
             keeps_lit: false,
+            pinned: 0,
+            hidden_last: 0,
+            key_lock_safe: false,
         }
     }
 }
@@ -196,6 +205,7 @@ impl Module for List {
             label.unwrap_or_else(|| format!("{} {}", self.settings.label, self.presses)),
         )
         .in_state(state)
+        .usable_when_locked(self.settings.key_lock_safe)
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {
@@ -216,14 +226,16 @@ impl Module for List {
                         ItemId(format!("i{}", index + shift)),
                         KeyContent::with_label(format!("item {index}"))
                             .focused(focus == Some(index))
-                            .checked(checked.contains(&index)),
+                            .checked(checked.contains(&index))
+                            .usable_when_locked(self.settings.lock_safe),
                     )
-                    .usable_when_locked(self.settings.lock_safe)
+                    .hidden_when_locked(index + self.settings.hidden_last >= self.settings.items)
                 })
                 .collect();
             PageContent::new(format!("{} ({page})", self.settings.label), items)
                 .with_context_dial(self.probe.context_dial.lock().unwrap().clone())
                 .keeps_device_lit(self.settings.keeps_lit)
+                .with_pinned_items(self.settings.pinned)
         })
     }
 
@@ -314,6 +326,34 @@ impl ModuleFactory for ListFactory {
                 SettingField {
                     key: "keepsLit".into(),
                     label: "Keeps lit".into(),
+                    help: None,
+                    kind: SettingKind::Boolean { default: false },
+                },
+                SettingField {
+                    key: "pinned".into(),
+                    label: "Pinned".into(),
+                    help: None,
+                    kind: SettingKind::Integer {
+                        default: 0,
+                        min: Some(0),
+                        max: Some(MAX_LIST_ITEMS),
+                        unit: None,
+                    },
+                },
+                SettingField {
+                    key: "hiddenLast".into(),
+                    label: "Hidden when locked".into(),
+                    help: None,
+                    kind: SettingKind::Integer {
+                        default: 0,
+                        min: Some(0),
+                        max: Some(MAX_LIST_ITEMS),
+                        unit: None,
+                    },
+                },
+                SettingField {
+                    key: "keyLockSafe".into(),
+                    label: "Key lock safe".into(),
                     help: None,
                     kind: SettingKind::Boolean { default: false },
                 },

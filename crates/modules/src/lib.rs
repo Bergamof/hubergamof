@@ -229,7 +229,11 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     // backend follows the windows for one hub only.
     let desktop = desktop::DesktopHub::new(
         services.desktop,
-        vec![claude::desktop_app(), intellij::desktop_app()],
+        vec![
+            claude::desktop_app(),
+            intellij::desktop_app(),
+            teams::desktop_app(),
+        ],
     );
     registry.register(Arc::new(claude::ClaudeFactory::new(Arc::clone(&desktop))));
     registry.register(Arc::new(intellij::IntellijFactory::new(
@@ -241,7 +245,10 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
         services.notifier,
         services.pomodoro_clock,
     )));
-    registry.register(Arc::new(teams::TeamsFactory::new(services.teams)));
+    registry.register(Arc::new(teams::TeamsFactory::new(
+        services.teams,
+        Arc::clone(&desktop),
+    )));
     registry
 }
 

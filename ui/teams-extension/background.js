@@ -4,7 +4,7 @@ const NATIVE_HOST = 'com.hubergamof.teams';
 const RETRY_ALARM = 'reconnect';
 const RETRY_PERIOD_MINUTES = 0.5;
 /** What the manager may ask; anything else is dropped before it reaches a page. */
-const ACTIONS = new Set(['toggleMute', 'toggleCamera', 'hangUp']);
+const ACTIONS = new Set(['toggleMute', 'toggleCamera', 'hangUp', 'returnToCall']);
 const TEAMS_ORIGIN = 'https://teams.cloud.microsoft';
 const CALENDAR_ORIGIN = 'https://outlook.office.com';
 const TEAMS_URLS = ['https://teams.cloud.microsoft/*'];
@@ -18,12 +18,37 @@ async function teamsTab() {
 	return tab?.id ?? null;
 }
 
+/** Longest identifier of a conversation passed on (the manager keeps the same bound). */
+const MAX_ID_LENGTH = 400;
+
+/**
+ * What the manager may ask, rebuilt field by field: an action of the fixed set,
+ * or the identifier of a conversation, which the content script only compares
+ * with the page.
+ * @param {any} request
+ */
+function checked(request) {
+	if (request?.type === 'do' && ACTIONS.has(request.action)) {
+		return { type: 'do', action: request.action };
+	}
+	if (
+		request?.type === 'openConversation' &&
+		typeof request.id === 'string' &&
+		request.id.length > 0 &&
+		request.id.length <= MAX_ID_LENGTH
+	) {
+		return { type: 'openConversation', id: request.id };
+	}
+	return null;
+}
+
 async function forwardToTeams(request) {
-	if (request?.type !== 'do' || !ACTIONS.has(request.action)) return;
+	const message = checked(request);
+	if (message === null) return;
 	const tab = await teamsTab();
 	if (tab === null) return;
 	// Frame 0: Teams itself, not the calendar frame.
-	chrome.tabs.sendMessage(tab, { type: 'do', action: request.action }, { frameId: 0 }).catch(() => {
+	chrome.tabs.sendMessage(tab, message, { frameId: 0 }).catch(() => {
 		callTab = null;
 	});
 }

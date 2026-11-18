@@ -164,13 +164,16 @@ describe('Relay', () => {
 
 describe('the manifest', () => {
 	// A change of privileges must show as a diff of this test in review.
+	// No `use_dynamic_url`: the modules a content script imports resolve against
+	// the static extension URL, which that option makes unreachable (the import
+	// fails and nothing is ever reported).
 	it('asks for nothing beyond what the extension needs', () => {
 		const origins = ['https://teams.cloud.microsoft/*', 'https://outlook.office.com/*'];
 		expect(manifest.permissions).toEqual(['nativeMessaging', 'alarms']);
 		expect(manifest.host_permissions).toEqual(['https://teams.cloud.microsoft/*']);
 		expect(manifest.content_scripts.map((script) => script.matches)).toEqual([origins]);
 		expect(manifest.web_accessible_resources).toEqual([
-			{ resources: ['lib/*.js'], matches: origins, use_dynamic_url: true }
+			{ resources: ['lib/*.js'], matches: origins }
 		]);
 		expect(manifest).not.toHaveProperty('externally_connectable');
 	});

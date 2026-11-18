@@ -17,8 +17,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, watch};
 
 use super::wire::{
-    BrowserReport, CallAction, CallPhase, MAX_FRAME_BYTES, ManagerRequest, Meeting, read_frame,
-    write_frame,
+    BrowserReport, CallAction, CallPhase, MAX_FRAME_BYTES, ManagerRequest, Meeting,
+    UnreadConversation, read_frame, write_frame,
 };
 use crate::background::spawn_worker;
 use crate::sync::lock_unpoisoned;
@@ -59,8 +59,8 @@ pub struct TeamsState {
     pub connected: bool,
     /// Number of unread conversations.
     pub unread: u32,
-    /// Names of the unread conversations (possibly fewer than `unread`).
-    pub conversations: Vec<String>,
+    /// The unread conversations, named (possibly fewer than `unread`).
+    pub conversations: Vec<UnreadConversation>,
     /// The call.
     pub call: CallState,
     /// Upcoming meetings.
@@ -126,6 +126,14 @@ pub trait TeamsBridge: fmt::Debug + Send + Sync {
     /// Fails, sending nothing, when no extension is connected or its queue
     /// is full.
     fn request(&self, action: CallAction) -> Result<(), RequestError>;
+
+    /// Asks the extension to show the conversation `id`, one it reported,
+    /// without waiting for it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::request`].
+    fn open_conversation(&self, id: &str) -> Result<(), RequestError>;
 }
 
 /// Where the socket is: `$XDG_RUNTIME_DIR/hubergamof/teams.sock`, `None`
@@ -139,7 +147,7 @@ pub fn socket_path() -> Option<PathBuf> {
 /// The extension of the connection that is current, if any.
 struct Current {
     generation: u64,
-    actions: mpsc::Sender<CallAction>,
+    actions: mpsc::Sender<ManagerRequest>,
 }
 
 struct Shared {
@@ -151,7 +159,7 @@ struct Shared {
 impl Shared {
     /// A new connection becomes the current one; the previous one, if any,
     /// ends as its action channel closes.
-    fn connected(&self) -> (u64, mpsc::Receiver<CallAction>) {
+    fn connected(&self) -> (u64, mpsc::Receiver<ManagerRequest>) {
         let generation = self.generations.fetch_add(1, Ordering::SeqCst) + 1;
         let (actions, receiver) = mpsc::channel(OUTGOING_QUEUE);
         let mut current = lock_unpoisoned(&self.current);
@@ -190,7 +198,7 @@ impl Shared {
         }
     }
 
-    fn actions(&self) -> Option<mpsc::Sender<CallAction>> {
+    fn actions(&self) -> Option<mpsc::Sender<ManagerRequest>> {
         lock_unpoisoned(&self.current)
             .as_ref()
             .map(|current| current.actions.clone())
@@ -262,8 +270,18 @@ impl TeamsBridge for SocketBridge {
     }
 
     fn request(&self, action: CallAction) -> Result<(), RequestError> {
-        let actions = self.shared.actions().ok_or(RequestError::NotConnected)?;
-        actions.try_send(action).map_err(|error| match error {
+        self.send(ManagerRequest::Do { action })
+    }
+
+    fn open_conversation(&self, id: &str) -> Result<(), RequestError> {
+        self.send(ManagerRequest::OpenConversation { id: id.to_owned() })
+    }
+}
+
+impl SocketBridge {
+    fn send(&self, request: ManagerRequest) -> Result<(), RequestError> {
+        let requests = self.shared.actions().ok_or(RequestError::NotConnected)?;
+        requests.try_send(request).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => RequestError::Busy,
             mpsc::error::TrySendError::Closed(_) => RequestError::NotConnected,
         })
@@ -384,9 +402,9 @@ async fn serve(stream: UnixStream, shared: Arc<Shared>) {
                 let Some(frame) = frame else { break };
                 handle_frame(&shared, generation, &frame);
             }
-            action = actions.recv() => {
-                let Some(action) = action else { break };
-                let Ok(bytes) = serde_json::to_vec(&ManagerRequest::Do { action }) else {
+            request = actions.recv() => {
+                let Some(request) = request else { break };
+                let Ok(bytes) = serde_json::to_vec(&request) else {
                     continue;
                 };
                 if write_frame(&mut writer, &bytes).await.is_err() {
@@ -420,7 +438,7 @@ fn handle_frame(shared: &Shared, generation: u64, frame: &[u8]) {
 #[derive(Debug)]
 pub struct SimulatedBridge {
     state: watch::Sender<TeamsState>,
-    requests: Mutex<Vec<CallAction>>,
+    requests: Mutex<Vec<ManagerRequest>>,
 }
 
 impl SimulatedBridge {
@@ -440,7 +458,10 @@ impl SimulatedBridge {
         let bridge = Self::new();
         bridge.report(BrowserReport::Unread { count: 2 });
         bridge.report(BrowserReport::Conversations {
-            unread: vec!["Équipe produit".into(), "Camille".into()],
+            unread: vec![
+                UnreadConversation::named("Équipe produit"),
+                UnreadConversation::named("Camille"),
+            ],
         });
         bridge
     }
@@ -458,7 +479,35 @@ impl SimulatedBridge {
     /// The actions asked so far.
     #[must_use]
     pub fn requests(&self) -> Vec<CallAction> {
-        lock_unpoisoned(&self.requests).clone()
+        lock_unpoisoned(&self.requests)
+            .iter()
+            .filter_map(|request| match request {
+                ManagerRequest::Do { action } => Some(*action),
+                ManagerRequest::OpenConversation { .. } => None,
+            })
+            .collect()
+    }
+
+    /// The conversations asked to be shown so far.
+    #[must_use]
+    pub fn opened_conversations(&self) -> Vec<String> {
+        lock_unpoisoned(&self.requests)
+            .iter()
+            .filter_map(|request| match request {
+                ManagerRequest::OpenConversation { id } => Some(id.clone()),
+                ManagerRequest::Do { .. } => None,
+            })
+            .collect()
+    }
+}
+
+impl SimulatedBridge {
+    fn record(&self, request: ManagerRequest) -> Result<(), RequestError> {
+        if !self.state.borrow().connected {
+            return Err(RequestError::NotConnected);
+        }
+        lock_unpoisoned(&self.requests).push(request);
+        Ok(())
     }
 }
 
@@ -474,11 +523,11 @@ impl TeamsBridge for SimulatedBridge {
     }
 
     fn request(&self, action: CallAction) -> Result<(), RequestError> {
-        if !self.state.borrow().connected {
-            return Err(RequestError::NotConnected);
-        }
-        lock_unpoisoned(&self.requests).push(action);
-        Ok(())
+        self.record(ManagerRequest::Do { action })
+    }
+
+    fn open_conversation(&self, id: &str) -> Result<(), RequestError> {
+        self.record(ManagerRequest::OpenConversation { id: id.to_owned() })
     }
 }
 
@@ -577,6 +626,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_conversation_is_asked_for_by_its_identifier() {
+        let dir = tempfile::tempdir().unwrap();
+        let (bridge, mut state) = bridge_in(&dir).await;
+        assert_eq!(
+            bridge.open_conversation("19:a@thread.v2"),
+            Err(RequestError::NotConnected)
+        );
+        let mut stream = extension(&dir).await;
+        state_where(&mut state, |state| state.connected).await;
+
+        assert_eq!(bridge.open_conversation("19:a\"@thread.v2"), Ok(()));
+        let frame = timeout(WAIT, read_frame(&mut stream, 128))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            frame,
+            br#"{"type":"openConversation","id":"19:a\"@thread.v2"}"#
+        );
+    }
+
+    #[tokio::test]
     async fn garbage_and_unbounded_text_are_handled() {
         let dir = tempfile::tempdir().unwrap();
         let (_bridge, mut state) = bridge_in(&dir).await;
@@ -592,7 +664,7 @@ mod tests {
         )
         .await;
         let seen = state_where(&mut state, |state| !state.conversations.is_empty()).await;
-        assert_eq!(seen.conversations[0].chars().count(), 120);
+        assert_eq!(seen.conversations[0].name.chars().count(), 120);
     }
 
     #[tokio::test]

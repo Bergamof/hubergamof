@@ -1,1 +1,9 @@
 engineStrict: true
+
+# Ignoré tant que picomatch (dernière version publiée : 4.0.7) n'a aucun correctif :
+# ReDoS par extglobs répétés, atteignable seulement par les motifs que nos outils de
+# build passent à picomatch (aucun ne vient d'une entrée externe). À retirer dès qu'une
+# version corrigée existe (constaté le 2026-11-18, Adrien).
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf

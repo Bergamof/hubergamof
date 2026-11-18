@@ -1,10 +1,18 @@
-import { performAction, readReports } from './teams-dom.js';
+import { openConversation, performAction, readReports } from './teams-dom.js';
 
 /** Teams changes its page without events we could rely on: look again regularly. */
 export const POLL_INTERVAL_MS = 2000;
 
 /**
- * Reports what the page shows, whenever it changes, and carries out the
+ * A report is sent again after this long even if unchanged: the extension's
+ * worker is suspended and restarted by the browser, and forgets what it was
+ * told, which the page would not repeat on its own.
+ */
+export const RESEND_AFTER_MS = 30_000;
+
+/**
+ * Reports what the page shows, whenever it changes (and now and then even if
+ * it does not, see {@link RESEND_AFTER_MS}), and carries out the
  * actions the manager asks for.
  * @param {Document} doc
  * @param {{ sendMessage: (message: unknown) => unknown,
@@ -20,21 +28,32 @@ export function start(doc, runtime, env = {}) {
 	};
 	const now = env.now ?? Date.now;
 	const schedule = env.setInterval ?? setInterval;
-	/** Last report sent of each type, to send changes only. */
+	/** A conversation is being opened (the list is awaited). */
+	let opening = false;
+	/** Last report sent of each type and when, to send changes (and reminders) only. */
 	const sent = new Map();
 
 	function report() {
-		for (const item of readReports(doc, hostname, Math.floor(now() / 1000), context)) {
+		const time = now();
+		for (const item of readReports(doc, hostname, Math.floor(time / 1000), context)) {
 			const text = JSON.stringify(item);
-			if (sent.get(item.type) === text) continue;
-			sent.set(item.type, text);
+			const previous = sent.get(item.type);
+			if (previous?.text === text && time - previous.at < RESEND_AFTER_MS) continue;
+			sent.set(item.type, { text, at: time });
 			runtime.sendMessage({ report: item });
 		}
 	}
 
 	runtime.onMessage.addListener((message) => {
-		if (message?.type === 'do' && context.top) {
+		if (!context.top) return;
+		if (message?.type === 'do') {
 			performAction(doc, message.action);
+		} else if (message?.type === 'openConversation' && typeof message.id === 'string' && !opening) {
+			// One at a time: a second press while the list is awaited is dropped.
+			opening = true;
+			openConversation(doc, message.id).finally(() => {
+				opening = false;
+			});
 		}
 	});
 	report();

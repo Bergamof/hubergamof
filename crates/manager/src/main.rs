@@ -130,10 +130,27 @@ async fn main() -> Result<()> {
     });
     match cli.command {
         Some(Command::Open) => run_open(cli.port).await,
-        Some(Command::NativeHost { origin }) => run_native_host(&origin).await,
+        Some(Command::NativeHost { origin }) => exit_with(run_native_host(&origin).await),
         Some(Command::InstallExtension { browser }) => install_extension(browser),
         None => run_manager(cli).await,
     }
+}
+
+/// Ends the process now, without letting the runtime shut down.
+///
+/// The native host reads stdin on a blocking thread that only returns when the
+/// browser closes the pipe: a normal return would wait for it and leave a host
+/// no longer relaying anything (and so a silent extension) after the manager
+/// restarted. Exiting makes the browser notice and start a new host.
+fn exit_with(outcome: Result<()>) -> ! {
+    let code = match outcome {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            1
+        }
+    };
+    std::process::exit(code)
 }
 
 /// Installs the Teams extension and its native messaging host.

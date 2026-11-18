@@ -10,6 +10,8 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+# Avatars of the Teams conversations, sent by the extension in base64.
+base64.workspace = true
 hubergamof-module-api.workspace = true
 # Docker Engine API over the local Unix socket only (`DOCKER_HOST=unix://…`).
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
