@@ -66,6 +66,7 @@ hubergamof_post_install() {
 	fi
 	hubergamof_note "service actif dans les sessions graphiques ouvertes, au prochain login sinon."
 	hubergamof_note "module Docker : l'utilisateur doit appartenir au groupe « docker »."
+	hubergamof_note "module Teams : chaque utilisateur lance « hubergamof install-extension » une fois (voir le README)."
 }
 
 hubergamof_pre_remove() {
