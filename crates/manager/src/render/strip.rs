@@ -1058,6 +1058,58 @@ mod tests {
     use super::*;
     use crate::strip::ClockReading;
 
+    /// The colour of the preview palette `name` in the UI, as `#rrggbb`.
+    fn rgb_hex(color: Rgba<u8>) -> String {
+        format!("#{:02x}{:02x}{:02x}", color.0[0], color.0[1], color.0[2])
+    }
+
+    /// The `name: '#rrggbb'` pairs of the `theme` palette of `StripPreview.svelte`.
+    fn preview_palette(source: &str, theme: &str) -> Vec<(String, String)> {
+        let start = source
+            .find(&format!("\t\t{theme}: {{"))
+            .unwrap_or_else(|| panic!("palette `{theme}` not found in StripPreview.svelte"));
+        source[start..]
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim_start().starts_with('}'))
+            .filter_map(|line| {
+                let (name, value) = line.trim().trim_end_matches(',').split_once(": ")?;
+                Some((name.to_owned(), value.trim_matches('\'').to_owned()))
+            })
+            .collect()
+    }
+
+    /// The preview of the UI copies the palettes drawn here: a change on one side must be made
+    /// on the other (`StripPreview.svelte` says so, this test makes it fail otherwise).
+    #[test]
+    fn the_ui_preview_uses_the_palettes_of_the_strip() {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../ui/src/lib/components/StripPreview.svelte"
+        ))
+        .expect("the UI sources are next to the crates");
+        for (theme, palette) in [("light", &LIGHT), ("dark", &DARK)] {
+            let preview = preview_palette(&source, theme);
+            assert!(!preview.is_empty(), "palette `{theme}` is empty");
+            for (name, value) in preview {
+                let drawn = match name.as_str() {
+                    "background" => palette.background,
+                    "ink" => palette.ink,
+                    "muted" => palette.muted,
+                    "track" => palette.track,
+                    "line" => palette.line,
+                    "cpu" => palette.cpu,
+                    "ram" => palette.ram,
+                    "swap" => palette.swap,
+                    "volume" => palette.volume,
+                    "working" => palette.working,
+                    other => panic!("unknown colour `{other}` in the {theme} preview"),
+                };
+                assert_eq!(value, rgb_hex(drawn), "{theme}.{name}");
+            }
+        }
+    }
+
     const STRIP: ImageSize = ImageSize {
         width: 800,
         height: 100,
