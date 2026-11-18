@@ -10,13 +10,85 @@ Gestionnaire de Stream Deck pour Linux, à base de modules, avec une interface d
 - **Gestionnaire** (Rust) : pilote les appareils (touches, molettes, bande tactile), exécute les modules, sert l'interface et un WebSocket sur `127.0.0.1:7878`, icône dans la barre système.
 - **Interface** (SvelteKit) : détecte les appareils, configure l'accueil, les modules et les molettes ; les changements s'appliquent immédiatement sur l'appareil.
 - **Bande tactile** : affichage global (heure, date, charge CPU/RAM/swap, page, volume, pomodoro), indépendant des molettes ; chaque molette reçoit une fonction (navigation, volume, pomodoro…) dont un rappel s'affiche sous la bande.
-- **Modules intégrés** : Audio, Pomodoro, Docker, IntelliJ, Claude, Teams (extension de navigateur, voir plus bas).
+- **Modules intégrés** : Audio, Pomodoro, Docker, IntelliJ, Claude, Notifications, Teams (voir [Modules](#modules)).
 
-Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme Stream Deck est prise en charge par conception.
+Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland) ; toute la gamme Stream Deck est prise en charge par conception. Projet personnel en développement actif : voir [`CHANGELOG.md`](CHANGELOG.md).
 
-> Projet en cours de développement : le gestionnaire détecte et pilote les appareils, mais les modules et l'interface ne sont pas encore branchés.
+## Table des matières
 
-## Prérequis
+- [Installation](#installation) : [par paquet](#par-paquet), [depuis les sources](#depuis-les-sources)
+- [Utilisation](#utilisation)
+- [Modules](#modules) : [Teams](#module-teams-extension-de-navigateur)
+- [Vie privée](#vie-privée)
+- [Développement](#développement) : [prérequis](#prérequis), [environnement](#activation-automatique-de-lenvironnement), [commandes](#commandes), [CI](#ci)
+- [Licence](#licence)
+
+## Installation
+
+### Par paquet
+
+Les [releases GitHub](https://github.com/Bergamof/hubergamof/releases) fournissent un paquet par distribution :
+
+```sh
+# Ubuntu 24.04+, Debian 12+
+sudo apt install ./hubergamof_X.Y.Z_amd64.deb
+# Manjaro, Arch Linux
+sudo pacman -U hubergamof-X.Y.Z-1-x86_64.pkg.tar.zst
+```
+
+Le paquet installe les dépendances nécessaires (dont `pactl` et un serveur de son pour le module Audio), la règle udev et le service utilisateur, qu'il démarre dans les sessions graphiques ouvertes. Docker est facultatif (module Docker : l'utilisateur doit être dans le groupe `docker`). La configuration est dans `~/.config/hubergamof`. Détails, numérotation et fabrication des releases : [`docs/release.md`](docs/release.md).
+
+### Depuis les sources
+
+Prérequis : voir [Développement](#prérequis).
+
+```sh
+make build
+make install
+```
+
+`make install` copie le binaire, installe le service utilisateur `hubergamof.service` (démarré avec la session) et, après confirmation, la règle udev `packaging/udev/70-hubergamof.rules` (avec `sudo`) qui donne accès aux Stream Deck sans être root. Débrancher puis rebrancher l'appareil ensuite. Options : `packaging/install.sh --no-udev`, `--yes`.
+
+## Utilisation
+
+Interface : <http://127.0.0.1:7878> (ou via l'icône de la barre système).
+
+Le lanceur de bureau **HuBergamof** (menu des applications, posé par le paquet ou par `make install`) ouvre l'interface et, si le gestionnaire ne tourne plus (quitté depuis la barre système, service arrêté ou abandonné par systemd après des échecs répétés), relance d'abord le service. En ligne de commande : `hubergamof open` (`hubergamof open --port <port>` si le port a été changé).
+
+La configuration des appareils est stockée dans `~/.config/hubergamof` avec le paquet, et, avec `make install`, dans le dépôt : `config/devices/<numéro de série>/` (ignoré par git ; un exemple versionné est dans `config/example/`). L'interface permet de l'exporter et de l'importer en `.zip`.
+
+## Modules
+
+| Module | Rôle |
+|---|---|
+| Audio | volume et sourdine (`pactl`), molette de volume, widget de la bande |
+| Pomodoro | minuteur de travail/pause, menu flottant sur la bande, notifications |
+| Docker | conteneurs et projets compose : démarrer, arrêter, sélection de services à la molette contextuelle |
+| IntelliJ | projets récents, lancement, passage à la fenêtre, attention après les tests |
+| Claude | Claude Desktop : lancement et attention (via claude.ai dans Brave) |
+| Notifications | notifications plein bandeau, non lues, actions à la molette |
+| Teams | non lus, appel (micro, caméra, raccrocher), rappels de réunions, via une extension de navigateur |
+
+Détail de chaque module, de l'API et de l'architecture : [`docs/modules.md`](docs/modules.md), [`docs/architecture.md`](docs/architecture.md).
+
+### Module Teams (extension de navigateur)
+
+Le module Teams lit Teams (version web, `teams.cloud.microsoft`) dans Brave par une petite extension, livrée dans le binaire mais **jamais installée automatiquement** (ni par le paquet, ni par `make install`) : elle se pose une fois par utilisateur.
+
+1. `hubergamof install-extension` (option `--browser brave|chromium|chrome|edge|vivaldi`, Brave par défaut) dépose l'extension dans `~/.local/share/hubergamof/extension` et déclare l'hôte natif au navigateur, avec le chemin du binaire qui l'a lancée : à relancer après être passé du dépôt au paquet (ou l'inverse), ou après une mise à jour. L'extension porte la version du gestionnaire : si elle diffère (extension chargée avant la mise à jour), le journal du service le signale (`journalctl --user -u hubergamof`) ; la commande affiche la version posée.
+2. Dans `brave://extensions`, activer le **mode développeur**, choisir **Charger l'extension non empaquetée** et sélectionner ce dossier (Brave refuse d'installer autrement une extension qui ne vient pas d'un magasin) ; la recharger à chaque mise à jour, puis recharger l'onglet Teams.
+
+Le module a besoin de la fenêtre de Teams en application Brave (PWA) pour la mettre au premier plan ; sous GNOME, la fenêtre n'est pas amenée devant (le bureau l'interdit) mais signalée par une notification. Détail : `docs/modules.md` (module teams).
+
+## Vie privée
+
+L'extension de Teams ne lit que le nombre de conversations non lues, leur nom et leur avatar, l'état de l'appel (micro, caméra) et le calendrier quand vous l'ouvrez : jamais le contenu des messages ; ces données restent sur votre machine (socket Unix privé) et ne sont ni écrites sur le disque ni journalisées.
+
+Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre attention, le gestionnaire observe les notifications de bureau de la session (`org.freedesktop.Notifications`). Seules celles envoyées par ces applications, reconnues par l'exécutable de l'expéditeur (et, pour claude.ai ouvert dans Brave, par le site que le navigateur indique : les notifications des autres sites sont écartées), sont retenues, pour mettre leur touche en attention : leur texte n'est ni affiché ni conservé ; les autres sont ignorées sans être conservées ni journalisées. Les fenêtres sont suivies par un script KWin qui ne transmet que celles des applications suivies. Un journal de débogage de zbus (`RUST_LOG=zbus=trace`) afficherait en revanche les messages du bus : à éviter hors diagnostic.
+
+## Développement
+
+### Prérequis
 
 | Outil | Rôle | Installation |
 |---|---|---|
@@ -31,24 +103,24 @@ Cible actuelle : Stream Deck+ sous KDE Plasma et GNOME (Wayland). Toute la gamme
 | [zizmor](https://docs.zizmor.sh/) 1.31 (facultatif) | `make lint-workflows` (audit des workflows, bloquant en CI) | `cargo install --locked zizmor` |
 | GNOME uniquement : extension AppIndicator | icône de barre système | activée par défaut sur Ubuntu |
 
-## Activation automatique de l'environnement
+### Activation automatique de l'environnement
 
-### Rust (rustup)
+#### Rust (rustup)
 1. Rien à installer à la main : à la première commande `cargo` dans le dossier, rustup lit `rust-toolchain.toml` et installe la 1.99.1 avec `rustfmt`, `clippy` et `llvm-tools-preview` (couverture).
 2. Le basculement est automatique dans ce dossier (et ses sous-dossiers).
 3. Vérification : `rustc --version` → `rustc 1.99.1 …`.
 
-### Node (nvm)
+#### Node (nvm)
 1. Installation de la version épinglée : `nvm install` (lit `.nvmrc`).
 2. Activation ponctuelle : `nvm use`.
 3. Basculement automatique : ajouter dans `~/.bashrc` (ou `~/.zshrc`), après le chargement de nvm, le hook « deeper shell integration » de la [documentation nvm](https://github.com/nvm-sh/nvm#deeper-shell-integration) (fonction `cdnvm` pour bash, `load-nvmrc` + `add-zsh-hook chpwd` pour zsh).
 4. Vérification : `node -v` → `v24.12` ou plus ; `corepack pnpm -v` (depuis `ui/`) → `12.x`.
 
-### Dépannage pnpm
+#### Dépannage pnpm
 - `Cannot find module …/corepack/v1/pnpm/12.…/bin/pnpm.cjs` : Node trop ancien (< 24.12, Corepack < 0.34.5, qui ne sait pas lancer pnpm 12). `make` le détecte (`make check-node`). Remède : `nvm install && nvm use`, puis `rm -rf ~/.cache/node/corepack/v1/pnpm` (le téléchargement raté laisse un cache incomplet que même un Corepack récent réutilise) et `corepack enable pnpm` (le raccourci est propre à chaque version de Node).
 - `getaddrinfo ENOTFOUND registry.npmjs.org` : pas de réseau (DNS, VPN, proxy) ; Corepack télécharge pnpm une fois depuis le registre npm. Derrière un proxy : `HTTPS_PROXY` ; registre interne : `COREPACK_NPM_REGISTRY`.
 
-## Commandes
+### Commandes
 
 Toutes passent par le `Makefile` (`make help` liste tout) :
 
@@ -69,50 +141,7 @@ Toutes passent par le `Makefile` (`make help` liste tout) :
 | `make package` / `make package-lint` / `make package-smoke` | paquets `.deb` et pacman dans `dist/` (après `make build` ; Docker requis), `lintian`, test d'installation en conteneurs |
 | `make install` / `make uninstall` | installe/retire le binaire (`~/.local/bin`), le service systemd utilisateur et la règle udev |
 
-## Installation par paquet
-
-Les [releases GitHub](https://github.com/Bergamof/hubergamof/releases) fournissent un paquet par distribution :
-
-```sh
-# Ubuntu 24.04+, Debian 12+
-sudo apt install ./hubergamof_X.Y.Z_amd64.deb
-# Manjaro, Arch Linux
-sudo pacman -U hubergamof-X.Y.Z-1-x86_64.pkg.tar.zst
-```
-
-Le paquet installe les dépendances nécessaires (dont `pactl` et un serveur de son pour le module Audio), la règle udev et le service utilisateur, qu'il démarre dans les sessions graphiques ouvertes. Docker est facultatif (module Docker : l'utilisateur doit être dans le groupe `docker`). La configuration est dans `~/.config/hubergamof`. Détails, numérotation et fabrication des releases : [`docs/release.md`](docs/release.md).
-
-## Installation depuis les sources
-
-```sh
-make build
-make install
-```
-
-`make install` copie le binaire, installe le service utilisateur `hubergamof.service` (démarré avec la session) et, après confirmation, la règle udev `packaging/udev/70-hubergamof.rules` (avec `sudo`) qui donne accès aux Stream Deck sans être root. Débrancher puis rebrancher l'appareil ensuite. Options : `packaging/install.sh --no-udev`, `--yes`.
-
-La configuration des appareils est, pour l'instant, stockée dans le dépôt : `config/devices/<numéro de série>/` (ignoré par git ; un exemple versionné est dans `config/example/`). L'interface permet de l'exporter et de l'importer en `.zip`.
-
-Interface : <http://127.0.0.1:7878> (ou via l'icône de la barre système).
-
-Le lanceur de bureau **HuBergamof** (menu des applications, posé par le paquet ou par `make install`) ouvre l'interface et, si le gestionnaire ne tourne plus (quitté depuis la barre système, service arrêté ou abandonné par systemd après des échecs répétés), relance d'abord le service. En ligne de commande : `hubergamof open` (`hubergamof open --port <port>` si le port a été changé).
-
-## Module Teams (extension de navigateur)
-
-Le module Teams lit Teams (version web, `teams.cloud.microsoft`) dans Brave par une petite extension, livrée dans le binaire mais **jamais installée automatiquement** (ni par le paquet, ni par `make install`) : elle se pose une fois par utilisateur.
-
-1. `hubergamof install-extension` (option `--browser brave|chromium|chrome|edge|vivaldi`, Brave par défaut) dépose l'extension dans `~/.local/share/hubergamof/extension` et déclare l'hôte natif au navigateur, avec le chemin du binaire qui l'a lancée : à relancer après être passé du dépôt au paquet (ou l'inverse), ou après une mise à jour. L'extension porte la version du gestionnaire : si elle diffère (extension chargée avant la mise à jour), le journal du service le signale (`journalctl --user -u hubergamof`) ; la commande affiche la version posée.
-2. Dans `brave://extensions`, activer le **mode développeur**, choisir **Charger l'extension non empaquetée** et sélectionner ce dossier (Brave refuse d'installer autrement une extension qui ne vient pas d'un magasin) ; la recharger à chaque mise à jour, puis recharger l'onglet Teams.
-
-Le module a besoin de la fenêtre de Teams en application Brave (PWA) pour la mettre au premier plan ; sous GNOME, la fenêtre n'est pas amenée devant (le bureau l'interdit) mais signalée par une notification. Détail : `docs/modules.md` (module teams).
-
-## Vie privée
-
-L'extension de Teams ne lit que le nombre de conversations non lues, leur nom et leur avatar, l'état de l'appel (micro, caméra) et le calendrier quand vous l'ouvrez : jamais le contenu des messages ; ces données restent sur votre machine (socket Unix privé) et ne sont ni écrites sur le disque ni journalisées.
-
-Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre attention, le gestionnaire observe les notifications de bureau de la session (`org.freedesktop.Notifications`). Seules celles envoyées par ces applications, reconnues par l'exécutable de l'expéditeur (et, pour claude.ai ouvert dans Brave, par le site que le navigateur indique : les notifications des autres sites sont écartées), sont retenues, pour mettre leur touche en attention : leur texte n'est ni affiché ni conservé ; les autres sont ignorées sans être conservées ni journalisées. Les fenêtres sont suivies par un script KWin qui ne transmet que celles des applications suivies. Un journal de débogage de zbus (`RUST_LOG=zbus=trace`) afficherait en revanche les messages du bus : à éviter hors diagnostic.
-
-## CI
+### CI
 
 `.github/workflows/ci.yml` vérifie chaque pull request (et chaque push sur `main`, plus une fois par semaine) : lint (dont zizmor), tests avec couverture, contrat TypeScript à jour, tests e2e, build, image Docker, intégration avec un vrai Docker (si la PR touche le module), sécurité (cargo-deny, `pnpm audit`, gitleaks, Trivy) et Lighthouse. Un job `package` construit et installe les paquets en conteneur. Un job final commente la PR avec un compte rendu.
 
