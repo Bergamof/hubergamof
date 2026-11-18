@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use hubergamof_module_api::testing::TestContext;
-use hubergamof_module_api::{Command, Feedback, KeyState, Notification, NotificationId, TaskScope};
+use hubergamof_module_api::{Command, KeyState, Notification, NotificationId, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -342,7 +342,7 @@ async fn items_of_the_call_page_ask_teams_for_the_matching_action() {
             .module
             .on_item_press(&CALL_PAGE.into(), &item.into())
             .await;
-        assert_eq!(commands, [Command::Feedback(Feedback::Ok)], "{item}");
+        assert_eq!(commands, [], "{item}: the icon shows it worked");
         assert_eq!(harness.bridge.requests().last(), Some(&action));
     }
     assert_eq!(
@@ -541,10 +541,7 @@ async fn an_incoming_call_is_announced_and_its_notification_answers_it() {
         .module
         .on_notification_press(NotificationId(1))
         .await;
-    assert!(matches!(
-        answer.as_slice(),
-        [Command::Feedback(Feedback::Ok)]
-    ));
+    assert_eq!(answer, []);
     assert_eq!(harness.bridge.requests(), [CallAction::Accept]);
 }
 

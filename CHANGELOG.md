@@ -21,6 +21,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Module Teams : micro, caméra, raccrocher et répondre n'affichent plus de ✓ (l'icône change quand l'action a marché) ; ⚠ reste affiché si l'extension est absente.
 - Module Teams : la page des non lus affiche le nom de la conversation (l'extension lisait le libellé « Non lu ») et ne lit plus que les conversations : passer sur l'onglet Équipes ne remplace plus la liste par les canaux non lus.
 - Extension Teams : elle ne rapportait rien (le chargement du script de page échouait : « Resources must be listed in web_accessible_resources », à cause de `use_dynamic_url`) ; l'option est retirée. Le script de page renvoie aussi ses rapports toutes les 30 s, pour qu'un worker suspendu puis redémarré retrouve l'état.
 - Module Teams : l'hôte natif ne reste plus en vie, sans lien avec le gestionnaire, quand celui-ci redémarre (le navigateur en relance un) ; la touche affiche « Hors ligne » sans extension connectée, et un appui sans rien à montrer ne fait plus ⚠.

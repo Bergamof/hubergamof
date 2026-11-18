@@ -19,9 +19,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, ContextDial, Feedback, ImageData, ItemId, KeyContent, KeyState, Module,
-    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
-    Notification, NotificationId, PageContent, PageId, PageItem, Rgb,
+    Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
+    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, Notification,
+    NotificationId, PageContent, PageId, PageItem, Rgb,
 };
 use serde_json::Value;
 use tokio::sync::watch;
@@ -247,10 +247,11 @@ impl Teams {
             .keeps_device_lit(call.phase == CallPhase::InCall)
     }
 
-    /// Asks Teams for `action`: ✓ once sent, ⚠ when no extension is there.
+    /// Asks Teams for `action`: nothing once sent (the key changes its icon
+    /// when it worked), ⚠ when no extension is there.
     fn ask(&self, action: CallAction) -> Vec<Command> {
         match self.bridge.request(action) {
-            Ok(()) => vec![Command::Feedback(Feedback::Ok)],
+            Ok(()) => Vec::new(),
             Err(error) => {
                 tracing::debug!(%error, ?action, "Teams action not sent");
                 Command::alert()
