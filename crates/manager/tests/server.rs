@@ -19,8 +19,7 @@ use hubergamof_manager::file_chooser::NoFilePicker;
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
-    MIN_LIVE_STATE_INTERVAL, MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH,
-    module_catalog, router,
+    MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH, module_catalog, router,
 };
 use hubergamof_manager::strip::{FixedClock, SimulatedProbe};
 use hubergamof_module_api::{
@@ -721,8 +720,17 @@ async fn live_states_are_only_sent_to_clients_asking_for_them() {
     watcher
         .live_state_where(|state| state.page.keys[0].label.as_deref() == Some("count 1"))
         .await;
-    // Past the throttling interval, it would have been sent to both.
-    tokio::time::sleep(MIN_LIVE_STATE_INTERVAL * 2).await;
+    // A later look reaching the watcher means the throttling interval has passed: the first one
+    // would have been sent to both by now, and would come before the answer to the ping.
+    client
+        .send(&ClientMessage::PressKey {
+            serial: DEMO_SERIAL.into(),
+            index: 0,
+        })
+        .await;
+    watcher
+        .live_state_where(|state| state.page.keys[0].label.as_deref() == Some("count 2"))
+        .await;
     client.ping().await;
     server.stop().await;
 }

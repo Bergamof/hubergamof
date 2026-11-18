@@ -2,7 +2,8 @@
 @component
 Preview of the touch strip, with sample figures (not the live strip): it follows the theme of the
 device and the options of the strip, and shows under it what each dial does. Selecting it opens the options.
-The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: change both together.
+The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: change both together
+(a Rust test, `the_ui_preview_uses_the_palettes_of_the_strip`, fails if the palettes differ).
 -->
 <script lang="ts">
 	import type { DeviceTheme, StripConfig } from '#lib/generated/index.js';

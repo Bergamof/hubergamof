@@ -28,6 +28,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Tests : une dérive entre les palettes de l'aperçu de la bande (`StripPreview.svelte`) et celles du rendu Rust fait échouer la CI ; le test des `liveState` non demandés n'attend plus un délai réel mais un signal (la mise à jour suivante).
 - UI (audit UX) : deux annonces identiques de suite sont relues par les lecteurs d'écran ; le titre de la page nomme l'appareil ; le statut de connexion de l'en-tête ne double plus l'alerte de connexion perdue ; textes d'information et titres de section en 14 px ; phrase d'aide sur le déplacement des touches (glisser ou boutons) ; l'éditeur tient sans défilement horizontal à 320 px (tuiles qui se réduisent) ; tests e2e correspondants.
 - Release : `lto = "thin"` et `codegen-units = 1` (binaire de 18,1 à 14,8 Mo, même temps de build).
 - Module Audio : la file de requêtes du worker est bornée (256) ; au-delà, la requête est refusée (⚠) au lieu de s'empiler.
