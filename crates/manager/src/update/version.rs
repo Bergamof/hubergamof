@@ -13,9 +13,13 @@ pub struct Version {
     patch: u64,
 }
 
+/// Longest text kept of a refused version: it comes from a remote server and
+/// ends up in the logs.
+const MAX_KEPT_CHARS: usize = 64;
+
 /// Text that is not a plain `X.Y.Z` version.
 #[derive(Debug, Error, PartialEq, Eq)]
-#[error("`{0}` is not a X.Y.Z version")]
+#[error("{0:?} is not a X.Y.Z version")]
 pub struct ParseVersionError(String);
 
 impl Version {
@@ -46,7 +50,7 @@ impl FromStr for Version {
     /// Pre-releases (`1.0.0-rc1`) and build metadata are refused: only stable
     /// releases are ever offered.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let error = || ParseVersionError(text.to_owned());
+        let error = || ParseVersionError(text.chars().take(MAX_KEPT_CHARS).collect());
         let mut parts = text.strip_prefix('v').unwrap_or(text).split('.');
         let mut number = || {
             let part = parts.next().ok_or_else(error)?;
@@ -117,6 +121,17 @@ mod tests {
         ] {
             assert!(text.parse::<Version>().is_err(), "{text:?} was accepted");
         }
+    }
+
+    #[test]
+    fn a_refused_text_is_shortened_and_escaped_in_the_message() {
+        let message = "x\ny"
+            .repeat(1000)
+            .parse::<Version>()
+            .unwrap_err()
+            .to_string();
+        assert!(message.len() < 200, "{}", message.len());
+        assert!(!message.contains('\n'));
     }
 
     #[test]

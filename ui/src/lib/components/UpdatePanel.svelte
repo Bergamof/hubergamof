@@ -16,6 +16,12 @@ The release notes open in a new tab: the update itself is installed from the sys
 	let { version, status, oncheck }: Props = $props();
 
 	// `aria-disabled`, not `disabled`: the button keeps the focus while the check runs.
+	/** Defence in depth: the manager already checks the link, the page still only follows https. */
+	const notesLink = $derived(
+		status.type === 'available' && status.notesUrl.startsWith('https://')
+			? status.notesUrl
+			: undefined
+	);
 	const checking = $derived(status.type === 'checking');
 </script>
 
@@ -30,17 +36,14 @@ The release notes open in a new tab: the update itself is installed from the sys
 		{#if status.type === 'available'}
 			<strong class="font-semibold">Version {status.version} disponible.</strong>
 			{#if version}Vous utilisez la version {version}.{/if}
-			<!-- External https link (checked by the manager), not a route of this app. -->
-			<!-- eslint-disable svelte/no-navigation-without-resolve -->
-			<a
-				href={status.notesUrl}
-				target="_blank"
-				rel="noopener noreferrer"
-				class="underline focus-ring"
-			>
-				Notes de version<span class="sr-only"> (s’ouvre dans un nouvel onglet)</span>
-			</a>
-			<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			{#if notesLink}
+				<!-- External https link (checked by the manager), not a route of this app. -->
+				<!-- eslint-disable svelte/no-navigation-without-resolve -->
+				<a href={notesLink} target="_blank" rel="noopener noreferrer" class="underline focus-ring">
+					Notes de version<span class="sr-only"> (s’ouvre dans un nouvel onglet)</span>
+				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			{/if}
 		{:else if status.type === 'checking'}
 			Recherche de mises à jour…
 		{:else if status.type === 'upToDate'}

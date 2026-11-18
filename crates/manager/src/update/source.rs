@@ -13,6 +13,15 @@ use super::version::{ParseVersionError, Version};
 /// Public repository publishing the releases.
 const RELEASES_URL: &str = "https://api.github.com/repos/Bergamof/hubergamof/releases/latest";
 
+/// Release notes pages of the project: the only links offered to the user.
+const NOTES_URL_PREFIX: &str = "https://github.com/Bergamof/hubergamof/releases/";
+
+/// Longest release notes link kept.
+const MAX_NOTES_URL_BYTES: usize = 512;
+
+/// Redirections followed (GitHub redirects a renamed repository).
+const MAX_REDIRECTS: usize = 3;
+
 /// Longest wait for the whole request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -81,19 +90,26 @@ impl GithubReleases {
     ///
     /// [`UpdateError::Network`] when the HTTP client cannot be built.
     pub fn new() -> Result<Self, UpdateError> {
-        Self::with_url(RELEASES_URL)
+        Self::build(RELEASES_URL, true)
     }
 
-    /// Client of another endpoint (tests).
+    /// Client of another endpoint, plain HTTP allowed (tests against a local
+    /// server).
     ///
     /// # Errors
     ///
     /// [`UpdateError::Network`] when the HTTP client cannot be built.
     pub fn with_url(url: &str) -> Result<Self, UpdateError> {
+        Self::build(url, false)
+    }
+
+    fn build(url: &str, https_only: bool) -> Result<Self, UpdateError> {
         // Generic user agent (GitHub requires one): nothing about the user.
         let client = Client::builder()
             .user_agent(concat!("hubergamof/", env!("CARGO_PKG_VERSION")))
             .timeout(REQUEST_TIMEOUT)
+            .https_only(https_only)
+            .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
             .build()?;
         Ok(Self {
             client,
@@ -145,13 +161,38 @@ fn parse_release(body: &[u8]) -> Result<ReleaseInfo, UpdateError> {
     if release.draft || release.prerelease {
         return Err(UpdateError::Unstable);
     }
-    if !release.html_url.starts_with("https://") {
+    if !is_notes_link(&release.html_url) {
         return Err(UpdateError::NotesLink);
     }
     Ok(ReleaseInfo {
         version: release.tag_name.parse()?,
         notes_url: release.html_url,
     })
+}
+
+/// Whether `url` is a release notes page of the project, of a sane length and
+/// without control characters.
+fn is_notes_link(url: &str) -> bool {
+    url.starts_with(NOTES_URL_PREFIX)
+        && url.len() <= MAX_NOTES_URL_BYTES
+        && !url.chars().any(char::is_control)
+}
+
+impl UpdateError {
+    /// Short description for the interface: the details (which come from a
+    /// remote server) stay in the logs.
+    #[must_use]
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::Network(_) => "release server unreachable".to_owned(),
+            Self::Status(status) => format!("release server answered {status}"),
+            Self::Unstable => "the latest release is not a stable one".to_owned(),
+            Self::Simulated(message) => message.clone(),
+            Self::TooLarge | Self::Malformed(_) | Self::Tag(_) | Self::NotesLink => {
+                "unexpected answer from the release server".to_owned()
+            }
+        }
+    }
 }
 
 /// Answers a fixed release, without network (`--demo`, tests).
@@ -166,7 +207,7 @@ impl SimulatedReleases {
         Self {
             answer: Ok(ReleaseInfo {
                 version,
-                notes_url: "https://example.org/releases/latest".to_owned(),
+                notes_url: format!("{NOTES_URL_PREFIX}latest"),
             }),
         }
     }
@@ -241,7 +282,7 @@ mod tests {
     async fn reads_the_latest_release() {
         let body = release_json(
             "v1.4.2",
-            "https://github.com/o/r/releases/tag/v1.4.2",
+            "https://github.com/Bergamof/hubergamof/releases/tag/v1.4.2",
             false,
             false,
         );
@@ -249,13 +290,18 @@ mod tests {
         assert_eq!(release.version, Version::new(1, 4, 2));
         assert_eq!(
             release.notes_url,
-            "https://github.com/o/r/releases/tag/v1.4.2"
+            "https://github.com/Bergamof/hubergamof/releases/tag/v1.4.2"
         );
     }
 
     #[tokio::test]
     async fn the_request_carries_a_generic_user_agent() {
-        let body = release_json("v1.0.0", "https://example.org/r", false, false);
+        let body = release_json(
+            "v1.0.0",
+            "https://github.com/Bergamof/hubergamof/releases/tag/v1.0.0",
+            false,
+            false,
+        );
         let (url, mut seen) = serve(AxumStatus::OK, body).await;
         GithubReleases::with_url(&url)
             .unwrap()
@@ -311,7 +357,12 @@ mod tests {
     #[test]
     fn drafts_and_prereleases_are_not_offered() {
         for (draft, prerelease) in [(true, false), (false, true)] {
-            let body = release_json("v2.0.0", "https://example.org/r", draft, prerelease);
+            let body = release_json(
+                "v2.0.0",
+                "https://github.com/Bergamof/hubergamof/releases/tag/v1.0.0",
+                draft,
+                prerelease,
+            );
             let error = parse_release(body.as_bytes()).unwrap_err();
             assert!(matches!(error, UpdateError::Unstable), "{error}");
         }
@@ -327,7 +378,12 @@ mod tests {
             parse_release(b"{\"tag_name\":\"v1.0.0\"}").unwrap_err(),
             UpdateError::Malformed(_)
         ));
-        let body = release_json("nightly", "https://example.org/r", false, false);
+        let body = release_json(
+            "nightly",
+            "https://github.com/Bergamof/hubergamof/releases/tag/v1.0.0",
+            false,
+            false,
+        );
         assert!(matches!(
             parse_release(body.as_bytes()).unwrap_err(),
             UpdateError::Tag(_)
@@ -335,7 +391,20 @@ mod tests {
     }
 
     #[test]
-    fn a_notes_link_must_be_https() {
+    fn the_public_message_hides_what_the_server_said() {
+        let error = parse_release(br#"{"tag_name":"line\nforged","html_url":"x"}"#).unwrap_err();
+        assert_eq!(
+            error.public_message(),
+            "unexpected answer from the release server"
+        );
+        assert_eq!(
+            UpdateError::Status(StatusCode::FORBIDDEN).public_message(),
+            "release server answered 403 Forbidden"
+        );
+    }
+
+    #[test]
+    fn a_notes_link_must_be_a_release_page_of_the_project() {
         for url in [
             "http://example.org/r",
             "javascript:alert(1)",

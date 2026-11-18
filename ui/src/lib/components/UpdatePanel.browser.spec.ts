@@ -18,6 +18,16 @@ describe('UpdatePanel', () => {
 		await expect.element(link).toHaveAttribute('rel', 'noopener noreferrer');
 	});
 
+	it('offers no link for anything but https', async () => {
+		await render(UpdatePanel, {
+			version: '1.0.0',
+			status: { type: 'available', version: '1.2.0', notesUrl: 'javascript:alert(1)' },
+			oncheck: vi.fn()
+		});
+		await expect.element(page.getByText('Version 1.2.0 disponible.')).toBeVisible();
+		expect(document.querySelectorAll('a')).toHaveLength(0);
+	});
+
 	it.each([
 		['upToDate' as const, {}, /HuBergamof est à jour \(version 1\.0\.0\)/],
 		['checking' as const, {}, /Recherche de mises à jour…/],

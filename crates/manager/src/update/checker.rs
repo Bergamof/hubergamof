@@ -11,6 +11,7 @@ use std::time::Duration;
 use hubergamof_protocol::UpdateStatus;
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use super::source::{ReleaseInfo, ReleaseSource};
 use super::version::Version;
@@ -20,6 +21,11 @@ pub const FIRST_CHECK_DELAY: Duration = Duration::from_secs(60);
 
 /// Time between two automatic checks.
 pub const CHECK_INTERVAL: Duration = Duration::from_hours(24);
+
+/// Shortest time between the starts of two checks, whoever asks: the
+/// unauthenticated GitHub quota (60 requests an hour per address) is shared
+/// with every other tool of the machine.
+pub const MIN_CHECK_SPACING: Duration = Duration::from_mins(5);
 
 /// Follows and triggers the check; cheap to clone.
 #[derive(Clone)]
@@ -53,7 +59,8 @@ impl UpdateHandle {
         self.sender.subscribe()
     }
 
-    /// Asks for a check now; requests made during a check are merged.
+    /// Asks for a check now; requests made during a check are merged, and a
+    /// check never starts less than [`MIN_CHECK_SPACING`] after the previous one.
     pub fn check_now(&self) {
         self.trigger.notify_one();
     }
@@ -80,6 +87,7 @@ async fn run(
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut delay = first_delay;
+    let mut last_start: Option<Instant> = None;
     loop {
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
@@ -87,7 +95,14 @@ async fn run(
             // A dropped sender also means shutting down.
             _ = shutdown.wait_for(|stopping| *stopping) => return,
         }
+        if let Some(last) = last_start {
+            tokio::select! {
+                () = tokio::time::sleep_until(last + MIN_CHECK_SPACING) => {}
+                _ = shutdown.wait_for(|stopping| *stopping) => return,
+            }
+        }
         delay = CHECK_INTERVAL;
+        last_start = Some(Instant::now());
         handle.sender.send_replace(UpdateStatus::Checking);
         let outcome = check(source.as_ref(), current).await;
         handle.sender.send_replace(outcome);
@@ -100,7 +115,7 @@ async fn check(source: &dyn ReleaseSource, current: Version) -> UpdateStatus {
         Err(error) => {
             tracing::warn!(%error, "update check failed");
             UpdateStatus::CheckFailed {
-                message: error.to_string(),
+                message: error.public_message(),
             }
         }
     }
@@ -164,7 +179,7 @@ mod tests {
             next_settled(&handle).await,
             UpdateStatus::Available {
                 version: "1.1.0".into(),
-                notes_url: "https://example.org/releases/latest".into(),
+                notes_url: "https://github.com/Bergamof/hubergamof/releases/latest".into(),
             }
         );
     }
@@ -215,6 +230,41 @@ mod tests {
             .await
             .expect("the task stops")
             .unwrap();
+    }
+
+    /// Counts the questions asked.
+    struct CountingSource(std::sync::atomic::AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl ReleaseSource for CountingSource {
+        async fn latest(&self) -> Result<ReleaseInfo, crate::update::UpdateError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(ReleaseInfo {
+                version: version("1.0.0"),
+                notes_url: String::new(),
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_requests_cannot_exhaust_the_quota() {
+        let source = Arc::new(CountingSource(std::sync::atomic::AtomicUsize::new(0)));
+        let (stop, stopping) = watch::channel(false);
+        let (handle, _task) = start(
+            Arc::clone(&source) as Arc<dyn ReleaseSource>,
+            version("1.0.0"),
+            Duration::ZERO,
+            stopping,
+        );
+        for _ in 0..100 {
+            handle.check_now();
+            tokio::task::yield_now().await;
+        }
+        // The first check starts at once, then at most one per spacing.
+        tokio::time::sleep(MIN_CHECK_SPACING * 2 + Duration::from_secs(1)).await;
+        let asked = source.0.load(std::sync::atomic::Ordering::SeqCst);
+        assert!((1..=3).contains(&asked), "{asked} checks in 2 spacings");
+        stop.send_replace(true);
     }
 
     #[test]

@@ -84,6 +84,11 @@ struct Cli {
     #[arg(long)]
     no_tray: bool,
 
+    /// Never look for a newer release: the manager then makes no connection
+    /// to the Internet at all.
+    #[arg(long)]
+    no_update_check: bool,
+
     /// Run a command instead of the manager.
     #[command(subcommand)]
     command: Option<Command>,
@@ -249,7 +254,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
-    let updates = start_update_check(cli.demo, stopping.clone());
+    let updates = start_update_check(cli.demo, cli.no_update_check, stopping.clone());
     let context = ServerContext {
         discovery: discovery.clone(),
         engines: supervisor.engines(),
@@ -327,7 +332,11 @@ const DEMO_RELEASE: Version = Version::new(999, 0, 0);
 
 /// Starts the periodic check for a newer release. `--demo` never touches the
 /// network: it announces [`DEMO_RELEASE`] at once.
-fn start_update_check(demo: bool, stopping: watch::Receiver<bool>) -> UpdateHandle {
+fn start_update_check(demo: bool, disabled: bool, stopping: watch::Receiver<bool>) -> UpdateHandle {
+    if disabled {
+        tracing::info!("update check disabled by --no-update-check");
+        return UpdateHandle::inactive();
+    }
     let current = match Version::current() {
         Ok(current) => current,
         Err(error) => {
