@@ -4,7 +4,7 @@ const NATIVE_HOST = 'com.hubergamof.teams';
 const RETRY_ALARM = 'reconnect';
 const RETRY_PERIOD_MINUTES = 0.5;
 /** What the manager may ask; anything else is dropped before it reaches a page. */
-const ACTIONS = new Set(['toggleMute', 'toggleCamera', 'hangUp']);
+const ACTIONS = new Set(['toggleMute', 'toggleCamera', 'hangUp', 'returnToCall']);
 const TEAMS_ORIGIN = 'https://teams.cloud.microsoft';
 const CALENDAR_ORIGIN = 'https://outlook.office.com';
 const TEAMS_URLS = ['https://teams.cloud.microsoft/*'];

@@ -263,6 +263,8 @@ pub enum CallAction {
     Accept,
     /// Declines the incoming call.
     Decline,
+    /// Brings the call back from its small window to the one of Teams.
+    ReturnToCall,
 }
 
 /// A message to the extension.

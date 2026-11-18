@@ -14,6 +14,8 @@ const PREJOIN = '[data-tid="calling-prejoin-screen"]';
 const PREJOIN_MICROPHONE = 'input[data-tid="toggle-mute"]';
 const PREJOIN_CAMERA = 'input[data-tid="toggle-video"]';
 const CALL_DURATION = '[data-tid="call-duration"]';
+/** Enlarges the call from its compact view (labelled "Agrandir la fenêtre de réunion"). */
+const RETURN_TO_CALL = '[data-tid="call-monitor-navigate-cw-button"]';
 // Conversations only: the channels of the Teams view are `data-item-type="channel"`.
 const CONVERSATION = '[role="treeitem"][aria-level="2"][data-item-type="chat"]';
 const UNREAD_MARK = '[data-tid="unread"]';
@@ -252,7 +254,8 @@ export function performAction(doc, action) {
 	const selectors = new Map([
 		['toggleMute', [MICROPHONE, PREJOIN_MICROPHONE]],
 		['toggleCamera', [CAMERA, PREJOIN_CAMERA]],
-		['hangUp', [HANGUP]]
+		['hangUp', [HANGUP]],
+		['returnToCall', [RETURN_TO_CALL]]
 	]);
 	const candidates = selectors.get(action) ?? [];
 	for (const selector of candidates) {

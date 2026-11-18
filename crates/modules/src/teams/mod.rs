@@ -245,7 +245,8 @@ enum CallItem {
     HangUp,
     Accept,
     Decline,
-    /// Brings the window of the call to the front (not an action of Teams).
+    /// Brings the call back from its small window, and the window of Teams
+    /// to the front.
     ReturnToCall,
 }
 
@@ -277,16 +278,15 @@ impl CallItem {
         Self::ALL.into_iter().find(|item| item.id() == *id)
     }
 
-    /// What Teams is asked when the key is pressed; nothing for the key
-    /// that only brings its window to the front.
-    fn action(self) -> Option<CallAction> {
+    /// What Teams is asked when the key is pressed.
+    fn action(self) -> CallAction {
         match self {
-            Self::Mute => Some(CallAction::ToggleMute),
-            Self::Camera => Some(CallAction::ToggleCamera),
-            Self::HangUp => Some(CallAction::HangUp),
-            Self::Accept => Some(CallAction::Accept),
-            Self::Decline => Some(CallAction::Decline),
-            Self::ReturnToCall => None,
+            Self::Mute => CallAction::ToggleMute,
+            Self::Camera => CallAction::ToggleCamera,
+            Self::HangUp => CallAction::HangUp,
+            Self::Accept => CallAction::Accept,
+            Self::Decline => CallAction::Decline,
+            Self::ReturnToCall => CallAction::ReturnToCall,
         }
     }
 
@@ -356,6 +356,18 @@ impl Teams {
                 LaunchStart::Refused => Command::alert(),
             },
         }
+    }
+
+    /// Brings the call back from its small window into Teams, then the window
+    /// of Teams to the front. Nothing on a locked computer, whatever let the
+    /// press through.
+    fn return_to_call(&mut self, surface: ModuleSurface) -> Vec<Command> {
+        if self.screen_lock.is_locked() {
+            return Vec::new();
+        }
+        let mut commands = self.ask(CallAction::ReturnToCall);
+        commands.extend(self.bring_to_front(surface));
+        commands
     }
 
     /// Shows the conversation `id` in Teams and brings its window to the
@@ -533,9 +545,9 @@ impl Module for Teams {
         if page.0 != CALL_PAGE {
             return Vec::new();
         }
-        match CallItem::from_id(item).map(CallItem::action) {
-            Some(Some(action)) => self.ask(action),
-            Some(None) => self.bring_to_front(surface),
+        match CallItem::from_id(item) {
+            Some(CallItem::ReturnToCall) => self.return_to_call(surface),
+            Some(item) => self.ask(item.action()),
             None => Vec::new(),
         }
     }

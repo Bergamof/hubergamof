@@ -240,6 +240,11 @@ async fn a_locked_computer_does_not_open_a_conversation_nor_return_to_the_call()
         .await;
     harness.settle_desktop().await;
     assert_eq!(harness.desktop.activations(), []);
+    assert_eq!(
+        harness.bridge.requests(),
+        [],
+        "nothing asked of Teams either"
+    );
     assert_eq!(harness.bridge.opened_conversations(), Vec::<String>::new());
 }
 
@@ -368,7 +373,7 @@ async fn the_conversations_of_a_call_page_open_too() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn return_to_the_call_brings_its_window_to_the_front_without_asking_teams() {
+async fn return_to_the_call_asks_teams_to_enlarge_it_and_brings_its_window_to_the_front() {
     let mut harness = Harness::new(SimulatedBridge::new());
     harness.desktop.set_windows(vec![teams_window()]);
     harness.settle_desktop().await;
@@ -385,7 +390,22 @@ async fn return_to_the_call_brings_its_window_to_the_front_without_asking_teams(
     assert_eq!(commands, []);
     assert_eq!(harness.settle_desktop().await, []);
     assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
-    assert_eq!(harness.bridge.requests(), []);
+    assert_eq!(harness.bridge.requests(), [CallAction::ReturnToCall]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn return_to_the_call_without_extension_still_brings_the_window_and_warns() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness.in_call().await;
+    let item = harness.call_page().items[3].id.clone();
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    let commands = harness.module.on_item_press(&CALL_PAGE.into(), &item).await;
+    assert_eq!(commands, Command::alert());
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
 }
 
 #[tokio::test]

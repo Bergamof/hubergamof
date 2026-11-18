@@ -243,6 +243,16 @@ describe('performAction', () => {
 		const doc = page('<button data-tid="hangup-main-btn"></button>');
 		expect(performAction(doc, 'hangUp')).toBe(true);
 	});
+	it('enlarges the call from its compact view, and does nothing without it', () => {
+		const doc = page(
+			'<button data-tid="call-monitor-navigate-cw-button" aria-label="Agrandir la fenêtre de réunion"></button>'
+		);
+		const click = vi.fn();
+		doc.querySelector('button')!.addEventListener('click', click);
+		expect(performAction(doc, 'returnToCall')).toBe(true);
+		expect(click).toHaveBeenCalledOnce();
+		expect(performAction(page('<p/>'), 'returnToCall')).toBe(false);
+	});
 	it('does nothing for a missing control or an unsupported action', () => {
 		const doc = page('<p/>');
 		expect(performAction(doc, 'hangUp')).toBe(false);
