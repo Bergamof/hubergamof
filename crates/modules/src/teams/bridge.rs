@@ -17,8 +17,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, watch};
 
 use super::wire::{
-    BrowserReport, CallAction, CallPhase, MAX_FRAME_BYTES, ManagerRequest, Meeting, read_frame,
-    write_frame,
+    BrowserReport, CallAction, CallPhase, MAX_FRAME_BYTES, ManagerRequest, Meeting,
+    UnreadConversation, read_frame, write_frame,
 };
 use crate::background::spawn_worker;
 use crate::sync::lock_unpoisoned;
@@ -59,8 +59,8 @@ pub struct TeamsState {
     pub connected: bool,
     /// Number of unread conversations.
     pub unread: u32,
-    /// Names of the unread conversations (possibly fewer than `unread`).
-    pub conversations: Vec<String>,
+    /// The unread conversations, named (possibly fewer than `unread`).
+    pub conversations: Vec<UnreadConversation>,
     /// The call.
     pub call: CallState,
     /// Upcoming meetings.
@@ -440,7 +440,10 @@ impl SimulatedBridge {
         let bridge = Self::new();
         bridge.report(BrowserReport::Unread { count: 2 });
         bridge.report(BrowserReport::Conversations {
-            unread: vec!["Équipe produit".into(), "Camille".into()],
+            unread: vec![
+                UnreadConversation::named("Équipe produit"),
+                UnreadConversation::named("Camille"),
+            ],
         });
         bridge
     }
@@ -592,7 +595,7 @@ mod tests {
         )
         .await;
         let seen = state_where(&mut state, |state| !state.conversations.is_empty()).await;
-        assert_eq!(seen.conversations[0].chars().count(), 120);
+        assert_eq!(seen.conversations[0].name.chars().count(), 120);
     }
 
     #[tokio::test]

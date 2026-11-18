@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FrameContext } from '../lib/teams-dom.js';
 import { RESEND_AFTER_MS, start } from '../lib/content-main.js';
 import {
+	avatarIcon,
 	frameRole,
 	performAction,
 	readCall,
@@ -16,10 +17,18 @@ function page(html: string, title = 'Teams'): Document {
 	return doc;
 }
 
-const CONVERSATIONS = `
-	<div role="treeitem" aria-level="2" aria-labelledby="a"><span id="a">Alice</span><i data-tid="unread"></i></div>
-	<div role="treeitem" aria-level="2" aria-labelledby="b"><span id="b">Bob</span></div>
-	<div role="treeitem" aria-level="2" aria-labelledby="c"><span id="c">Carol</span><i data-tid="unread"></i></div>`;
+// The markup of Teams, reduced: the first reference of `aria-labelledby` is
+// the "Non lu" label, the name is in the title span.
+function conversation(name: string, unread: boolean, type = 'chat') {
+	return `<div role="treeitem" aria-level="2" data-item-type="${type}"
+		aria-labelledby="chat_list_unread_text title-${name}">
+		<span class="fui-Avatar"><img class="fui-Avatar__image" src="data:,"></span>
+		${unread ? '<div data-tid="unread" id="unread-label">Non lu</div>' : ''}
+		<span id="title-${name}" role="text">${name}</span></div>`;
+}
+
+const CONVERSATIONS =
+	conversation('Alice', true) + conversation('Bob', false) + conversation('Carol', true);
 
 describe('readCall', () => {
 	it('is idle without call controls', () => {
@@ -44,14 +53,68 @@ describe('readCall', () => {
 
 describe('readUnreadConversations', () => {
 	it('names the unread conversations only', () => {
-		expect(readUnreadConversations(page(CONVERSATIONS))).toEqual(['Alice', 'Carol']);
+		expect(readUnreadConversations(page(CONVERSATIONS))?.map((c) => c.name)).toEqual([
+			'Alice',
+			'Carol'
+		]);
+	});
+	it('reads the title, not the "Non lu" label', () => {
+		expect(readUnreadConversations(page(conversation('Équipe Exposition', true)))).toEqual([
+			{ name: 'Équipe Exposition', icon: null }
+		]);
+	});
+	it('leaves the channels of the Teams view out and learns nothing from them alone', () => {
+		const channels = conversation('Général', true, 'channel');
+		expect(readUnreadConversations(page(channels))).toBeNull();
+		const both = conversation('Alice', true) + channels;
+		expect(readUnreadConversations(page(both))?.map((c) => c.name)).toEqual(['Alice']);
 	});
 	it('learns nothing when the list is not on screen', () => {
 		expect(readUnreadConversations(page('<p>Calendrier</p>'))).toBeNull();
 	});
 	it('skips an entry without a name', () => {
-		const doc = page('<div role="treeitem" aria-level="2"><i data-tid="unread"></i></div>');
+		const doc = page(
+			'<div role="treeitem" aria-level="2" data-item-type="chat"><i data-tid="unread"></i></div>'
+		);
 		expect(readUnreadConversations(doc)).toEqual([]);
+	});
+});
+
+// A 2×2 opaque PNG.
+const AVATAR_PNG =
+	'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP8z8Dwn4GBgYGJAQoAHxQCAZlgAXUAAAAASUVORK5CYII=';
+const PNG_SIGNATURE_BASE64 = 'iVBORw0KGgo';
+
+async function loadedAvatar(source: string) {
+	const image = new Image();
+	image.src = source;
+	await image.decode();
+	return image;
+}
+
+describe('avatars', () => {
+	afterEach(() => {
+		document.body.innerHTML = '';
+	});
+
+	it('sends the pixels of a loaded avatar as an icon', async () => {
+		const icon = avatarIcon(document, await loadedAvatar(AVATAR_PNG));
+		expect(icon?.startsWith(PNG_SIGNATURE_BASE64)).toBe(true);
+	});
+
+	it('goes with its conversation, and a conversation without avatar has none', async () => {
+		document.body.innerHTML =
+			conversation('Alice', true).replace('src="data:,"', `src="${AVATAR_PNG}"`) +
+			conversation('Bob', true).replace(/<img[^>]*>/, '');
+		await document.querySelector<HTMLImageElement>('img')!.decode();
+		const [alice, bob] = readUnreadConversations(document)!;
+		expect(alice.icon?.startsWith(PNG_SIGNATURE_BASE64)).toBe(true);
+		expect(bob).toEqual({ name: 'Bob', icon: null });
+	});
+
+	it('gives none while the image is not loaded', () => {
+		document.body.innerHTML = conversation('Alice', true);
+		expect(readUnreadConversations(document)).toEqual([{ name: 'Alice', icon: null }]);
 	});
 });
 

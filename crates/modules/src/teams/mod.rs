@@ -9,6 +9,7 @@
 //! lit while its page is displayed.
 
 mod bridge;
+mod icons;
 pub mod native_host;
 mod reminders;
 pub mod wire;
@@ -29,9 +30,10 @@ pub use bridge::{
     CallState, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState, is_same_user,
     socket_path,
 };
+use icons::{ACCEPT, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED};
 use reminders::MeetingSoon;
 pub use reminders::{TeamsSettings, WallClock};
-use wire::{CallAction, CallPhase};
+use wire::{CallAction, CallPhase, UnreadConversation};
 
 use crate::icons::{asset, svg};
 
@@ -212,6 +214,13 @@ impl CallItem {
 
 impl Teams {
     fn unread_page(&self) -> PageContent {
+        PageContent::new(UNREAD_TITLE, self.unread_items())
+    }
+
+    /// One key per unread conversation, with its avatar or a generic icon,
+    /// then a "+N" key for those whose name is unknown. Hidden while the
+    /// computer is locked: a name must not be read by someone passing by.
+    fn unread_items(&self) -> Vec<PageItem> {
         let state = self.changes.borrow();
         let known = state.conversations.len();
         let hidden = usize::try_from(state.unread)
@@ -221,43 +230,53 @@ impl Teams {
             .conversations
             .iter()
             .enumerate()
-            .map(|(index, name)| {
-                PageItem::new(
-                    ItemId(format!("c{index}")),
-                    KeyContent::with_label(name.clone()),
-                )
-            })
+            .map(|(index, conversation)| conversation_item(index, conversation))
             .collect();
         if hidden > 0 {
-            items.push(PageItem::new(
-                ItemId("more".into()),
-                KeyContent::with_label(format!("+{hidden}")),
-            ));
+            items.push(
+                PageItem::new(
+                    ItemId("more".into()),
+                    KeyContent::with_label(format!("+{hidden}")),
+                )
+                .hidden_when_locked(true),
+            );
         }
-        PageContent::new(UNREAD_TITLE, items)
+        items
     }
 
     fn call_page(&self) -> PageContent {
-        let state = self.changes.borrow();
-        let call = &state.call;
-        let ringing = call.phase == CallPhase::Ringing;
-        let items = if ringing {
-            // The caller is on a key, not in the title: titles are logged.
-            let caller = call.caller.clone().unwrap_or_else(|| "?".to_owned());
-            vec![
-                PageItem::new(ItemId("caller".into()), KeyContent::with_label(caller)),
-                CallItem::Accept.item(KeyContent::with_label(ANSWER_LABEL)),
-                CallItem::Decline.item(KeyContent::with_label("Refuser")),
-            ]
-        } else {
-            vec![
-                CallItem::Mute.item(mute_key(call.muted)),
-                CallItem::Camera.item(camera_key(call.camera_on)),
-                CallItem::HangUp
-                    .item(KeyContent::with_label("Raccrocher").in_state(KeyState::Attention)),
-            ]
+        let (ringing, in_call, items) = {
+            let state = self.changes.borrow();
+            let call = &state.call;
+            let ringing = call.phase == CallPhase::Ringing;
+            let items = if ringing {
+                // The caller is on a key, not in the title: titles are logged.
+                let caller = call.caller.clone().unwrap_or_else(|| "?".to_owned());
+                vec![
+                    PageItem::new(ItemId("caller".into()), KeyContent::with_label(caller)),
+                    CallItem::Accept.item(KeyContent::with_icon(&ACCEPT, ANSWER_LABEL)),
+                    CallItem::Decline.item(KeyContent::with_icon(&HANG_UP, "Refuser")),
+                ]
+            } else {
+                vec![
+                    CallItem::Mute.item(mute_key(call.muted)),
+                    CallItem::Camera.item(camera_key(call.camera_on)),
+                    CallItem::HangUp.item(KeyContent::with_icon(&HANG_UP, "Raccrocher")),
+                ]
+            };
+            (ringing, call.phase == CallPhase::InCall, items)
         };
-        PageContent::new("Appel", items).keeps_device_lit(call.phase == CallPhase::InCall)
+        // During a call the actions stay in place on the first row and the
+        // unread conversations scroll below them.
+        let pinned = items.len();
+        let items = if ringing {
+            items
+        } else {
+            [items, self.unread_items()].concat()
+        };
+        PageContent::new("Appel", items)
+            .with_pinned_items(pinned)
+            .keeps_device_lit(in_call)
     }
 
     /// Asks Teams for `action`: ✓ once sent, ⚠ when no extension is there.
@@ -285,19 +304,30 @@ fn call_notification(caller: Option<&str>) -> Notification {
         .with_context_dial(ContextDial::none().pressing(ANSWER_LABEL))
 }
 
+/// A conversation key: its avatar when the extension could read one.
+fn conversation_item(index: usize, conversation: &UnreadConversation) -> PageItem {
+    let icon = conversation.icon.as_ref().unwrap_or(&CONVERSATION);
+    PageItem::new(
+        ItemId(format!("c{index}")),
+        KeyContent::with_icon(icon, conversation.name.clone()),
+    )
+    .hidden_when_locked(true)
+}
+
+/// The icon says whether the microphone is on, as the label does.
 fn mute_key(muted: Option<bool>) -> KeyContent {
     match muted {
-        Some(true) => KeyContent::with_label("Micro coupé").in_state(KeyState::Attention),
-        Some(false) => KeyContent::with_label("Micro actif"),
-        None => KeyContent::with_label("Micro"),
+        Some(true) => KeyContent::with_icon(&MICROPHONE_MUTED, "Micro coupé"),
+        Some(false) => KeyContent::with_icon(&MICROPHONE, "Micro actif"),
+        None => KeyContent::with_icon(&MICROPHONE, "Micro"),
     }
 }
 
 fn camera_key(camera_on: Option<bool>) -> KeyContent {
     match camera_on {
-        Some(true) => KeyContent::with_label("Caméra on").in_state(KeyState::Active),
-        Some(false) => KeyContent::with_label("Caméra off"),
-        None => KeyContent::with_label("Caméra"),
+        Some(true) => KeyContent::with_icon(&CAMERA, "Caméra on"),
+        Some(false) => KeyContent::with_icon(&CAMERA_OFF, "Caméra off"),
+        None => KeyContent::with_icon(&CAMERA, "Caméra"),
     }
 }
 
@@ -318,7 +348,12 @@ impl Module for Teams {
             }
             CallPhase::Idle | CallPhase::Prejoin => (MODULE_LABEL.to_owned(), KeyState::Normal),
         };
-        KeyContent::with_icon(&MODULE_ICON, label).in_state(state)
+        // A call in progress or ringing is reached from the home key even on
+        // a locked computer: it only opens the page of the call, whose keys
+        // declare what stays usable.
+        KeyContent::with_icon(&MODULE_ICON, label)
+            .in_state(state)
+            .usable_when_locked(teams.call.phase.is_active())
     }
 
     async fn on_key_press(&mut self) -> Vec<Command> {

@@ -5,7 +5,7 @@ use hubergamof_module_api::{Command, Feedback, KeyState, Notification, Notificat
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use super::wire::{BrowserReport, Meeting};
+use super::wire::{BrowserReport, Meeting, UnreadConversation};
 use super::*;
 
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -132,7 +132,7 @@ async fn unread_conversations_without_a_name_are_counted() {
     harness.report(BrowserReport::Unread { count: 4 }).await;
     harness
         .report(BrowserReport::Conversations {
-            unread: vec!["Camille".into()],
+            unread: vec![UnreadConversation::named("Camille")],
         })
         .await;
     let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
@@ -199,7 +199,134 @@ async fn the_call_page_follows_the_microphone() {
         .await;
     let mute = &harness.call_page().items[0].key;
     assert_eq!(mute.label.as_deref(), Some("Micro coupé"));
-    assert_eq!(mute.state, KeyState::Attention);
+    assert_eq!(mute.image.as_ref(), Some(&*icons::MICROPHONE_MUTED));
+    assert_ne!(mute.image.as_ref(), Some(&*icons::MICROPHONE));
+}
+
+#[tokio::test]
+async fn the_actions_of_a_call_have_icons_and_no_attention_state() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::InCall,
+            muted: Some(true),
+            camera_on: Some(false),
+            caller: None,
+        })
+        .await;
+    let page = harness.call_page();
+    let actions = &page.items[..3];
+    let images: Vec<_> = actions.iter().map(|item| item.key.image.clone()).collect();
+    assert_eq!(
+        images,
+        [
+            Some(icons::MICROPHONE_MUTED.clone()),
+            Some(icons::CAMERA_OFF.clone()),
+            Some(icons::HANG_UP.clone())
+        ]
+    );
+    assert!(
+        actions
+            .iter()
+            .all(|item| item.key.state == KeyState::Normal)
+    );
+
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::InCall,
+            muted: Some(false),
+            camera_on: Some(true),
+            caller: None,
+        })
+        .await;
+    let page = harness.call_page();
+    assert_eq!(page.items[0].key.image.as_ref(), Some(&*icons::MICROPHONE));
+    assert_eq!(page.items[1].key.image.as_ref(), Some(&*icons::CAMERA));
+}
+
+#[tokio::test]
+async fn the_unread_conversations_follow_the_actions_of_a_call_and_hide_when_locked() {
+    let mut harness = Harness::new(SimulatedBridge::demo());
+    harness.in_call().await;
+    let page = harness.call_page();
+    // The three actions are pinned on the first row, then the conversations.
+    assert_eq!(page.pinned_items, 3);
+    let after: Vec<_> = page.items[3..]
+        .iter()
+        .map(|item| (item.key.label.clone().unwrap(), item.hidden_when_locked))
+        .collect();
+    assert_eq!(
+        after,
+        [
+            ("Équipe produit".to_owned(), true),
+            ("Camille".to_owned(), true)
+        ]
+    );
+    assert!(page.items[..3].iter().all(|item| !item.hidden_when_locked));
+}
+
+#[tokio::test]
+async fn a_ringing_call_shows_no_conversations() {
+    let mut harness = Harness::new(SimulatedBridge::demo());
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: Some("Camille".into()),
+        })
+        .await;
+    let page = harness.call_page();
+    assert_eq!(page.items.len(), 3);
+    assert_eq!(page.pinned_items, 3);
+}
+
+#[tokio::test]
+async fn a_conversation_shows_its_avatar_or_a_generic_icon() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.bridge.report(BrowserReport::Unread { count: 2 });
+    let avatar = ImageData::new(b"avatar".as_slice());
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![
+                UnreadConversation {
+                    name: "Alice".into(),
+                    icon: Some(avatar.clone()),
+                },
+                UnreadConversation::named("Équipe"),
+            ],
+        })
+        .await;
+    let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
+    let shown: Vec<_> = page
+        .items
+        .iter()
+        .map(|item| (item.key.label.clone().unwrap(), item.key.image.clone()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("Alice".to_owned(), Some(avatar)),
+            ("Équipe".to_owned(), Some(icons::CONVERSATION.clone()))
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_home_key_is_usable_when_locked_only_during_a_call() {
+    let mut harness = Harness::new(SimulatedBridge::demo());
+    assert!(!harness.module.key().usable_when_locked, "unread names");
+    harness.in_call().await;
+    assert!(harness.module.key().usable_when_locked);
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Idle,
+            muted: None,
+            camera_on: None,
+            caller: None,
+        })
+        .await;
+    assert!(!harness.module.key().usable_when_locked);
 }
 
 #[tokio::test]

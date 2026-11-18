@@ -9,6 +9,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Module Teams : chaque conversation non lue montre son avatar (lu par l'extension, réduit à 64 px et validé par le gestionnaire ; une icône générique sinon) ; les actions d'un appel (micro, caméra, raccrocher, répondre, refuser) ont des icônes, sans état d'attention ; pendant un appel, les conversations non lues sont sur la ligne du dessous, la ligne des actions ne bouge plus avec la molette, et ces noms sont masqués ordinateur verrouillé ; la touche Teams de l'accueil reste utilisable verrouillé pendant un appel, pour retourner à sa page.
+- API des modules : `PageContent::with_pinned_items` (premières touches fixes, le reste défile en dessous), `PageItem::hidden_when_locked` et `KeyContent::usable_when_locked` (touche d'accueil, valable pour un module déclarant `lock_safe_pages`).
 - Module Teams : rappel des réunions sur la bande tactile (réglage « Rappel des réunions », 5 min par défaut, 0 = aucun ; seules les réunions lues quand vous ouvrez le calendrier dans Teams comptent) et notification d'appel entrant dont l'appui de la molette contextuelle répond (refusée ordinateur verrouillé). La détection de la sonnerie par l'extension reste à faire.
 - Module Teams : rappel des réunions du calendrier sur la bande, N minutes avant (réglage « Rappel des réunions », 5 min par défaut, 0 = jamais) ; le calendrier n'est lu que lorsqu'il est ouvert dans Teams. Un appel entrant affiche une notification dont l'appui de la molette contextuelle répond (refusé ordinateur verrouillé). La détection de la sonnerie par l'extension reste à faire (sélecteurs jamais observés).
 - Extension de navigateur Teams (`ui/teams-extension/`, MV3, identifiant fixe par clé dédiée) : relaie compteur et noms des non lus, état de l'appel (micro, caméra lus par libellé fr/en) et calendrier ouvert, et exécute micro, caméra et raccrocher ; reconnexion avec backoff. `hubergamof install-extension [--browser brave|chromium|chrome|edge|vivaldi]` dépose l'extension (embarquée dans le binaire) dans `~/.local/share/hubergamof/extension` et déclare l'hôte natif au navigateur ; l'extension se charge une fois (« Charger l'extension non empaquetée »). Répondre/refuser un appel entrant et les rappels de réunions viennent ensuite.
@@ -19,6 +21,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Module Teams : la page des non lus affiche le nom de la conversation (l'extension lisait le libellé « Non lu ») et ne lit plus que les conversations : passer sur l'onglet Équipes ne remplace plus la liste par les canaux non lus.
 - Extension Teams : elle ne rapportait rien (le chargement du script de page échouait : « Resources must be listed in web_accessible_resources », à cause de `use_dynamic_url`) ; l'option est retirée. Le script de page renvoie aussi ses rapports toutes les 30 s, pour qu'un worker suspendu puis redémarré retrouve l'état.
 - Module Teams : l'hôte natif ne reste plus en vie, sans lien avec le gestionnaire, quand celui-ci redémarre (le navigateur en relance un) ; la touche affiche « Hors ligne » sans extension connectée, et un appui sans rien à montrer ne fait plus ⚠.
 
