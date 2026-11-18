@@ -16,8 +16,8 @@ use futures_util::FutureExt as _;
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId,
     KeyContent, Module, ModuleContext, ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind,
-    NotificationId, PageContent, PageId, RedrawHandle, StripPopup, StripWidget, TaskScope,
-    UnreadNotifications,
+    NotificationId, PageContent, PageId, RedrawHandle, ScreenLockState, StripPopup, StripWidget,
+    TaskScope, UnreadNotifications,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -123,6 +123,8 @@ pub(crate) struct Instances {
     events: mpsc::Sender<RoutedEvent>,
     unread: UnreadNotifications,
     images: ImageLibrary,
+    /// Whether the computer is locked, as modules ask it.
+    screen_lock: ScreenLockState,
     /// Whether the event queue was found full and not sent to since: the
     /// overflow is logged once, when it starts.
     queue_full: Arc<AtomicBool>,
@@ -139,6 +141,7 @@ impl Instances {
         events: mpsc::Sender<RoutedEvent>,
         unread: UnreadNotifications,
         images: ImageLibrary,
+        screen_lock: ScreenLockState,
     ) -> Self {
         Self {
             registry,
@@ -146,6 +149,7 @@ impl Instances {
             events,
             unread,
             images,
+            screen_lock,
             queue_full: Arc::default(),
             live: BTreeMap::new(),
             failures: Vec::new(),
@@ -375,7 +379,8 @@ impl Instances {
             tasks.spawner(),
         )
         .with_unread(self.unread.clone())
-        .with_images(self.images.clone());
+        .with_images(self.images.clone())
+        .with_screen_lock(self.screen_lock.clone());
         match catch_unwind(AssertUnwindSafe(|| factory.create(ctx, &config.settings))) {
             Ok(Ok(module)) => Some(module),
             Ok(Err(error)) => {
@@ -548,6 +553,7 @@ mod tests {
                 events,
                 UnreadNotifications::none(),
                 ImageLibrary::empty(),
+                ScreenLockState::never(),
             ),
             received,
         )

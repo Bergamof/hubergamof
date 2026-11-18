@@ -22,6 +22,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Module Teams : ordinateur verrouillé, la touche d'accueil, « Revenir à l'appel » et l'ouverture d'une conversation ne mettent plus jamais une fenêtre au premier plan et ne lancent rien, même si l'appel se termine (ou l'extension part) entre le dessin de la touche et l'appui : le module relit l'état de verrouillage (`ModuleContext::screen_lock`, nouveau). La fenêtre du profil `Default` de Brave est préférée, et un seul `openConversation` tourne à la fois dans la page.
 - Module Teams : micro, caméra, raccrocher et répondre n'affichent plus de ✓ (l'icône change quand l'action a marché) ; ⚠ reste affiché si l'extension est absente.
 - Module Teams : la page des non lus affiche le nom de la conversation (l'extension lisait le libellé « Non lu ») et ne lit plus que les conversations : passer sur l'onglet Équipes ne remplace plus la liste par les canaux non lus.
 - Extension Teams : elle ne rapportait rien (le chargement du script de page échouait : « Resources must be listed in web_accessible_resources », à cause de `use_dynamic_url`) ; l'option est retirée. Le script de page renvoie aussi ses rapports toutes les 30 s, pour qu'un worker suspendu puis redémarré retrouve l'état.

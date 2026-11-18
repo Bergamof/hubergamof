@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, Feedback, ModuleInstanceId, ModuleSurface, PageContent, PageId,
-    PageItem, RedrawHandle, UnreadNotification,
+    PageItem, RedrawHandle, ScreenLockState, UnreadNotification,
 };
 use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -254,6 +254,10 @@ impl DeviceEngine {
             events_tx,
             notifications.handle(),
             services.store.image_library(&deck.info().serial),
+            {
+                let screen = services.screen_lock.watch();
+                ScreenLockState::new(move || *screen.borrow())
+            },
         );
         instances.sync(&loaded.config.modules);
 

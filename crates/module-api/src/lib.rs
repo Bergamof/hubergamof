@@ -166,7 +166,9 @@ pub use catalog::{
 };
 pub use command::{Command, Feedback, ModuleSurface};
 pub use content::{ImageData, KeyContent, KeyState, PageContent, PageItem};
-pub use context::{EventSender, ModuleContext, ModuleEvent, RedrawHandle, TaskScope, TaskSpawner};
+pub use context::{
+    EventSender, ModuleContext, ModuleEvent, RedrawHandle, ScreenLockState, TaskScope, TaskSpawner,
+};
 pub use file_entries::{EntryNaming, FileChooser, FileEntry, FileFilter, is_hidden_control};
 pub use ids::{DialFunctionId, ItemId, ModuleInstanceId, ModuleKind, PageId};
 pub use images::{ImageFuture, ImageLibrary, MAX_IMAGE_NAME_LENGTH, is_safe_image_name};

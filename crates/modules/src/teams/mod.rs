@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
     ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
-    Notification, NotificationId, PageContent, PageId, PageItem, Rgb,
+    Notification, NotificationId, PageContent, PageId, PageItem, Rgb, ScreenLockState,
 };
 use serde_json::Value;
 use tokio::sync::watch;
@@ -62,6 +62,9 @@ const HELPER_ARGUMENT: &str = "--type=";
 /// Starts a desktop entry, as the desktop's launchers do (looked up in
 /// `PATH`, shipped with GTK).
 const LAUNCHER: &str = "gtk-launch";
+
+/// End of the class of the windows of the default profile of the browser.
+const DEFAULT_PROFILE_SUFFIX: &str = "-Default";
 
 /// Prefix of the identifier of the items that open a conversation.
 const CHAT_ITEM_PREFIX: &str = "chat:";
@@ -136,9 +139,17 @@ pub(crate) fn desktop_app() -> DesktopApp {
             path: BROWSER_EXECUTABLE.into(),
             helper_argument: Some(HELPER_ARGUMENT.into()),
         },
-        desktop_entry: None,
+        // Notifications naming another entry (any other page of Brave) are not
+        // Teams'.
+        desktop_entry: Some(desktop_entry()),
         relays: Vec::new(),
     }
+}
+
+/// Desktop entry of the web application of Teams in Brave (the default
+/// profile).
+fn desktop_entry() -> String {
+    format!("brave-{PWA_ID}-Default")
 }
 
 /// What starts the web application of Teams: its desktop entry in Brave
@@ -146,7 +157,7 @@ pub(crate) fn desktop_app() -> DesktopApp {
 fn launch() -> Launch {
     Launch {
         program: LAUNCHER.into(),
-        args: vec![format!("brave-{PWA_ID}-Default").into()],
+        args: vec![desktop_entry().into()],
     }
 }
 
@@ -199,6 +210,7 @@ impl ModuleFactory for TeamsFactory {
         ));
         Ok(Box::new(Teams {
             app: FollowedApp::follow(&self.desktop, APP, AppAttention::notifications_only(), &ctx),
+            screen_lock: ctx.screen_lock().clone(),
             bridge: Arc::clone(&self.bridge),
             changes,
             lead,
@@ -212,6 +224,9 @@ impl ModuleFactory for TeamsFactory {
 pub(crate) struct Teams {
     /// The window of Teams on the desktop, to bring to the front.
     app: FollowedApp,
+    /// Asked again when an action reaches the computer: the permission to act
+    /// on a locked one is read from the last drawing, which may be older.
+    screen_lock: ScreenLockState,
     bridge: Arc<dyn TeamsBridge>,
     changes: watch::Receiver<TeamsState>,
     /// Lead time of the meeting reminders, read by their task.
@@ -320,9 +335,20 @@ impl Teams {
     }
 
     /// Brings the window of Teams to the front, or starts Teams when it has
-    /// none; the outcome is marked on `surface` only when it fails.
+    /// none; the outcome is marked on `surface` only when it fails. Never on
+    /// a locked computer, whatever let the press through: this reaches the
+    /// computer, the only thing allowed there being to open the call page.
     fn bring_to_front(&mut self, surface: ModuleSurface) -> Vec<Command> {
-        let window = self.app.windows().first().map(|window| window.id.clone());
+        if self.screen_lock.is_locked() {
+            return Vec::new();
+        }
+        // The window of the default profile, the one that is started.
+        let windows = self.app.windows();
+        let window = windows
+            .iter()
+            .find(|window| window.class.ends_with(DEFAULT_PROFILE_SUFFIX))
+            .or_else(|| windows.first())
+            .map(|window| window.id.clone());
         match window {
             Some(window) => self.app.activate(window, surface),
             None => match self.app.launch(launch(), surface) {
@@ -336,6 +362,9 @@ impl Teams {
     /// front. Only a conversation the extension reported is asked for: a
     /// list that changed since the key was drawn is not followed blindly.
     fn open_conversation(&mut self, id: &str, surface: ModuleSurface) -> Vec<Command> {
+        if self.screen_lock.is_locked() {
+            return Vec::new();
+        }
         let known = self
             .changes
             .borrow()

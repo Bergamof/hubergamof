@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use hubergamof_module_api::testing::TestContext;
@@ -34,6 +35,8 @@ struct Harness {
     module: Box<dyn Module>,
     events: UnboundedReceiver<ModuleEvent>,
     desktop: Arc<SimulatedDesktop>,
+    /// The computer is locked (read by the module when it acts).
+    locked: Arc<AtomicBool>,
     _scope: TaskScope,
 }
 
@@ -47,6 +50,11 @@ impl Harness {
         let TestContext { ctx, events, scope } = TestContext::new(TEAMS_KIND);
         let desktop = Arc::new(SimulatedDesktop::empty());
         let hub = DesktopHub::new(Arc::clone(&desktop) as _, vec![desktop_app()]);
+        let locked = Arc::new(AtomicBool::new(false));
+        let ctx = ctx.with_screen_lock(ScreenLockState::new({
+            let locked = Arc::clone(&locked);
+            move || locked.load(Ordering::SeqCst)
+        }));
         let module = TeamsFactory::with_clock(Arc::clone(&bridge) as _, clock, hub)
             .create(ctx, settings)
             .unwrap();
@@ -55,6 +63,7 @@ impl Harness {
             module,
             events,
             desktop,
+            locked,
             _scope: scope,
         }
     }
@@ -187,6 +196,68 @@ async fn the_key_with_nothing_to_show_brings_teams_to_the_front_or_starts_it() {
     closed.settle_desktop().await;
     assert_eq!(closed.desktop.launches(), [launch()]);
     assert_eq!(closed.desktop.activations(), []);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_locked_computer_gets_neither_a_window_nor_a_launch() {
+    // The key let the press through because a call was showing; the call
+    // ended (or the extension left) before it acted.
+    for window in [true, false] {
+        let mut harness = Harness::new(SimulatedBridge::new());
+        if window {
+            harness.desktop.set_windows(vec![teams_window()]);
+        }
+        harness.settle_desktop().await;
+        harness.locked.store(true, Ordering::SeqCst);
+        assert_eq!(harness.module.on_key_press().await, []);
+        assert_eq!(harness.settle_desktop().await, []);
+        assert_eq!(harness.desktop.activations(), []);
+        assert_eq!(harness.desktop.launches(), []);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_locked_computer_does_not_open_a_conversation_nor_return_to_the_call() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![conversation_with_id("Alice", "19:alice@thread.v2")],
+        })
+        .await;
+    harness.in_call().await;
+    harness.locked.store(true, Ordering::SeqCst);
+    let page = harness.call_page();
+    let returning = page.items[3].id.clone();
+    harness
+        .module
+        .on_item_press(&CALL_PAGE.into(), &returning)
+        .await;
+    harness
+        .module
+        .on_item_press(&CALL_PAGE.into(), &"chat:19:alice@thread.v2".into())
+        .await;
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), []);
+    assert_eq!(harness.bridge.opened_conversations(), Vec::<String>::new());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_window_of_the_default_profile_is_the_one_brought_to_the_front() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![
+        Window::new(
+            "other",
+            "brave-ompifgpmddkgmclendfeacglnodjjndh-Profile 1",
+            "Teams",
+        ),
+        teams_window(),
+    ]);
+    harness.settle_desktop().await;
+    harness.module.on_key_press().await;
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
 }
 
 #[tokio::test(start_paused = true)]

@@ -28,6 +28,8 @@ export function start(doc, runtime, env = {}) {
 	};
 	const now = env.now ?? Date.now;
 	const schedule = env.setInterval ?? setInterval;
+	/** A conversation is being opened (the list is awaited). */
+	let opening = false;
 	/** Last report sent of each type and when, to send changes (and reminders) only. */
 	const sent = new Map();
 
@@ -46,8 +48,12 @@ export function start(doc, runtime, env = {}) {
 		if (!context.top) return;
 		if (message?.type === 'do') {
 			performAction(doc, message.action);
-		} else if (message?.type === 'openConversation' && typeof message.id === 'string') {
-			openConversation(doc, message.id);
+		} else if (message?.type === 'openConversation' && typeof message.id === 'string' && !opening) {
+			// One at a time: a second press while the list is awaited is dropped.
+			opening = true;
+			openConversation(doc, message.id).finally(() => {
+				opening = false;
+			});
 		}
 	});
 	report();
