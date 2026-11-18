@@ -143,6 +143,37 @@ async fn overflowing_pages_scroll_by_rows_within_bounds() {
 }
 
 #[tokio::test]
+async fn pinned_items_keep_their_row_while_the_others_scroll() {
+    let fixture = start(virtual_plus_info(DEMO_SERIAL)).await;
+    let mut module = list(11);
+    module.settings = json!({ "items": 11, "pinned": 3 });
+    fixture
+        .configure(
+            vec![module],
+            &["list"],
+            &[Some(NAVIGATION_DIAL), None, None, None],
+        )
+        .await;
+    fixture.engine.press_key(0).await.unwrap();
+
+    // Three pinned items fill the first row with one blank; 7 others follow.
+    let first_row = labels(&[Some("item 0"), Some("item 1"), Some("item 2"), None]);
+    assert_eq!(fixture.labels()[..4], first_row[..]);
+    assert_eq!(fixture.labels()[4].as_deref(), Some("item 3"));
+    assert_eq!(fixture.page().row_count, 3);
+
+    // Scrolling moves the second row only.
+    fixture.engine.rotate_dial(0, 1).await.unwrap();
+    assert_eq!(fixture.page().row, 1);
+    assert_eq!(fixture.labels()[..4], first_row[..], "pinned row unchanged");
+    assert_eq!(fixture.labels()[4].as_deref(), Some("item 7"));
+
+    // The row is the last one: no further.
+    fixture.engine.rotate_dial(0, 5).await.unwrap();
+    assert_eq!(fixture.page().row, 1);
+}
+
+#[tokio::test]
 async fn devices_without_dials_scroll_through_module_commands() {
     let fixture = start(no_dial_info()).await;
     fixture.configure(vec![list(8)], &["list"], &[]).await;

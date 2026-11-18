@@ -63,6 +63,14 @@ pub struct KeyContent {
     /// The key is ticked (a selection): the host draws a check mark in a
     /// corner.
     pub checked: bool,
+    /// Pressing the home key of the module acts even while the computer is
+    /// locked: for a key that only opens a page the module declares usable
+    /// when locked (a call in progress). Read for the home key only (a page
+    /// item declares it with [`PageItem::usable_when_locked`]), and honoured
+    /// only for a module whose descriptor declares
+    /// [`crate::ModuleCapabilities::lock_safe_pages`]. Never derive it from
+    /// settings that the web UI or an import can change.
+    pub usable_when_locked: bool,
 }
 
 impl KeyContent {
@@ -102,6 +110,15 @@ impl KeyContent {
     pub fn checked(self, checked: bool) -> Self {
         Self { checked, ..self }
     }
+
+    /// The same home key, acting while the computer is locked or not.
+    #[must_use]
+    pub fn usable_when_locked(self, usable_when_locked: bool) -> Self {
+        Self {
+            usable_when_locked,
+            ..self
+        }
+    }
 }
 
 /// One key of a module page. Built with [`PageItem::new`]: fields may be
@@ -119,16 +136,30 @@ pub struct PageItem {
     /// [`crate::ModuleCapabilities::lock_safe_pages`]. Never derive it from
     /// settings that the web UI or an import can change.
     pub usable_when_locked: bool,
+    /// The key is not shown while the computer is locked (what must not be
+    /// read by someone passing by, such as the name of a conversation).
+    pub hidden_when_locked: bool,
 }
 
 impl PageItem {
-    /// A key `key` identified by `id`, refused while the computer is locked.
+    /// A key `key` identified by `id`, refused while the computer is locked
+    /// and shown then.
     #[must_use]
     pub fn new(id: ItemId, key: KeyContent) -> Self {
         Self {
             id,
             key,
             usable_when_locked: false,
+            hidden_when_locked: false,
+        }
+    }
+
+    /// The same key, hidden while the computer is locked or not.
+    #[must_use]
+    pub fn hidden_when_locked(self, hidden_when_locked: bool) -> Self {
+        Self {
+            hidden_when_locked,
+            ..self
         }
     }
 
@@ -162,6 +193,11 @@ pub struct PageContent {
     /// page is not closed by the lock. Nothing by default: a module declares
     /// it for pages the user must keep acting on, such as a call in progress.
     pub keeps_device_lit: bool,
+    /// How many of the first items stay in place while the others scroll:
+    /// they fill whole rows (the host completes the last one with blank
+    /// keys), the rest scrolls below them. Nothing is pinned by default. A
+    /// device with a single row of keys pins nothing.
+    pub pinned_items: usize,
 }
 
 impl PageContent {
@@ -174,6 +210,7 @@ impl PageContent {
             items,
             context_dial: ContextDial::none(),
             keeps_device_lit: false,
+            pinned_items: 0,
         }
     }
 
@@ -191,6 +228,16 @@ impl PageContent {
     pub fn keeps_device_lit(self, keeps_device_lit: bool) -> Self {
         Self {
             keeps_device_lit,
+            ..self
+        }
+    }
+
+    /// The same page, with its first `pinned_items` items kept in place
+    /// while the others scroll.
+    #[must_use]
+    pub fn with_pinned_items(self, pinned_items: usize) -> Self {
+        Self {
+            pinned_items,
             ..self
         }
     }
@@ -244,6 +291,21 @@ mod tests {
                 .keeps_device_lit(false)
                 .keeps_device_lit
         );
+    }
+
+    #[test]
+    fn keys_are_shown_pinned_and_refused_when_locked_unless_declared() {
+        let key = KeyContent::with_label("x");
+        assert!(!key.usable_when_locked);
+        assert!(key.usable_when_locked(true).usable_when_locked);
+
+        let item = PageItem::new(ItemId("x".into()), KeyContent::with_label("x"));
+        assert!(!item.hidden_when_locked);
+        assert!(item.hidden_when_locked(true).hidden_when_locked);
+
+        let page = PageContent::new("Titre", Vec::new());
+        assert_eq!(page.pinned_items, 0);
+        assert_eq!(page.with_pinned_items(3).pinned_items, 3);
     }
 
     #[test]

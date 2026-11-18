@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, Feedback, ModuleInstanceId, ModuleSurface, PageContent, PageId,
-    RedrawHandle, UnreadNotification,
+    PageItem, RedrawHandle, UnreadNotification,
 };
 use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -134,6 +134,9 @@ struct DisplayedPage {
     id: String,
     title: String,
     keys: Vec<FrameKey>,
+    /// How many of the first keys stay in place while the rest scrolls
+    /// (blank keys included: they fill whole rows).
+    pinned: usize,
     context: Option<ContextFace>,
     keeps_lit: bool,
 }
@@ -732,8 +735,9 @@ impl DeviceEngine {
     }
 
     fn scroll_rows(&mut self, delta: i32) {
-        let items = self.page_item_count();
-        let row = self.grid.scroll(self.nav.row(), delta, items);
+        let page = self.displayed_page();
+        let grid = self.grid.pinning(page.pinned);
+        let row = grid.scroll(self.nav.row(), delta, page.keys.len());
         self.nav.set_row(row);
     }
 
@@ -984,13 +988,6 @@ impl DeviceEngine {
         }
     }
 
-    fn page_item_count(&mut self) -> usize {
-        match self.resolve_page() {
-            PageModel::Home => self.config.home.len(),
-            PageModel::Module { content, .. } => content.items.len(),
-        }
-    }
-
     async fn refresh_or_log(&mut self) {
         if let Err(error) = self.refresh().await {
             tracing::warn!(serial = %self.serial(), %error, "cannot redraw");
@@ -1048,8 +1045,9 @@ impl DeviceEngine {
         }
         loop {
             let page = self.displayed_page();
-            self.follow_focus(&page.keys);
-            self.clamp_row(page.keys.len());
+            let grid = self.grid.pinning(page.pinned);
+            self.follow_focus(&page.keys, grid);
+            self.clamp_row(page.keys.len(), grid);
             let frame = self.compose(page);
             let failed = self.instances.take_failures();
             if failed.is_empty() {
@@ -1111,14 +1109,14 @@ impl DeviceEngine {
     /// Scrolls to the key holding the cursor of the contextual dial when it
     /// moved, so that the user always sees it; a page the user scrolls
     /// elsewhere is left alone until the cursor moves again.
-    fn follow_focus(&mut self, keys: &[FrameKey]) {
+    fn follow_focus(&mut self, keys: &[FrameKey], grid: KeyGrid) {
         let focused = keys.iter().position(|key| key.face.focused);
         let target = focused.and_then(|index| keys[index].target.clone());
         if target == self.focus {
             return;
         }
         if let Some(index) = focused {
-            let row = self.grid.reveal(self.nav.row(), index, keys.len());
+            let row = grid.reveal(self.nav.row(), index, keys.len());
             self.nav.set_row(row);
         }
         self.focus = target;
@@ -1126,8 +1124,8 @@ impl DeviceEngine {
 
     /// Keeps the visible row within the page, which may have shrunk since
     /// the last scroll.
-    fn clamp_row(&mut self, item_count: usize) {
-        let row = self.nav.row().min(self.grid.max_row(item_count));
+    fn clamp_row(&mut self, item_count: usize, grid: KeyGrid) {
+        let row = self.nav.row().min(grid.max_row(item_count));
         self.nav.set_row(row);
     }
 
@@ -1137,6 +1135,7 @@ impl DeviceEngine {
                 id: HOME_PAGE_ID.to_owned(),
                 title: HOME_PAGE_TITLE.to_owned(),
                 keys: self.home_keys(),
+                pinned: 0,
                 context: None,
                 keeps_lit: false,
             },
@@ -1148,23 +1147,27 @@ impl DeviceEngine {
                 // What a page declares keeps the device lit only for a module
                 // that declares it may (what a press does: `may_press`).
                 let lock_safe = self.instances.lock_safe_pages(&module);
+                let (items, pinned) = self.placed_items(content.items, content.pinned_items);
                 DisplayedPage {
                     id: format!("{module}/{page}"),
                     title: content.title,
                     keeps_lit: lock_safe && content.keeps_device_lit,
-                    keys: content
-                        .items
+                    keys: items
                         .into_iter()
-                        .map(|item| FrameKey {
-                            usable_when_locked: item.usable_when_locked,
-                            face: KeyFace::from_content(item.key),
-                            target: Some(KeyTarget::Item {
-                                module: module.clone(),
-                                page: page.clone(),
-                                item: item.id,
-                            }),
+                        .map(|item| {
+                            item.map(|item| FrameKey {
+                                usable_when_locked: item.usable_when_locked,
+                                face: KeyFace::from_content(item.key),
+                                target: Some(KeyTarget::Item {
+                                    module: module.clone(),
+                                    page: page.clone(),
+                                    item: item.id,
+                                }),
+                            })
+                            .unwrap_or_default()
                         })
                         .collect(),
+                    pinned,
                     context: Some(ContextFace {
                         module,
                         page,
@@ -1175,23 +1178,45 @@ impl DeviceEngine {
         }
     }
 
+    /// The items of a module page as they are placed: the ones hidden on a
+    /// locked computer left out, and the pinned ones (the first `pinned`
+    /// declared) completed with blanks (`None`) to whole rows. Returns them
+    /// with the number of pinned positions.
+    fn placed_items(&self, items: Vec<PageItem>, pinned: usize) -> (Vec<Option<PageItem>>, usize) {
+        let locked = self.lock.is_locked();
+        let mut kept = Vec::with_capacity(items.len());
+        let mut pinned_kept = 0;
+        for (index, item) in items.into_iter().enumerate() {
+            if locked && item.hidden_when_locked {
+                continue;
+            }
+            pinned_kept += usize::from(index < pinned);
+            kept.push(Some(item));
+        }
+        let pinned_len = self.grid.pinning(pinned_kept).pinned_len();
+        let blanks = pinned_len.saturating_sub(pinned_kept);
+        kept.splice(pinned_kept..pinned_kept, std::iter::repeat_n(None, blanks));
+        (kept, pinned_kept + blanks)
+    }
+
     /// Places `page` on the keys from the visible row, with the feedback
     /// marks, and adds the dials.
     fn compose(&mut self, page: DisplayedPage) -> Frame {
+        let grid = self.grid.pinning(page.pinned);
         let row = self.nav.row();
-        let row_count = self.grid.row_count(page.keys.len());
+        let row_count = grid.row_count(page.keys.len());
         let keys = (0..self.deck.info().capabilities.key_count())
             .map(|key| {
                 let shown = u8::try_from(key)
                     .ok()
-                    .and_then(|key| page.keys.get(self.grid.item_index(key, row)));
+                    .and_then(|key| page.keys.get(grid.item_index(key, row)));
                 shown
                     .cloned()
                     .map(|key| self.marked(key))
                     .unwrap_or_default()
             })
             .collect();
-        let positions = self.grid.max_row(page.keys.len()) + 1;
+        let positions = grid.max_row(page.keys.len()) + 1;
         let strip = self
             .has_strip
             .then(|| self.strip_face(&page.title, row, positions, page.context.as_ref()));
@@ -1234,11 +1259,9 @@ impl DeviceEngine {
             .collect();
         let mut keys = Vec::with_capacity(self.config.home.len());
         for id in &self.config.home {
-            let mut face = self
-                .instances
-                .key(id)
-                .map(KeyFace::from_content)
-                .unwrap_or_default();
+            let content = self.instances.key(id);
+            let usable_when_locked = content.as_ref().is_some_and(|key| key.usable_when_locked);
+            let mut face = content.map(KeyFace::from_content).unwrap_or_default();
             if let Some(config) = configured.get(id) {
                 if let Some(label) = &config.label {
                     face.label = Some(label.clone());
@@ -1257,7 +1280,7 @@ impl DeviceEngine {
             keys.push(FrameKey {
                 face,
                 target: Some(KeyTarget::Home(id.clone())),
-                usable_when_locked: false,
+                usable_when_locked,
             });
         }
         keys
