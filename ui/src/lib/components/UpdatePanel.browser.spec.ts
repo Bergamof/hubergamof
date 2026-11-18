@@ -11,7 +11,7 @@ describe('UpdatePanel', () => {
 			oncheck: vi.fn()
 		});
 		await expect.element(page.getByText('Version 1.2.0 disponible.')).toBeVisible();
-		await expect.element(page.getByText(/Vous utilisez la 1\.0\.0/)).toBeVisible();
+		await expect.element(page.getByText(/Vous utilisez la version 1\.0\.0/)).toBeVisible();
 		const link = page.getByRole('link', { name: /Notes de version/ });
 		await expect.element(link).toHaveAttribute('href', 'https://example.org/notes');
 		await expect.element(link).toHaveAttribute('target', '_blank');
@@ -21,7 +21,7 @@ describe('UpdatePanel', () => {
 	it.each([
 		['upToDate' as const, {}, /HuBergamof est à jour \(version 1\.0\.0\)/],
 		['checking' as const, {}, /Recherche de mises à jour…/],
-		['checkFailed' as const, { message: 'hors ligne' }, /a échoué : hors ligne/],
+		['checkFailed' as const, { message: 'hors ligne' }, /La recherche de mises à jour a échoué\./],
 		['unknown' as const, {}, /Version 1\.0\.0\. Aucune recherche/]
 	])('shows the %s state', async (type, extra, text) => {
 		await render(UpdatePanel, {
@@ -30,6 +30,15 @@ describe('UpdatePanel', () => {
 			oncheck: vi.fn()
 		});
 		await expect.element(page.getByText(text)).toBeVisible();
+	});
+
+	it('shows the detail of a failure as English text', async () => {
+		await render(UpdatePanel, {
+			version: '1.0.0',
+			status: { type: 'checkFailed', message: 'offline' },
+			oncheck: vi.fn()
+		});
+		await expect.element(page.getByText('offline')).toHaveAttribute('lang', 'en');
 	});
 
 	it('copes with an unknown running version', async () => {

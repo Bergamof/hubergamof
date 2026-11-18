@@ -29,7 +29,7 @@ The release notes open in a new tab: the update itself is installed from the sys
 	<p role="status" class="flex-1">
 		{#if status.type === 'available'}
 			<strong class="font-semibold">Version {status.version} disponible.</strong>
-			{#if version}Vous utilisez la {version}.{/if}
+			{#if version}Vous utilisez la version {version}.{/if}
 			<!-- External https link (checked by the manager), not a route of this app. -->
 			<!-- eslint-disable svelte/no-navigation-without-resolve -->
 			<a
@@ -46,14 +46,14 @@ The release notes open in a new tab: the update itself is installed from the sys
 		{:else if status.type === 'upToDate'}
 			HuBergamof est à jour{version ? ` (version ${version})` : ''}.
 		{:else if status.type === 'checkFailed'}
-			La recherche de mises à jour a échoué : {status.message}
+			La recherche de mises à jour a échoué. Détail&nbsp;: <span lang="en">{status.message}</span>
 		{:else}
 			{version ? `Version ${version}.` : 'Version inconnue.'} Aucune recherche de mise à jour effectuée.
 		{/if}
 	</p>
 	<button
 		type="button"
-		class="min-h-9 rounded-lg border border-line px-3 font-medium focus-ring aria-disabled:opacity-60"
+		class="secondary-button"
 		aria-disabled={checking}
 		onclick={() => {
 			if (!checking) oncheck();
