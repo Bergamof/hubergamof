@@ -32,18 +32,18 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Toute nouvelle vérification est ajoutée à la CI ET aux `needs` du job `report`.
 - Dépôt GitHub `Bergamof/hubergamof` : la CI s'exécute sur chaque PR (en session cloud, suivi via les outils MCP GitHub, pas de `gh`). « Terminé localement, CI non vérifiée » seulement si les runs sont inaccessibles.
 
-## Équipe
+## Équipe d'agents (`.claude/agents/`)
 - Session principale (Chef Bouillon) : plan, briefs aux spécialistes, arbitrage et **toute écriture** (code Rust, UI, CI/CD, packaging, docs, `.claude/**`). Pas de sous-agent de développement (décision d'Adrien, 2026-11-01).
 - Conventions et pièges par techno : `.claude/rules/rust.md`, `ui.md`, `ci-packaging.md` (chargés selon les fichiers touchés).
-- Spécialistes en lecture seule (`.claude/agents/`), qui rendent des rapports :
+- Spécialistes (aucun droit d'écriture, `model:` explicite jamais `inherit`), rapports uniquement :
 
-| Agent | Modèle | Rôle |
-|---|---|---|
-| `gardien-du-phare` | sonnet | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) |
-| `turbo-escargot` | sonnet | performances |
-| `cerbere-le-paranoiaque` | opus | sécurité & CVE |
-| `maniaque-du-plumeau` | opus | architecture & clean code |
-| `capitaine-assertion` | sonnet | stratégie de tests |
+| Agent | Modèle | Écrit | Rôle |
+|---|---|---|---|
+| `gardien-du-phare` | sonnet | non | UX & accessibilité (Lighthouse ≥ 90 A11y & Bonnes pratiques) |
+| `turbo-escargot` | sonnet | non | performances |
+| `cerbere-le-paranoiaque` | opus | non | sécurité & CVE |
+| `maniaque-du-plumeau` | opus | non | architecture & clean code |
+| `capitaine-assertion` | sonnet | non | stratégie de tests |
 
 ## Méthode de travail
 - Tâche non triviale : d'abord un plan d'action (choix techniques et fonctionnels justifiés, étapes, livrables, spécialistes mobilisés, risques), puis attendre le « go » d'Adrien avant de coder. Écart significatif en cours de route → resoumettre.
@@ -182,7 +182,7 @@ GPL-3.0-or-later ; `crates/module-api` sous MPL-2.0. Toute dépendance doit êtr
 
 ## Git
 - Conventional Commits (anglais, impératif) ; branches `feat/…`, `fix/…`, `chore/…` depuis `main`.
-- Noms de branche parlants en kebab-case anglais : `claude/<type>/<sujet>` (ex. `claude/feat/docker-compose-file-names-icons`), sujet d'au moins deux mots ; sans préfixe `claude/` : `<type>/<sujet>` ; jamais `fix/bug`, `feat/update`, `wip`, `test` ni identifiant aléatoire. Préfixe imposé par l'outil (ex. `claude/`) conservé, suite parlante.
+- Noms de branche parlants en kebab-case anglais : `claude/<type>/<sujet>` (ex. `claude/feat/docker-compose-file-names-icons`), sujet d'au moins deux mots ; sans préfixe `claude/` : `<type>/<sujet>` ; jamais `fix/bug`, `feat/update`, `wip`, `test` ni identifiant aléatoire. Préfixe imposé par l'outil (ex. `claude/`) conservé, suite parlante. Renommer si le périmètre change, avant push/PR.
 - **Renommage obligatoire** : la branche générée par l'outil (`claude/<adjectif>-<nom>-<hasard>`) est renommée (`git branch -m`) **avant le premier commit** de la tâche, puis poussée sous son nouveau nom (c'est une autorisation explicite d'Adrien, qui prime sur « pousser sur la branche désignée »). Appliqué par `make check-branch` (dans `make check`) et par une étape du job `lint` de la CI (`.github/scripts/check-branch-name.sh`).
 - SemVer ; `CHANGELOG.md` (Keep a Changelog) à jour pour tout changement notable.
 - Avant chaque commit : nom de branche conforme (`make check-branch`), lint + tests au vert.
