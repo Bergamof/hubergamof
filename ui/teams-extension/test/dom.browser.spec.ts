@@ -4,6 +4,7 @@ import { RESEND_AFTER_MS, start } from '../lib/content-main.js';
 import {
 	avatarIcon,
 	frameRole,
+	openConversation,
 	performAction,
 	readCall,
 	readMeetings,
@@ -21,7 +22,7 @@ function page(html: string, title = 'Teams'): Document {
 // the "Non lu" label, the name is in the title span.
 function conversation(name: string, unread: boolean, type = 'chat') {
 	return `<div role="treeitem" aria-level="2" data-item-type="${type}"
-		aria-labelledby="chat_list_unread_text title-${name}">
+		data-fui-tree-item-value="id:${name}" aria-labelledby="chat_list_unread_text title-${name}">
 		<span class="fui-Avatar"><img class="fui-Avatar__image" src="data:,"></span>
 		${unread ? '<div data-tid="unread" id="unread-label">Non lu</div>' : ''}
 		<span id="title-${name}" role="text">${name}</span></div>`;
@@ -60,7 +61,7 @@ describe('readUnreadConversations', () => {
 	});
 	it('reads the title, not the "Non lu" label', () => {
 		expect(readUnreadConversations(page(conversation('Équipe Exposition', true)))).toEqual([
-			{ name: 'Équipe Exposition', icon: null }
+			{ name: 'Équipe Exposition', icon: null, id: 'id:Équipe Exposition' }
 		]);
 	});
 	it('leaves the channels of the Teams view out and learns nothing from them alone', () => {
@@ -109,12 +110,64 @@ describe('avatars', () => {
 		await document.querySelector<HTMLImageElement>('img')!.decode();
 		const [alice, bob] = readUnreadConversations(document)!;
 		expect(alice.icon?.startsWith(PNG_SIGNATURE_BASE64)).toBe(true);
-		expect(bob).toEqual({ name: 'Bob', icon: null });
+		expect(bob).toEqual({ name: 'Bob', icon: null, id: 'id:Bob' });
 	});
 
 	it('gives none while the image is not loaded', () => {
 		document.body.innerHTML = conversation('Alice', true);
-		expect(readUnreadConversations(document)).toEqual([{ name: 'Alice', icon: null }]);
+		expect(readUnreadConversations(document)).toEqual([
+			{ name: 'Alice', icon: null, id: 'id:Alice' }
+		]);
+	});
+});
+
+describe('openConversation', () => {
+	const CHAT_APP = '86fcd49b-61a2-4701-b771-54728cd291fb';
+
+	it('clicks the conversation of that identifier, and no other', async () => {
+		const doc = page(conversation('Alice', true) + conversation('Bob', true));
+		const clicked: string[] = [];
+		for (const item of doc.querySelectorAll('[role="treeitem"]')) {
+			item.addEventListener('click', () =>
+				clicked.push(item.getAttribute('data-fui-tree-item-value')!)
+			);
+		}
+		expect(await openConversation(doc, 'id:Bob')).toBe(true);
+		expect(clicked).toEqual(['id:Bob']);
+	});
+
+	it('does not take the identifier for a selector', async () => {
+		const doc = page(conversation('Alice', true));
+		expect(await openConversation(doc, 'x"] , [role="treeitem')).toBe(false);
+	});
+
+	it('refuses a conversation that is not there, after trying the rail', async () => {
+		const doc = page(`<button data-tid="${CHAT_APP}"></button>`);
+		const wait = vi.fn(async () => {});
+		expect(await openConversation(doc, 'id:Alice', wait)).toBe(false);
+		expect(wait).toHaveBeenCalled();
+	});
+
+	it('goes to the Chat application first when the list is not on screen', async () => {
+		const doc = page(`<button data-tid="${CHAT_APP}"></button>`);
+		const item = () => doc.querySelector('[role="treeitem"]');
+		doc.querySelector('button')!.addEventListener('click', () => {
+			doc.body.insertAdjacentHTML('beforeend', conversation('Alice', true));
+		});
+		const opened = vi.fn();
+		const wait = async () => {
+			item()?.addEventListener('click', opened, { once: true });
+		};
+		expect(await openConversation(doc, 'id:Alice', wait)).toBe(true);
+		expect(item()).not.toBeNull();
+	});
+
+	it('does not touch the rail when the conversation is already listed', async () => {
+		const doc = page(`<button data-tid="${CHAT_APP}"></button>` + conversation('Alice', true));
+		const rail = vi.fn();
+		doc.querySelector('button')!.addEventListener('click', rail);
+		expect(await openConversation(doc, 'id:Alice')).toBe(true);
+		expect(rail).not.toHaveBeenCalled();
 	});
 });
 

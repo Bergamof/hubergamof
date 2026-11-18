@@ -19,6 +19,10 @@ const CONVERSATION = '[role="treeitem"][aria-level="2"][data-item-type="chat"]';
 const UNREAD_MARK = '[data-tid="unread"]';
 const CONVERSATION_TITLE = '[role="text"][id^="title-"]';
 const AVATAR = 'img.fui-Avatar__image';
+/** Attribute of a conversation holding its identifier in Teams, opaque. */
+const CONVERSATION_ID = 'data-fui-tree-item-value';
+/** The Chat application of the left rail: a constant of Teams, in any language. */
+const CHAT_APP = '[data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]';
 const CALENDAR_SLOT = 'div[role="button"][aria-label]';
 
 /** Most unread names and meetings one report may hold (the manager keeps fewer). */
@@ -32,6 +36,10 @@ const ICON_SIZE = 64;
  * stays far under the 1 MiB the browser allows a message to the host.
  */
 const MAX_ICON_BASE64 = 16 * 1024;
+
+/** How long to wait for the conversation list after a click on the rail. */
+const LIST_ATTEMPTS = 20;
+const LIST_POLL_MS = 100;
 
 /** Avatars already encoded, by image element, until Teams changes their source. */
 const ICONS = new WeakMap();
@@ -84,14 +92,18 @@ export function readCall(doc) {
  * list is not on screen (it only is on the Conversation view; the Teams view
  * lists channels, which are left out), so that nothing is learnt.
  * @param {Document} doc
- * @returns {{ name: string, icon: string | null }[] | null}
+ * @returns {{ name: string, icon: string | null, id: string | null }[] | null}
  */
 export function readUnreadConversations(doc) {
 	const items = [...doc.querySelectorAll(CONVERSATION)];
 	if (items.length === 0) return null;
 	return items
 		.filter((item) => item.querySelector(UNREAD_MARK))
-		.map((item) => ({ name: conversationName(item), icon: conversationIcon(doc, item) }))
+		.map((item) => ({
+			name: conversationName(item),
+			icon: conversationIcon(doc, item),
+			id: item.getAttribute(CONVERSATION_ID)
+		}))
 		.filter((conversation) => conversation.name !== '')
 		.slice(0, MAX_ITEMS);
 }
@@ -190,6 +202,44 @@ export function readReports(doc, hostname, nowSeconds, context) {
 		...(names ? [{ type: 'conversations', unread: names }] : []),
 		readCall(doc)
 	];
+}
+
+/**
+ * @param {Document} doc
+ * @param {string} id
+ */
+function findConversation(doc, id) {
+	// Compared with the attribute, never put in a selector.
+	return [...doc.querySelectorAll(CONVERSATION)].find(
+		(item) => item.getAttribute(CONVERSATION_ID) === id
+	);
+}
+
+/**
+ * Shows the conversation `id` (one the extension reported): clicks it in the
+ * list, after a click on the Chat application of the rail when the list is not
+ * on screen (the Teams or the calendar view). Only clicks, never navigates: a
+ * reload would end a call in progress. Whether it was found.
+ * @param {Document} doc
+ * @param {string} id
+ * @param {(ms: number) => Promise<void>} [wait]
+ */
+export async function openConversation(
+	doc,
+	id,
+	wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+) {
+	if (!findConversation(doc, id)) {
+		const rail = doc.querySelector(CHAT_APP);
+		if (rail instanceof HTMLElement) rail.click();
+		for (let attempt = 0; attempt < LIST_ATTEMPTS && !findConversation(doc, id); attempt++) {
+			await wait(LIST_POLL_MS);
+		}
+	}
+	const item = findConversation(doc, id);
+	if (!(item instanceof HTMLElement)) return false;
+	item.click();
+	return true;
 }
 
 /**

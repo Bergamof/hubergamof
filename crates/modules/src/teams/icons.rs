@@ -23,6 +23,8 @@ pub(super) static CAMERA_OFF: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("teams-camera-off")));
 /// Red handset: leave or decline the call.
 pub(super) static HANG_UP: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams-hangup")));
+/// Window with an arrow: back to the window of the call.
+pub(super) static RETURN: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams-return")));
 /// Green handset: answer the call.
 pub(super) static ACCEPT: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams-accept")));
 
@@ -41,6 +43,7 @@ mod tests {
             &CAMERA_OFF,
             &HANG_UP,
             &ACCEPT,
+            &RETURN,
         ] {
             let source = std::str::from_utf8(&icon.bytes).unwrap();
             assert!(is_complete_svg(source), "{source}");

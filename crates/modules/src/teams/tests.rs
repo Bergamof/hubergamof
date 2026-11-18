@@ -1,14 +1,30 @@
 use std::time::Duration;
 
 use hubergamof_module_api::testing::TestContext;
-use hubergamof_module_api::{Command, KeyState, Notification, NotificationId, TaskScope};
+use hubergamof_module_api::{Command, Feedback, KeyState, Notification, NotificationId, TaskScope};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::wire::{BrowserReport, Meeting, UnreadConversation};
 use super::*;
+use crate::desktop::{SimulatedDesktop, Window, WindowId};
 
 const PATIENCE: Duration = Duration::from_secs(5);
+
+/// Simulated time after which the simulated desktop has said all it had to.
+const DESKTOP_QUIET: Duration = Duration::from_secs(5);
+
+fn hub() -> Arc<DesktopHub> {
+    DesktopHub::new(Arc::new(SimulatedDesktop::empty()), vec![desktop_app()])
+}
+
+fn teams_window() -> Window {
+    Window::new(
+        "teams",
+        "brave-ompifgpmddkgmclendfeacglnodjjndh-Default",
+        "Teams",
+    )
+}
 
 /// Simulated time to wait for a reminder.
 const MEETING_WAIT: Duration = Duration::from_secs(600);
@@ -17,6 +33,7 @@ struct Harness {
     bridge: Arc<SimulatedBridge>,
     module: Box<dyn Module>,
     events: UnboundedReceiver<ModuleEvent>,
+    desktop: Arc<SimulatedDesktop>,
     _scope: TaskScope,
 }
 
@@ -28,13 +45,16 @@ impl Harness {
     fn with(bridge: SimulatedBridge, clock: WallClock, settings: &Value) -> Self {
         let bridge = Arc::new(bridge);
         let TestContext { ctx, events, scope } = TestContext::new(TEAMS_KIND);
-        let module = TeamsFactory::with_clock(Arc::clone(&bridge) as _, clock)
+        let desktop = Arc::new(SimulatedDesktop::empty());
+        let hub = DesktopHub::new(Arc::clone(&desktop) as _, vec![desktop_app()]);
+        let module = TeamsFactory::with_clock(Arc::clone(&bridge) as _, clock, hub)
             .create(ctx, settings)
             .unwrap();
         Self {
             bridge,
             module,
             events,
+            desktop,
             _scope: scope,
         }
     }
@@ -49,12 +69,30 @@ impl Harness {
         self.next_event_within(PATIENCE).await
     }
 
+    /// The commands of the next event of Teams itself: what the desktop
+    /// reports on the way is handed to the module and left aside.
     async fn next_event_within(&mut self, patience: Duration) -> Vec<Command> {
-        let event = tokio::time::timeout(patience, self.events.recv())
-            .await
-            .expect("an event")
-            .expect("the instance is alive");
-        self.module.on_event(event).await
+        loop {
+            let event = tokio::time::timeout(patience, self.events.recv())
+                .await
+                .expect("an event")
+                .expect("the instance is alive");
+            let from_desktop = event.is::<AppEvent>();
+            let commands = self.module.on_event(event).await;
+            if !from_desktop {
+                return commands;
+            }
+        }
+    }
+
+    /// Hands the module what the desktop reports until it is quiet, and what
+    /// the commands among them are.
+    async fn settle_desktop(&mut self) -> Vec<Command> {
+        let mut commands = Vec::new();
+        while let Ok(Some(event)) = tokio::time::timeout(DESKTOP_QUIET, self.events.recv()).await {
+            commands.extend(self.module.on_event(event).await);
+        }
+        commands
     }
 
     async fn in_call(&mut self) -> Vec<Command> {
@@ -80,7 +118,7 @@ fn open_page(commands: &[Command], page: &str) -> bool {
 
 #[test]
 fn the_module_may_declare_lock_safe_pages_on_a_single_key_instance() {
-    let capabilities = TeamsFactory::new(Arc::new(SimulatedBridge::new()))
+    let capabilities = TeamsFactory::new(Arc::new(SimulatedBridge::new()), hub())
         .descriptor()
         .capabilities;
     assert!(capabilities.key && capabilities.lock_safe_pages);
@@ -115,15 +153,168 @@ async fn pressing_the_key_opens_the_unread_page_and_does_nothing_when_there_is_n
     assert_eq!(quiet.module.on_key_press().await, []);
 }
 
-#[tokio::test]
-async fn without_an_extension_the_key_says_so_and_alerts() {
+#[tokio::test(start_paused = true)]
+async fn without_an_extension_the_key_says_so_and_brings_teams_to_the_front() {
     let mut harness = Harness::new(SimulatedBridge::demo());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
     harness.bridge.set_connected(false);
     harness.next_event().await;
     let key = harness.module.key();
     assert_eq!(key.label.as_deref(), Some("Hors ligne"));
     assert_eq!(key.state, KeyState::Normal);
-    assert_eq!(harness.module.on_key_press().await, Command::alert());
+
+    assert_eq!(harness.module.on_key_press().await, []);
+    assert_eq!(harness.settle_desktop().await, []);
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_key_with_nothing_to_show_brings_teams_to_the_front_or_starts_it() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.module.on_key_press().await, []);
+    // The success is not marked: the window coming up is the answer.
+    assert_eq!(harness.settle_desktop().await, []);
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
+    assert_eq!(harness.desktop.launches(), []);
+
+    // Without window, Teams is started (a fixed program and argument).
+    let mut closed = Harness::new(SimulatedBridge::new());
+    closed.settle_desktop().await;
+    assert_eq!(closed.module.on_key_press().await, []);
+    closed.settle_desktop().await;
+    assert_eq!(closed.desktop.launches(), [launch()]);
+    assert_eq!(closed.desktop.activations(), []);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_window_that_cannot_be_raised_is_marked_with_a_warning() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness.desktop.fail_actions(true);
+    assert_eq!(harness.module.on_key_press().await, []);
+    assert_eq!(
+        harness.settle_desktop().await,
+        [Command::FeedbackOn(ModuleSurface::HomeKey, Feedback::Alert)]
+    );
+}
+
+fn conversation_with_id(name: &str, id: &str) -> UnreadConversation {
+    UnreadConversation {
+        id: Some(id.to_owned()),
+        ..UnreadConversation::named(name)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_conversation_is_opened_in_teams_and_its_window_brought_to_the_front() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness.bridge.report(BrowserReport::Unread { count: 1 });
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![conversation_with_id("Alice", "19:alice@thread.v2")],
+        })
+        .await;
+    let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
+    let item = page.items[0].id.clone();
+
+    let commands = harness
+        .module
+        .on_item_press(&UNREAD_PAGE.into(), &item)
+        .await;
+    assert_eq!(commands, []);
+    assert_eq!(harness.settle_desktop().await, []);
+    assert_eq!(
+        harness.bridge.opened_conversations(),
+        ["19:alice@thread.v2"]
+    );
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_conversation_the_extension_did_not_report_is_not_asked_for() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![conversation_with_id("Alice", "19:alice@thread.v2")],
+        })
+        .await;
+    // The list changed between the drawing and the press.
+    let commands = harness
+        .module
+        .on_item_press(&UNREAD_PAGE.into(), &"chat:19:gone@thread.v2".into())
+        .await;
+    assert_eq!(commands, Command::alert());
+    assert_eq!(harness.bridge.opened_conversations(), Vec::<String>::new());
+    assert_eq!(harness.desktop.activations(), []);
+}
+
+#[tokio::test(start_paused = true)]
+async fn without_an_extension_a_conversation_is_not_opened() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![conversation_with_id("Alice", "19:alice@thread.v2")],
+        })
+        .await;
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    let commands = harness
+        .module
+        .on_item_press(&UNREAD_PAGE.into(), &"chat:19:alice@thread.v2".into())
+        .await;
+    assert_eq!(commands, Command::alert());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_conversations_of_a_call_page_open_too() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![conversation_with_id("Alice", "19:alice@thread.v2")],
+        })
+        .await;
+    harness.bridge.report(BrowserReport::Unread { count: 1 });
+    harness.next_event().await;
+    harness.in_call().await;
+    let page = harness.call_page();
+    let item = page.items.last().unwrap().id.clone();
+    harness.module.on_item_press(&CALL_PAGE.into(), &item).await;
+    harness.settle_desktop().await;
+    assert_eq!(
+        harness.bridge.opened_conversations(),
+        ["19:alice@thread.v2"]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn return_to_the_call_brings_its_window_to_the_front_without_asking_teams() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    harness.in_call().await;
+    let page = harness.call_page();
+    assert_eq!(
+        page.items[3].key.label.as_deref(),
+        Some("Revenir à l'appel")
+    );
+    let commands = harness
+        .module
+        .on_item_press(&CALL_PAGE.into(), &page.items[3].id)
+        .await;
+    assert_eq!(commands, []);
+    assert_eq!(harness.settle_desktop().await, []);
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
+    assert_eq!(harness.bridge.requests(), []);
 }
 
 #[tokio::test]
@@ -176,7 +367,8 @@ async fn only_muting_and_hanging_up_are_declared_usable_when_locked() {
         [
             ("mute".to_owned(), true),
             ("camera".to_owned(), false),
-            ("hangup".to_owned(), true)
+            ("hangup".to_owned(), true),
+            ("return".to_owned(), false)
         ]
     );
 }
@@ -249,9 +441,9 @@ async fn the_unread_conversations_follow_the_actions_of_a_call_and_hide_when_loc
     let mut harness = Harness::new(SimulatedBridge::demo());
     harness.in_call().await;
     let page = harness.call_page();
-    // The three actions are pinned on the first row, then the conversations.
-    assert_eq!(page.pinned_items, 3);
-    let after: Vec<_> = page.items[3..]
+    // The four actions are pinned on the first row, then the conversations.
+    assert_eq!(page.pinned_items, 4);
+    let after: Vec<_> = page.items[4..]
         .iter()
         .map(|item| (item.key.label.clone().unwrap(), item.hidden_when_locked))
         .collect();
@@ -262,7 +454,7 @@ async fn the_unread_conversations_follow_the_actions_of_a_call_and_hide_when_loc
             ("Camille".to_owned(), true)
         ]
     );
-    assert!(page.items[..3].iter().all(|item| !item.hidden_when_locked));
+    assert!(page.items[..4].iter().all(|item| !item.hidden_when_locked));
 }
 
 #[tokio::test]
@@ -292,6 +484,7 @@ async fn a_conversation_shows_its_avatar_or_a_generic_icon() {
                 UnreadConversation {
                     name: "Alice".into(),
                     icon: Some(avatar.clone()),
+                    id: None,
                 },
                 UnreadConversation::named("Équipe"),
             ],
@@ -485,7 +678,16 @@ async fn no_reminder_when_the_lead_time_is_zero() {
         items: vec![meeting("Point", 10_100)],
     });
     harness.next_event().await;
-    let nothing = tokio::time::timeout(Duration::from_secs(600), harness.events.recv()).await;
+    // The desktop may report meanwhile; Teams itself has nothing to say.
+    let nothing = tokio::time::timeout(Duration::from_secs(600), async {
+        loop {
+            let event = harness.events.recv().await;
+            if event.is_some_and(|event| !event.is::<AppEvent>()) {
+                break;
+            }
+        }
+    })
+    .await;
     assert!(nothing.is_err());
 }
 
@@ -511,7 +713,7 @@ async fn the_lead_time_can_change_while_the_module_runs() {
 #[test]
 fn a_lead_time_out_of_range_is_refused() {
     let TestContext { ctx, .. } = TestContext::new(TEAMS_KIND);
-    let factory = TeamsFactory::new(Arc::new(SimulatedBridge::new()));
+    let factory = TeamsFactory::new(Arc::new(SimulatedBridge::new()), hub());
     assert!(
         factory
             .create(ctx, &json!({ "reminderMinutes": 61 }))

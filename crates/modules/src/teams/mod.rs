@@ -20,8 +20,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, Notification,
-    NotificationId, PageContent, PageId, PageItem, Rgb,
+    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
+    Notification, NotificationId, PageContent, PageId, PageItem, Rgb,
 };
 use serde_json::Value;
 use tokio::sync::watch;
@@ -30,15 +30,41 @@ pub use bridge::{
     CallState, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState, is_same_user,
     socket_path,
 };
-use icons::{ACCEPT, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED};
+use icons::{
+    ACCEPT, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED, RETURN,
+};
 use reminders::MeetingSoon;
 pub use reminders::{TeamsSettings, WallClock};
 use wire::{CallAction, CallPhase, UnreadConversation};
 
+use crate::desktop::{
+    AppAttention, AppEvent, AppId, ClassMatch, DesktopApp, DesktopHub, ExecutableMatch,
+    FollowedApp, Launch, LaunchStart,
+};
 use crate::icons::{asset, svg};
 
 /// Kind of the Teams module.
 pub const TEAMS_KIND: &str = "teams";
+
+/// Teams among the applications of the desktop layer.
+const APP: AppId = AppId(TEAMS_KIND);
+
+/// Identifier of the Teams web application (a PWA), the same in every
+/// browser: the classes of its windows contain it (`brave-<id>-Default`,
+/// `crx_<id>`…).
+const PWA_ID: &str = "ompifgpmddkgmclendfeacglnodjjndh";
+
+/// Main program of the browsers running it (Brave, whichever the path of
+/// its package), and the argument of its helper processes.
+const BROWSER_EXECUTABLE: &str = "brave";
+const HELPER_ARGUMENT: &str = "--type=";
+
+/// Starts a desktop entry, as the desktop's launchers do (looked up in
+/// `PATH`, shipped with GTK).
+const LAUNCHER: &str = "gtk-launch";
+
+/// Prefix of the identifier of the items that open a conversation.
+const CHAT_ITEM_PREFIX: &str = "chat:";
 
 /// Page of the unread conversations.
 const UNREAD_PAGE: &str = "unread";
@@ -72,19 +98,55 @@ struct TeamsChanged;
 pub struct TeamsFactory {
     bridge: Arc<dyn TeamsBridge>,
     clock: WallClock,
+    desktop: Arc<DesktopHub>,
 }
 
 impl TeamsFactory {
-    /// Factory of instances reading and driving Teams through `bridge`.
+    /// Factory of instances reading and driving Teams through `bridge`, and
+    /// bringing its window to the front through `desktop` (which must follow
+    /// [`desktop_app`]).
     #[must_use]
-    pub fn new(bridge: Arc<dyn TeamsBridge>) -> Self {
-        Self::with_clock(bridge, WallClock::system())
+    pub(crate) fn new(bridge: Arc<dyn TeamsBridge>, desktop: Arc<DesktopHub>) -> Self {
+        Self::with_clock(bridge, WallClock::system(), desktop)
     }
 
     /// Factory whose reminders read the time of day from `clock`.
     #[must_use]
-    pub fn with_clock(bridge: Arc<dyn TeamsBridge>, clock: WallClock) -> Self {
-        Self { bridge, clock }
+    pub(crate) fn with_clock(
+        bridge: Arc<dyn TeamsBridge>,
+        clock: WallClock,
+        desktop: Arc<DesktopHub>,
+    ) -> Self {
+        Self {
+            bridge,
+            clock,
+            desktop,
+        }
+    }
+}
+
+/// Teams, as the desktop layer follows it: the windows of its web
+/// application, in Brave.
+#[must_use]
+pub(crate) fn desktop_app() -> DesktopApp {
+    DesktopApp {
+        id: APP,
+        window_class: ClassMatch::Contains(PWA_ID.into()),
+        executable: ExecutableMatch {
+            path: BROWSER_EXECUTABLE.into(),
+            helper_argument: Some(HELPER_ARGUMENT.into()),
+        },
+        desktop_entry: None,
+        relays: Vec::new(),
+    }
+}
+
+/// What starts the web application of Teams: its desktop entry in Brave
+/// (the default profile), a fixed program and argument.
+fn launch() -> Launch {
+    Launch {
+        program: LAUNCHER.into(),
+        args: vec![format!("brave-{PWA_ID}-Default").into()],
     }
 }
 
@@ -136,6 +198,7 @@ impl ModuleFactory for TeamsFactory {
             ctx.events().clone(),
         ));
         Ok(Box::new(Teams {
+            app: FollowedApp::follow(&self.desktop, APP, AppAttention::notifications_only(), &ctx),
             bridge: Arc::clone(&self.bridge),
             changes,
             lead,
@@ -147,6 +210,8 @@ impl ModuleFactory for TeamsFactory {
 
 /// One instance: Teams as the bridge last reported.
 pub(crate) struct Teams {
+    /// The window of Teams on the desktop, to bring to the front.
+    app: FollowedApp,
     bridge: Arc<dyn TeamsBridge>,
     changes: watch::Receiver<TeamsState>,
     /// Lead time of the meeting reminders, read by their task.
@@ -165,15 +230,18 @@ enum CallItem {
     HangUp,
     Accept,
     Decline,
+    /// Brings the window of the call to the front (not an action of Teams).
+    ReturnToCall,
 }
 
 impl CallItem {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Mute,
         Self::Camera,
         Self::HangUp,
         Self::Accept,
         Self::Decline,
+        Self::ReturnToCall,
     ];
 
     fn id(self) -> ItemId {
@@ -184,6 +252,7 @@ impl CallItem {
                 Self::HangUp => "hangup",
                 Self::Accept => "accept",
                 Self::Decline => "decline",
+                Self::ReturnToCall => "return",
             }
             .into(),
         )
@@ -193,14 +262,16 @@ impl CallItem {
         Self::ALL.into_iter().find(|item| item.id() == *id)
     }
 
-    /// What Teams is asked when the key is pressed.
-    fn action(self) -> CallAction {
+    /// What Teams is asked when the key is pressed; nothing for the key
+    /// that only brings its window to the front.
+    fn action(self) -> Option<CallAction> {
         match self {
-            Self::Mute => CallAction::ToggleMute,
-            Self::Camera => CallAction::ToggleCamera,
-            Self::HangUp => CallAction::HangUp,
-            Self::Accept => CallAction::Accept,
-            Self::Decline => CallAction::Decline,
+            Self::Mute => Some(CallAction::ToggleMute),
+            Self::Camera => Some(CallAction::ToggleCamera),
+            Self::HangUp => Some(CallAction::HangUp),
+            Self::Accept => Some(CallAction::Accept),
+            Self::Decline => Some(CallAction::Decline),
+            Self::ReturnToCall => None,
         }
     }
 
@@ -239,12 +310,54 @@ impl Teams {
             CallItem::Mute.item(mute_key(call.muted)),
             CallItem::Camera.item(camera_key(call.camera_on)),
             CallItem::HangUp.item(KeyContent::with_icon(&HANG_UP, "Raccrocher")),
+            CallItem::ReturnToCall.item(KeyContent::with_icon(&RETURN, "Revenir à l'appel")),
         ];
         let pinned = actions.len();
         let items = [actions.to_vec(), unread_items(&state)].concat();
         PageContent::new("Appel", items)
             .with_pinned_items(pinned)
             .keeps_device_lit(call.phase == CallPhase::InCall)
+    }
+
+    /// Brings the window of Teams to the front, or starts Teams when it has
+    /// none; the outcome is marked on `surface` only when it fails.
+    fn bring_to_front(&mut self, surface: ModuleSurface) -> Vec<Command> {
+        let window = self.app.windows().first().map(|window| window.id.clone());
+        match window {
+            Some(window) => self.app.activate(window, surface),
+            None => match self.app.launch(launch(), surface) {
+                LaunchStart::Started | LaunchStart::Busy => Vec::new(),
+                LaunchStart::Refused => Command::alert(),
+            },
+        }
+    }
+
+    /// Shows the conversation `id` in Teams and brings its window to the
+    /// front. Only a conversation the extension reported is asked for: a
+    /// list that changed since the key was drawn is not followed blindly.
+    fn open_conversation(&mut self, id: &str, surface: ModuleSurface) -> Vec<Command> {
+        let known = self
+            .changes
+            .borrow()
+            .conversations
+            .iter()
+            .any(|conversation| conversation.id.as_deref() == Some(id));
+        if !known {
+            return Command::alert();
+        }
+        if let Err(error) = self.bridge.open_conversation(id) {
+            tracing::debug!(%error, "Teams conversation not opened");
+            return Command::alert();
+        }
+        self.bring_to_front(surface)
+    }
+
+    /// What the desktop layer reports: only a failure is shown.
+    fn on_app_event(&mut self, event: AppEvent) -> Vec<Command> {
+        match self.app.handle(event) {
+            Some(outcome) if !outcome.ok => vec![outcome.feedback()],
+            _ => Vec::new(),
+        }
     }
 
     /// Asks Teams for `action`: nothing once sent (the key changes its icon
@@ -301,8 +414,14 @@ fn unread_items(state: &TeamsState) -> Vec<PageItem> {
 /// A conversation key: its avatar when the extension could read one.
 fn conversation_item(index: usize, conversation: &UnreadConversation) -> PageItem {
     let icon = conversation.icon.as_ref().unwrap_or(&CONVERSATION);
+    // The identifier of Teams is in the one of the item: what is pressed is
+    // what was shown, whatever the list became since.
+    let id = conversation.id.as_ref().map_or_else(
+        || format!("c{index}"),
+        |id| format!("{CHAT_ITEM_PREFIX}{id}"),
+    );
     PageItem::new(
-        ItemId(format!("c{index}")),
+        ItemId(id),
         KeyContent::with_icon(icon, conversation.name.clone()),
     )
     .hidden_when_locked(true)
@@ -355,15 +474,14 @@ impl Module for Teams {
             let state = self.changes.borrow();
             (state.connected, state.call.phase.is_active(), state.unread)
         };
-        if !connected {
-            Command::alert()
-        } else if active {
+        if connected && active {
             vec![Command::OpenPage(CALL_PAGE.into())]
-        } else if unread > 0 {
+        } else if connected && unread > 0 {
             vec![Command::OpenPage(UNREAD_PAGE.into())]
         } else {
-            // Connected with nothing to show: not a failure.
-            Vec::new()
+            // Nothing to show (or no extension, Teams not being open): Teams
+            // itself comes to the front.
+            self.bring_to_front(ModuleSurface::HomeKey)
         }
     }
 
@@ -376,17 +494,28 @@ impl Module for Teams {
     }
 
     async fn on_item_press(&mut self, page: &PageId, item: &ItemId) -> Vec<Command> {
+        let surface = ModuleSurface::Item {
+            page: page.clone(),
+            item: item.clone(),
+        };
+        if let Some(id) = item.0.strip_prefix(CHAT_ITEM_PREFIX) {
+            return self.open_conversation(id, surface);
+        }
         if page.0 != CALL_PAGE {
             return Vec::new();
         }
-        let Some(item) = CallItem::from_id(item) else {
-            return Vec::new();
-        };
-        let action = item.action();
-        self.ask(action)
+        match CallItem::from_id(item).map(CallItem::action) {
+            Some(Some(action)) => self.ask(action),
+            Some(None) => self.bring_to_front(surface),
+            None => Vec::new(),
+        }
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {
+        let event = match event.downcast::<AppEvent>() {
+            Ok(app_event) => return self.on_app_event(*app_event),
+            Err(event) => event,
+        };
         if let Some(meeting) = event.downcast_ref::<MeetingSoon>() {
             let notification = Notification::new(meeting.message.clone(), MEETING_BACKGROUND)
                 .with_timeout(MEETING_NOTICE);

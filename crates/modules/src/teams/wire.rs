@@ -26,6 +26,10 @@ pub const MAX_MEETINGS: usize = 100;
 /// Longest conversation name, caller name or meeting subject, in characters.
 pub const MAX_TEXT_CHARS: usize = 120;
 
+/// Longest identifier of a conversation kept, in characters: an opaque
+/// string of Teams that goes back to the extension as it came.
+pub const MAX_ID_CHARS: usize = 400;
+
 /// Longest avatar kept, in base64 characters: a 64 px icon is a few kilobytes,
 /// so a larger one is not an icon and is ignored.
 pub const MAX_ICON_BASE64: usize = 16 * 1024;
@@ -41,7 +45,8 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 /// Start of a JPEG file.
 const JPEG_SIGNATURE: &[u8] = &[0xFF, 0xD8, 0xFF];
 
-/// An unread conversation: its name and, when the page gave a usable one, its
+/// An unread conversation: its name, its identifier in Teams (what the
+/// extension is asked to open) and, when the page gave a usable one, its
 /// avatar. On the wire a name alone (an older extension) or an object with
 /// the avatar in base64; what is not a PNG or a JPEG of reasonable size is
 /// dropped, never an error: the conversation then shows a generic icon.
@@ -52,15 +57,19 @@ pub struct UnreadConversation {
     pub name: String,
     /// Avatar, PNG or JPEG.
     pub icon: Option<ImageData>,
+    /// Opaque identifier of the conversation in Teams, as the extension
+    /// reported it; `None` when it did not, or gave an unusable one.
+    pub id: Option<String>,
 }
 
 impl UnreadConversation {
-    /// A conversation without avatar.
+    /// A conversation without avatar nor identifier.
     #[must_use]
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             icon: None,
+            id: None,
         }
     }
 }
@@ -74,6 +83,8 @@ enum WireConversation {
         name: String,
         #[serde(default)]
         icon: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
     },
 }
 
@@ -81,9 +92,10 @@ impl From<WireConversation> for UnreadConversation {
     fn from(wire: WireConversation) -> Self {
         match wire {
             WireConversation::Name(name) => Self::named(name),
-            WireConversation::Full { name, icon } => Self {
+            WireConversation::Full { name, icon, id } => Self {
                 name,
                 icon: icon.as_deref().and_then(decode_icon),
+                id: id.filter(|id| is_valid_id(id)),
             },
         }
     }
@@ -96,8 +108,18 @@ impl From<UnreadConversation> for WireConversation {
             icon: conversation
                 .icon
                 .map(|icon| STANDARD.encode(icon.bytes.as_ref())),
+            id: conversation.id,
         }
     }
+}
+
+/// Whether `id` can go back to the extension: not empty, bounded, without
+/// control characters (it is compared with an attribute of the page, never
+/// used as a selector).
+fn is_valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().count() <= MAX_ID_CHARS
+        && !id.chars().any(|c| c.is_control() || is_hidden_control(c))
 }
 
 /// The avatar `base64` holds, if it is a PNG or a JPEG that is not too big,
@@ -244,13 +266,18 @@ pub enum CallAction {
 }
 
 /// A message to the extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ManagerRequest {
     /// Do `action` in Teams.
     Do {
         /// What to do.
         action: CallAction,
+    },
+    /// Show a conversation the extension reported, by its identifier.
+    OpenConversation {
+        /// The identifier, as reported.
+        id: String,
     },
 }
 
@@ -287,7 +314,7 @@ impl BrowserReport {
                     .into_iter()
                     .map(|conversation| UnreadConversation {
                         name: bounded_text(&conversation.name),
-                        icon: conversation.icon,
+                        ..conversation
                     })
                     .filter(|conversation| !conversation.name.is_empty())
                     .take(MAX_CONVERSATIONS)
@@ -546,6 +573,51 @@ mod tests {
         assert!(serde_json::from_str::<BrowserReport>(&json).is_err());
     }
 
+    fn conversation_with_id(id: &str) -> UnreadConversation {
+        let json = format!(
+            r#"{{"type":"conversations","unread":[{{"name":"Alice","id":{}}}]}}"#,
+            serde_json::to_string(id).unwrap()
+        );
+        only_conversation(&json)
+    }
+
+    #[test]
+    fn the_identifier_of_a_conversation_is_kept_only_when_it_can_go_back() {
+        let id = "OneGQL_Folder|a~b/OneGQL_GroupChatConversation|19:abc@thread.v2";
+        assert_eq!(conversation_with_id(id).id.as_deref(), Some(id));
+        assert_eq!(conversation_with_id("").id, None);
+        assert_eq!(conversation_with_id("a\nb").id, None, "a control character");
+        assert_eq!(
+            conversation_with_id("a\u{202E}b").id,
+            None,
+            "a bidirectional override"
+        );
+        let longest = "x".repeat(MAX_ID_CHARS);
+        assert_eq!(
+            conversation_with_id(&longest).id.as_deref(),
+            Some(longest.as_str())
+        );
+        assert_eq!(conversation_with_id(&format!("{longest}x")).id, None);
+        // The name stays whatever the identifier is.
+        assert_eq!(conversation_with_id("").name, "Alice");
+    }
+
+    #[test]
+    fn requests_to_the_extension_have_a_fixed_shape() {
+        let open = ManagerRequest::OpenConversation { id: "19:a".into() };
+        assert_eq!(
+            serde_json::to_string(&open).unwrap(),
+            r#"{"type":"openConversation","id":"19:a"}"#
+        );
+        let act = ManagerRequest::Do {
+            action: CallAction::HangUp,
+        };
+        assert_eq!(
+            serde_json::to_string(&act).unwrap(),
+            r#"{"type":"do","action":"hangUp"}"#
+        );
+    }
+
     #[test]
     fn a_name_alone_is_still_a_conversation() {
         let report: BrowserReport =
@@ -567,6 +639,7 @@ mod tests {
         let conversation = UnreadConversation {
             name: "Alice".into(),
             icon: Some(ImageData::new(png())),
+            id: Some("19:abc@thread.v2".into()),
         };
         let json = serde_json::to_string(&conversation).unwrap();
         assert_eq!(

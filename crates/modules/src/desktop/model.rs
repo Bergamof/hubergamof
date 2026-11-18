@@ -24,6 +24,9 @@ pub enum ClassMatch {
     /// Every class starting with this prefix (`jetbrains-` covers every
     /// JetBrains IDE and edition).
     Prefix(String),
+    /// Every class containing this text (the identifier of a browser
+    /// application, which each browser wraps in its own prefix and suffix).
+    Contains(String),
 }
 
 impl ClassMatch {
@@ -33,6 +36,7 @@ impl ClassMatch {
         match self {
             Self::Exact(exact) => class == exact,
             Self::Prefix(prefix) => class.starts_with(prefix.as_str()),
+            Self::Contains(text) => class.contains(text.as_str()),
         }
     }
 }
@@ -345,6 +349,9 @@ mod tests {
         let prefix = ClassMatch::Prefix("jetbrains-".into());
         assert!(prefix.matches("jetbrains-idea") && prefix.matches("jetbrains-idea-ce"));
         assert!(!prefix.matches("org.mozilla.firefox"));
+        let contains = ClassMatch::Contains("ompifgpm".into());
+        assert!(contains.matches("brave-ompifgpm-Default") && contains.matches("crx_ompifgpm"));
+        assert!(!contains.matches("brave-browser"));
     }
 
     #[test]

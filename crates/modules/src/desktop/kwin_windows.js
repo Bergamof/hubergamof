@@ -7,7 +7,8 @@ function followed(window) {
     }
     const windowClass = String(window.resourceClass);
     return CLASSES.includes(windowClass)
-        || PREFIXES.some((prefix) => windowClass.startsWith(prefix));
+        || PREFIXES.some((prefix) => windowClass.startsWith(prefix))
+        || SUBSTRINGS.some((text) => windowClass.includes(text));
 }
 
 function describe(window) {
