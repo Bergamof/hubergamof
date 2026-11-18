@@ -13,11 +13,11 @@ use tokio::time::timeout;
 const WAIT: Duration = Duration::from_secs(10);
 
 fn native_host(runtime: &std::path::Path) -> tokio::process::Child {
+    // The host only starts for the extension's own origin.
+    let id = hubergamof_manager::teams_extension::embedded_extension_id().unwrap();
+    let origin = format!("chrome-extension://{id}/");
     Command::new(env!("CARGO_BIN_EXE_hubergamof"))
-        .args([
-            "native-host",
-            "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
-        ])
+        .args(["native-host", &origin])
         .env("XDG_RUNTIME_DIR", runtime)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -79,5 +79,27 @@ async fn without_a_manager_the_host_fails_instead_of_hanging() {
     let runtime = tempfile::tempdir().unwrap();
     let mut host = native_host(runtime.path());
     let status = timeout(WAIT, host.wait()).await.unwrap().unwrap();
+    assert!(!status.success());
+}
+
+#[tokio::test]
+async fn the_host_refuses_an_origin_that_is_not_the_extensions() {
+    let runtime = tempfile::tempdir().unwrap();
+    let status = timeout(
+        WAIT,
+        Command::new(env!("CARGO_BIN_EXE_hubergamof"))
+            .args([
+                "native-host",
+                "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
+            ])
+            .env("XDG_RUNTIME_DIR", runtime.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(!status.success());
 }

@@ -1,0 +1,4 @@
+# Clé publique de l'extension Teams (champ « key » de manifest.json : elle fixe
+# l'identifiant de l'extension), faux positif de generic-api-key. La clé privée
+# n'est pas dans le dépôt.
+79f1a90ec590a4ce7f2128e78b98c30e44121b38:ui/teams-extension/manifest.json:generic-api-key:6
