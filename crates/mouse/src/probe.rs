@@ -288,7 +288,7 @@ fn read_features<C: Channel>(
     Ok(())
 }
 
-fn read_name<C: Channel>(
+pub(crate) fn read_name<C: Channel>(
     hidpp: &mut Hidpp<C>,
     device: u8,
     index: u8,

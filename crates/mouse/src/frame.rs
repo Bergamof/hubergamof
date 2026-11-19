@@ -95,6 +95,40 @@ impl Request {
     }
 }
 
+/// A frame a device sends by itself (a button pressed, a battery change…):
+/// its function byte carries no software id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notification {
+    /// Device index.
+    pub device: u8,
+    /// Index of the feature that sent it.
+    pub feature_index: u8,
+    /// Event number within the feature.
+    pub event: u8,
+    /// Parameters.
+    pub params: Vec<u8>,
+}
+
+impl Notification {
+    /// Reads a notification from a frame; `None` for anything else (an answer
+    /// carries our software id, an error frame has a reserved feature index).
+    #[must_use]
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        let [report_id, device, feature_index, function_byte, params @ ..] = bytes else {
+            return None;
+        };
+        let long_enough_report = matches!(*report_id, 0x10..=0x12);
+        let carries_no_software_id = function_byte.is_multiple_of(16);
+        let reserved = matches!(*feature_index, ERROR_20 | ERROR_10);
+        (long_enough_report && carries_no_software_id && !reserved).then(|| Self {
+            device: *device,
+            feature_index: *feature_index,
+            event: function_byte >> 4,
+            params: params.to_vec(),
+        })
+    }
+}
+
 /// What a device answered to a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
@@ -254,6 +288,61 @@ mod tests {
         // An error header with no function byte nor code: not ours.
         assert_eq!(request.answered_by(&[0x11, 3, 0xFF, 6]), None);
         assert_eq!(request.answered_by(&[0x11, 3, 0x8F, 6]), None);
+    }
+
+    #[test]
+    fn notifications_carry_no_software_id() {
+        let frame = answer_frame(1, 7, 0x10, &[0, 0x50, 0, 0x52]);
+        let notification = Notification::parse(&frame).unwrap();
+        assert_eq!(
+            (
+                notification.device,
+                notification.feature_index,
+                notification.event
+            ),
+            (1, 7, 1)
+        );
+        assert_eq!(&notification.params[..4], &[0, 0x50, 0, 0x52]);
+        let short = [0x10, 2, 5, 0x00, 9, 9, 0];
+        assert_eq!(Notification::parse(&short).unwrap().params, [9, 9, 0]);
+    }
+
+    #[test]
+    fn every_hidpp_report_size_can_carry_a_notification() {
+        for report_id in [0x10, 0x11, 0x12] {
+            let mut bytes = answer_frame(1, 7, 0x00, &[1]);
+            bytes[0] = report_id;
+            assert!(Notification::parse(&bytes).is_some(), "{report_id:#04x}");
+        }
+    }
+
+    #[test]
+    fn the_event_number_is_the_high_nibble() {
+        for event in [0, 1, 5, 15] {
+            let notification = Notification::parse(&answer_frame(1, 7, event << 4, &[])).unwrap();
+            assert_eq!(notification.event, event);
+        }
+    }
+
+    #[test]
+    fn answers_errors_and_odd_frames_are_not_notifications() {
+        let answer = answer_frame(1, 7, 0x1B, &[1]);
+        assert_eq!(Notification::parse(&answer), None, "software id present");
+        assert_eq!(
+            Notification::parse(&answer_frame(1, 0xFF, 0x00, &[1])),
+            None,
+            "hidpp 2.0 error"
+        );
+        assert_eq!(
+            Notification::parse(&answer_frame(1, 0x8F, 0x00, &[1])),
+            None,
+            "hidpp 1.0 error"
+        );
+        let mut other_report = answer_frame(1, 7, 0x00, &[1]);
+        other_report[0] = 0x20;
+        assert_eq!(Notification::parse(&other_report), None);
+        assert_eq!(Notification::parse(&[0x11, 1, 7]), None);
+        assert_eq!(Notification::parse(&[]), None);
     }
 
     #[test]
