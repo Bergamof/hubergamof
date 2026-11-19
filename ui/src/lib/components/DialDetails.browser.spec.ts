@@ -49,6 +49,7 @@ const CONFIG = {
 
 async function show(assignment: DialAssignment = VOLUME, config: DeviceConfig = CONFIG, index = 0) {
 	const onassign = vi.fn();
+	const onswap = vi.fn();
 	await render(DialDetails, {
 		index,
 		config,
@@ -61,13 +62,26 @@ async function show(assignment: DialAssignment = VOLUME, config: DeviceConfig = 
 		moduleOf: (kind: string) => MODULES.find((candidate) => candidate.kind === kind),
 		headingId: 'details-heading',
 		onassign,
+		onswap,
 		onapply: vi.fn(),
 		ondiscard: vi.fn()
 	});
-	return { onassign };
+	return { onassign, onswap };
 }
 
 describe('DialDetails', () => {
+	it('swaps with the neighbouring dials, and ignores the missing one at each end', async () => {
+		const config = { ...CONFIG, dials: [VOLUME, VOLUME, VOLUME] } as unknown as DeviceConfig;
+		const first = await show(VOLUME, config, 0);
+		await page.getByRole('button', { name: /Échanger avec la précédente/ }).click({ force: true });
+		await expect
+			.element(page.getByRole('button', { name: /Échanger avec la précédente/ }))
+			.toHaveAttribute('aria-disabled', 'true');
+		expect(first.onswap).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: /Échanger avec la suivante/ }).click();
+		expect(first.onswap).toHaveBeenCalledExactlyOnceWith(1);
+	});
+
 	it('names the dial and offers the functions, the current one selected', async () => {
 		await show();
 		await expect.element(page.getByRole('heading', { name: 'Molette 1' })).toBeVisible();
