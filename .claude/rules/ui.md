@@ -19,6 +19,7 @@ paths:
 - `$state.snapshot` sur un type contenant `JsonValue` (récursif) : « Type instantiation is excessively deep » → `cloneJson` (`#lib/deck/json.js`).
 - Annonces vocales : un message identique au précédent n'est pas relu par un lecteur d'écran (`announce()` de `DeckEditor` vide la région puis la remplit). `aria-current="true"` marque la tuile (touche, molette, bande) dont les détails sont ouverts : choix assumé, pas `aria-pressed`. Le conteneur `role="alert"` de `Notices` reste dans le DOM même vide (`empty:hidden`) : fiable, à garder.
 - Largeur : les tuiles de touches se réduisent (`w-full max-w-24`, colonnes `minmax(0, 1fr)`), l'éditeur tient sans défilement horizontal à 320 px (test e2e) ; textes d'information en `text-sm` au moins.
+- Texte sous la grille de touches : le corps de l'appareil est en `w-fit`, un paragraphe long en fixerait la largeur → `w-0 min-w-full` (suit la grille, revient à la ligne). Un test de composant ne mesure la mise en page qu'avec `import '../../routes/layout.css'` (sinon Tailwind est absent).
 - `StripPreview.svelte` recopie les palettes de `render/strip.rs` : le test Rust `the_ui_preview_uses_the_palettes_of_the_strip` échoue si elles divergent (la mise en page, elle, reste à tenir à la main).
 - Identifiants DOM : `$props.id()`, jamais d'id en dur dans un composant.
 - Bouton qui devient inactif sous le focus (déplacer en bout de liste) : `aria-disabled` + action ignorée, pas `disabled` (le focus tomberait sur `body`).

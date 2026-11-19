@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Corrigé
+
+- Interface : les textes d'aide sous les touches (défilement par la molette Navigation, déplacement d'une touche) reviennent à la ligne au lieu d'élargir le panneau qui représente le Stream Deck ; test de composant `KeyGrid` (#67).
+
 ### Ajouté
 
 - Mises à jour, volet 2 (installation automatique) : le gestionnaire installé par paquet télécharge la release et l'envoie, par le socket `/run/hubergamof-update.sock`, à un service système (unités `hubergamof-update.socket` / `hubergamof-update@.service`, activées par les scripts du paquet) dont l'assistant `hubergamof-update-helper` (root) vérifie la signature Ed25519 de `SHA256SUMS` (clé publique embarquée), l'empreinte du paquet et que la version est plus récente, puis installe par `apt-get`/`pacman`. Pas de `pkexec` ni de polkit : l'assistant ne lit que des octets reçus, avec l'environnement de systemd. Installation automatique par défaut, interrupteur dans l'interface (`updates.json`), bouton « Mettre à jour maintenant » / « Réessayer », entrée « Mettre à jour vers X.Y.Z » du tray. Le workflow de release signe `SHA256SUMS` dans un job dédié (secret `RELEASE_SIGNING_KEY`, environnement `release`, `SHA256SUMS.sig` publié). Hors paquet : annonce sans installation.

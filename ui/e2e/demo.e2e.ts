@@ -81,6 +81,17 @@ test('explique comment déplacer une touche, à la souris comme au clavier', asy
 	await expect(page.getByText(/Glissez une touche pour la déplacer/)).toBeVisible();
 });
 
+test('le texte d’aide revient à la ligne sans élargir le panneau de l’appareil', async ({
+	page
+}) => {
+	await open(page);
+	const help = page.getByText(/Glissez une touche pour la déplacer/);
+	const grid = page.getByRole('list').filter({ has: key(page, '1 : Audio') });
+	const helpBox = await help.boundingBox();
+	const gridBox = await grid.boundingBox();
+	expect(helpBox?.width).toBeLessThanOrEqual(gridBox?.width ?? 0);
+});
+
 test('tient sans défilement horizontal sur un écran de 320 px', async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 800 });
 	await open(page);

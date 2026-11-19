@@ -114,7 +114,8 @@ its details; keys can also be reordered with the mouse (the keyboard way is in t
 	</li>
 </ol>
 {#if overflows}
-	<p class="mt-3 text-sm text-device-muted">
+	<!-- w-0 min-w-full: the text follows the grid width instead of widening the device body. -->
+	<p class="mt-3 w-0 min-w-full text-sm wrap-break-word text-device-muted">
 		L’appareil affiche {visibleRows} ligne{visibleRows > 1 ? 's' : ''} de {columns} touches à la fois
 		: les suivantes s’atteignent en faisant défiler avec la molette Navigation.
 	</p>

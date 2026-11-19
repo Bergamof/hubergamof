@@ -265,7 +265,7 @@ selected key or dial.
 						onmove={move}
 						onadd={() => (pickerOpen = true)}
 					/>
-					<p class="text-sm text-device-muted">
+					<p class="w-0 min-w-full text-sm wrap-break-word text-device-muted">
 						Glissez une touche pour la déplacer, ou sélectionnez-la puis utilisez « Déplacer avant »
 						et « Déplacer après ».
 					</p>
