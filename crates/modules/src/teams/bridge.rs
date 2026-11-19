@@ -102,13 +102,13 @@ impl TeamsState {
         self.badges.map_or(self.unread, |badges| badges.chats)
     }
 
-    /// Unread conversations the extension could not name: the badge
-    /// announces more than the list shows.
+    /// What the counter says of the conversations beyond the list: positive
+    /// when it announces more than the list names, negative when it announces
+    /// fewer (a list read before the counter fell), `0` when they agree.
     #[must_use]
-    pub fn hidden_conversations(&self) -> usize {
-        usize::try_from(self.unread_chats())
-            .unwrap_or(usize::MAX)
-            .saturating_sub(self.conversations.len())
+    pub fn conversation_gap(&self) -> i64 {
+        let known = i64::try_from(self.conversations.len()).unwrap_or(i64::MAX);
+        i64::from(self.unread_chats()) - known
     }
 
     /// Everything waiting for the user, as the home key counts it: the

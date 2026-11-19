@@ -1059,3 +1059,31 @@ async fn a_call_shows_even_when_the_windows_are_not_listed() {
     harness.in_call().await;
     assert_eq!(harness.module.key().label.as_deref(), Some("En appel"));
 }
+
+#[tokio::test]
+async fn the_conversations_key_shows_a_negative_gap_when_the_counter_is_lower() {
+    // Three named conversations, the badge says one.
+    let harness = harness_with_badges(0, 1, &["Adam", "Benjamin", "Camille"]);
+    assert_eq!(
+        unread_labels(&harness),
+        ["-2", "Adam", "Benjamin", "Camille"]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_negative_gap_key_shows_the_conversation_panel_all_the_same() {
+    let mut harness = harness_with_badges(0, 1, &["Adam", "Benjamin"]);
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    let item = ItemId(CONVERSATIONS_ITEM.into());
+    assert_eq!(
+        harness
+            .module
+            .on_item_press(&UNREAD_PAGE.into(), &item)
+            .await,
+        []
+    );
+    assert_eq!(harness.bridge.opened_panels(), [Panel::Chat]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), []);
+}

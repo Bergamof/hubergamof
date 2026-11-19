@@ -466,8 +466,8 @@ fn call_notification(caller: Option<&str>) -> Notification {
 
 /// The unread keys, hidden while the computer is locked (a name must not be
 /// read by someone passing by): the Activity counter, the "+N" of the
-/// conversations the list does not name (what the Conversation badge says
-/// beyond the list), then one key per named unread conversation, with its
+/// gap between the Conversation badge and the named conversations
+/// ("+N" or "-N", absent when they agree), then one key per named unread conversation, with its
 /// avatar or a generic icon.
 fn unread_items(state: &TeamsState) -> Vec<PageItem> {
     let mut items = Vec::new();
@@ -482,12 +482,12 @@ fn unread_items(state: &TeamsState) -> Vec<PageItem> {
             .hidden_when_locked(true),
         );
     }
-    let hidden = state.hidden_conversations();
-    if hidden > 0 {
+    let gap = state.conversation_gap();
+    if gap != 0 {
         items.push(
             PageItem::new(
                 ItemId(CONVERSATIONS_ITEM.into()),
-                KeyContent::with_icon(&CONVERSATION, format!("+{hidden}")),
+                KeyContent::with_icon(&CONVERSATION, format!("{gap:+}")),
             )
             .hidden_when_locked(true),
         );
