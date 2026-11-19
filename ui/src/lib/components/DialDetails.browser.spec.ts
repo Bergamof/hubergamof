@@ -82,7 +82,7 @@ describe('DialDetails', () => {
 				(option) => option.textContent
 			);
 		expect(optionsOf('Fonctions des modules configurés')).toEqual(['Contrôle du volume']);
-		expect(optionsOf('Nouveau module')).toContain('Contrôle du pomodoro');
+		expect(optionsOf('Nouveau module (réglages à zéro)')).toContain('Contrôle du pomodoro');
 		// Where a function lives is not repeated in its name: no « (module, touche 1) ».
 		const names = Array.from(document.querySelectorAll('option'), (option) => option.textContent);
 		expect(names.every((name) => !name?.includes('('))).toBe(true);

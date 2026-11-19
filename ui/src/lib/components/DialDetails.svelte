@@ -147,7 +147,7 @@ nothing, and the settings of the module of that function.
 					</optgroup>
 				{/if}
 				{#if freeModules.length > 0}
-					<optgroup label="Nouveau module">
+					<optgroup label="Nouveau module (réglages à zéro)">
 						{#each freeModules as candidate (candidate.kind)}
 							{#each candidate.dialFunctions as fn (fn.id)}
 								<option value={newOption(candidate, fn)}>{fn.name}</option>
@@ -169,8 +169,8 @@ nothing, and the settings of the module of that function.
 			<p id="{uid}-description" class="text-sm text-muted">{description}</p>
 		{/if}
 		<p id="{uid}-hint" class="text-sm text-muted">
-			Un module déjà configuré garde ses réglages, partagés avec ses autres emplacements. Un module
-			n’occupe qu’une seule molette.
+			Choisir un module déjà configuré réutilise ses réglages, communs à tous ses emplacements
+			(touche ou molette). Un module n’occupe qu’une seule molette.
 		</p>
 		{#if lost}
 			<p id="{uid}-lost" class="text-sm font-medium text-warning">
