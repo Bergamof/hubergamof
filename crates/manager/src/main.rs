@@ -120,6 +120,15 @@ enum Command {
         #[arg(long, value_enum, default_value_t = Browser::Brave)]
         browser: Browser,
     },
+
+    /// List what the Logitech mice on this machine tell about themselves
+    /// (HID++ features, remappable buttons). Read-only: nothing is written to
+    /// a device. Paste the output when asking for a model to be supported.
+    MouseProbe {
+        /// Also print every frame exchanged with the devices.
+        #[arg(long)]
+        trace: bool,
+    },
 }
 
 /// Where devices come from.
@@ -136,12 +145,14 @@ async fn main() -> Result<()> {
     init_tracing(match cli.command {
         // The native host owns stdout: its frames, nothing else.
         Some(Command::NativeHost { .. }) => LogOutput::Stderr,
-        Some(Command::Open | Command::InstallExtension { .. }) | None => LogOutput::Stdout,
+        Some(Command::Open | Command::InstallExtension { .. } | Command::MouseProbe { .. })
+        | None => LogOutput::Stdout,
     });
     match cli.command {
         Some(Command::Open) => run_open(cli.port).await,
         Some(Command::NativeHost { origin }) => exit_with(run_native_host(&origin).await),
         Some(Command::InstallExtension { browser }) => install_extension(browser),
+        Some(Command::MouseProbe { trace }) => run_mouse_probe(trace),
         None => run_manager(cli).await,
     }
 }
@@ -161,6 +172,13 @@ fn exit_with(outcome: Result<()>) -> ! {
         }
     };
     std::process::exit(code)
+}
+
+/// Prints the read-only inventory of the Logitech devices (`mouse-probe`).
+fn run_mouse_probe(trace: bool) -> Result<()> {
+    let scans = hubergamof_mouse::hidraw::scan_hardware(trace)?;
+    hubergamof_mouse::probe::render(&mut std::io::stdout().lock(), &scans)
+        .context("cannot write the report")
 }
 
 /// Installs the Teams extension and its native messaging host.
@@ -658,6 +676,20 @@ mod tests {
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
         let cli = Cli::try_parse_from(["hubergamof", "native-host"]).unwrap();
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
+    }
+
+    #[test]
+    fn mouse_probe_traces_on_request() {
+        let cli = Cli::try_parse_from(["hubergamof", "mouse-probe"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::MouseProbe { trace: false })
+        ));
+        let cli = Cli::try_parse_from(["hubergamof", "mouse-probe", "--trace"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::MouseProbe { trace: true })
+        ));
     }
 
     #[test]

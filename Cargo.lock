@@ -945,6 +945,7 @@ dependencies = [
  "hidapi",
  "hubergamof-module-api",
  "hubergamof-modules",
+ "hubergamof-mouse",
  "hubergamof-protocol",
  "image",
  "jiff",
@@ -998,6 +999,14 @@ dependencies = [
  "tokio",
  "tracing",
  "zbus",
+]
+
+[[package]]
+name = "hubergamof-mouse"
+version = "0.1.0"
+dependencies = [
+ "hidapi",
+ "thiserror",
 ]
 
 [[package]]
