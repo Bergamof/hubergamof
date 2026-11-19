@@ -74,6 +74,7 @@ Détail complet (par crate, flux, API) : `docs/architecture.md` ; modules : `doc
 ## Modèle de domaine
 - `Device` — serial, modèle, capacités (grille de touches, taille image, molettes, bande tactile).
 - `DeviceConfig` — luminosité, accueil (instances de modules ordonnées), `DialAssignment` par molette, `StripConfig`, thème (`DeviceTheme`), réglages des modules, images/libellés remplacés, `lock_sleep_seconds` ; schéma 3 (1 et 2 migrés).
+- `MouseConfig` (par souris, `config/devices/<serial>/mouse.json`, schéma 1) — liaisons `MouseControlId` → `ButtonAction` (aucune, clic, double clic, bascule de molette, menu circulaire, action de module, raccourci ; un contrôle sans entrée reste natif), pointeur, molette, molette du pouce, haptique (`HapticSettings`) ; `MouseModel::capabilities()` donne les contrôles de chaque modèle (clic gauche/droit verrouillés) ; `RadialMenuConfig` (globale, `config/radial-menu.json`, schéma 1) — entrées par module, action principale au clic (ou fermer), durée du maintien. Types dans `crates/protocol/src/mouse/` et `radial.rs` ; les identifiants HID++ des boutons ne sont pas dans le contrat (ils iront dans `crates/mouse`).
 - `ModuleInstance` — type de module + id + réglages ; fournit touche, pages, fonctions de molette, widget et menu de bande.
 - `Page` → liste de `Key` (image, libellé, `Action` | `OpenPage`) ; `NavState` par appareil (pile de pages, ligne visible).
 
@@ -106,7 +107,7 @@ Détail (Docker, notifications animées, Painter, tests du moteur, zbus, Teams�
 - Requêtes vers des API publiques : User-Agent générique, jamais d'information personnelle.
 
 ## État du projet
-- En cours : support des souris Logitech MX (étape 0 faite et validée sur le matériel : crate `mouse`, `mouse-probe`, relevés dans `docs/mouse-hidpp.md` ; ensuite domaine et contrat, moteur, modules, menu circulaire, interface). Bureau visé d'abord : KDE/Wayland (Manjaro), GNOME (Ubuntu 24.04) en repli.
+- En cours : support des souris Logitech MX (étapes 0 (crate `mouse`, `mouse-probe`, relevés dans `docs/mouse-hidpp.md`) et 1 (domaine et contrat : `MouseConfig`, `RadialMenuConfig`, `HapticWaveform`) faites ; ensuite persistance et moteur, modules, menu circulaire, interface). Bureau visé d'abord : KDE/Wayland (Manjaro), GNOME (Ubuntu 24.04) en repli.
 - Fait : tout le socle (protocole, moteur, rendu, config, serveur web/WebSocket, tray, UI de configuration, images, export/import), bande tactile globale, molette contextuelle, verrouillage, lanceur de bureau, modules audio, pomodoro, docker, intellij, claude, notifications, teams (pont, extension, installateur, rappels de réunions, appel entrant côté module) ; revues des spécialistes faites et corrigées (audit complet du 2026-11-18 : 0 bloquant). Historique : `docs/decisions.md`.
 - À valider sur le vrai Stream Deck+ : latence des molettes avec écritures de bande, appui long de la molette contextuelle, lisibilité du cadre sur les touches, extinction au verrouillage (vrai KDE/GNOME), lanceur de bureau, extension Teams dans Brave (sélecteurs non validés ; reste la détection de la sonnerie et les noms des non lus par D-Bus).
 - À valider sur poste réel : mises à jour automatiques (activation du socket par systemd, `apt-get`/`pacman` depuis l'assistant, redémarrage du service) après la première release signée.

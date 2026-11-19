@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use ts_rs::{Config, TS, TypeVisitor};
 
 use crate::{
-    ApiError, ClientMessage, FileChooserRequest, FileChosen, ImageUploaded, ServerMessage,
+    ApiError, ClientMessage, FileChooserRequest, FileChosen, ImageUploaded, MouseConfig, MouseInfo,
+    RadialMenuConfig, ServerMessage,
 };
 
 const INDEX_FILE: &str = "index.ts";
@@ -60,6 +61,9 @@ fn export_bindings_index() {
     FileChosen::export_all(&cfg).unwrap();
     ImageUploaded::export_all(&cfg).unwrap();
     ApiError::export_all(&cfg).unwrap();
+    MouseInfo::export_all(&cfg).unwrap();
+    MouseConfig::export_all(&cfg).unwrap();
+    RadialMenuConfig::export_all(&cfg).unwrap();
 
     let mut outputs = OutputPaths::default();
     outputs.collect::<ClientMessage>();
@@ -68,6 +72,9 @@ fn export_bindings_index() {
     outputs.collect::<FileChosen>();
     outputs.collect::<ImageUploaded>();
     outputs.collect::<ApiError>();
+    outputs.collect::<MouseInfo>();
+    outputs.collect::<MouseConfig>();
+    outputs.collect::<RadialMenuConfig>();
 
     let mut index = format!("{HEADER}\n");
     for path in &outputs.paths {
