@@ -10,9 +10,11 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 ### Corrigé
 
 - Molettes : « Affecter » une fonction qui retire un module placé nulle part ailleurs (sauf fonctions du gestionnaire) demande maintenant confirmation, comme le retrait d'une touche ; ses réglages seraient perdus (#69).
+- Interface : les textes d'aide sous les touches (défilement par la molette Navigation, déplacement d'une touche) reviennent à la ligne au lieu d'élargir le panneau qui représente le Stream Deck ; test de composant `KeyGrid` (#67).
 
 ### Ajouté
 
+- Interface : les fonctions de deux molettes s'échangent par cliquer-glisser (comme les touches) ou au clavier avec « Échanger avec la précédente / la suivante » dans les détails de la molette ; édition pure `swapDials`, annonce vocale, tests unitaires, composants et e2e (#70).
 - Mises à jour, volet 2 (installation automatique) : le gestionnaire installé par paquet télécharge la release et l'envoie, par le socket `/run/hubergamof-update.sock`, à un service système (unités `hubergamof-update.socket` / `hubergamof-update@.service`, activées par les scripts du paquet) dont l'assistant `hubergamof-update-helper` (root) vérifie la signature Ed25519 de `SHA256SUMS` (clé publique embarquée), l'empreinte du paquet et que la version est plus récente, puis installe par `apt-get`/`pacman`. Pas de `pkexec` ni de polkit : l'assistant ne lit que des octets reçus, avec l'environnement de systemd. Installation automatique par défaut, interrupteur dans l'interface (`updates.json`), bouton « Mettre à jour maintenant » / « Réessayer », entrée « Mettre à jour vers X.Y.Z » du tray. Le workflow de release signe `SHA256SUMS` dans un job dédié (secret `RELEASE_SIGNING_KEY`, environnement `release`, `SHA256SUMS.sig` publié). Hors paquet : annonce sans installation.
 - Mises à jour, volet 1 (vérification) : le gestionnaire interroge l'API des releases GitHub du dépôt public (sans jeton) 60 s après son démarrage puis toutes les 24 h, ou à la demande (`checkForUpdates`) ; versions stables seulement. Le contrat gagne `UpdateStatus` / `updateStatus`. L'interface affiche la version, le résultat et un bouton « Rechercher des mises à jour » ; le menu du tray ajoute « Mise à jour disponible (X.Y.Z) ». `--demo` annonce une version fictive sans réseau. Dépendance `reqwest` (rustls, racines du système) ; licence `CDLA-Permissive-2.0` (certificats Mozilla) autorisée dans `deny.toml`. Option `--no-update-check` : aucune connexion sortante. L'installation automatique suit (volet 2).
 - Bande tactile : dessinée dès que l'appareil la déclare, même sans molette (UI et hôte partagent la règle) ; test du moteur et de l'aperçu.
@@ -63,6 +65,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Réglage des molettes : la liste des fonctions n'affiche plus l'emplacement ni « nouveau » entre parenthèses (« Contrôle du volume », plus « Contrôle du volume (Audio, touche 1) »), et le champ « Libellé » n'apparaît que sur une touche, plus sur une molette (#68).
 - Module Docker : les touches « Up » et « Down » du projet (et du conteneur) deviennent « Monter » et « Démonter » ; les entrées de la page « Monter » se nomment « Up », « Up build » et « Up no start » ; la page « Démonter » ne change pas.
 - Module Docker : les commandes `docker compose` (up, pull, down) n'ont plus de délai maximal (l'ancien plafond de 15 minutes faisait échouer un `up` qui tire de grosses images) ; seule la lecture des services garde 30 s.
 - Disposition par défaut d'un nouvel appareil : touches Audio, Docker, IntelliJ, Claude, Notifications.

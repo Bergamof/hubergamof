@@ -16,6 +16,7 @@ import {
 	setLockSleepSeconds,
 	setStrip,
 	setTheme,
+	swapDials,
 	updateInstance
 } from './config-edits.js';
 
@@ -133,6 +134,26 @@ describe('edits', () => {
 		const edited = removeKey(0)(original);
 		expect(edited.revision).toBe(7);
 		expect(original).toEqual(frozen);
+	});
+
+	it('swap the functions of two dials without touching the instances', () => {
+		const original = config();
+		const edited = swapDials(0, 3)(original);
+		expect(edited.dials).toEqual([
+			{ kind: 'none' },
+			original.dials[1],
+			original.dials[2],
+			original.dials[0]
+		]);
+		expect(edited.modules).toEqual(original.modules);
+		expect(swapDials(3, 0)(swapDials(0, 3)(original)).dials).toEqual(original.dials);
+	});
+
+	it('ignore a dial swap that is identical or out of range', () => {
+		const original = config();
+		expect(swapDials(1, 1)(original)).toBe(original);
+		expect(swapDials(-1, 1)(original)).toBe(original);
+		expect(swapDials(0, 4)(original)).toBe(original);
 	});
 
 	it('round and clamp the brightness', () => {

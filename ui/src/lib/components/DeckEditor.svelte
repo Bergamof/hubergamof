@@ -19,6 +19,7 @@ selected key or dial.
 		sharedInstance,
 		moveKey,
 		removeKey,
+		swapDials,
 		removedInstance,
 		setBrightness,
 		setLockSleepSeconds,
@@ -84,9 +85,7 @@ selected key or dial.
 		)
 	);
 	const dialCandidates = $derived(
-		config.modules
-			.filter((instance) => (moduleOf(instance.kind)?.dialFunctions.length ?? 0) > 0)
-			.map((instance) => ({ instance, place: placeOf(instance.id) }))
+		config.modules.filter((instance) => (moduleOf(instance.kind)?.dialFunctions.length ?? 0) > 0)
 	);
 
 	const selected = $derived.by(() => {
@@ -107,15 +106,6 @@ selected key or dial.
 				(assignment) => assignment.kind === 'module' && assignment.instance === instance.id
 			)
 		);
-	}
-
-	function placeOf(id: string): string {
-		const key = config.home.indexOf(id);
-		if (key >= 0) return `touche ${key + 1}`;
-		const dial = config.dials.findIndex(
-			(assignment) => assignment.kind === 'module' && assignment.instance === id
-		);
-		return `molette ${dial + 1}`;
 	}
 
 	function keyButtonId(position: number): string {
@@ -231,6 +221,12 @@ selected key or dial.
 		document.getElementById(keyButtonId(neighbour))?.focus();
 	}
 
+	function swap(from: number, to: number) {
+		void deck.edit(swapDials(from, to));
+		selection = { surface: 'dial', index: to };
+		void announce(`Molettes ${from + 1} et ${to + 1} échangées.`);
+	}
+
 	function assign(index: number, choice: DialChoice) {
 		void deck.edit(assignDial(index, choice));
 		void announce(`Fonction de la molette ${index + 1} modifiée.`);
@@ -265,7 +261,7 @@ selected key or dial.
 						onmove={move}
 						onadd={() => (pickerOpen = true)}
 					/>
-					<p class="text-sm text-device-muted">
+					<p class="w-0 min-w-full text-sm wrap-break-word text-device-muted">
 						Glissez une touche pour la déplacer, ou sélectionnez-la puis utilisez « Déplacer avant »
 						et « Déplacer après ».
 					</p>
@@ -292,6 +288,7 @@ selected key or dial.
 							{dials}
 							selected={selected?.surface === 'dial' ? selected.index : undefined}
 							onselect={selectDial}
+							onswap={swap}
 						/>
 					</section>
 				{/if}
@@ -352,6 +349,7 @@ selected key or dial.
 						{moduleOf}
 						headingId={detailsHeadingId}
 						onassign={(choice) => assign(index, choice)}
+						onswap={(other) => swap(index, other)}
 						onapply={(changes) => apply(instance, changes)}
 						ondiscard={(fields) => discarded(instance, fields)}
 					/>

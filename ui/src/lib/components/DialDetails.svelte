@@ -42,14 +42,16 @@ nothing, and the settings of the module of that function.
 		assignment: DialAssignment;
 		/** The instance of that function, if it is one of a module. */
 		instance: ModuleInstance | null;
-		/** Instances offering dial functions, with where they are placed. */
-		candidates: readonly { instance: ModuleInstance; place: string }[];
+		/** Instances offering dial functions. */
+		candidates: readonly ModuleInstance[];
 		/** Modules offering dial functions, for a new instance. */
 		modules: readonly CatalogModule[];
 		moduleOf: (kind: string) => CatalogModule | undefined;
 		/** Id of the heading, for the page to bring it into view. */
 		headingId: string;
 		onassign: (choice: DialChoice) => void;
+		/** Swaps this dial with dial `other`. */
+		onswap: (other: number) => void;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
 		/** Called when the settings editor goes away with refused fields (see `InstanceEditor`). */
 		ondiscard: (fields: string[]) => void;
@@ -67,6 +69,7 @@ nothing, and the settings of the module of that function.
 		moduleOf,
 		headingId,
 		onassign,
+		onswap,
 		onapply,
 		ondiscard
 	}: Props = $props();
@@ -80,13 +83,15 @@ nothing, and the settings of the module of that function.
 	};
 
 	const uid = $props.id();
+	const isFirst = $derived(index === 0);
+	const isLast = $derived(index === config.dials.length - 1);
 	const current = $derived(assignmentOption(assignment));
 	let chosen: string | undefined = $state();
 	/** The assignment waits for confirmation: it would delete a module and its settings. */
 	let confirming = $state(false);
 	/** A module has one dial at most: what another dial already offers is not proposed. */
 	const freeCandidates = $derived(
-		candidates.filter(({ instance }) => !kindOnOtherDial(config, instance.kind, index))
+		candidates.filter((instance) => !kindOnOtherDial(config, instance.kind, index))
 	);
 	const freeModules = $derived(modules.filter(({ kind }) => !kindOnOtherDial(config, kind, index)));
 	const pending = $derived(chosen ?? current);
@@ -130,6 +135,25 @@ nothing, and the settings of the module of that function.
 
 <section aria-labelledby={headingId} class="flex flex-col gap-4">
 	<h2 id={headingId} tabindex="-1" class="text-lg font-semibold">Molette {index + 1}</h2>
+	<!-- aria-disabled rather than disabled: a disabled button would drop the keyboard focus. -->
+	<div class="flex flex-wrap gap-2">
+		<button
+			type="button"
+			class="secondary-button"
+			aria-disabled={isFirst}
+			onclick={() => isFirst || onswap(index - 1)}
+		>
+			<span aria-hidden="true">←</span> Échanger avec la molette précédente
+		</button>
+		<button
+			type="button"
+			class="secondary-button"
+			aria-disabled={isLast}
+			onclick={() => isLast || onswap(index + 1)}
+		>
+			Échanger avec la molette suivante <span aria-hidden="true">→</span>
+		</button>
+	</div>
 	<form class="flex flex-col gap-2" onsubmit={assign}>
 		<label class="font-medium" for="{uid}-function">Fonction</label>
 		<div class="flex flex-wrap gap-2">
@@ -147,23 +171,19 @@ nothing, and the settings of the module of that function.
 				<option value={CONTEXTUAL_OPTION}>Fonction contextuelle</option>
 				{#if freeCandidates.length > 0}
 					<optgroup label="Fonctions des modules configurés">
-						{#each freeCandidates as candidate (candidate.instance.id)}
-							{@const kind = moduleOf(candidate.instance.kind)}
+						{#each freeCandidates as candidate (candidate.id)}
+							{@const kind = moduleOf(candidate.kind)}
 							{#each kind?.dialFunctions ?? [] as fn (fn.id)}
-								<option value={existingOption(candidate.instance.id, fn.id)}>
-									{fn.name} ({instanceName(candidate.instance, kind)}, {candidate.place})
-								</option>
+								<option value={existingOption(candidate.id, fn.id)}>{fn.name}</option>
 							{/each}
 						{/each}
 					</optgroup>
 				{/if}
 				{#if freeModules.length > 0}
-					<optgroup label="Nouveau module">
+					<optgroup label="Nouveau module (réglages à zéro)">
 						{#each freeModules as candidate (candidate.kind)}
 							{#each candidate.dialFunctions as fn (fn.id)}
-								<option value={newOption(candidate, fn)}>
-									{fn.name} ({candidate.name}, nouveau)
-								</option>
+								<option value={newOption(candidate, fn)}>{fn.name}</option>
 							{/each}
 						{/each}
 					</optgroup>
@@ -182,8 +202,8 @@ nothing, and the settings of the module of that function.
 			<p id="{uid}-description" class="text-sm text-muted">{description}</p>
 		{/if}
 		<p id="{uid}-hint" class="text-sm text-muted">
-			Un module déjà configuré garde ses réglages, partagés avec ses autres emplacements. Un module
-			n’occupe qu’une seule molette.
+			Choisir un module déjà configuré réutilise ses réglages, communs à tous ses emplacements
+			(touche ou molette). Un module n’occupe qu’une seule molette.
 		</p>
 		{#if lost}
 			<p id="{uid}-lost" class="text-sm font-medium text-warning">
@@ -205,7 +225,7 @@ nothing, and the settings of the module of that function.
 			</p>
 		{/if}
 		{#key `${instance.id}/${module?.kind ?? ''}`}
-			<InstanceEditor {instance} {module} {serial} {api} {onapply} {ondiscard} />
+			<InstanceEditor {instance} {module} showLabel={false} {serial} {api} {onapply} {ondiscard} />
 		{/key}
 	{/if}
 </section>

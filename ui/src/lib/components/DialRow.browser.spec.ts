@@ -12,8 +12,9 @@ const FREE = dial('Rien', { rotate: null, assigned: false });
 
 async function renderRow(dials: readonly DialSummary[], selected?: number) {
 	const onselect = vi.fn();
-	const { container } = await render(DialRow, { dials, selected, onselect });
-	return { container, onselect };
+	const onswap = vi.fn();
+	const { container } = await render(DialRow, { dials, selected, onselect, onswap });
+	return { container, onselect, onswap };
 }
 
 describe('DialRow', () => {
@@ -38,6 +39,54 @@ describe('DialRow', () => {
 		await expect.element(second).toHaveAttribute('aria-current', 'true');
 		await page.getByRole('button', { name: 'Molette 1 : Navigation' }).click();
 		expect(onselect).toHaveBeenCalledWith(0);
+	});
+
+	it('swaps two dials dropped on one another', async () => {
+		const { container, onswap } = await renderRow([dial('Navigation'), dial('Volume'), FREE]);
+		const items = container.querySelectorAll('li');
+		const transfer = new DataTransfer();
+		items[0].dispatchEvent(new DragEvent('dragstart', { dataTransfer: transfer, bubbles: true }));
+		const over = new DragEvent('dragover', {
+			dataTransfer: transfer,
+			bubbles: true,
+			cancelable: true
+		});
+		items[2].dispatchEvent(over);
+		expect(over.defaultPrevented).toBe(true);
+		items[2].dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true }));
+		expect(onswap).toHaveBeenCalledExactlyOnceWith(0, 2);
+	});
+
+	it('ignores a drop on the dial itself and a foreign drag', async () => {
+		const { container, onswap } = await renderRow([dial('Navigation'), dial('Volume')]);
+		const items = container.querySelectorAll('li');
+		const transfer = new DataTransfer();
+		items[0].dispatchEvent(new DragEvent('dragstart', { dataTransfer: transfer, bubbles: true }));
+		items[0].dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true }));
+		const foreign = new DragEvent('dragover', {
+			dataTransfer: new DataTransfer(),
+			bubbles: true,
+			cancelable: true
+		});
+		items[1].dispatchEvent(foreign);
+		expect(foreign.defaultPrevented).toBe(false);
+		items[1].dispatchEvent(
+			new DragEvent('drop', { dataTransfer: new DataTransfer(), bubbles: true })
+		);
+		expect(onswap).not.toHaveBeenCalled();
+	});
+
+	it('outlines the dial under the drag until it leaves or the drag ends', async () => {
+		const { container } = await renderRow([dial('Navigation'), dial('Volume')]);
+		const target = container.querySelectorAll('li')[1];
+		const transfer = new DataTransfer();
+		transfer.setData('application/x-hubergamof-dial', '0');
+		target.dispatchEvent(
+			new DragEvent('dragover', { dataTransfer: transfer, bubbles: true, cancelable: true })
+		);
+		await vi.waitFor(() => expect(target.className).toContain('outline-dashed'));
+		target.dispatchEvent(new DragEvent('dragleave', { bubbles: true }));
+		await vi.waitFor(() => expect(target.className).not.toContain('outline-dashed'));
 	});
 
 	it('flags a function of a module this manager does not provide', async () => {

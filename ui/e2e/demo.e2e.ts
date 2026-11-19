@@ -81,6 +81,17 @@ test('explique comment déplacer une touche, à la souris comme au clavier', asy
 	await expect(page.getByText(/Glissez une touche pour la déplacer/)).toBeVisible();
 });
 
+test('le texte d’aide revient à la ligne sans élargir le panneau de l’appareil', async ({
+	page
+}) => {
+	await open(page);
+	const help = page.getByText(/Glissez une touche pour la déplacer/);
+	const grid = page.getByRole('list').filter({ has: key(page, '1 : Audio') });
+	const helpBox = await help.boundingBox();
+	const gridBox = await grid.boundingBox();
+	expect(helpBox?.width).toBeLessThanOrEqual(gridBox?.width ?? 0);
+});
+
 test('tient sans défilement horizontal sur un écran de 320 px', async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 800 });
 	await open(page);
@@ -140,6 +151,23 @@ test('déplace une touche à la souris', async ({ page }) => {
 	await key(page, '1 : Audio').dragTo(key(page, '3 : IntelliJ'));
 	await expect(key(page, '3 : Audio')).toBeVisible();
 	await expect(page.getByText('Touche déplacée en position 3 sur 5.')).toBeAttached();
+});
+
+test('échange deux molettes à la souris', async ({ page }) => {
+	await open(page);
+	await dial(page, '1 : Contrôle du volume').dragTo(dial(page, '3 : Fonction contextuelle'));
+	await expect(dial(page, '3 : Contrôle du volume')).toBeVisible();
+	await expect(dial(page, '1 : Fonction contextuelle')).toBeVisible();
+	await expect(page.getByText('Molettes 1 et 3 échangées.')).toBeAttached();
+});
+
+test('échange une molette avec sa voisine au clavier', async ({ page }) => {
+	await open(page);
+	await dial(page, '1 : Contrôle du volume').click();
+	await page.getByRole('button', { name: /Échanger avec la molette suivante/ }).click();
+	await expect(page.getByText('Molettes 1 et 2 échangées.')).toBeAttached();
+	await expect(dial(page, '2 : Contrôle du volume')).toHaveAttribute('aria-current', 'true');
+	await expect(dial(page, '1 : Contrôle du pomodoro')).toBeVisible();
 });
 
 test('refuse un réglage invalide, puis enregistre sans bouton un réglage valide', async ({
@@ -349,10 +377,12 @@ test('change la fonction d’une molette seulement sur « Affecter »', async ({
 	await page.getByRole('button', { name: 'Affecter' }).click();
 	await page.getByRole('button', { name: 'Retirer' }).click();
 	await dial(page, '3 : Navigation').click();
-	await fonction.selectOption({ label: 'Contrôle du pomodoro (Pomodoro, nouveau)' });
+	await fonction.selectOption({ label: 'Contrôle du pomodoro' });
 	await page.getByRole('button', { name: 'Affecter' }).click();
 	await expect(dial(page, '3 : Contrôle du pomodoro')).toBeVisible();
-	await expect(page.getByLabel('Libellé')).toHaveAttribute('placeholder', 'Pomodoro');
+	// The label names a key: a dial has none to edit, only the settings of its module.
+	await expect(page.getByLabel('Libellé')).toHaveCount(0);
+	await expect(page.getByRole('heading', { name: 'Réglages' })).toBeVisible();
 });
 
 test('règle la bande tactile, avec un aperçu qui suit', async ({ page, context }) => {

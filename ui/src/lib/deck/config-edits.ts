@@ -173,6 +173,17 @@ export function moveKey(from: number, to: number): ConfigEdit {
 	};
 }
 
+/** Swaps the functions of dials `first` and `second`; out-of-range or identical dials change nothing. */
+export function swapDials(first: number, second: number): ConfigEdit {
+	return (config) => {
+		const inRange = (dial: number) => dial >= 0 && dial < config.dials.length;
+		if (first === second || !inRange(first) || !inRange(second)) return config;
+		const dials = [...config.dials];
+		[dials[first], dials[second]] = [dials[second], dials[first]];
+		return { ...config, dials };
+	};
+}
+
 /**
  * What a dial gets: nothing, a function of the manager, a function of an instance already
  * configured, or a function of a new instance of a module.

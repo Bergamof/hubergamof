@@ -35,12 +35,14 @@ one being changed keeps what is typed, saved over the other change once finished
 		/** Device the instance belongs to, and the client storing the images of its settings. */
 		serial: string;
 		api: ManagerApi;
+		/** Whether the label is offered: it names a key, not a dial. */
+		showLabel?: boolean;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
 		/** Called when the editor goes away with refused fields, lost: their labels. */
 		ondiscard: (fields: string[]) => void;
 	}
 
-	let { instance, module, serial, api, onapply, ondiscard }: Props = $props();
+	let { instance, module, serial, api, showLabel = true, onapply, ondiscard }: Props = $props();
 
 	/** Longest label: it is drawn at the bottom of a key, where little more fits. */
 	const MAX_LABEL_LENGTH = 40;
@@ -220,30 +222,32 @@ one being changed keeps what is typed, saved over the other change once finished
 		</p>
 	</div>
 
-	<div class="flex flex-col gap-1">
-		<label class="font-medium" for="{uid}-label">Libellé</label>
-		<input
-			id="{uid}-label"
-			type="text"
-			class="field"
-			placeholder={moduleName(instance.kind, module)}
-			maxlength={MAX_LABEL_LENGTH}
-			bind:value={label}
-			oninput={typed}
-			onchange={commit}
-			onkeydown={(event) => {
-				if (event.isComposing) return;
-				if (event.key === 'Enter') commit();
-				else if (event.key === 'Escape') revertLabel();
-				else return;
-				event.preventDefault();
-			}}
-			aria-describedby="{uid}-label-hint"
-		/>
-		<p id="{uid}-label-hint" class="text-sm text-muted">
-			Vide : nom du module. {MAX_LABEL_LENGTH} caractères au plus.
-		</p>
-	</div>
+	{#if showLabel}
+		<div class="flex flex-col gap-1">
+			<label class="font-medium" for="{uid}-label">Libellé</label>
+			<input
+				id="{uid}-label"
+				type="text"
+				class="field"
+				placeholder={moduleName(instance.kind, module)}
+				maxlength={MAX_LABEL_LENGTH}
+				bind:value={label}
+				oninput={typed}
+				onchange={commit}
+				onkeydown={(event) => {
+					if (event.isComposing) return;
+					if (event.key === 'Enter') commit();
+					else if (event.key === 'Escape') revertLabel();
+					else return;
+					event.preventDefault();
+				}}
+				aria-describedby="{uid}-label-hint"
+			/>
+			<p id="{uid}-label-hint" class="text-sm text-muted">
+				Vide : nom du module. {MAX_LABEL_LENGTH} caractères au plus.
+			</p>
+		</div>
+	{/if}
 
 	{#if !module}
 		<p class="text-sm text-muted">
