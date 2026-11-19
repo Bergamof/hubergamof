@@ -48,4 +48,8 @@ serial: string,
 /**
  * Dial index.
  */
-index: number, } | { "type": "checkForUpdates" } | { "type": "ping" };
+index: number, } | { "type": "checkForUpdates" } | { "type": "installUpdate" } | { "type": "setAutoInstall", 
+/**
+ * Install automatically.
+ */
+enabled: boolean, } | { "type": "ping" };

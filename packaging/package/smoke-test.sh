@@ -18,6 +18,8 @@ version="$2"
 dist="$3"
 
 readonly BINARY=/usr/bin/hubergamof
+readonly HELPER=/usr/lib/hubergamof/hubergamof-update-helper
+readonly POLKIT_POLICY=/usr/share/polkit-1/actions/io.github.bergamof.hubergamof.update.policy
 readonly UNIT=/usr/lib/systemd/user/hubergamof.service
 readonly UDEV_RULE=/usr/lib/udev/rules.d/70-hubergamof.rules
 # shellcheck source=packaging/desktop/install-desktop.sh
@@ -57,10 +59,12 @@ remove_package() {
 
 check_files() {
 	local path
-	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "${DESKTOP_FILES[@]}"; do
+	for path in "$BINARY" "$HELPER" "$POLKIT_POLICY" "$UNIT" "$UDEV_RULE" "${DESKTOP_FILES[@]}"; do
 		[[ -e "$path" ]] || fail "fichier absent : $path"
 	done
 	[[ "$(stat -c %a "$BINARY")" == 755 ]] || fail "$BINARY n'est pas en 0755"
+	[[ "$(stat -c %a "$HELPER")" == 755 && "$(stat -c %U "$HELPER")" == root ]] || fail "$HELPER doit être en 0755 et à root"
+	grep -qF -- "org.freedesktop.policykit.exec.path\">$HELPER<" "$POLKIT_POLICY" || fail "action polkit sans le chemin de l'assistant"
 	grep -qF -- "$EXPECTED_EXEC_START" "$UNIT" || fail "ExecStart inattendu dans $UNIT"
 	grep -q 'TAG+="uaccess"' "$UDEV_RULE" || fail "règle udev sans uaccess"
 	# Hors commentaires : l'en-tête de la règle cite MODE="0666" pour expliquer pourquoi on l'évite.
@@ -74,6 +78,17 @@ check_binary() {
 }
 
 # Dépendance obligatoire du module Audio : pactl d'une version assez récente.
+# Les mises à jour automatiques : pkexec présent, et l'assistant refuse (sans rien
+# installer) un dossier de téléchargement vide.
+check_update_helper() {
+	command -v pkexec >/dev/null || fail "pkexec absent : mises à jour automatiques impossibles"
+	local empty output
+	empty="$(mktemp -d)"
+	if output="$("$HELPER" "$empty" 2>&1)"; then fail "l'assistant a accepté un dossier vide"; fi
+	rmdir "$empty"
+	grep -q 'SHA256SUMS' <<<"$output" || fail "message inattendu de l'assistant : $output"
+}
+
 check_pactl() {
 	local output major
 	command -v pactl >/dev/null || fail "pactl absent : dépendance audio non installée"
@@ -118,7 +133,7 @@ check_arch_lint() {
 
 check_removed() {
 	local path
-	for path in "$BINARY" "$UNIT" "$UDEV_RULE" "${DESKTOP_FILES[@]}"; do
+	for path in "$BINARY" "$HELPER" "$POLKIT_POLICY" "$UNIT" "$UDEV_RULE" "${DESKTOP_FILES[@]}"; do
 		[[ ! -e "$path" ]] || fail "fichier resté après désinstallation : $path"
 	done
 }
@@ -129,6 +144,8 @@ step "Fichiers"
 check_files
 step "Binaire"
 check_binary
+step "Assistant des mises à jour"
+check_update_helper
 step "pactl (module Audio)"
 check_pactl
 step "Unité systemd et règle udev"

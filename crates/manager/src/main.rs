@@ -29,8 +29,9 @@ use hubergamof_manager::strip::{ProcProbe, SimulatedProbe, SystemClock, SystemPr
 use hubergamof_manager::teams_extension::{self, Browser, Locations};
 use hubergamof_manager::tray::{TrayIcon, quit_on};
 use hubergamof_manager::update::{
-    self, FIRST_CHECK_DELAY, GithubReleases, ReleaseSource, SimulatedReleases, UpdateHandle,
-    Version,
+    self, Downloader, FIRST_CHECK_DELAY, FilePolicyStore, GithubReleases, Installed, Installer,
+    MemoryPolicyStore, PackageInstaller, PkexecHelper, SimulatedInstaller, SimulatedReleases,
+    SystemPackages, UnsupportedInstaller, UpdateHandle, UpdateParts, UpdatePolicy, Version,
 };
 use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
@@ -254,7 +255,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
     let supervisor = Supervisor::start(&discovery, services);
-    let updates = start_update_check(cli.demo, cli.no_update_check, stopping.clone());
+    let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
         discovery: discovery.clone(),
         engines: supervisor.engines(),
@@ -330,10 +331,12 @@ async fn run_manager(cli: Cli) -> Result<()> {
 /// always shows an available update.
 const DEMO_RELEASE: Version = Version::new(999, 0, 0);
 
-/// Starts the periodic check for a newer release. `--demo` never touches the
-/// network: it announces [`DEMO_RELEASE`] at once.
-fn start_update_check(demo: bool, disabled: bool, stopping: watch::Receiver<bool>) -> UpdateHandle {
-    if disabled {
+/// Starts the update service: the periodic check for a newer release and, when
+/// the installation is a system package, its installation. `--demo` never
+/// touches the network nor the system: it announces [`DEMO_RELEASE`] at once
+/// and simulates the installation, on request only.
+fn start_update_service(cli: &Cli, stopping: watch::Receiver<bool>) -> UpdateHandle {
+    if cli.no_update_check {
         tracing::info!("update check disabled by --no-update-check");
         return UpdateHandle::inactive();
     }
@@ -344,14 +347,11 @@ fn start_update_check(demo: bool, disabled: bool, stopping: watch::Receiver<bool
             return UpdateHandle::inactive();
         }
     };
-    let (source, first_delay): (Arc<dyn ReleaseSource>, Duration) = if demo {
-        (
-            Arc::new(SimulatedReleases::announcing(DEMO_RELEASE)),
-            Duration::ZERO,
-        )
+    let parts = if cli.demo {
+        demo_update_parts(current)
     } else {
-        match GithubReleases::new() {
-            Ok(source) => (Arc::new(source), FIRST_CHECK_DELAY),
+        match system_update_parts(current, &cli.config_dir) {
+            Ok(parts) => parts,
             Err(error) => {
                 tracing::warn!(%error, "update check disabled");
                 return UpdateHandle::inactive();
@@ -359,7 +359,56 @@ fn start_update_check(demo: bool, disabled: bool, stopping: watch::Receiver<bool
         }
     };
     // The task ends with the shutdown signal; nothing to wait for.
-    update::start(source, current, first_delay, stopping).0
+    update::start(parts, stopping).0
+}
+
+fn demo_update_parts(current: Version) -> UpdateParts {
+    UpdateParts {
+        source: Arc::new(SimulatedReleases::announcing(DEMO_RELEASE)),
+        installer: Arc::new(SimulatedInstaller::succeeding()),
+        // On request only, so that the interface shows the release first.
+        policy: Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
+            auto_install: false,
+        })),
+        current,
+        first_delay: Duration::ZERO,
+    }
+}
+
+fn system_update_parts(
+    current: Version,
+    config_dir: &std::path::Path,
+) -> Result<UpdateParts, update::UpdateError> {
+    Ok(UpdateParts {
+        source: Arc::new(GithubReleases::new()?),
+        installer: system_installer(),
+        policy: Arc::new(FilePolicyStore::in_dir(config_dir)),
+        current,
+        first_delay: FIRST_CHECK_DELAY,
+    })
+}
+
+/// Installs through the helper when this is a system package that ships it;
+/// otherwise (sources, container) the release is only announced.
+fn system_installer() -> Arc<dyn Installer> {
+    let packaged = Installed
+        .installed_format()
+        .filter(|_| std::path::Path::new(update::HELPER_PATH).is_file());
+    let (Some(format), Some(work_dir)) = (packaged, update::download_dir_from_env()) else {
+        return Arc::new(UnsupportedInstaller);
+    };
+    match Downloader::new() {
+        Ok(downloader) => Arc::new(PackageInstaller::new(
+            format,
+            downloader,
+            Box::new(PkexecHelper),
+            work_dir,
+        )),
+        Err(error) => {
+            tracing::warn!(%error, "updates cannot be installed");
+            Arc::new(UnsupportedInstaller)
+        }
+    }
 }
 
 /// Resolves when the tray's « Quitter » (or anything else) requests shutdown.

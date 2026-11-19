@@ -54,13 +54,24 @@ test('nomme la page d’après l’appareil affiché', async ({ page }) => {
 	await expect(page).toHaveTitle('Stream Deck+ (virtual) · HuBergamof');
 });
 
-test('annonce une version plus récente et permet de relancer la recherche', async ({ page }) => {
+test('annonce une version plus récente puis simule son installation', async ({ page }) => {
 	await open(page);
-	// `--demo` announces a fake release, without network.
+	// `--demo` announces a fake release, without network, and installs it only on request.
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 	const notes = page.getByRole('link', { name: /Notes de version/ });
 	await expect(notes).toHaveAttribute('href', /^https:\/\//);
 	await expect(notes).toHaveAttribute('rel', 'noopener noreferrer');
+	await expect(
+		page.getByRole('checkbox', { name: 'Installer automatiquement les mises à jour' })
+	).not.toBeChecked();
+
+	await page.getByRole('button', { name: 'Mettre à jour maintenant' }).click();
+	await expect(page.getByText('Version 999.0.0 installée : le service redémarre.')).toBeVisible();
+});
+
+test('relance la recherche de mises à jour à la demande', async ({ page }) => {
+	await open(page);
+	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 	await page.getByRole('button', { name: 'Rechercher des mises à jour' }).click();
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 });

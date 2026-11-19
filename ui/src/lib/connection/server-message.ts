@@ -10,6 +10,7 @@ const SERVER_MESSAGE_TYPES = {
 	moduleCatalog: true,
 	config: true,
 	liveState: true,
+	updateSettings: true,
 	updateStatus: true,
 	error: true,
 	pong: true

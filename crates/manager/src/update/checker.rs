@@ -1,18 +1,22 @@
-//! Periodic check for a newer release.
+//! The update service: checks for a newer release shortly after startup, then
+//! once a day or on request, and installs it when the user's policy says so
+//! (or on request).
 //!
-//! One background task asks the [`ReleaseSource`] shortly after startup, then
-//! once a day, or at once on request; the outcome is published as an
-//! [`UpdateStatus`] that the WebSocket sessions and the tray follow. A failed
-//! check is logged and published, never fatal: the next one retries.
+//! One background task owns everything; the outcome is published as an
+//! [`UpdateStatus`] (and the policy as [`UpdateSettings`]) that the WebSocket
+//! sessions and the tray follow. A failed check or installation is logged and
+//! published, never fatal: the next check retries.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use hubergamof_protocol::UpdateStatus;
+use hubergamof_protocol::{InstallSupport, UpdateSettings, UpdateStatus};
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use super::installer::{InstallStage, Installer};
+use super::policy::{PolicyStore, UpdatePolicy};
 use super::source::{ReleaseInfo, ReleaseSource};
 use super::version::Version;
 
@@ -27,131 +31,304 @@ pub const CHECK_INTERVAL: Duration = Duration::from_hours(24);
 /// with every other tool of the machine.
 pub const MIN_CHECK_SPACING: Duration = Duration::from_mins(5);
 
-/// Follows and triggers the check; cheap to clone.
+/// Follows and drives the update service; cheap to clone.
 #[derive(Clone)]
 pub struct UpdateHandle {
-    /// Held by every handle so that followers never see the channel close,
-    /// whether or not the checking task still runs.
-    sender: Arc<watch::Sender<UpdateStatus>>,
-    trigger: Arc<Notify>,
+    /// Held by every handle so that followers never see a channel close,
+    /// whether or not the service task still runs.
+    status: Arc<watch::Sender<UpdateStatus>>,
+    settings: Arc<watch::Sender<UpdateSettings>>,
+    check_trigger: Arc<Notify>,
+    install_trigger: Arc<Notify>,
 }
 
 impl UpdateHandle {
-    /// A handle that never checks and stays [`UpdateStatus::Unknown`]
-    /// (tests, tools that need a context but no update check).
+    /// A handle without a service behind it: stays [`UpdateStatus::Unknown`]
+    /// and cannot install (tests, tools that need a context only).
     #[must_use]
     pub fn inactive() -> Self {
+        Self::new(UpdateSettings {
+            auto_install: UpdatePolicy::default().auto_install,
+            install_support: InstallSupport::Unpackaged,
+        })
+    }
+
+    fn new(settings: UpdateSettings) -> Self {
         Self {
-            sender: Arc::new(watch::channel(UpdateStatus::Unknown).0),
-            trigger: Arc::new(Notify::new()),
+            status: Arc::new(watch::channel(UpdateStatus::Unknown).0),
+            settings: Arc::new(watch::channel(settings).0),
+            check_trigger: Arc::new(Notify::new()),
+            install_trigger: Arc::new(Notify::new()),
         }
     }
 
     /// Current status.
     #[must_use]
     pub fn status(&self) -> UpdateStatus {
-        self.sender.borrow().clone()
+        self.status.borrow().clone()
     }
 
     /// Receiver notified at every status change.
     #[must_use]
     pub fn subscribe(&self) -> watch::Receiver<UpdateStatus> {
-        self.sender.subscribe()
+        self.status.subscribe()
+    }
+
+    /// Current settings.
+    #[must_use]
+    pub fn settings(&self) -> UpdateSettings {
+        *self.settings.borrow()
+    }
+
+    /// Receiver notified at every settings change.
+    #[must_use]
+    pub fn subscribe_settings(&self) -> watch::Receiver<UpdateSettings> {
+        self.settings.subscribe()
     }
 
     /// Asks for a check now; requests made during a check are merged, and a
     /// check never starts less than [`MIN_CHECK_SPACING`] after the previous one.
     pub fn check_now(&self) {
-        self.trigger.notify_one();
+        self.check_trigger.notify_one();
+    }
+
+    /// Asks to install the newer release found by the last check.
+    pub fn install_now(&self) {
+        self.install_trigger.notify_one();
+    }
+
+    /// Chooses whether a newer release is installed as soon as it is found;
+    /// the service saves the choice.
+    pub fn set_auto_install(&self, enabled: bool) {
+        self.settings.send_if_modified(|settings| {
+            let changed = settings.auto_install != enabled;
+            settings.auto_install = enabled;
+            changed
+        });
     }
 }
 
-/// Starts the checking task, first check after `first_delay`; it ends when `shutdown` turns `true`.
+/// What the service works with.
+pub struct UpdateParts {
+    /// Where the latest release comes from.
+    pub source: Arc<dyn ReleaseSource>,
+    /// How a release is installed.
+    pub installer: Arc<dyn Installer>,
+    /// Where the user's choice is kept.
+    pub policy: Arc<dyn PolicyStore>,
+    /// Version of the running manager.
+    pub current: Version,
+    /// Delay before the first check.
+    pub first_delay: Duration,
+}
+
+/// Starts the service; it ends when `shutdown` turns `true`.
 #[must_use]
 pub fn start(
-    source: Arc<dyn ReleaseSource>,
-    current: Version,
-    first_delay: Duration,
+    parts: UpdateParts,
     shutdown: watch::Receiver<bool>,
 ) -> (UpdateHandle, JoinHandle<()>) {
-    let handle = UpdateHandle::inactive();
-    let task = tokio::spawn(run(source, current, first_delay, handle.clone(), shutdown));
-    (handle, task)
+    let handle = UpdateHandle::new(UpdateSettings {
+        auto_install: parts.policy.load().auto_install,
+        install_support: parts.installer.support(),
+    });
+    let service = Service {
+        parts,
+        handle: handle.clone(),
+        stopping: shutdown,
+        found: None,
+        failed: None,
+        last_check: None,
+    };
+    (handle, tokio::spawn(service.run()))
 }
 
-async fn run(
-    source: Arc<dyn ReleaseSource>,
-    current: Version,
-    first_delay: Duration,
+/// Resolves when the manager shuts down (a dropped sender counts too). Not
+/// `wait_for` inline: its guard would be held across the other branches.
+async fn wait_for_stop(shutdown: &mut watch::Receiver<bool>) {
+    let _ = shutdown.wait_for(|stopping| *stopping).await;
+}
+
+struct Service {
+    parts: UpdateParts,
     handle: UpdateHandle,
-    mut shutdown: watch::Receiver<bool>,
-) {
-    let mut delay = first_delay;
-    let mut last_start: Option<Instant> = None;
-    loop {
-        tokio::select! {
-            () = tokio::time::sleep(delay) => {}
-            () = handle.trigger.notified() => {}
-            // A dropped sender also means shutting down.
-            _ = shutdown.wait_for(|stopping| *stopping) => return,
+    stopping: watch::Receiver<bool>,
+    /// The newer release the last check found.
+    found: Option<ReleaseInfo>,
+    /// Version whose automatic installation failed: not retried by itself.
+    failed: Option<Version>,
+    last_check: Option<Instant>,
+}
+
+impl Service {
+    async fn run(mut self) {
+        let mut shutdown = self.stopping.clone();
+        let mut settings = self.handle.subscribe_settings();
+        settings.mark_unchanged();
+        let mut delay = self.parts.first_delay;
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(delay) => self.check().await,
+                () = self.handle.check_trigger.notified() => self.check().await,
+                () = self.handle.install_trigger.notified() => self.install_on_request().await,
+                Ok(()) = settings.changed() => self.on_settings_changed().await,
+                // A dropped sender also means shutting down.
+                () = wait_for_stop(&mut shutdown) => return,
+            }
+            delay = CHECK_INTERVAL;
+            if *shutdown.borrow() {
+                return;
+            }
         }
-        if let Some(last) = last_start {
+    }
+
+    async fn check(&mut self) {
+        if let Some(last) = self.last_check {
+            let mut shutdown = self.stopping.clone();
             tokio::select! {
                 () = tokio::time::sleep_until(last + MIN_CHECK_SPACING) => {}
-                _ = shutdown.wait_for(|stopping| *stopping) => return,
+                () = wait_for_stop(&mut shutdown) => return,
             }
         }
-        delay = CHECK_INTERVAL;
-        last_start = Some(Instant::now());
-        handle.sender.send_replace(UpdateStatus::Checking);
-        let outcome = check(source.as_ref(), current).await;
-        handle.sender.send_replace(outcome);
-    }
-}
-
-async fn check(source: &dyn ReleaseSource, current: Version) -> UpdateStatus {
-    match source.latest().await {
-        Ok(release) => status_of(&release, current),
-        Err(error) => {
-            tracing::warn!(%error, "update check failed");
-            UpdateStatus::CheckFailed {
-                message: error.public_message(),
+        self.last_check = Some(Instant::now());
+        self.handle.status.send_replace(UpdateStatus::Checking);
+        match self.parts.source.latest().await {
+            Ok(release) if release.version > self.parts.current => {
+                self.handle.status.send_replace(UpdateStatus::Available {
+                    version: release.version.to_string(),
+                    notes_url: release.notes_url.clone(),
+                });
+                self.found = Some(release);
+                self.install_if_automatic().await;
+            }
+            Ok(_) => {
+                self.found = None;
+                self.handle.status.send_replace(UpdateStatus::UpToDate);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "update check failed");
+                self.handle.status.send_replace(UpdateStatus::CheckFailed {
+                    message: error.public_message(),
+                });
             }
         }
     }
-}
 
-fn status_of(release: &ReleaseInfo, current: Version) -> UpdateStatus {
-    if release.version > current {
-        UpdateStatus::Available {
-            version: release.version.to_string(),
-            notes_url: release.notes_url.clone(),
+    /// Installs the release just found when the policy says so, once per
+    /// version: a failure is shown and waits for the user.
+    async fn install_if_automatic(&mut self) {
+        let settings = self.handle.settings();
+        let Some(release) = self.found.clone() else {
+            return;
+        };
+        if settings.auto_install
+            && settings.install_support != InstallSupport::Unpackaged
+            && self.failed != Some(release.version)
+        {
+            self.install(&release).await;
         }
-    } else {
-        UpdateStatus::UpToDate
+    }
+
+    async fn install_on_request(&mut self) {
+        if let Some(release) = self.found.clone() {
+            self.install(&release).await;
+        }
+    }
+
+    /// The policy was changed: save it, and install at once what is waiting
+    /// when it now says to.
+    async fn on_settings_changed(&mut self) {
+        let policy = UpdatePolicy {
+            auto_install: self.handle.settings().auto_install,
+        };
+        let store = Arc::clone(&self.parts.policy);
+        if let Err(error) = tokio::task::spawn_blocking(move || store.save(policy)).await {
+            tracing::warn!(%error, "cannot save the update policy");
+        }
+        if matches!(self.handle.status(), UpdateStatus::Available { .. }) {
+            self.install_if_automatic().await;
+        }
+    }
+
+    async fn install(&mut self, release: &ReleaseInfo) {
+        let version = release.version.to_string();
+        let status = Arc::clone(&self.handle.status);
+        let progress = {
+            let version = version.clone();
+            move |stage: InstallStage| {
+                status.send_replace(match stage {
+                    InstallStage::Downloading => UpdateStatus::Downloading {
+                        version: version.clone(),
+                    },
+                    InstallStage::Installing => UpdateStatus::Installing {
+                        version: version.clone(),
+                    },
+                });
+            }
+        };
+        match self.parts.installer.install(release, &progress).await {
+            Ok(()) => {
+                tracing::info!(%version, "update installed");
+                self.found = None;
+                self.handle
+                    .status
+                    .send_replace(UpdateStatus::Installed { version });
+            }
+            Err(error) => {
+                tracing::warn!(%error, %version, "update installation failed");
+                self.failed = Some(release.version);
+                self.handle
+                    .status
+                    .send_replace(UpdateStatus::InstallFailed {
+                        version,
+                        message: error.public_message(),
+                    });
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
+
     use super::*;
-    use crate::update::source::SimulatedReleases;
+    use crate::update::installer::{InstallError, SimulatedInstaller, UnsupportedInstaller};
+    use crate::update::policy::MemoryPolicyStore;
+    use crate::update::source::{SimulatedReleases, UpdateError};
 
     fn version(text: &str) -> Version {
         text.parse().unwrap()
     }
 
-    fn started(
-        source: SimulatedReleases,
-        current: &str,
-    ) -> (UpdateHandle, watch::Sender<bool>, JoinHandle<()>) {
+    fn parts(
+        source: Arc<dyn ReleaseSource>,
+        installer: Arc<dyn Installer>,
+        policy: Arc<dyn PolicyStore>,
+    ) -> UpdateParts {
+        UpdateParts {
+            source,
+            installer,
+            policy,
+            current: version("1.0.0"),
+            first_delay: FIRST_CHECK_DELAY,
+        }
+    }
+
+    /// Announces `latest`; installation unsupported, automatic by default.
+    fn checking_only(latest: &str) -> UpdateParts {
+        parts(
+            Arc::new(SimulatedReleases::announcing(version(latest))),
+            Arc::new(UnsupportedInstaller),
+            Arc::new(MemoryPolicyStore::default()),
+        )
+    }
+
+    fn started(parts: UpdateParts) -> (UpdateHandle, watch::Sender<bool>, JoinHandle<()>) {
         let (stop, stopping) = watch::channel(false);
-        let (handle, task) = start(
-            Arc::new(source),
-            version(current),
-            FIRST_CHECK_DELAY,
-            stopping,
-        );
+        let (handle, task) = start(parts, stopping);
         (handle, stop, task)
     }
 
@@ -164,17 +341,24 @@ mod tests {
         settled.clone()
     }
 
+    async fn status_where(
+        handle: &UpdateHandle,
+        wanted: impl Fn(&UpdateStatus) -> bool,
+    ) -> UpdateStatus {
+        let mut receiver = handle.subscribe();
+        let found = receiver.wait_for(wanted).await.unwrap();
+        found.clone()
+    }
+
     #[tokio::test(start_paused = true)]
     async fn nothing_is_known_before_the_first_check() {
-        let (handle, _stop, _task) =
-            started(SimulatedReleases::announcing(version("2.0.0")), "1.0.0");
+        let (handle, _stop, _task) = started(checking_only("2.0.0"));
         assert_eq!(handle.status(), UpdateStatus::Unknown);
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_newer_release_is_announced_after_the_first_delay() {
-        let (handle, _stop, _task) =
-            started(SimulatedReleases::announcing(version("1.1.0")), "1.0.0");
+        let (handle, _stop, _task) = started(checking_only("1.1.0"));
         assert_eq!(
             next_settled(&handle).await,
             UpdateStatus::Available {
@@ -187,15 +371,18 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_same_or_an_older_release_is_up_to_date() {
         for latest in ["1.0.0", "0.9.0"] {
-            let (handle, _stop, _task) =
-                started(SimulatedReleases::announcing(version(latest)), "1.0.0");
+            let (handle, _stop, _task) = started(checking_only(latest));
             assert_eq!(next_settled(&handle).await, UpdateStatus::UpToDate);
         }
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_failure_is_published_and_retried_at_the_next_check() {
-        let (handle, _stop, _task) = started(SimulatedReleases::failing("offline"), "1.0.0");
+        let (handle, _stop, _task) = started(parts(
+            Arc::new(SimulatedReleases::failing("offline")),
+            Arc::new(UnsupportedInstaller),
+            Arc::new(MemoryPolicyStore::default()),
+        ));
         assert_eq!(
             next_settled(&handle).await,
             UpdateStatus::CheckFailed {
@@ -212,8 +399,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_request_checks_without_waiting() {
-        let (handle, _stop, _task) =
-            started(SimulatedReleases::announcing(version("1.0.1")), "1.0.0");
+        let (handle, _stop, _task) = started(checking_only("1.0.1"));
         handle.check_now();
         let status = tokio::time::timeout(FIRST_CHECK_DELAY / 2, next_settled(&handle))
             .await
@@ -223,8 +409,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn shutdown_ends_the_task() {
-        let (_handle, stop, task) =
-            started(SimulatedReleases::announcing(version("1.0.1")), "1.0.0");
+        let (_handle, stop, task) = started(checking_only("1.0.1"));
         stop.send_replace(true);
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
@@ -232,45 +417,208 @@ mod tests {
             .unwrap();
     }
 
-    /// Counts the questions asked.
-    struct CountingSource(std::sync::atomic::AtomicUsize);
+    #[test]
+    fn an_inactive_handle_stays_unknown_and_cannot_install() {
+        let handle = UpdateHandle::inactive();
+        handle.check_now();
+        handle.install_now();
+        assert_eq!(handle.status(), UpdateStatus::Unknown);
+        assert_eq!(
+            handle.settings().install_support,
+            InstallSupport::Unpackaged
+        );
+    }
 
-    #[async_trait::async_trait]
+    /// Counts the questions asked.
+    struct CountingSource(AtomicUsize);
+
+    #[async_trait]
     impl ReleaseSource for CountingSource {
-        async fn latest(&self) -> Result<ReleaseInfo, crate::update::UpdateError> {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async fn latest(&self) -> Result<ReleaseInfo, UpdateError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
             Ok(ReleaseInfo {
                 version: version("1.0.0"),
                 notes_url: String::new(),
+                assets: Vec::new(),
             })
         }
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_burst_of_requests_cannot_exhaust_the_quota() {
-        let source = Arc::new(CountingSource(std::sync::atomic::AtomicUsize::new(0)));
-        let (stop, stopping) = watch::channel(false);
-        let (handle, _task) = start(
+        let source = Arc::new(CountingSource(AtomicUsize::new(0)));
+        let mut parts = parts(
             Arc::clone(&source) as Arc<dyn ReleaseSource>,
-            version("1.0.0"),
-            Duration::ZERO,
-            stopping,
+            Arc::new(UnsupportedInstaller),
+            Arc::new(MemoryPolicyStore::default()),
         );
+        parts.first_delay = Duration::ZERO;
+        let (handle, _stop, _task) = started(parts);
         for _ in 0..100 {
             handle.check_now();
             tokio::task::yield_now().await;
         }
         // The first check starts at once, then at most one per spacing.
         tokio::time::sleep(MIN_CHECK_SPACING * 2 + Duration::from_secs(1)).await;
-        let asked = source.0.load(std::sync::atomic::Ordering::SeqCst);
+        let asked = source.0.load(Ordering::SeqCst);
         assert!((1..=3).contains(&asked), "{asked} checks in 2 spacings");
-        stop.send_replace(true);
     }
 
-    #[test]
-    fn an_inactive_handle_stays_unknown() {
-        let handle = UpdateHandle::inactive();
+    fn installing(
+        installer: SimulatedInstaller,
+        policy: Arc<MemoryPolicyStore>,
+    ) -> (UpdateHandle, watch::Sender<bool>, JoinHandle<()>) {
+        started(parts(
+            Arc::new(SimulatedReleases::announcing(version("1.1.0"))),
+            Arc::new(installer),
+            policy,
+        ))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_release_is_installed_by_itself_when_the_policy_says_so() {
+        let (handle, _stop, _task) = installing(
+            SimulatedInstaller::succeeding(),
+            Arc::new(MemoryPolicyStore::default()),
+        );
+        let status = status_where(&handle, |status| {
+            matches!(status, UpdateStatus::Installed { .. })
+        })
+        .await;
+        assert_eq!(
+            status,
+            UpdateStatus::Installed {
+                version: "1.1.0".into()
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn without_the_automatic_policy_it_waits_for_a_request() {
+        let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
+            auto_install: false,
+        }));
+        let (handle, _stop, _task) = installing(SimulatedInstaller::succeeding(), policy);
+        assert!(matches!(
+            next_settled(&handle).await,
+            UpdateStatus::Available { .. }
+        ));
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(matches!(handle.status(), UpdateStatus::Available { .. }));
+        handle.install_now();
+        let status = status_where(&handle, |status| {
+            matches!(status, UpdateStatus::Installed { .. })
+        })
+        .await;
+        assert_eq!(
+            status,
+            UpdateStatus::Installed {
+                version: "1.1.0".into()
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn turning_the_policy_on_installs_what_is_waiting_and_is_saved() {
+        let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
+            auto_install: false,
+        }));
+        let (handle, _stop, _task) =
+            installing(SimulatedInstaller::succeeding(), Arc::clone(&policy));
+        assert!(matches!(
+            next_settled(&handle).await,
+            UpdateStatus::Available { .. }
+        ));
+        handle.set_auto_install(true);
+        status_where(&handle, |status| {
+            matches!(status, UpdateStatus::Installed { .. })
+        })
+        .await;
+        assert!(policy.load().auto_install);
+        handle.set_auto_install(false);
+        let mut settings = handle.subscribe_settings();
+        settings
+            .wait_for(|settings| !settings.auto_install)
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        // `spawn_blocking` runs on a real thread: wait for it to have saved.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while policy.load().auto_install {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the choice is saved");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_installation_is_shown_and_not_retried_by_itself() {
+        let (handle, _stop, _task) = installing(
+            SimulatedInstaller::failing("signature mismatch"),
+            Arc::new(MemoryPolicyStore::default()),
+        );
+        let failed = status_where(&handle, |status| {
+            matches!(status, UpdateStatus::InstallFailed { .. })
+        })
+        .await;
+        assert_eq!(
+            failed,
+            UpdateStatus::InstallFailed {
+                version: "1.1.0".into(),
+                message: "signature mismatch".into()
+            }
+        );
+        // The next daily check finds the same release: it is not tried again.
         handle.check_now();
-        assert_eq!(handle.status(), UpdateStatus::Unknown);
+        tokio::time::sleep(MIN_CHECK_SPACING * 2).await;
+        assert!(matches!(
+            handle.status(),
+            UpdateStatus::Available { .. } | UpdateStatus::InstallFailed { .. }
+        ));
+        assert!(!matches!(
+            handle.status(),
+            UpdateStatus::Installing { .. } | UpdateStatus::Downloading { .. }
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_installation_that_cannot_happen_says_why() {
+        let (handle, _stop, _task) = started(checking_only("1.1.0"));
+        assert!(matches!(
+            next_settled(&handle).await,
+            UpdateStatus::Available { .. }
+        ));
+        handle.install_now();
+        let failed = status_where(&handle, |status| {
+            matches!(status, UpdateStatus::InstallFailed { .. })
+        })
+        .await;
+        assert_eq!(
+            failed,
+            UpdateStatus::InstallFailed {
+                version: "1.1.0".into(),
+                message: InstallError::Unsupported.public_message()
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_with_nothing_found_does_nothing() {
+        let (handle, _stop, _task) = started(checking_only("1.0.0"));
+        assert_eq!(next_settled(&handle).await, UpdateStatus::UpToDate);
+        handle.install_now();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(handle.status(), UpdateStatus::UpToDate);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_saved_policy_is_the_starting_setting() {
+        let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
+            auto_install: false,
+        }));
+        let (handle, _stop, _task) = installing(SimulatedInstaller::succeeding(), policy);
+        assert!(!handle.settings().auto_install);
+        assert_eq!(handle.settings().install_support, InstallSupport::Demo);
     }
 }

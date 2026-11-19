@@ -4,6 +4,7 @@ import type {
 	DeviceConfig,
 	DeviceInfo,
 	ServerMessage,
+	UpdateSettings,
 	UpdateStatus
 } from '#lib/generated/index.js';
 import type { ConfigEdit } from './config-edits.js';
@@ -96,6 +97,8 @@ export class DeckState {
 	notices: Notice[] = $state([]);
 	/** Version of the running manager, known once it has greeted us. */
 	managerVersion: string | undefined = $state();
+	/** How updates are handled; unknown until the manager has said. */
+	updateSettings: UpdateSettings | undefined = $state();
 	/** Outcome of the manager's check for a newer release. */
 	updateStatus: UpdateStatus = $state({ type: 'unknown' });
 
@@ -160,6 +163,16 @@ export class DeckState {
 		this.#connection.send({ type: 'checkForUpdates' });
 	}
 
+	/** Asks the manager to install the newer release it found. */
+	installUpdate(): void {
+		this.#connection.send({ type: 'installUpdate' });
+	}
+
+	/** Chooses whether the manager installs a newer release as soon as it finds one. */
+	setAutoInstall(enabled: boolean): void {
+		this.#connection.send({ type: 'setAutoInstall', enabled });
+	}
+
 	dismiss(id: number): void {
 		this.notices = this.notices.filter((notice) => notice.id !== id);
 	}
@@ -183,6 +196,9 @@ export class DeckState {
 				break;
 			case 'error':
 				this.#receiveError(problemOf(message.code, message.message));
+				break;
+			case 'updateSettings':
+				this.updateSettings = message.settings;
 				break;
 			case 'updateStatus':
 				this.updateStatus = message.status;

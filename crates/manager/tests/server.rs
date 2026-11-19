@@ -22,14 +22,18 @@ use hubergamof_manager::server::{
     MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH, module_catalog, router,
 };
 use hubergamof_manager::strip::{FixedClock, SimulatedProbe};
-use hubergamof_manager::update::{self, SimulatedReleases, UpdateHandle, Version};
+use hubergamof_manager::update::{
+    self, MemoryPolicyStore, SimulatedInstaller, SimulatedReleases, UpdateHandle, UpdateParts,
+    UpdatePolicy, Version,
+};
 use hubergamof_module_api::{
     Command, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleFactory,
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, ErrorCode, LiveState, ModuleInstance, ServerMessage, UpdateStatus,
+    ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, ModuleInstance,
+    ServerMessage, UpdateSettings, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -233,11 +237,11 @@ impl Running {
         Ok(Client(stream))
     }
 
-    /// Client past the `hello`, `devices` and `moduleCatalog` greeting.
+    /// Client past the `hello`, `devices`, `moduleCatalog` and `updateSettings` greeting.
     async fn connect(&self) -> Client {
         let own_origin = format!("http://127.0.0.1:{}", self.port);
         let mut client = self.connect_with(Some(&own_origin)).await.unwrap();
-        for _ in 0..3 {
+        for _ in 0..4 {
             client.receive().await;
         }
         client
@@ -613,6 +617,16 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         }
         other => panic!("expected the catalog, got {other:?}"),
     }
+    // Nothing can be installed through the inactive handle of the test server.
+    assert_eq!(
+        client.receive().await,
+        ServerMessage::UpdateSettings {
+            settings: UpdateSettings {
+                auto_install: true,
+                install_support: InstallSupport::Unpackaged,
+            }
+        }
+    );
     client.ping().await;
     server.stop().await;
 }
@@ -911,22 +925,29 @@ async fn shutdown_closes_websocket_sessions() {
     server.stop().await;
 }
 
-#[tokio::test]
-async fn clients_follow_the_update_check_and_can_ask_for_one() {
+/// A running server whose update service announces 999.0.0 and simulates the
+/// installation; the first check is far away, so that only requests run it.
+async fn server_with_updates(auto_install: bool) -> (Running, watch::Sender<bool>) {
     let mut devices = Devices::start();
     let (stop, stopping) = watch::channel(false);
-    let source = SimulatedReleases::announcing(Version::new(999, 0, 0));
-    let (updates, _task) = update::start(
-        Arc::new(source),
-        Version::new(1, 0, 0),
-        Duration::from_secs(3600),
-        stopping,
-    );
+    let parts = UpdateParts {
+        source: Arc::new(SimulatedReleases::announcing(Version::new(999, 0, 0))),
+        installer: Arc::new(SimulatedInstaller::succeeding()),
+        policy: Arc::new(MemoryPolicyStore::holding(UpdatePolicy { auto_install })),
+        current: Version::new(1, 0, 0),
+        first_delay: Duration::from_secs(3600),
+    };
+    let (updates, _task) = update::start(parts, stopping);
     devices.context.updates = updates;
-    let server = Running::with_devices(devices).await;
+    (Running::with_devices(devices).await, stop)
+}
+
+#[tokio::test]
+async fn clients_follow_the_update_check_and_can_ask_for_one() {
+    let (server, stop) = server_with_updates(false).await;
     let mut client = server.connect().await;
 
-    // Nothing is known before the first check: no message at greeting.
+    // Nothing is known before the first check: no status at greeting.
     client.ping().await;
     client.send(&ClientMessage::CheckForUpdates).await;
     let available = client
@@ -943,7 +964,7 @@ async fn clients_follow_the_update_check_and_can_ask_for_one() {
         "{available:?}"
     );
 
-    // A client connecting later is told right after the catalog.
+    // A client connecting later is told right after the greeting.
     let mut late = server.connect().await;
     let status = late
         .receive_until(|message| match message {
@@ -952,6 +973,56 @@ async fn clients_follow_the_update_check_and_can_ask_for_one() {
         })
         .await;
     assert_eq!(status, available);
+    stop.send_replace(true);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn clients_install_an_update_and_choose_the_policy() {
+    let (server, stop) = server_with_updates(false).await;
+    let mut client = server.connect().await;
+    client.send(&ClientMessage::CheckForUpdates).await;
+    client
+        .receive_until(|message| match message {
+            ServerMessage::UpdateStatus {
+                status: UpdateStatus::Available { .. },
+            } => Some(()),
+            _ => None,
+        })
+        .await;
+
+    client.send(&ClientMessage::InstallUpdate).await;
+    let installed = client
+        .receive_until(|message| match message {
+            ServerMessage::UpdateStatus {
+                status: status @ UpdateStatus::Installed { .. },
+            } => Some(status),
+            _ => None,
+        })
+        .await;
+    assert_eq!(
+        installed,
+        UpdateStatus::Installed {
+            version: "999.0.0".into()
+        }
+    );
+
+    // The choice is applied and told to every client.
+    let mut observer = server.connect().await;
+    client
+        .send(&ClientMessage::SetAutoInstall { enabled: true })
+        .await;
+    for watcher in [&mut client, &mut observer] {
+        let settings = watcher
+            .receive_until(|message| match message {
+                ServerMessage::UpdateSettings { settings } if settings.auto_install => {
+                    Some(settings)
+                }
+                _ => None,
+            })
+            .await;
+        assert_eq!(settings.install_support, InstallSupport::Demo);
+    }
     stop.send_replace(true);
     server.stop().await;
 }

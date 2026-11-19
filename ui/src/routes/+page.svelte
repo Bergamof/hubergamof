@@ -136,7 +136,10 @@
 			<UpdatePanel
 				version={deck.managerVersion}
 				status={deck.updateStatus}
+				settings={deck.updateSettings}
 				oncheck={() => deck?.checkForUpdates()}
+				oninstall={() => deck?.installUpdate()}
+				onautoinstall={(enabled) => deck?.setAutoInstall(enabled)}
 			/>
 		</footer>
 	{/if}

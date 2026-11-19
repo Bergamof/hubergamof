@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<!--
+  Mises à jour automatiques de HuBergamof : le gestionnaire (service systemd
+  *utilisateur*, donc hors de toute session pour polkit : c'est « allow_any »
+  qui s'applique) lance l'assistant par pkexec, sans mot de passe.
+
+  L'assistant ne fait qu'une chose : il vérifie la signature Ed25519 de la
+  release (clé publique embarquée), l'empreinte du paquet, refuse toute version
+  qui n'est pas plus récente que celle installée, puis passe le paquet vérifié à
+  apt-get ou pacman. Son seul argument est un dossier qu'il ne fait que lire.
+-->
+<policyconfig>
+  <vendor>HuBergamof</vendor>
+  <vendor_url>https://github.com/Bergamof/hubergamof</vendor_url>
+
+  <action id="io.github.bergamof.hubergamof.update">
+    <description>Install a signed HuBergamof update</description>
+    <message>Authentication is required to install a HuBergamof update</message>
+    <defaults>
+      <allow_any>yes</allow_any>
+      <allow_inactive>yes</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/hubergamof/hubergamof-update-helper</annotate>
+  </action>
+</policyconfig>

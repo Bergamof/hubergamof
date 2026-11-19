@@ -121,6 +121,13 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- *.deb *.pkg.tar.zst > SHA256SUMS
+      # Signature de SHA256SUMS (Ed25519) : l'assistant de mise à jour des
+      # installations existantes ne se fie qu'à elle. Le script la vérifie avec la
+      # clé publique du dépôt avant de rendre la main.
+      - name: Sign the checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: .github/scripts/sign-checksums.sh dist
       - name: Upload packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

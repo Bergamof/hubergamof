@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{CatalogModule, DeviceConfig, DeviceInfo, LiveState, UpdateStatus};
+use crate::{CatalogModule, DeviceConfig, DeviceInfo, LiveState, UpdateSettings, UpdateStatus};
 
 /// Message sent by the UI to the manager.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -61,6 +61,16 @@ pub enum ClientMessage {
     /// Check for a newer release now, instead of waiting for the next
     /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
     CheckForUpdates,
+    /// Download, verify and install the newer release found by the check.
+    /// Ignored when there is none or when installing is not supported (the
+    /// status then says why).
+    InstallUpdate,
+    /// Choose whether a newer release is installed as soon as it is found.
+    /// Answered by [`ServerMessage::UpdateSettings`].
+    SetAutoInstall {
+        /// Install automatically.
+        enabled: bool,
+    },
     /// Keep-alive request, answered by [`ServerMessage::Pong`].
     Ping,
 }
@@ -101,7 +111,13 @@ pub enum ServerMessage {
         /// Live state.
         state: LiveState,
     },
-    /// Result of the check for a newer release: sent after `moduleCatalog`
+    /// How updates are handled: sent after `moduleCatalog`, then at every
+    /// change.
+    UpdateSettings {
+        /// Current settings.
+        settings: UpdateSettings,
+    },
+    /// Result of the check for a newer release: sent after `updateSettings`
     /// once a check has started (never while the status is still
     /// [`UpdateStatus::Unknown`]), then at every change.
     UpdateStatus {

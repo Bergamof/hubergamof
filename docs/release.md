@@ -8,8 +8,8 @@ Choix « Niveau de version » : `auto` (par défaut, d'après les commits), `pat
 Le workflow `.github/workflows/release.yml` enchaîne trois jobs :
 
 1. **gate** — fige le SHA de `main` ; attend la fin du dernier run de `CI` sur ce SHA et sur `main` (événements `push` et planification ; jamais un run de PR) et échoue s'il est en erreur, annulé ou introuvable ; calcule la version.
-2. **build** (Ubuntu 24.04, sans cache) — fixe la version dans `Cargo.toml`/`Cargo.lock` et dans le manifeste de l'extension Teams `ui/teams-extension/manifest.json` (copie de travail, jamais committée ; l'extension embarquée porte ainsi celle du paquet), `make build`, `make package`, `lintian`, puis installe chaque paquet dans un conteneur propre (`make package-smoke`) ; produit `SHA256SUMS`.
-3. **publish** — crée d'abord le tag `vX.Y.Z` au SHA vérifié par l'API (échec s'il existe déjà), puis la release avec `--verify-tag` : livrables, `SHA256SUMS` et note.
+2. **build** (Ubuntu 24.04, sans cache) — fixe la version dans `Cargo.toml`/`Cargo.lock` et dans le manifeste de l'extension Teams `ui/teams-extension/manifest.json` (copie de travail, jamais committée ; l'extension embarquée porte ainsi celle du paquet), `make build`, `make package`, `lintian`, puis installe chaque paquet dans un conteneur propre (`make package-smoke`) ; produit `SHA256SUMS` et le **signe** (`SHA256SUMS.sig`, voir « Signature »).
+3. **publish** — crée d'abord le tag `vX.Y.Z` au SHA vérifié par l'API (échec s'il existe déjà), puis la release avec `--verify-tag` : livrables, `SHA256SUMS`, `SHA256SUMS.sig` et note.
 
 ## Numéro de version
 
@@ -35,6 +35,7 @@ Un sujet qui ne suit pas la convention ne déclenche aucun bump. Les titres de P
 | `hubergamof_X.Y.Z_amd64.deb` | Ubuntu 24.04+, Debian 12+ |
 | `hubergamof-X.Y.Z-1-x86_64.pkg.tar.zst` | Manjaro, Arch Linux (`pacman -U`) |
 | `SHA256SUMS` | sommes des deux paquets |
+| `SHA256SUMS.sig` | signature Ed25519 de `SHA256SUMS` (64 octets), vérifiée par l'assistant de mise à jour |
 
 Les deux contiennent le même binaire (UI embarquée), construit sur Ubuntu 24.04 : sa glibc est assez ancienne pour Manjaro stable, que ses paquets ne mettent pas à jour aussi vite qu'Arch.
 
@@ -50,6 +51,20 @@ Les deux contiennent le même binaire (UI embarquée), construit sur Ubuntu 24.0
 - aucune étape ne fait échouer l'opération ; la configuration de l'utilisateur n'est jamais supprimée.
 
 Le service est une unité *utilisateur* : sans session graphique ouverte, il démarre au prochain login.
+
+## Signature et mises à jour automatiques
+
+Un gestionnaire installé par paquet cherche une nouvelle release (API GitHub, sans jeton), télécharge `SHA256SUMS`, `SHA256SUMS.sig` et son paquet, puis lance par `pkexec` l'assistant `/usr/lib/hubergamof/hubergamof-update-helper` (root, action polkit `io.github.bergamof.hubergamof.update`). L'assistant ne se fie à rien de ce qu'il reçoit : il vérifie la signature de `SHA256SUMS` avec la **clé publique embarquée** (`crates/manager/assets/release-signing.pub`), l'empreinte du paquet contre `SHA256SUMS`, refuse toute version qui n'est pas plus récente que celle installée (rejeu d'une ancienne release signée), puis passe le paquet vérifié à `apt-get install` ou `pacman -U`. Le hook du paquet redémarre ensuite le service.
+
+- **Clé privée** : secret du dépôt `RELEASE_SIGNING_KEY` (PEM). `.github/scripts/sign-checksums.sh` signe, puis vérifie la signature avec la clé publique du dépôt : un secret qui n'est pas la clé publiée fait échouer la release (jamais de release non signée ni signée par une autre clé).
+- **Créer la paire** (sur un poste de confiance, sans phrase de passe) :
+  ```sh
+  openssl genpkey -algorithm ed25519 -out release-signing.key
+  openssl pkey -in release-signing.key -pubout -out release-signing.pub
+  ```
+  La clé publique va dans `crates/manager/assets/release-signing.pub` (commitée), la privée dans le secret, puis le fichier est supprimé du poste (copie dans un gestionnaire de mots de passe).
+- **Rotation / perte de la clé** : les installations existantes n'acceptent que la clé embarquée dans leur binaire. Pour changer de clé, publier d'abord une release signée par l'ancienne clé et embarquant la nouvelle ; une clé perdue impose une réinstallation manuelle.
+- Installation depuis les sources (`make install`) : pas d'assistant, donc vérification seule ; `--no-update-check` supprime toute connexion sortante.
 
 ## Construire les paquets en local
 

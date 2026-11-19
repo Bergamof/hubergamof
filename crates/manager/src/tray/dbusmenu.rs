@@ -125,7 +125,7 @@ impl DbusMenu {
             return false;
         }
         if event_id == CLICKED_EVENT
-            && let Some(action) = TrayMenu::action(id)
+            && let Some(action) = self.menu.action(id)
         {
             self.handler.run(action);
         }

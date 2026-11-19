@@ -3,7 +3,8 @@
 #
 # Dépendances obligatoires : bibliothèques du binaire (calculées par
 # dpkg-shlibdeps), udev, systemd, et le nécessaire au module Audio : pactl
-# (pulseaudio-utils ≥ 16) et un serveur de son (PipeWire ou PulseAudio).
+# (pulseaudio-utils ≥ 16) et un serveur de son (PipeWire ou PulseAudio), et pkexec
+# (polkit) pour les mises à jour automatiques.
 # Optionnels : Docker, portail de fichiers, extension de tray GNOME.
 #
 # Usage : build-deb.sh <binaire> <version> <dossier de sortie>
@@ -21,7 +22,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PACKAGE="hubergamof"
 readonly MAINTAINER="HuBergamof <noreply@users.noreply.github.com>"
 readonly HOMEPAGE="https://github.com/Bergamof/hubergamof"
-readonly RUNTIME_DEPENDS="udev, systemd, pulseaudio-utils (>= 1:16), pipewire-pulse | pulseaudio, xdg-utils"
+readonly RUNTIME_DEPENDS="udev, systemd, pulseaudio-utils (>= 1:16), pipewire-pulse | pulseaudio, xdg-utils, pkexec | policykit-1"
 readonly RECOMMENDS="xdg-desktop-portal"
 readonly SUGGESTS="docker.io | docker-ce, gnome-shell-extension-appindicator"
 

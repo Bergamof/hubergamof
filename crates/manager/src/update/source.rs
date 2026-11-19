@@ -16,6 +16,12 @@ const RELEASES_URL: &str = "https://api.github.com/repos/Bergamof/hubergamof/rel
 /// Release notes pages of the project: the only links offered to the user.
 const NOTES_URL_PREFIX: &str = "https://github.com/Bergamof/hubergamof/releases/";
 
+/// Where the files of the releases are downloaded from.
+const ASSET_URL_PREFIX: &str = "https://github.com/Bergamof/hubergamof/releases/download/";
+
+/// Most assets kept: a release has a handful.
+const MAX_ASSETS: usize = 16;
+
 /// Longest release notes link kept.
 const MAX_NOTES_URL_BYTES: usize = 512;
 
@@ -28,6 +34,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Largest answer read: a release description is a few kilobytes.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
+/// A file attached to a release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseAsset {
+    /// File name.
+    pub name: String,
+    /// Where to download it.
+    pub url: String,
+}
+
 /// The latest stable release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseInfo {
@@ -35,6 +50,8 @@ pub struct ReleaseInfo {
     pub version: Version,
     /// Its release notes page.
     pub notes_url: String,
+    /// Its files (packages, checksums, signature).
+    pub assets: Vec<ReleaseAsset>,
 }
 
 /// Why the latest release could not be determined.
@@ -153,6 +170,14 @@ struct ReleaseJson {
     draft: bool,
     #[serde(default)]
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<AssetJson>,
+}
+
+#[derive(Deserialize)]
+struct AssetJson {
+    name: String,
+    browser_download_url: String,
 }
 
 /// Reads a GitHub release; drafts and pre-releases are not offered.
@@ -164,9 +189,22 @@ fn parse_release(body: &[u8]) -> Result<ReleaseInfo, UpdateError> {
     if !is_notes_link(&release.html_url) {
         return Err(UpdateError::NotesLink);
     }
+    // Assets that do not come from the project's releases are dropped, not
+    // refused: the announcement stays useful without them.
+    let assets = release
+        .assets
+        .into_iter()
+        .filter(|asset| is_asset_link(&asset.browser_download_url))
+        .take(MAX_ASSETS)
+        .map(|asset| ReleaseAsset {
+            name: asset.name,
+            url: asset.browser_download_url,
+        })
+        .collect();
     Ok(ReleaseInfo {
         version: release.tag_name.parse()?,
         notes_url: release.html_url,
+        assets,
     })
 }
 
@@ -174,6 +212,13 @@ fn parse_release(body: &[u8]) -> Result<ReleaseInfo, UpdateError> {
 /// without control characters.
 fn is_notes_link(url: &str) -> bool {
     url.starts_with(NOTES_URL_PREFIX)
+        && url.len() <= MAX_NOTES_URL_BYTES
+        && !url.chars().any(char::is_control)
+}
+
+/// Whether `url` downloads a file of the project's releases.
+fn is_asset_link(url: &str) -> bool {
+    url.starts_with(ASSET_URL_PREFIX)
         && url.len() <= MAX_NOTES_URL_BYTES
         && !url.chars().any(char::is_control)
 }
@@ -208,6 +253,7 @@ impl SimulatedReleases {
             answer: Ok(ReleaseInfo {
                 version,
                 notes_url: format!("{NOTES_URL_PREFIX}latest"),
+                assets: Vec::new(),
             }),
         }
     }

@@ -18,7 +18,7 @@ use hubergamof_modules::desktop::{Launch, scoped_command};
 use std::sync::Arc;
 use std::time::Duration;
 
-use hubergamof_protocol::{DeviceInfo, UpdateStatus};
+use hubergamof_protocol::{DeviceInfo, InstallSupport, UpdateStatus};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -30,7 +30,7 @@ pub use menu::{NO_DEVICE_LABEL, OPEN_UI_LABEL, QUIT_LABEL};
 
 use dbusmenu::{DbusMenu, MENU_PATH, MenuHandler};
 use item::{ITEM_PATH, StatusNotifierItem};
-use menu::{MenuAction, TrayMenu};
+use menu::{MenuAction, TrayMenu, UpdateEntry};
 use theme::{apply_theme, follow_theme};
 
 use crate::device::{DeviceDiscovery, DiscoveryEvent};
@@ -49,6 +49,7 @@ const URL_OPENER: &str = "xdg-open";
 struct UiActions {
     url: String,
     engines: EngineRegistry,
+    updates: UpdateHandle,
     quit: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -60,6 +61,7 @@ impl MenuHandler for UiActions {
                 let engines = self.engines.clone();
                 tokio::spawn(async move { apply_theme(&engines, theme).await });
             }
+            MenuAction::InstallUpdate => self.updates.install_now(),
             MenuAction::Quit => (self.quit)(),
         }
     }
@@ -130,6 +132,7 @@ impl TrayIcon {
         let handler: Arc<dyn MenuHandler> = Arc::new(UiActions {
             url,
             engines: engines.clone(),
+            updates: updates.clone(),
             quit,
         });
         let started = tokio::time::timeout(
@@ -240,32 +243,41 @@ async fn publish_devices(connection: &Connection, labels: Vec<String>) -> zbus::
     StatusNotifierItem::new_tool_tip(item.signal_emitter()).await
 }
 
-/// Shows in the menu the newer release found by the update check, if any.
+/// Shows in the menu the newer release found by the update check, if any,
+/// and whether the entry installs it.
 async fn follow_updates(connection: Connection, updates: UpdateHandle) {
     let mut status = updates.subscribe();
+    let mut settings = updates.subscribe_settings();
     loop {
-        let version = match &*status.borrow_and_update() {
-            UpdateStatus::Available { version, .. } => Some(version.clone()),
+        let installable =
+            settings.borrow_and_update().install_support != InstallSupport::Unpackaged;
+        let entry = match &*status.borrow_and_update() {
+            UpdateStatus::Available { version, .. } => Some(UpdateEntry {
+                version: version.clone(),
+                installable,
+            }),
             _ => None,
         };
-        if let Err(error) = publish_update(&connection, version).await {
+        if let Err(error) = publish_update(&connection, entry).await {
             tracing::warn!(%error, "cannot update the system tray menu");
         }
-        if status.changed().await.is_err() {
-            return;
+        tokio::select! {
+            result = status.changed() => if result.is_err() { return },
+            // The installation support never changes at run time.
+            result = settings.changed() => if result.is_err() { return },
         }
     }
 }
 
 /// Updates the update entry of the menu, and tells the host when it changed.
-async fn publish_update(connection: &Connection, version: Option<String>) -> zbus::Result<()> {
+async fn publish_update(connection: &Connection, entry: Option<UpdateEntry>) -> zbus::Result<()> {
     let menu = connection
         .object_server()
         .interface::<_, DbusMenu>(MENU_PATH)
         .await?;
     let revision = {
         let mut menu = menu.get_mut().await;
-        if !menu.menu_mut().set_update(version) {
+        if !menu.menu_mut().set_update(entry) {
             return Ok(());
         }
         menu.revision()
@@ -342,6 +354,7 @@ mod tests {
         let actions = UiActions {
             url: String::new(),
             engines: EngineRegistry::default(),
+            updates: UpdateHandle::inactive(),
             quit: quit_on(shutdown),
         };
         actions.run(MenuAction::Quit);
@@ -359,6 +372,7 @@ mod tests {
         let handler: Arc<dyn MenuHandler> = Arc::new(UiActions {
             url: String::new(),
             engines,
+            updates: UpdateHandle::inactive(),
             quit,
         });
         let tray = serve(Builder::unix_stream(tray_socket), devices, &handler)
@@ -400,6 +414,41 @@ mod tests {
 
     fn label(properties: &HashMap<String, OwnedVariant>) -> String {
         String::try_from(properties["label"].clone()).unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_install_action_installs_the_release_that_was_found() {
+        let (_stop, stopping) = watch::channel(false);
+        let parts = crate::update::UpdateParts {
+            source: Arc::new(crate::update::SimulatedReleases::announcing(
+                crate::update::Version::new(2, 0, 0),
+            )),
+            installer: Arc::new(crate::update::SimulatedInstaller::succeeding()),
+            policy: Arc::new(crate::update::MemoryPolicyStore::holding(
+                crate::update::UpdatePolicy {
+                    auto_install: false,
+                },
+            )),
+            current: crate::update::Version::new(1, 0, 0),
+            first_delay: Duration::ZERO,
+        };
+        let (updates, _task) = crate::update::start(parts, stopping);
+        let mut status = updates.subscribe();
+        status
+            .wait_for(|status| matches!(status, UpdateStatus::Available { .. }))
+            .await
+            .unwrap();
+        let actions = UiActions {
+            url: String::new(),
+            engines: EngineRegistry::default(),
+            updates,
+            quit: Arc::new(|| {}),
+        };
+        actions.run(MenuAction::InstallUpdate);
+        status
+            .wait_for(|status| matches!(status, UpdateStatus::Installed { .. }))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -491,8 +540,24 @@ mod tests {
     #[tokio::test]
     async fn a_newer_release_shows_in_the_menu_and_disappears_with_it() {
         let (tray, host) = connected_pair(&[], EngineRegistry::default(), Arc::new(|| {})).await;
-        publish_update(&tray, Some("2.0.0".into())).await.unwrap();
-        publish_update(&tray, Some("2.0.0".into())).await.unwrap();
+        publish_update(
+            &tray,
+            Some(UpdateEntry {
+                version: "2.0.0".into(),
+                installable: false,
+            }),
+        )
+        .await
+        .unwrap();
+        publish_update(
+            &tray,
+            Some(UpdateEntry {
+                version: "2.0.0".into(),
+                installable: false,
+            }),
+        )
+        .await
+        .unwrap();
         let (revision, (_, _, children)): (u32, WireLayout) = call(
             &host,
             MENU_PATH,
