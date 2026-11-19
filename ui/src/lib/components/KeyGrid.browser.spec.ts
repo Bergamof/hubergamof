@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import type { CatalogModule, ModuleInstance } from '#lib/generated/index.js';
+import '../../routes/layout.css';
 import KeyGrid from './KeyGrid.svelte';
 
 const CLOCK: CatalogModule = {
@@ -44,6 +45,8 @@ async function renderGrid(keys: readonly (ModuleInstance | undefined)[], selecte
 const key = (position: number, name: string) =>
 	page.getByRole('button', { name: new RegExp(`^Touche ${position} : ${name}`) });
 
+const MAX_COLUMN_WIDTH_PX = 96;
+
 describe('KeyGrid', () => {
 	it('shows each key by name, in order, the selected one current', async () => {
 		await renderGrid([instance('a', 'clock'), instance('b', 'clock', 'Paris')], 1);
@@ -81,5 +84,24 @@ describe('KeyGrid', () => {
 		await expect.element(scrolling).not.toBeInTheDocument();
 		await renderGrid([instance('a', 'clock'), instance('b', 'clock')]);
 		await expect.element(scrolling).toBeVisible();
+	});
+
+	it('wraps the scrolling help instead of widening a shrink-to-fit container', async () => {
+		const { container } = await render(KeyGrid, {
+			keys: [instance('a', 'clock'), instance('b', 'clock')],
+			moduleOf: () => CLOCK,
+			imageOf: () => null,
+			columns: 1,
+			visibleRows: 1,
+			selected: undefined,
+			buttonId: (position: number) => `key-${position}`,
+			onselect: vi.fn(),
+			onmove: vi.fn(),
+			onadd: vi.fn()
+		});
+		container.style.width = 'fit-content';
+		expect(container.querySelector('p')).not.toBeNull();
+		// A single column of tiles (max-w-24 = 96 px): the help text must not stretch it.
+		expect(container.getBoundingClientRect().width).toBeLessThanOrEqual(MAX_COLUMN_WIDTH_PX);
 	});
 });

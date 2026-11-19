@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Corrigé
+
+- Interface : les textes d'aide sous les touches (défilement par la molette Navigation, déplacement d'une touche) reviennent à la ligne au lieu d'élargir le panneau qui représente le Stream Deck ; test de composant `KeyGrid` (#67).
+
 ### Ajouté
 
 - Interface : les fonctions de deux molettes s'échangent par cliquer-glisser (comme les touches) ou au clavier avec « Échanger avec la précédente / la suivante » dans les détails de la molette ; édition pure `swapDials`, annonce vocale, tests unitaires, composants et e2e (#70).
