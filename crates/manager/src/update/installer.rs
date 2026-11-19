@@ -36,7 +36,8 @@ const MAX_SMALL_FILE_BYTES: u64 = 64 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Longest wait for the helper: a stuck package manager must not leave the
-/// update « installing » for ever.
+/// update « installing » for ever. The helper runs as root: it is not killed
+/// (the installation may well finish), only no longer waited for.
 const HELPER_TIMEOUT: Duration = Duration::from_mins(20);
 
 /// Longest download (connection included).
@@ -200,12 +201,13 @@ impl HelperRunner for PkexecHelper {
             args: vec![HELPER_PATH.into(), download_dir.as_os_str().to_owned()],
         };
         let mut command = tokio::process::Command::from(scoped_command(&launch));
-        command
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true);
+        command.stdin(std::process::Stdio::null());
         let output = tokio::time::timeout(HELPER_TIMEOUT, command.output())
             .await
-            .map_err(|_| InstallError::Helper("the installation took too long".to_owned()))?
+            .map_err(|_| InstallError::Helper(
+                    "the installation is taking long: its outcome is unknown, check the installed version"
+                        .to_owned(),
+                ))?
             .map_err(|error| {
                 InstallError::Helper(format!("cannot run {PRIVILEGE_PROGRAM}: {error}"))
             })?;

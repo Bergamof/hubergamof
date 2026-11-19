@@ -36,6 +36,12 @@ const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
 const STAGING_DIR_MODE: u32 = 0o755;
 const STAGED_FILE_MODE: u32 = 0o644;
 
+/// The umask the package manager (and the hooks it starts) run with.
+const PACKAGE_MANAGER_UMASK: u32 = 0o022;
+
+/// Prefix of the folders staging a package under the staging root.
+const STAGING_PREFIX: &str = "update-";
+
 /// Mode of the staged package while it is written: the helper only.
 const STAGED_FILE_WRITE_MODE: u32 = 0o600;
 
@@ -103,6 +109,9 @@ pub struct SystemInstaller;
 
 impl PackageInstaller for SystemInstaller {
     fn install(&self, format: PackageFormat, package: &Path) -> Result<(), String> {
+        // The helper runs with a private umask for what it creates itself; the
+        // package manager and the hooks it runs get the usual one.
+        rustix::process::umask(Mode::from_raw_mode(PACKAGE_MANAGER_UMASK));
         let status = install_command(format, package)
             .stdin(Stdio::null())
             .status()
@@ -241,8 +250,9 @@ fn install_staged(
         return Err(ApplyError::Unacceptable(name.to_owned()));
     }
     check_staging_root(environment.staging_root, environment.staging_owner)?;
+    remove_stale_staging(environment.staging_root);
     let staging = tempfile::Builder::new()
-        .prefix("update-")
+        .prefix(STAGING_PREFIX)
         .tempdir_in(environment.staging_root)
         .map_err(failed)?;
     fs::set_permissions(staging.path(), fs::Permissions::from_mode(STAGING_DIR_MODE))
@@ -264,6 +274,23 @@ fn install_staged(
         .installer
         .install(format, &path)
         .map_err(ApplyError::Install)
+}
+
+/// Removes what an interrupted run left under the staging root (only the
+/// helper writes there, and one run at a time reaches this point).
+fn remove_stale_staging(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(STAGING_PREFIX);
+        if stale && let Err(error) = fs::remove_dir_all(entry.path()) {
+            eprintln!("cannot remove {}: {error}", entry.path().display());
+        }
+    }
 }
 
 /// The staging root must be a real folder (not a link) of `owner`, closed to
@@ -874,6 +901,20 @@ mod tests {
             );
         }
         assert!(!missing.exists(), "a missing staging root is not created");
+    }
+
+    #[test]
+    fn what_an_interrupted_run_left_is_removed_and_nothing_else() {
+        let release = Release::signed();
+        let stale = release.staging.path().join("update-OLD");
+        fs::create_dir(&stale).unwrap();
+        fs::write(stale.join("hubergamof_0.0.1_amd64.deb"), b"old").unwrap();
+        let other = release.staging.path().join("keep-me");
+        fs::create_dir(&other).unwrap();
+        let installer = RecordingInstaller::default();
+        release.apply(Some(PackageFormat::Deb), &installer).unwrap();
+        assert!(!stale.exists());
+        assert!(other.exists());
     }
 
     #[test]

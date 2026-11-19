@@ -77,6 +77,8 @@ hubergamof_pre_remove() {
 }
 
 hubergamof_post_remove() {
+	# Ce qu'une mise à jour interrompue a laissé dans le dossier de l'assistant.
+	rm -rf -- /var/lib/hubergamof/update-* 2>/dev/null || true
 	hubergamof_in_graphical_sessions daemon-reload
 	hubergamof_reload_udev
 }
