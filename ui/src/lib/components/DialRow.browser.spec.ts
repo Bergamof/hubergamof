@@ -70,7 +70,23 @@ describe('DialRow', () => {
 		});
 		items[1].dispatchEvent(foreign);
 		expect(foreign.defaultPrevented).toBe(false);
+		items[1].dispatchEvent(
+			new DragEvent('drop', { dataTransfer: new DataTransfer(), bubbles: true })
+		);
 		expect(onswap).not.toHaveBeenCalled();
+	});
+
+	it('outlines the dial under the drag until it leaves or the drag ends', async () => {
+		const { container } = await renderRow([dial('Navigation'), dial('Volume')]);
+		const target = container.querySelectorAll('li')[1];
+		const transfer = new DataTransfer();
+		transfer.setData('application/x-hubergamof-dial', '0');
+		target.dispatchEvent(
+			new DragEvent('dragover', { dataTransfer: transfer, bubbles: true, cancelable: true })
+		);
+		await vi.waitFor(() => expect(target.className).toContain('outline-dashed'));
+		target.dispatchEvent(new DragEvent('dragleave', { bubbles: true }));
+		await vi.waitFor(() => expect(target.className).not.toContain('outline-dashed'));
 	});
 
 	it('flags a function of a module this manager does not provide', async () => {

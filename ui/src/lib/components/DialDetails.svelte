@@ -134,7 +134,7 @@ nothing, and the settings of the module of that function.
 			aria-disabled={isFirst}
 			onclick={() => isFirst || onswap(index - 1)}
 		>
-			<span aria-hidden="true">←</span> Échanger avec la précédente
+			<span aria-hidden="true">←</span> Échanger avec la molette précédente
 		</button>
 		<button
 			type="button"
@@ -142,7 +142,7 @@ nothing, and the settings of the module of that function.
 			aria-disabled={isLast}
 			onclick={() => isLast || onswap(index + 1)}
 		>
-			Échanger avec la suivante <span aria-hidden="true">→</span>
+			Échanger avec la molette suivante <span aria-hidden="true">→</span>
 		</button>
 	</div>
 	<form class="flex flex-col gap-2" onsubmit={assign}>

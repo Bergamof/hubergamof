@@ -153,9 +153,10 @@ test('échange deux molettes à la souris', async ({ page }) => {
 test('échange une molette avec sa voisine au clavier', async ({ page }) => {
 	await open(page);
 	await dial(page, '1 : Contrôle du volume').click();
-	await page.getByRole('button', { name: /Échanger avec la suivante/ }).click();
+	await page.getByRole('button', { name: /Échanger avec la molette suivante/ }).click();
 	await expect(page.getByText('Molettes 1 et 2 échangées.')).toBeAttached();
 	await expect(dial(page, '2 : Contrôle du volume')).toHaveAttribute('aria-current', 'true');
+	await expect(dial(page, '1 : Contrôle du pomodoro')).toBeVisible();
 });
 
 test('refuse un réglage invalide, puis enregistre sans bouton un réglage valide', async ({

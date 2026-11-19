@@ -32,9 +32,12 @@ Dials of the device, left to right: a knob drawing and the name of the function 
 	}
 
 	function drop(event: DragEvent, index: number) {
-		const from = Number(event.dataTransfer?.getData(DRAG_TYPE));
+		const dragged = event.dataTransfer?.getData(DRAG_TYPE);
 		event.preventDefault();
 		dropTarget = undefined;
+		// An empty value is no dial: `Number('')` would read it as dial 0.
+		if (!dragged) return;
+		const from = Number(dragged);
 		if (Number.isInteger(from) && from !== index) onswap(from, index);
 	}
 </script>
