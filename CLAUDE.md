@@ -13,7 +13,7 @@ Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception
 - Activation (manuelle et auto) : voir la section dédiée du `README.md`.
 - Toute montée de version d'outil se fait dans ces fichiers ET dans le `Dockerfile` (et le README si la démarche change), dans le même commit.
 - Node ≥ 24.12 (`engines`) : le Corepack des Node plus anciens (< 0.34.5) ne sait pas lancer pnpm 12 (`Cannot find module …/pnpm.cjs`, cache `~/.cache/node/corepack/v1/pnpm/<version>` incomplet à effacer) ; `make check-node` (prérequis de `ui-deps`) le détecte. Minimum lu depuis `engines` par `.github/scripts/check-node-version.sh`.
-- Prérequis système : compilateur C + `pkg-config` + `libudev-dev` (hidapi compilé statiquement par `elgato-streamdeck`, `libhidapi` système inutile), `pactl` ≥ 16 (module Audio ; Ubuntu : paquet `pulseaudio-utils`, absent par défaut ; `wpctl` inutilisé), Docker (utilisateur dans le groupe `docker`), règle udev `packaging/udev/70-hubergamof.rules` (Stream Deck ; aucune règle Logitech tant que la règle durable n'a pas passé la revue sécurité, `docs/security.md`).
+- Prérequis système : compilateur C + `pkg-config` + `libudev-dev` (hidapi compilé statiquement par `elgato-streamdeck`, `libhidapi` système inutile), `pactl` ≥ 16 (module Audio ; Ubuntu : paquet `pulseaudio-utils`, absent par défaut ; `wpctl` inutilisé), Docker (utilisateur dans le groupe `docker`), règle udev `packaging/udev/70-hubergamof.rules` (Stream Deck + interface HID++ du récepteur Logi Bolt seulement, `docs/security.md`).
 
 ## Commandes (Makefile racine)
 - Tout vérifier : `make check` (lint + tests instrumentés avec planchers de couverture + doctests + contrat TS à jour)
@@ -106,7 +106,7 @@ Détail (Docker, notifications animées, Painter, tests du moteur, zbus, Teams�
 - Requêtes vers des API publiques : User-Agent générique, jamais d'information personnelle.
 
 ## État du projet
-- En cours : support des souris Logitech MX (étape 0 faite : crate `mouse` et `mouse-probe`, à lancer par Adrien sur ses deux souris ; ensuite domaine, moteur, modules, menu circulaire, interface). Bureau visé d'abord : KDE/Wayland (Manjaro), GNOME (Ubuntu 24.04) en repli.
+- En cours : support des souris Logitech MX (étape 0 faite et validée sur le matériel : crate `mouse`, `mouse-probe`, relevés dans `docs/mouse-hidpp.md` ; ensuite domaine et contrat, moteur, modules, menu circulaire, interface). Bureau visé d'abord : KDE/Wayland (Manjaro), GNOME (Ubuntu 24.04) en repli.
 - Fait : tout le socle (protocole, moteur, rendu, config, serveur web/WebSocket, tray, UI de configuration, images, export/import), bande tactile globale, molette contextuelle, verrouillage, lanceur de bureau, modules audio, pomodoro, docker, intellij, claude, notifications, teams (pont, extension, installateur, rappels de réunions, appel entrant côté module) ; revues des spécialistes faites et corrigées (audit complet du 2026-11-18 : 0 bloquant). Historique : `docs/decisions.md`.
 - À valider sur le vrai Stream Deck+ : latence des molettes avec écritures de bande, appui long de la molette contextuelle, lisibilité du cadre sur les touches, extinction au verrouillage (vrai KDE/GNOME), lanceur de bureau, extension Teams dans Brave (sélecteurs non validés ; reste la détection de la sonnerie et les noms des non lus par D-Bus).
 - À valider sur poste réel : mises à jour automatiques (activation du socket par systemd, `apt-get`/`pacman` depuis l'assistant, redémarrage du service) après la première release signée.
