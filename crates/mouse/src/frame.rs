@@ -308,6 +308,23 @@ mod tests {
     }
 
     #[test]
+    fn every_hidpp_report_size_can_carry_a_notification() {
+        for report_id in [0x10, 0x11, 0x12] {
+            let mut bytes = answer_frame(1, 7, 0x00, &[1]);
+            bytes[0] = report_id;
+            assert!(Notification::parse(&bytes).is_some(), "{report_id:#04x}");
+        }
+    }
+
+    #[test]
+    fn the_event_number_is_the_high_nibble() {
+        for event in [0, 1, 5, 15] {
+            let notification = Notification::parse(&answer_frame(1, 7, event << 4, &[])).unwrap();
+            assert_eq!(notification.event, event);
+        }
+    }
+
+    #[test]
     fn answers_errors_and_odd_frames_are_not_notifications() {
         let answer = answer_frame(1, 7, 0x1B, &[1]);
         assert_eq!(Notification::parse(&answer), None, "software id present");

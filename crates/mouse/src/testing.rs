@@ -1,4 +1,9 @@
-//! A scripted HID++ device for the tests: answers the getters the probe sends.
+//! A scripted HID++ device for the tests.
+//!
+//! It encodes the same function numbers and bytes as the code it tests, from the
+//! same source (Solaar): a green test shows the code is consistent, not that a
+//! real mouse agrees. That is what the checks on the hardware are for
+//! (`docs/mouse-hidpp.md`).
 
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
@@ -27,6 +32,8 @@ pub struct FakeDevice {
     controls: Vec<[u8; 9]>,
     /// Features whose functions all fail with "invalid function".
     broken: Vec<u16>,
+    /// Features whose lookup at the root fails with an error.
+    lookup_errors: Vec<u16>,
     /// What the settings of the device currently are.
     pub state: FakeState,
 }
@@ -71,6 +78,7 @@ impl FakeDevice {
             name: String::new(),
             controls: Vec::new(),
             broken: Vec::new(),
+            lookup_errors: Vec::new(),
             state: FakeState::default(),
         }
     }
@@ -163,6 +171,12 @@ impl FakeDevice {
         self
     }
 
+    /// The root answers an error, not an index, when asked for this feature.
+    pub fn with_lookup_error(mut self, id: u16) -> Self {
+        self.lookup_errors.push(id);
+        self
+    }
+
     pub fn with_broken_feature(mut self, id: u16) -> Self {
         self.broken.push(id);
         self
@@ -191,6 +205,9 @@ impl FakeDevice {
         match (feature, function) {
             (0, 0) => {
                 let wanted = u16::from_be_bytes([*params.first()?, *params.get(1)?]);
+                if self.lookup_errors.contains(&wanted) {
+                    return None;
+                }
                 let found = if wanted == 0 {
                     Some(0)
                 } else {
