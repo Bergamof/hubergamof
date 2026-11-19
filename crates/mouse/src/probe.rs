@@ -112,6 +112,8 @@ pub struct InterfaceInfo {
 pub struct InterfaceScan {
     /// The interface.
     pub info: InterfaceInfo,
+    /// Why the interface was not probed, when it was left alone on purpose.
+    pub skipped: Option<String>,
     /// Why the interface could not be opened, if it could not.
     pub open_error: Option<String>,
     /// Devices that answered.
@@ -145,7 +147,7 @@ pub fn probe_device<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Option<Devi
     }
     match feature_index(hidpp, device, DEVICE_NAME) {
         Ok(Some(index)) => match read_name(hidpp, device, index) {
-            Ok(name) => report.name = Some(name),
+            Ok(name) => report.name = Some(name).filter(|name| !name.is_empty()),
             Err(error) => report.warnings.push(format!("name: {error}")),
         },
         Ok(None) => {}
@@ -195,14 +197,18 @@ fn read_features<C: Channel>(
     // The set lists the features after Root: indexes 1 to count.
     for index in 1..=count {
         let params = hidpp.request(device, set, 1, &[index])?;
-        if let [hi, lo, flags, version, ..] = params[..] {
-            report.features.push(FeatureEntry {
-                index,
-                id: u16::from_be_bytes([hi, lo]),
-                flags,
-                version,
-            });
-        }
+        let [hi, lo, flags, version, ..] = params[..] else {
+            return Err(HidppError::Malformed(format!(
+                "feature entry of {} bytes",
+                params.len()
+            )));
+        };
+        report.features.push(FeatureEntry {
+            index,
+            id: u16::from_be_bytes([hi, lo]),
+            flags,
+            version,
+        });
     }
     Ok(())
 }
@@ -223,6 +229,9 @@ fn read_name<C: Channel>(
     while name.len() < length {
         let offset = u8::try_from(name.len()).unwrap_or(u8::MAX);
         let chunk = hidpp.request(device, index, 1, &[offset])?;
+        if chunk.is_empty() {
+            return Err(HidppError::Malformed("empty name chunk".to_owned()));
+        }
         let wanted = (length - name.len()).min(NAME_CHUNK);
         name.extend(chunk.iter().take(wanted));
     }
@@ -257,8 +266,9 @@ fn read_controls<C: Channel>(
                 ..,
             ] = params[..]
             else {
-                return Err(HidppError::Channel(crate::channel::ChannelError(
-                    "short button description".to_owned(),
+                return Err(HidppError::Malformed(format!(
+                    "button description of {} bytes",
+                    params.len()
                 )));
             };
             Ok(Control {
@@ -270,6 +280,24 @@ fn read_controls<C: Channel>(
                 group_mask,
                 position,
             })
+        })
+        .collect()
+}
+
+/// Text from a device or the system, safe to print: control characters (terminal
+/// escape sequences) and bidirectional overrides become `?`.
+#[must_use]
+pub fn clean(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control()
+                || ('\u{202A}'..='\u{202E}').contains(&c)
+                || ('\u{2066}'..='\u{2069}').contains(&c)
+            {
+                '?'
+            } else {
+                c
+            }
         })
         .collect()
 }
@@ -300,10 +328,13 @@ pub fn render(out: &mut impl Write, scans: &[InterfaceScan]) -> io::Result<()> {
             info.interface_number,
             info.usage_page,
             info.usage,
-            info.product.as_deref().unwrap_or("")
+            clean(info.product.as_deref().unwrap_or(""))
         )?;
+        if let Some(reason) = &scan.skipped {
+            writeln!(out, "  not probed: {reason}")?;
+        }
         if let Some(error) = &scan.open_error {
-            writeln!(out, "  cannot open: {error}")?;
+            writeln!(out, "  cannot open: {}", clean(error))?;
         }
         for device in &scan.devices {
             render_device(out, device)?;
@@ -324,7 +355,7 @@ fn render_device(out: &mut impl Write, device: &DeviceReport) -> io::Result<()> 
         out,
         "  Device index 0x{:02X}: {} (HID++ {}.{})",
         device.index,
-        device.name.as_deref().unwrap_or("name unknown"),
+        clean(device.name.as_deref().unwrap_or("name unknown")),
         device.protocol.0,
         device.protocol.1
     )?;
@@ -359,18 +390,17 @@ fn render_device(out: &mut impl Write, device: &DeviceReport) -> io::Result<()> 
         }
     }
     for warning in &device.warnings {
-        writeln!(out, "    warning: {warning}")?;
+        writeln!(out, "    warning: {}", clean(warning))?;
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use std::time::Duration;
 
     use super::*;
-    use crate::testing::{FakeDevice, FakeLink};
+    use crate::testing::{FakeDevice, FakeLink, ScriptedChannel, frame};
 
     fn mouse() -> FakeDevice {
         FakeDevice::new()
@@ -380,13 +410,14 @@ mod tests {
             .with_control(0x00C3, 0x00B4, 0x70, 0x01)
     }
 
-    fn hidpp(link: FakeLink) -> Hidpp<FakeLink> {
-        Hidpp::new(link).with_timeout(Duration::from_millis(1))
+    /// Function bytes a scripted reply must carry for `function` (software id included).
+    fn function_byte(function: u8) -> u8 {
+        function << 4 | crate::frame::SOFTWARE_ID
     }
 
     #[test]
     fn reads_features_name_and_buttons_of_a_direct_device() {
-        let mut hidpp = hidpp(FakeLink::direct(mouse()));
+        let mut hidpp = Hidpp::new(FakeLink::direct(mouse()));
         let devices = scan_interface(&mut hidpp);
         assert_eq!(devices.len(), 1);
         let device = &devices[0];
@@ -404,7 +435,31 @@ mod tests {
             device.controls[0].flag_names(),
             ["mouse", "reprogrammable", "divertable"]
         );
-        assert!(device.warnings.is_empty(), "{:?}", device.warnings);
+        assert_eq!(device.warnings, Vec::<String>::new());
+    }
+
+    #[test]
+    fn button_fields_are_decoded_from_their_own_bytes() {
+        let link = FakeLink::direct(FakeDevice::new().with_control_layout(
+            0x1234,
+            0x5678,
+            0xA5,
+            0x5A,
+            [7, 8, 9],
+        ));
+        let device = scan_interface(&mut Hidpp::new(link)).remove(0);
+        assert_eq!(
+            device.controls,
+            [Control {
+                cid: 0x1234,
+                tid: 0x5678,
+                flags: 0xA5,
+                flags2: 0x5A,
+                group: 8,
+                group_mask: 9,
+                position: 7,
+            }]
+        );
     }
 
     #[test]
@@ -413,7 +468,7 @@ mod tests {
             (1, mouse()),
             (3, FakeDevice::new().with_name("Keyboard")),
         ]);
-        let devices = scan_interface(&mut hidpp(link));
+        let devices = scan_interface(&mut Hidpp::new(link));
         let seen: Vec<(u8, Option<&str>)> = devices
             .iter()
             .map(|device| (device.index, device.name.as_deref()))
@@ -429,15 +484,31 @@ mod tests {
 
     #[test]
     fn a_silent_interface_yields_nothing() {
-        assert_eq!(scan_interface(&mut hidpp(FakeLink::silent())).len(), 0);
+        let mut hidpp = Hidpp::new(FakeLink::silent());
+        assert_eq!(scan_interface(&mut hidpp).len(), 0);
+    }
+
+    #[test]
+    fn a_ping_with_the_wrong_echo_is_not_a_device() {
+        // Echo byte 0x00 instead of the 0x5A we sent.
+        let reply = frame(0xFF, 0, function_byte(1), &[4, 5, 0x00]);
+        let mut hidpp = Hidpp::new(ScriptedChannel::new().then_frame(reply));
+        assert_eq!(probe_device(&mut hidpp, 0xFF), None);
+    }
+
+    #[test]
+    fn a_ping_refused_with_an_hidpp20_error_is_not_a_device() {
+        let reply = frame(0xFF, 0xFF, 0, &[function_byte(1), 2]);
+        let mut hidpp = Hidpp::new(ScriptedChannel::new().then_frame(reply));
+        assert_eq!(probe_device(&mut hidpp, 0xFF), None);
     }
 
     #[test]
     fn a_device_without_buttons_reports_none() {
         let link = FakeLink::direct(FakeDevice::new().with_feature(REPROG_CONTROLS_V4, 4));
-        let device = scan_interface(&mut hidpp(link)).remove(0);
+        let device = scan_interface(&mut Hidpp::new(link)).remove(0);
         assert_eq!(device.controls.len(), 0);
-        assert_eq!(device.warnings.len(), 0);
+        assert_eq!(device.warnings, Vec::<String>::new());
     }
 
     #[test]
@@ -448,7 +519,7 @@ mod tests {
                 .with_control(0x0050, 0x0038, 0x31, 0)
                 .with_broken_feature(REPROG_CONTROLS_V4),
         );
-        let device = scan_interface(&mut hidpp(link)).remove(0);
+        let device = scan_interface(&mut Hidpp::new(link)).remove(0);
         assert_eq!(device.name.as_deref(), Some("Half Broken"));
         assert_eq!(device.controls.len(), 0);
         assert_eq!(device.warnings.len(), 1);
@@ -456,10 +527,119 @@ mod tests {
     }
 
     #[test]
-    fn the_report_names_what_it_knows_and_marks_the_rest() {
-        let mut hidpp = hidpp(FakeLink::direct(mouse().with_feature(0xBEEF, 1)));
+    fn the_probe_only_sends_getters_of_the_features_it_reads() {
+        let mut hidpp = Hidpp::new(FakeLink::direct(mouse()));
         let device = scan_interface(&mut hidpp).remove(0);
-        let scan = InterfaceScan {
+        let index_of = |id: u16| device.features.iter().find(|f| f.id == id).map(|f| f.index);
+        let readable = [
+            Some(0),
+            index_of(FEATURE_SET),
+            index_of(DEVICE_NAME),
+            index_of(REPROG_CONTROLS_V4),
+        ];
+        let written = hidpp.channel().written();
+        assert!(written.len() > 10, "{} reports", written.len());
+        for report in written {
+            let (feature_index, function) = (report[2], report[3] >> 4);
+            assert!(
+                readable.contains(&Some(feature_index)) && function <= 1,
+                "not a getter of a read feature: {report:02x?}"
+            );
+        }
+    }
+
+    // Name reading, in 16-character chunks.
+
+    fn name_of(len: usize) -> Option<String> {
+        let name = "abcdefghij".repeat(26)[..len].to_owned();
+        let link = FakeLink::direct(FakeDevice::new().with_name(&name));
+        let device = scan_interface(&mut Hidpp::new(link)).remove(0);
+        assert_eq!(device.warnings, Vec::<String>::new(), "length {len}");
+        device.name
+    }
+
+    #[test]
+    fn names_of_every_awkward_length_are_read_whole() {
+        for len in [1, 15, 16, 17, 31, 32, 33, 255] {
+            let expected = "abcdefghij".repeat(26)[..len].to_owned();
+            assert_eq!(name_of(len), Some(expected), "length {len}");
+        }
+    }
+
+    #[test]
+    fn an_empty_name_is_no_name() {
+        assert_eq!(name_of(0), None);
+    }
+
+    /// Replies for a name of `length` characters answered by `chunks`.
+    fn name_script(length: u8, chunks: &[&[u8]]) -> Hidpp<ScriptedChannel> {
+        let mut channel =
+            ScriptedChannel::new().then_frame(frame(0xFF, 5, function_byte(0), &[length]));
+        for chunk in chunks {
+            channel = channel.then_frame(frame(0xFF, 5, function_byte(1), chunk));
+        }
+        Hidpp::new(channel)
+    }
+
+    #[test]
+    fn trailing_nuls_are_dropped_and_bad_utf8_is_replaced() {
+        let mut hidpp = name_script(4, &[b"ab\0\0"]);
+        assert_eq!(read_name(&mut hidpp, 0xFF, 5).unwrap(), "ab");
+        let mut hidpp = name_script(2, &[&[0xFF, b'a']]);
+        assert_eq!(read_name(&mut hidpp, 0xFF, 5).unwrap(), "\u{FFFD}a");
+    }
+
+    #[test]
+    fn a_name_longer_than_what_the_device_returns_is_an_error_not_a_loop() {
+        // 20 characters announced, a 4-byte first chunk (the reply is padded to
+        // the report size, so it is long), then silence.
+        let mut hidpp = name_script(40, &[]).with_timeout(Duration::from_millis(5));
+        assert!(matches!(
+            read_name(&mut hidpp, 0xFF, 5),
+            Err(HidppError::Timeout(_))
+        ));
+    }
+
+    #[test]
+    fn an_answer_without_parameters_cannot_stall_the_name_loop() {
+        let bare = vec![0x11, 0xFF, 5, function_byte(1)];
+        let channel = ScriptedChannel::new()
+            .then_frame(frame(0xFF, 5, function_byte(0), &[20]))
+            .then_frame(bare);
+        let error = read_name(&mut Hidpp::new(channel), 0xFF, 5).unwrap_err();
+        assert_eq!(error, HidppError::Malformed("empty name chunk".to_owned()));
+    }
+
+    #[test]
+    fn a_short_button_description_is_malformed() {
+        let short = vec![0x11, 0xFF, 6, function_byte(1), 0, 0x50, 0];
+        let channel = ScriptedChannel::new()
+            .then_frame(frame(0xFF, 6, function_byte(0), &[1]))
+            .then_frame(short);
+        let error = read_controls(&mut Hidpp::new(channel), 0xFF, 6).unwrap_err();
+        assert_eq!(
+            error,
+            HidppError::Malformed("button description of 3 bytes".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_short_feature_entry_is_reported_as_a_warning() {
+        let short = vec![0x11, 0xFF, 1, function_byte(1), 0x10];
+        let channel = ScriptedChannel::new()
+            // ping, getFeature(FeatureSet) -> index 1, count 1, entry 1 (short)
+            .then_frame(frame(0xFF, 0, function_byte(1), &[4, 5, PING_ECHO]))
+            .then_frame(frame(0xFF, 0, function_byte(0), &[1, 0, 0]))
+            .then_frame(frame(0xFF, 1, function_byte(0), &[1]))
+            .then_frame(short);
+        let device = probe_device(&mut Hidpp::new(channel), 0xFF).unwrap();
+        assert!(device.warnings[0].starts_with("feature list: malformed answer"));
+    }
+
+    // Report format.
+
+    fn interface(devices: Vec<DeviceReport>) -> InterfaceScan {
+        InterfaceScan {
             info: InterfaceInfo {
                 path: "/dev/hidraw9".to_owned(),
                 vendor_id: 0x046D,
@@ -469,26 +649,119 @@ mod tests {
                 usage: 1,
                 product: Some("Bolt Receiver".to_owned()),
             },
-            open_error: Some("permission denied".to_owned()),
-            devices: vec![device],
-            trace: vec!["-> 11 ff".to_owned()],
-        };
+            skipped: None,
+            open_error: None,
+            devices,
+            trace: Vec::new(),
+        }
+    }
+
+    fn rendered(scans: &[InterfaceScan]) -> String {
         let mut out = Vec::new();
-        render(&mut out, &[scan]).unwrap();
-        let text = String::from_utf8(out).unwrap();
+        render(&mut out, scans).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn the_report_is_exactly_what_a_person_pastes_back() {
+        let link = FakeLink::direct(FakeDevice::new().with_name("Mini").with_control_layout(
+            0x0053,
+            0x0038,
+            0x31,
+            0,
+            [1, 2, 3],
+        ));
+        let device = scan_interface(&mut Hidpp::new(link)).remove(0);
+        let expected = "\
+HuBergamof mouse-probe (read-only: no setting is written)
+1 interface(s) examined, 1 device(s) answered.
+
+Interface /dev/hidraw9 046d:c548 interface 2 usage ff00/0001 Bolt Receiver
+  Device index 0xFF: Mini (HID++ 4.5)
+    Features (4):
+      index 0x00  id 0x0000  v0  flags 0x00  Root
+      index 0x01  id 0x0001  v0  flags 0x00  FeatureSet
+      index 0x02  id 0x0005  v0  flags 0x00  DeviceNameAndType
+      index 0x03  id 0x1B04  v4  flags 0x00  ReprogControlsV4
+    Buttons (1):
+      cid 0x0053  task 0x0038  flags 0x31/0x00  group 2/3  pos 1  back  [mouse reprogrammable divertable]
+
+";
+        assert_eq!(rendered(&[interface(vec![device])]), expected);
+    }
+
+    #[test]
+    fn the_report_marks_unknown_names_and_shows_errors_warnings_and_frames() {
+        let mut device = scan_interface(&mut Hidpp::new(FakeLink::direct(
+            mouse().with_feature(0xBEEF, 1),
+        )))
+        .remove(0);
+        device.warnings.push("buttons: broken".to_owned());
+        let mut scan = interface(vec![device]);
+        scan.open_error = Some("permission denied".to_owned());
+        scan.trace = vec!["-> 11 ff".to_owned()];
+        scan.info.product = None;
+        let text = rendered(&[scan]);
         for expected in [
-            "1 interface(s) examined, 1 device(s) answered.",
-            "046d:c548",
             "cannot open: permission denied",
-            "MX Test Mouse With A Long Name (HID++ 4.5)",
-            "id 0x1B04  v4  flags 0x00  ReprogControlsV4",
             "id 0xBEEF  v1  flags 0x00  ?",
-            "cid 0x00C3",
             "gesture button",
-            "[mouse reprogrammable divertable]",
-            "-> 11 ff",
+            "warning: buttons: broken",
+            "  Frames:\n    -> 11 ff",
+            "usage ff00/0001 \n",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
+    }
+
+    #[test]
+    fn an_empty_scan_and_a_bare_device_render_without_gaps() {
+        assert_eq!(
+            rendered(&[]),
+            "HuBergamof mouse-probe (read-only: no setting is written)\n0 interface(s) examined, 0 device(s) answered.\n\n"
+        );
+        let bare = DeviceReport {
+            index: 1,
+            ..DeviceReport::default()
+        };
+        let text = rendered(&[interface(vec![bare])]);
+        assert!(
+            text.contains("Device index 0x01: name unknown (HID++ 0.0)"),
+            "{text}"
+        );
+        assert!(!text.contains("Buttons"), "{text}");
+    }
+
+    #[test]
+    fn device_text_cannot_inject_terminal_sequences() {
+        assert_eq!(clean("MX\u{1b}[31m \u{202E}evil\u{2066}"), "MX?[31m ?evil?");
+        assert_eq!(clean("plain é"), "plain é");
+        let mut device = DeviceReport {
+            index: 1,
+            name: Some("Mouse\u{1b}]0;title\u{7}".to_owned()),
+            ..DeviceReport::default()
+        };
+        device.warnings.push("bad\u{1b}[2J".to_owned());
+        let mut scan = interface(vec![device]);
+        scan.info.product = Some("Prod\u{1b}[0m".to_owned());
+        scan.skipped = Some("because".to_owned());
+        let text = rendered(&[scan]);
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        assert!(text.contains("Mouse?]0;title?"), "{text}");
+        assert!(text.contains("not probed: because"), "{text}");
+    }
+
+    #[test]
+    fn a_failing_writer_is_reported() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("closed"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        assert!(render(&mut Broken, &[]).is_err());
     }
 }

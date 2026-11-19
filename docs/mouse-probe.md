@@ -5,23 +5,32 @@
 ## Ce qu'elle fait
 - Ouvre les interfaces HID++ Logitech (récepteurs Logi Bolt et Unifying, câble) et interroge chaque appareil : version du protocole, nom, liste des fonctions (`FeatureSet`), boutons réaffectables (`ReprogControlsV4`).
 - **Lecture seule** : elle n'envoie que des fonctions de lecture (ping, `getFeature`, nombre et description des fonctions et des boutons, nom). Elle ne modifie aucun réglage, ne détourne aucun bouton et ne déclenche aucun effet.
-- N'ouvre aucune interface de saisie (clavier ou souris) : seules les interfaces d'usage HID++ (pages `0xFF00` et `0xFF43`) sont lues.
+- N'ouvre que les collections HID++ (voir plus bas) et n'envoie rien aux interfaces de saisie. Le récepteur fait toutefois passer sur son interface HID++ la saisie des appareils appairés : n'ouvrez pas ce nœud à d'autres programmes que la sonde.
+
+## Donner l'accès à la sonde
+Les nœuds `/dev/hidraw*` des souris ne sont pas ouverts à l'utilisateur par défaut, et le projet n'en ouvre aucun pour l'instant (voir `docs/security.md`). Deux façons, sans lancer la sonde en root (en root elle écrirait aussi sur des interfaces qu'on n'a pas à toucher) :
+
+- **Solaar installé** : ses règles udev donnent déjà l'accès, rien à faire. S'il tourne, arrêtez-le pour la sonde (`systemctl --user stop solaar`).
+- **ACL temporaire** : lancer la sonde une première fois, elle liste les interfaces (`not probed`, `cannot open: …`) ; repérer celle du récepteur Logitech dont la page d'usage est `ff00`, usage `0001` ou `0002`, puis donner l'accès à ce seul nœud jusqu'au prochain débranchement :
+
+```bash
+sudo setfacl -m u:$USER:rw /dev/hidrawN
+```
 
 ## La lancer
-1. Installer la règle udev (`make install` ou le paquet), débrancher puis rebrancher le récepteur Logi Bolt (ou redémarrer la session). Sans règle, la sonde dit « cannot open: Permission denied » pour chaque interface.
-2. Souris allumée et appairée au récepteur :
+Souris allumée et appairée au récepteur :
 
 ```bash
 hubergamof mouse-probe
 ```
 
-3. En cas d'anomalie, ajouter les trames échangées :
+En cas d'anomalie, ajouter les trames échangées :
 
 ```bash
 hubergamof mouse-probe --trace
 ```
 
-Solaar et `logid` peuvent rester installés pour cette lecture, mais s'ils tournent ils lisent les mêmes trames : arrêtez-les si une réponse manque (`systemctl --user stop solaar`).
+La sonde n'ouvre que les collections HID++ de Logitech (pages `0xFF00`, usages 1 et 2, et `0xFF43`, usage `0x0202` ; jamais une interface de saisie ni un chargeur de micrologiciel). Les autres interfaces Logitech sont listées avec la mention « not probed ».
 
 ## Ce qu'il faut renvoyer
 Toute la sortie du terminal. Elle contient le modèle, les fonctions (avec celles que le projet ne connaît pas, marquées `?`, parmi lesquelles se trouve l'haptique) et les boutons (identifiant, drapeaux : réaffectable, détournable…).

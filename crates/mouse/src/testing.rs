@@ -8,7 +8,7 @@ use crate::features::{DEVICE_NAME, FEATURE_SET, REPROG_CONTROLS_V4};
 use crate::frame::{LONG_REPORT_ID, LONG_REPORT_LEN};
 
 /// One answer frame, padded to a long report.
-fn frame(device: u8, feature: u8, function_byte: u8, params: &[u8]) -> Vec<u8> {
+pub fn frame(device: u8, feature: u8, function_byte: u8, params: &[u8]) -> Vec<u8> {
     let mut bytes = vec![LONG_REPORT_ID, device, feature, function_byte];
     bytes.extend_from_slice(params);
     bytes.resize(LONG_REPORT_LEN, 0);
@@ -46,7 +46,19 @@ impl FakeDevice {
         self.with_feature(DEVICE_NAME, 0)
     }
 
-    pub fn with_control(mut self, cid: u16, tid: u16, flags: u8, flags2: u8) -> Self {
+    pub fn with_control(self, cid: u16, tid: u16, flags: u8, flags2: u8) -> Self {
+        self.with_control_layout(cid, tid, flags, flags2, [0, 0, 0])
+    }
+
+    /// A button with its position, group and group mask, in that order.
+    pub fn with_control_layout(
+        mut self,
+        cid: u16,
+        tid: u16,
+        flags: u8,
+        flags2: u8,
+        [position, group, mask]: [u8; 3],
+    ) -> Self {
         if !self
             .features
             .iter()
@@ -56,7 +68,8 @@ impl FakeDevice {
         }
         let [c0, c1] = cid.to_be_bytes();
         let [t0, t1] = tid.to_be_bytes();
-        self.controls.push([c0, c1, t0, t1, flags, 0, 0, 0, flags2]);
+        self.controls
+            .push([c0, c1, t0, t1, flags, position, group, mask, flags2]);
         self
     }
 
@@ -130,6 +143,7 @@ pub struct FakeLink {
     failing: bool,
     noise: Option<Vec<u8>>,
     queue: VecDeque<Vec<u8>>,
+    written: Vec<Vec<u8>>,
 }
 
 impl FakeLink {
@@ -141,6 +155,7 @@ impl FakeLink {
             failing: false,
             noise: None,
             queue: VecDeque::new(),
+            written: Vec::new(),
         }
     }
 
@@ -170,6 +185,11 @@ impl FakeLink {
         }
     }
 
+    /// Every report written so far.
+    pub fn written(&self) -> &[Vec<u8>] {
+        &self.written
+    }
+
     /// A frame sent before every answer (a notification).
     pub fn with_noise(mut self, frame: Vec<u8>) -> Self {
         self.noise = Some(frame);
@@ -182,6 +202,7 @@ impl Channel for FakeLink {
         if self.failing {
             return Err(ChannelError("write refused".to_owned()));
         }
+        self.written.push(report.to_vec());
         if self.silent {
             return Ok(());
         }
@@ -200,14 +221,10 @@ impl Channel for FakeLink {
                 }
             }
             None if self.receiver => {
+                // HID++ 1.0 error: sub id (our feature index), address (our
+                // function byte), then the code.
                 self.queue
-                    .push_back(frame(*device, 0x8F, 0, &[*function_byte, 8]));
-                // HID++ 1.0 error: sub id then address then code.
-                if let Some(last) = self.queue.back_mut() {
-                    last[3] = *feature;
-                    last[4] = *function_byte;
-                    last[5] = 8;
-                }
+                    .push_back(frame(*device, 0x8F, *feature, &[*function_byte, 8]));
             }
             None => {}
         }
@@ -216,5 +233,49 @@ impl Channel for FakeLink {
 
     fn read(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
         Ok(self.queue.pop_front())
+    }
+}
+
+/// A channel that replays raw replies, whatever is written: for the cases a
+/// well-behaved fake cannot produce (short frames, floods, read errors).
+#[derive(Debug, Default)]
+pub struct ScriptedChannel {
+    replies: VecDeque<Result<Option<Vec<u8>>, ChannelError>>,
+    /// Frame returned forever once `replies` is empty.
+    flood: Option<Vec<u8>>,
+}
+
+impl ScriptedChannel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn then_frame(mut self, frame: Vec<u8>) -> Self {
+        self.replies.push_back(Ok(Some(frame)));
+        self
+    }
+
+    pub fn then_error(mut self, message: &str) -> Self {
+        self.replies
+            .push_back(Err(ChannelError(message.to_owned())));
+        self
+    }
+
+    pub fn then_flood(mut self, frame: Vec<u8>) -> Self {
+        self.flood = Some(frame);
+        self
+    }
+}
+
+impl Channel for ScriptedChannel {
+    fn write(&mut self, _report: &[u8]) -> Result<(), ChannelError> {
+        Ok(())
+    }
+
+    fn read(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
+        match self.replies.pop_front() {
+            Some(reply) => reply,
+            None => Ok(self.flood.clone()),
+        }
     }
 }

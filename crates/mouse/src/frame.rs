@@ -150,8 +150,8 @@ fn name_10(code: u8) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::testing::frame as answer_frame;
 
     #[test]
     fn encodes_a_long_report() {
@@ -169,13 +169,6 @@ mod tests {
         assert_eq!(request.encode()[4..], [7; PARAMS_LEN]);
     }
 
-    fn answer_frame(device: u8, feature: u8, function_byte: u8, params: &[u8]) -> Vec<u8> {
-        let mut bytes = vec![LONG_REPORT_ID, device, feature, function_byte];
-        bytes.extend_from_slice(params);
-        bytes.resize(LONG_REPORT_LEN, 0);
-        bytes
-    }
-
     #[test]
     fn recognises_its_answer_and_nothing_else() {
         let request = Request::new(1, 4, 2, &[]);
@@ -184,42 +177,83 @@ mod tests {
             panic!("answer expected");
         };
         assert_eq!(&params[..2], &[9, 8]);
-        // Another device, another feature, another function, another software id.
-        assert_eq!(
-            request.answered_by(&answer_frame(2, 4, request.function_byte(), &[])),
-            None
-        );
-        assert_eq!(
-            request.answered_by(&answer_frame(1, 5, request.function_byte(), &[])),
-            None
-        );
-        assert_eq!(request.answered_by(&answer_frame(1, 4, 0x3B, &[])), None);
-        assert_eq!(request.answered_by(&answer_frame(1, 4, 0x2A, &[])), None);
+        let other_device = answer_frame(2, 4, request.function_byte(), &[]);
+        let other_feature = answer_frame(1, 5, request.function_byte(), &[]);
+        let other_function = answer_frame(1, 4, 0x3B, &[]);
+        let other_software_id = answer_frame(1, 4, 0x2A, &[]);
+        for frame in [
+            other_device,
+            other_feature,
+            other_function,
+            other_software_id,
+        ] {
+            assert_eq!(request.answered_by(&frame), None, "{frame:?}");
+        }
         assert_eq!(request.answered_by(&[0x11, 1]), None);
+        assert_eq!(request.answered_by(&[]), None);
+    }
+
+    #[test]
+    fn a_bare_header_is_an_answer_without_parameters() {
+        let request = Request::new(1, 4, 2, &[]);
+        let bare = [LONG_REPORT_ID, 1, 4, request.function_byte()];
+        assert_eq!(request.answered_by(&bare), Some(Answer::Params(Vec::new())));
+    }
+
+    #[test]
+    fn the_report_id_is_not_checked() {
+        // Receivers answer on short, long or very long reports alike.
+        let request = Request::new(1, 4, 2, &[]);
+        let mut short = answer_frame(1, 4, request.function_byte(), &[1]);
+        short[0] = 0x10;
+        assert!(matches!(
+            request.answered_by(&short),
+            Some(Answer::Params(_))
+        ));
     }
 
     #[test]
     fn recognises_an_hidpp20_error() {
         let request = Request::new(0xFF, 6, 1, &[]);
-        let frame = answer_frame(0xFF, 0xFF, 6, &[request.function_byte(), 7]);
         // [report, device, 0xFF, feature index, function byte, code]
+        let frame = answer_frame(0xFF, 0xFF, 6, &[request.function_byte(), 7]);
         assert_eq!(
             request.answered_by(&frame),
             Some(Answer::Failed(DeviceError::Hidpp20(7)))
         );
-        let other = answer_frame(0xFF, 0xFF, 7, &[request.function_byte(), 7]);
-        assert_eq!(request.answered_by(&other), None);
+        let other_feature = answer_frame(0xFF, 0xFF, 7, &[request.function_byte(), 7]);
+        let other_function = answer_frame(0xFF, 0xFF, 6, &[0x2B, 7]);
+        assert_eq!(request.answered_by(&other_feature), None);
+        assert_eq!(request.answered_by(&other_function), None);
     }
 
     #[test]
     fn recognises_an_hidpp10_error_from_a_receiver() {
         let request = Request::new(3, 0, 1, &[]);
-        let mut frame = vec![0x10, 3, 0x8F, 0, request.function_byte(), 8, 0];
-        frame.resize(LONG_REPORT_LEN, 0);
+        // [report, device, 0x8F, sub id (our feature), address (our function), code]
+        let padded = answer_frame(3, 0x8F, 0, &[request.function_byte(), 8]);
         assert_eq!(
-            request.answered_by(&frame),
+            request.answered_by(&padded),
             Some(Answer::Failed(DeviceError::Hidpp10(8)))
         );
+        // The short report a receiver really sends, unpadded.
+        let short = [0x10, 3, 0x8F, 0, request.function_byte(), 8, 0];
+        assert_eq!(
+            request.answered_by(&short),
+            Some(Answer::Failed(DeviceError::Hidpp10(8)))
+        );
+        let other_feature = answer_frame(3, 0x8F, 9, &[request.function_byte(), 8]);
+        let other_function = answer_frame(3, 0x8F, 0, &[0x2B, 8]);
+        assert_eq!(request.answered_by(&other_feature), None);
+        assert_eq!(request.answered_by(&other_function), None);
+    }
+
+    #[test]
+    fn truncated_error_frames_are_not_taken_for_answers_to_other_requests() {
+        let request = Request::new(3, 6, 1, &[]);
+        // An error header with no function byte nor code: not ours.
+        assert_eq!(request.answered_by(&[0x11, 3, 0xFF, 6]), None);
+        assert_eq!(request.answered_by(&[0x11, 3, 0x8F, 6]), None);
     }
 
     #[test]
