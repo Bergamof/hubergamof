@@ -1,4 +1,4 @@
-import { openConversation, performAction, readReports } from './teams-dom.js';
+import { openConversation, openPanel, performAction, readReports } from './teams-dom.js';
 
 /** Teams changes its page without events we could rely on: look again regularly. */
 export const POLL_INTERVAL_MS = 2000;
@@ -48,6 +48,8 @@ export function start(doc, runtime, env = {}) {
 		if (!context.top) return;
 		if (message?.type === 'do') {
 			performAction(doc, message.action);
+		} else if (message?.type === 'openPanel' && typeof message.panel === 'string') {
+			openPanel(doc, message.panel);
 		} else if (message?.type === 'openConversation' && typeof message.id === 'string' && !opening) {
 			// One at a time: a second press while the list is awaited is dropped.
 			opening = true;

@@ -6,7 +6,7 @@ use hubergamof_module_api::{Command, Feedback, KeyState, Notification, Notificat
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use super::wire::{BrowserReport, Meeting, UnreadConversation};
+use super::wire::{BrowserReport, Meeting, Panel, UnreadConversation};
 use super::*;
 use crate::desktop::{SimulatedDesktop, Window, WindowId};
 
@@ -17,6 +17,20 @@ const DESKTOP_QUIET: Duration = Duration::from_secs(5);
 
 fn hub() -> Arc<DesktopHub> {
     DesktopHub::new(Arc::new(SimulatedDesktop::empty()), vec![desktop_app()])
+}
+
+/// Two unread conversations, both named, and no rail badge (what an older
+/// extension reports).
+fn named_unread_bridge() -> SimulatedBridge {
+    let bridge = SimulatedBridge::new();
+    bridge.report(BrowserReport::Unread { count: 2 });
+    bridge.report(BrowserReport::Conversations {
+        unread: vec![
+            UnreadConversation::named("Équipe produit"),
+            UnreadConversation::named("Camille"),
+        ],
+    });
+    bridge
 }
 
 fn teams_window() -> Window {
@@ -136,7 +150,7 @@ fn the_module_may_declare_lock_safe_pages_on_a_single_key_instance() {
 
 #[tokio::test]
 async fn the_key_counts_the_unread_conversations() {
-    let harness = Harness::new(SimulatedBridge::demo());
+    let harness = Harness::new(named_unread_bridge());
     let key = harness.module.key();
     assert_eq!(key.label.as_deref(), Some("2 non lus"));
     assert_eq!(key.state, KeyState::Attention);
@@ -148,7 +162,7 @@ async fn the_key_counts_the_unread_conversations() {
 
 #[tokio::test]
 async fn pressing_the_key_opens_the_unread_page_and_does_nothing_when_there_is_nothing() {
-    let mut harness = Harness::new(SimulatedBridge::demo());
+    let mut harness = Harness::new(named_unread_bridge());
     assert!(open_page(&harness.module.on_key_press().await, UNREAD_PAGE));
     let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
     let labels: Vec<_> = page
@@ -164,14 +178,14 @@ async fn pressing_the_key_opens_the_unread_page_and_does_nothing_when_there_is_n
 
 #[tokio::test(start_paused = true)]
 async fn without_an_extension_the_key_says_so_and_brings_teams_to_the_front() {
-    let mut harness = Harness::new(SimulatedBridge::demo());
+    let mut harness = Harness::new(named_unread_bridge());
     harness.desktop.set_windows(vec![teams_window()]);
     harness.settle_desktop().await;
     harness.bridge.set_connected(false);
     harness.next_event().await;
     let key = harness.module.key();
     assert_eq!(key.label.as_deref(), Some("Hors ligne"));
-    assert_eq!(key.state, KeyState::Normal);
+    assert_eq!(key.state, KeyState::Attention);
 
     assert_eq!(harness.module.on_key_press().await, []);
     assert_eq!(harness.settle_desktop().await, []);
@@ -410,7 +424,7 @@ async fn return_to_the_call_without_extension_still_brings_the_window_and_warns(
 
 #[tokio::test]
 async fn the_unread_page_is_gone_once_nothing_is_unread() {
-    let mut harness = Harness::new(SimulatedBridge::demo());
+    let mut harness = Harness::new(named_unread_bridge());
     assert!(harness.module.page(&UNREAD_PAGE.into()).is_some());
 
     // The last conversation is read: the page no longer exists, so that the
@@ -436,7 +450,7 @@ async fn unread_conversations_without_a_name_are_counted() {
         })
         .await;
     let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
-    assert_eq!(page.items.last().unwrap().key.label.as_deref(), Some("+3"));
+    assert_eq!(page.items[0].key.label.as_deref(), Some("+3"));
 }
 
 #[tokio::test]
@@ -547,7 +561,7 @@ async fn the_actions_of_a_call_have_icons_and_no_attention_state() {
 
 #[tokio::test]
 async fn the_unread_conversations_follow_the_actions_of_a_call_and_hide_when_locked() {
-    let mut harness = Harness::new(SimulatedBridge::demo());
+    let mut harness = Harness::new(named_unread_bridge());
     harness.in_call().await;
     let page = harness.call_page();
     // The four actions are pinned on the first row, then the conversations.
@@ -568,7 +582,7 @@ async fn the_unread_conversations_follow_the_actions_of_a_call_and_hide_when_loc
 
 #[tokio::test]
 async fn a_ringing_call_shows_no_conversations() {
-    let mut harness = Harness::new(SimulatedBridge::demo());
+    let mut harness = Harness::new(named_unread_bridge());
     harness
         .report(BrowserReport::Call {
             phase: CallPhase::Ringing,
@@ -616,7 +630,7 @@ async fn a_conversation_shows_its_avatar_or_a_generic_icon() {
 
 #[tokio::test]
 async fn the_home_key_is_usable_when_locked_only_during_a_call() {
-    let mut harness = Harness::new(SimulatedBridge::demo());
+    let mut harness = Harness::new(named_unread_bridge());
     assert!(!harness.module.key().usable_when_locked, "unread names");
     harness.in_call().await;
     assert!(harness.module.key().usable_when_locked);
@@ -879,4 +893,169 @@ async fn a_ringing_call_is_announced_once() {
     };
     assert!(notification(&harness.report(ringing("Alice")).await).is_some());
     assert!(notification(&harness.report(ringing("Alice B.")).await).is_none());
+}
+
+/// A harness whose bridge already holds what the rail says (reported
+/// directly: nothing waits for the module to be told).
+fn harness_with_badges(activity: u32, chats: u32, named: &[&str]) -> Harness {
+    let harness = Harness::new(SimulatedBridge::new());
+    harness.bridge.report(BrowserReport::Unread {
+        count: activity + chats,
+    });
+    harness.bridge.report(BrowserReport::Conversations {
+        unread: named
+            .iter()
+            .map(|name| UnreadConversation::named(*name))
+            .collect(),
+    });
+    harness
+        .bridge
+        .report(BrowserReport::Badges { activity, chats });
+    harness
+}
+
+fn unread_labels(harness: &Harness) -> Vec<String> {
+    harness
+        .module
+        .page(&UNREAD_PAGE.into())
+        .map(|page| {
+            page.items
+                .iter()
+                .map(|item| item.key.label.clone().unwrap())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn the_activity_and_the_missing_conversations_come_before_the_conversations() {
+    // The badge says 3 conversations, 2 are named: "+1".
+    let harness = harness_with_badges(2, 3, &["Adam", "Benjamin"]);
+    assert_eq!(unread_labels(&harness), ["2", "+1", "Adam", "Benjamin"]);
+    let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
+    assert_eq!(page.items[0].key.image.as_ref(), Some(&*icons::ACTIVITY));
+    assert_eq!(page.items[0].key.state, KeyState::Attention);
+    assert_eq!(
+        page.items[1].key.image.as_ref(),
+        Some(&*icons::CONVERSATION)
+    );
+    assert!(page.items[..2].iter().all(|item| item.hidden_when_locked));
+    // The home key still counts everything.
+    assert_eq!(harness.module.key().label.as_deref(), Some("5 non lus"));
+}
+
+#[tokio::test]
+async fn the_conversations_key_goes_when_every_conversation_is_shown() {
+    let harness = harness_with_badges(0, 2, &["Adam", "Benjamin"]);
+    assert_eq!(unread_labels(&harness), ["Adam", "Benjamin"]);
+}
+
+#[tokio::test]
+async fn activity_alone_keeps_the_unread_page_and_the_home_key_opens_it() {
+    let mut harness = harness_with_badges(1, 0, &[]);
+    assert_eq!(unread_labels(&harness), ["1"]);
+    assert!(open_page(&harness.module.on_key_press().await, UNREAD_PAGE));
+}
+
+#[tokio::test]
+async fn without_the_badges_the_title_count_gives_the_missing_conversations() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.report(BrowserReport::Unread { count: 3 }).await;
+    harness
+        .report(BrowserReport::Conversations {
+            unread: vec![UnreadConversation::named("Adam")],
+        })
+        .await;
+    assert_eq!(unread_labels(&harness), ["+2", "Adam"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_activity_key_shows_the_panel_and_brings_teams_to_the_front() {
+    let mut harness = harness_with_badges(2, 0, &[]);
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    let item = ItemId(ACTIVITY_ITEM.into());
+    let commands = harness
+        .module
+        .on_item_press(&UNREAD_PAGE.into(), &item)
+        .await;
+    assert_eq!(commands, []);
+    assert_eq!(harness.bridge.opened_panels(), [Panel::Activity]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_conversations_key_shows_the_panel_without_leaving_the_device() {
+    let mut harness = harness_with_badges(0, 3, &["Adam"]);
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    let item = ItemId(CONVERSATIONS_ITEM.into());
+    let commands = harness
+        .module
+        .on_item_press(&UNREAD_PAGE.into(), &item)
+        .await;
+    assert_eq!(commands, []);
+    assert_eq!(harness.bridge.opened_panels(), [Panel::Chat]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), []);
+    assert_eq!(harness.desktop.launches(), []);
+}
+
+#[tokio::test]
+async fn the_panel_keys_do_nothing_when_locked_and_alert_without_extension() {
+    let mut harness = harness_with_badges(1, 2, &[]);
+    harness.locked.store(true, Ordering::SeqCst);
+    for id in [ACTIVITY_ITEM, CONVERSATIONS_ITEM] {
+        let commands = harness
+            .module
+            .on_item_press(&UNREAD_PAGE.into(), &ItemId(id.into()))
+            .await;
+        assert_eq!(commands, []);
+    }
+    assert_eq!(harness.bridge.opened_panels(), []);
+
+    harness.locked.store(false, Ordering::SeqCst);
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    let commands = harness
+        .module
+        .on_item_press(&UNREAD_PAGE.into(), &ItemId(CONVERSATIONS_ITEM.into()))
+        .await;
+    assert_eq!(commands, Command::alert());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_closed_window_is_told_even_with_the_extension_connected_and_pressing_starts_teams() {
+    let mut harness = harness_with_badges(0, 1, &["Adam"]);
+    // Windows not followed yet: nothing is claimed.
+    assert_eq!(harness.module.key().label.as_deref(), Some("1 non lus"));
+
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.module.key().label.as_deref(), Some("1 non lus"));
+
+    harness.desktop.set_windows(Vec::new());
+    harness.settle_desktop().await;
+    let key = harness.module.key();
+    assert_eq!(key.label.as_deref(), Some("Teams fermé"));
+    assert_eq!(key.state, KeyState::Attention);
+
+    // The unread page is not opened over a window that is not there.
+    assert_eq!(harness.module.on_key_press().await, []);
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.launches(), [launch()]);
+
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.module.key().label.as_deref(), Some("1 non lus"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_call_shows_even_when_the_windows_are_not_listed() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(Vec::new());
+    harness.settle_desktop().await;
+    harness.in_call().await;
+    assert_eq!(harness.module.key().label.as_deref(), Some("En appel"));
 }

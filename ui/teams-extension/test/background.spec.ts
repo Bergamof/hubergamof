@@ -102,6 +102,7 @@ describe('background worker', () => {
 		ask({ type: 'do', action: 'formatDisk' });
 		ask({ type: 'openConversation', id: '' });
 		ask({ type: 'openConversation', id: 'x'.repeat(401) });
+		ask({ type: 'openPanel', panel: 'settings' });
 		ask({ type: 'unknown' });
 		await Promise.resolve();
 		expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
@@ -111,6 +112,14 @@ describe('background worker', () => {
 		expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
 			7,
 			{ type: 'openConversation', id: 'chat:1' },
+			{ frameId: 0 }
+		);
+
+		ask({ type: 'openPanel', panel: 'activity', extra: 'ignored' });
+		await vi.waitFor(() => expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(2));
+		expect(chrome.tabs.sendMessage).toHaveBeenLastCalledWith(
+			7,
+			{ type: 'openPanel', panel: 'activity' },
 			{ frameId: 0 }
 		);
 	});

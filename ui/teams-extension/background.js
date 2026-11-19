@@ -5,6 +5,8 @@ const RETRY_ALARM = 'reconnect';
 const RETRY_PERIOD_MINUTES = 0.5;
 /** What the manager may ask; anything else is dropped before it reaches a page. */
 const ACTIONS = new Set(['toggleMute', 'toggleCamera', 'hangUp', 'returnToCall']);
+/** The panels of the rail the manager may show. */
+const PANELS = new Set(['activity', 'chat']);
 const TEAMS_ORIGIN = 'https://teams.cloud.microsoft';
 const CALENDAR_ORIGIN = 'https://outlook.office.com';
 const TEAMS_URLS = ['https://teams.cloud.microsoft/*'];
@@ -30,6 +32,9 @@ const MAX_ID_LENGTH = 400;
 function checked(request) {
 	if (request?.type === 'do' && ACTIONS.has(request.action)) {
 		return { type: 'do', action: request.action };
+	}
+	if (request?.type === 'openPanel' && PANELS.has(request.panel)) {
+		return { type: 'openPanel', panel: request.panel };
 	}
 	if (
 		request?.type === 'openConversation' &&

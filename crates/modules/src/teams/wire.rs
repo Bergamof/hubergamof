@@ -221,6 +221,17 @@ pub enum BrowserReport {
         /// The count; `0` when everything is read.
         count: u32,
     },
+    /// Counters of the Activity and Conversation applications of the rail,
+    /// read from their badges. Absent from older extensions, and while the
+    /// rail is not on screen: the manager then keeps the previous report.
+    #[serde(rename_all = "camelCase")]
+    Badges {
+        /// Unread items of the Activity panel (the bell).
+        activity: u32,
+        /// Unread conversations announced by the Conversation badge (the
+        /// bubble).
+        chats: u32,
+    },
     /// The version of the extension, sent at every connection: the manager
     /// tells the user when it is not its own.
     #[serde(rename_all = "camelCase")]
@@ -272,6 +283,16 @@ pub enum CallAction {
     ReturnToCall,
 }
 
+/// A panel of the left rail of Teams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Panel {
+    /// Mentions, reactions and the rest of the notifications (the bell).
+    Activity,
+    /// The conversation list (the bubble).
+    Chat,
+}
+
 /// A message to the extension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -280,6 +301,11 @@ pub enum ManagerRequest {
     Do {
         /// What to do.
         action: CallAction,
+    },
+    /// Show a panel of the rail, without bringing the window to the front.
+    OpenPanel {
+        /// The panel.
+        panel: Panel,
     },
     /// Show a conversation the extension reported, by its identifier.
     OpenConversation {
@@ -316,6 +342,7 @@ impl BrowserReport {
     pub fn sanitized(self) -> Self {
         match self {
             Self::Unread { count } => Self::Unread { count },
+            Self::Badges { activity, chats } => Self::Badges { activity, chats },
             Self::Hello { version } => Self::Hello {
                 version: bounded_text(&version),
             },
@@ -610,6 +637,34 @@ mod tests {
         assert_eq!(conversation_with_id(&format!("{longest}x")).id, None);
         // The name stays whatever the identifier is.
         assert_eq!(conversation_with_id("").name, "Alice");
+    }
+
+    #[test]
+    fn the_rail_badges_come_as_counters_and_a_panel_goes_as_a_name() {
+        let report: BrowserReport =
+            serde_json::from_str(r#"{"type":"badges","activity":2,"chats":3}"#).unwrap();
+        assert_eq!(
+            report.clone().sanitized(),
+            BrowserReport::Badges {
+                activity: 2,
+                chats: 3
+            }
+        );
+        assert!(
+            serde_json::from_str::<BrowserReport>(r#"{"type":"badges","activity":-1,"chats":0}"#)
+                .is_err()
+        );
+        let panel = ManagerRequest::OpenPanel {
+            panel: Panel::Activity,
+        };
+        assert_eq!(
+            serde_json::to_string(&panel).unwrap(),
+            r#"{"type":"openPanel","panel":"activity"}"#
+        );
+        assert!(
+            serde_json::from_str::<ManagerRequest>(r#"{"type":"openPanel","panel":"settings"}"#)
+                .is_err()
+        );
     }
 
     #[test]
