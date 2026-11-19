@@ -16,6 +16,8 @@ mod config;
 mod device;
 mod live;
 mod messages;
+mod mouse;
+mod radial;
 mod update;
 
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
@@ -29,14 +31,25 @@ pub use config::{
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{KeyView, LiveState, PageView};
 pub use messages::{ClientMessage, ErrorCode, ServerMessage};
+pub use mouse::{
+    ButtonAction, ControlKind, DPI_RANGE, DPI_STEP, HapticEventSetting, HapticLevel,
+    HapticSettings, MAX_HAPTIC_EVENTS, MAX_SHORTCUT_CHARS, MOUSE_SCHEMA_VERSION, MouseButton,
+    MouseCapabilities, MouseConfig, MouseConfigError, MouseControl, MouseControlId, MouseInfo,
+    MouseModel, PointerSettings, THUMB_SPEED_RANGE, ThumbWheelSettings, WHEEL_THRESHOLD_RANGE,
+    WheelMode, WheelSettings,
+};
+pub use radial::{
+    HOLD_RANGE, MAX_LISTED_ENTRIES, MAX_SHOWN_ENTRIES, MIN_SHOWN_ENTRIES, RADIAL_SCHEMA_VERSION,
+    RadialConfigError, RadialEntryConfig, RadialMenuConfig, RadialPrimary,
+};
 pub use update::{InstallSupport, UpdateSettings, UpdateStatus};
 
 // Defined in the MPL-2.0 module API so that modules do not link GPL code;
 // re-exported here because they are part of the wire contract.
 pub use hubergamof_module_api::{
     ChoiceOption, DialFunctionDescriptor, DialFunctionId, EntryNaming, FileChooser, FileEntry,
-    FileFilter, KeyState, MAX_IMAGE_NAME_LENGTH, ModuleCapabilities, ModuleDescriptor,
-    ModuleInstanceId, ModuleKind, SettingField, SettingKind, is_safe_image_name,
+    FileFilter, HapticWaveform, KeyState, MAX_IMAGE_NAME_LENGTH, ModuleCapabilities,
+    ModuleDescriptor, ModuleInstanceId, ModuleKind, SettingField, SettingKind, is_safe_image_name,
 };
 
 #[cfg(test)]
