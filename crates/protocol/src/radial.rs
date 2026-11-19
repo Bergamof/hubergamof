@@ -17,6 +17,9 @@ pub const RADIAL_SCHEMA_VERSION: u32 = 1;
 /// press-and-release instead of staying open.
 pub const HOLD_RANGE: RangeInclusive<u16> = 150..=500;
 
+/// Hold time of a menu that does not say, in milliseconds.
+pub const DEFAULT_HOLD_MS: u16 = 280;
+
 /// Fewest entries shown: under this the petals get too wide to read as a menu.
 pub const MIN_SHOWN_ENTRIES: usize = 3;
 
@@ -116,8 +119,12 @@ pub enum RadialConfigError {
 
 impl RadialMenuConfig {
     /// The menu of a first start: Pomodoro, Teams, Audio and `IntelliJ` shown,
-    /// the other modules listed and hidden. The actions are those the modules
-    /// declare in their radial entry.
+    /// the other modules listed and hidden.
+    ///
+    /// Provisional: the module and action ids are written here by hand until
+    /// the modules declare their radial entries (module API, step 4), from
+    /// which the host will build this menu; a test in the modules crate will
+    /// then check that each exists.
     #[must_use]
     pub fn default_menu() -> Self {
         let entry = |module: &str, action: &str, enabled: bool| RadialEntryConfig {
@@ -129,7 +136,7 @@ impl RadialMenuConfig {
         };
         Self {
             schema_version: RADIAL_SCHEMA_VERSION,
-            hold_ms: 280,
+            hold_ms: DEFAULT_HOLD_MS,
             animate: true,
             haptics: true,
             entries: vec![
@@ -206,61 +213,88 @@ mod tests {
     }
 
     #[test]
+    fn the_default_hold_time_is_in_range() {
+        assert!(HOLD_RANGE.contains(&DEFAULT_HOLD_MS));
+    }
+
+    #[test]
     fn the_hold_time_stays_in_range() {
         let mut menu = RadialMenuConfig::default_menu();
-        for (hold, ok) in [
+        for (hold, valid) in [
+            (0, false),
+            (149, false),
             (150, true),
             (500, true),
-            (149, false),
             (501, false),
-            (0, false),
+            (u16::MAX, false),
         ] {
             menu.hold_ms = hold;
-            assert_eq!(menu.validate().is_ok(), ok, "{hold} ms");
+            let expected = if valid {
+                Ok(())
+            } else {
+                Err(RadialConfigError::InvalidHold(hold))
+            };
+            assert_eq!(menu.validate(), expected, "{hold} ms");
         }
+    }
+
+    fn menu_showing(shown: usize, listed: usize) -> RadialMenuConfig {
+        let mut menu = RadialMenuConfig::default_menu();
+        menu.entries = (0..listed)
+            .map(|index| RadialEntryConfig {
+                module: format!("m{index}").as_str().into(),
+                enabled: index < shown,
+                primary: RadialPrimary::Close,
+            })
+            .collect();
+        menu
     }
 
     #[test]
     fn three_to_eight_entries_are_shown() {
-        let mut menu = RadialMenuConfig::default_menu();
-        for entry in &mut menu.entries {
-            entry.enabled = false;
+        for (shown, valid) in [
+            (0, false),
+            (2, false),
+            (3, true),
+            (4, true),
+            (7, true),
+            (8, true),
+            (9, false),
+        ] {
+            let expected = if valid {
+                Ok(())
+            } else {
+                Err(RadialConfigError::ShownEntries { shown })
+            };
+            assert_eq!(
+                menu_showing(shown, 12).validate(),
+                expected,
+                "{shown} shown"
+            );
         }
+    }
+
+    #[test]
+    fn the_list_may_be_long_when_few_are_shown() {
         assert_eq!(
-            menu.validate(),
-            Err(RadialConfigError::ShownEntries { shown: 0 })
+            menu_showing(4, MAX_LISTED_ENTRIES).validate(),
+            Ok(()),
+            "exactly the limit"
         );
-        menu.entries[0].enabled = true;
-        menu.entries[1].enabled = true;
         assert_eq!(
-            menu.validate(),
-            Err(RadialConfigError::ShownEntries { shown: 2 })
-        );
-        for entry in &mut menu.entries {
-            entry.enabled = true;
-        }
-        assert_eq!(menu.validate(), Ok(()), "seven shown");
-        menu.entries.push(RadialEntryConfig {
-            module: "extra".into(),
-            enabled: true,
-            primary: RadialPrimary::Close,
-        });
-        assert_eq!(menu.validate(), Ok(()), "eight shown");
-        menu.entries.push(RadialEntryConfig {
-            module: "more".into(),
-            enabled: true,
-            primary: RadialPrimary::Close,
-        });
-        assert_eq!(
-            menu.validate(),
-            Err(RadialConfigError::ShownEntries { shown: 9 })
+            menu_showing(4, MAX_LISTED_ENTRIES + 1).validate(),
+            Err(RadialConfigError::TooManyEntries {
+                count: MAX_LISTED_ENTRIES + 1
+            })
         );
     }
 
     #[test]
-    fn a_module_appears_once() {
+    fn a_module_appears_once_shown_or_not() {
         let mut menu = RadialMenuConfig::default_menu();
-        menu.entries.push(menu.entries[0].clone());
+        let mut hidden_twin = menu.entries[0].clone();
+        hidden_twin.enabled = false;
+        menu.entries.push(hidden_twin);
         assert_eq!(
             menu.validate(),
             Err(RadialConfigError::DuplicateModule("pomodoro".into()))
@@ -268,29 +302,40 @@ mod tests {
     }
 
     #[test]
-    fn identifiers_are_plain_and_the_list_is_bounded() {
-        let mut menu = RadialMenuConfig::default_menu();
-        menu.entries[0].module = "po mo".into();
-        assert!(matches!(
+    fn identifiers_are_plain() {
+        for bad in ["po mo", "", "a;b", "é"] {
+            let mut menu = RadialMenuConfig::default_menu();
+            menu.entries[0].module = bad.into();
+            assert_eq!(
+                menu.validate(),
+                Err(RadialConfigError::InvalidIdentifier(bad.to_owned())),
+                "module {bad:?}"
+            );
+            let mut menu = RadialMenuConfig::default_menu();
+            menu.entries[1].primary = RadialPrimary::Action {
+                action: bad.to_owned(),
+            };
+            assert_eq!(
+                menu.validate(),
+                Err(RadialConfigError::InvalidIdentifier(bad.to_owned())),
+                "action {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_first_problem_found_is_the_one_reported() {
+        // Version, then hold time, then the size of the list, then each entry.
+        let mut menu = menu_showing(4, MAX_LISTED_ENTRIES + 1);
+        menu.hold_ms = 0;
+        menu.schema_version = 9;
+        assert_eq!(
             menu.validate(),
-            Err(RadialConfigError::InvalidIdentifier(_))
-        ));
-        let mut menu = RadialMenuConfig::default_menu();
-        menu.entries[1].primary = RadialPrimary::Action {
-            action: "a;b".to_owned(),
-        };
-        assert!(matches!(
-            menu.validate(),
-            Err(RadialConfigError::InvalidIdentifier(_))
-        ));
-        let mut menu = RadialMenuConfig::default_menu();
-        menu.entries = (0..=MAX_LISTED_ENTRIES)
-            .map(|index| RadialEntryConfig {
-                module: format!("m{index}").as_str().into(),
-                enabled: index < 4,
-                primary: RadialPrimary::Close,
-            })
-            .collect();
+            Err(RadialConfigError::UnsupportedSchemaVersion { found: 9 })
+        );
+        menu.schema_version = RADIAL_SCHEMA_VERSION;
+        assert_eq!(menu.validate(), Err(RadialConfigError::InvalidHold(0)));
+        menu.hold_ms = DEFAULT_HOLD_MS;
         assert_eq!(
             menu.validate(),
             Err(RadialConfigError::TooManyEntries {
@@ -321,7 +366,7 @@ mod tests {
         let mut menu = RadialMenuConfig::default_menu();
         menu.entries[1].primary = RadialPrimary::Close;
         let json = serde_json::to_value(&menu).unwrap();
-        assert_eq!(json["holdMs"], 280);
+        assert_eq!(json["holdMs"], DEFAULT_HOLD_MS);
         assert_eq!(json["entries"][0]["module"], "pomodoro");
         assert_eq!(json["entries"][0]["primary"]["kind"], "action");
         assert_eq!(json["entries"][0]["primary"]["action"], "toggle");

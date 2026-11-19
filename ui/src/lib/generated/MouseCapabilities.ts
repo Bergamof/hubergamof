@@ -10,7 +10,8 @@ export type MouseCapabilities = {
  */
 controls: Array<MouseControl>, 
 /**
- * Has a thumb wheel, with its own settings.
+ * Has a thumb wheel, with its own settings (it is also among the
+ * controls).
  */
 thumbWheel: boolean, 
 /**

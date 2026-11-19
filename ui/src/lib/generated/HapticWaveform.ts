@@ -4,8 +4,7 @@
  * A predefined vibration pattern of a haptic mouse.
  *
  * Modules pick the one that best suits what they signal; the user may change
- * it per event, and the manager plays it on the mouse (the exact feel is the
- * device's). Names follow the patterns Logitech documents for its haptic
- * mice.
+ * it per event, and the manager plays it on the mouse. The names describe the
+ * feel; the exact pattern is the device's.
  */
 export type HapticWaveform = "sharpStateChange" | "dampStateChange" | "sharpCollision" | "dampCollision" | "subtleCollision" | "whisperCollision" | "happyAlert" | "angryAlert" | "completed" | "square" | "wave" | "firework" | "mad" | "knock" | "jingle" | "ringing";

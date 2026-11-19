@@ -24,7 +24,10 @@ serial: string,
  */
 model: MouseModel, 
 /**
- * What each control does; a control left out is [`ButtonAction::Native`].
+ * What the controls do when it is not what the mouse does by itself. A
+ * control without an entry is left alone: there is one single way to say
+ * so. Locked controls never have an entry, and a thumb wheel only
+ * accepts [`ButtonAction::None`].
  */
 bindings: { [key in MouseControlId]?: ButtonAction }, 
 /**

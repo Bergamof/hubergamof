@@ -5,7 +5,7 @@
  */
 export type PointerSettings = { 
 /**
- * Sensitivity in dots per inch, within [`DPI_RANGE`], a multiple of
+ * Sensitivity in dots per inch: within [`DPI_RANGE`] and a multiple of
  * [`DPI_STEP`] from its start.
  */
 dpi: number, };

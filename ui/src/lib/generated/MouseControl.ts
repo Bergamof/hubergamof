@@ -4,6 +4,9 @@ import type { MouseControlId } from "./MouseControlId";
 
 /**
  * A control of a mouse model.
+ *
+ * How the mouse itself numbers its buttons (HID++ control ids) is the
+ * business of the `hubergamof-mouse` crate, not of this contract.
  */
 export type MouseControl = { 
 /**
@@ -18,9 +21,4 @@ kind: ControlKind,
  * Cannot be given another action: left and right click always keep
  * theirs, so that the mouse stays usable whatever the configuration says.
  */
-locked: boolean, 
-/**
- * Control id the mouse itself gives the button (`ReprogControlsV4`),
- * `None` for a wheel, which is not a button.
- */
-cid: number | null, };
+locked: boolean, };

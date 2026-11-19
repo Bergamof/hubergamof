@@ -3,9 +3,11 @@ import type { ModuleKind } from "./ModuleKind";
 import type { MouseButton } from "./MouseButton";
 
 /**
- * What a control does.
+ * What a control does when the user gives it something other than what the
+ * mouse does by itself. A control without an entry in
+ * [`crate::MouseConfig::bindings`] is left alone; there is no entry to say so.
  */
-export type ButtonAction = { "kind": "native" } | { "kind": "none" } | { "kind": "click", 
+export type ButtonAction = { "kind": "none" } | { "kind": "click", 
 /**
  * The button clicked.
  */
