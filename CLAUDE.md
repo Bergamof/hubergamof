@@ -3,7 +3,7 @@
 Gestionnaire de Stream Deck (cible : Stream Deck+, toute la gamme par conception) pour Linux, à base de modules, avec une interface de configuration web locale synchronisée en temps réel.
 
 ## Stack
-- Gestionnaire : Rust 1.99.1 (édition 2024), tokio, axum (HTTP + WebSocket), `elgato-streamdeck` (+ `hidapi`), tray SNI/dbusmenu maison sur `zbus` 6, `zbus` (D-Bus), `bollard` (Docker), `image` + `resvg`, `zip` (Deflate seul, export), `rust-embed`, `ts-rs`.
+- Gestionnaire : Rust 1.99.1 (édition 2024), tokio, axum (HTTP + WebSocket), `elgato-streamdeck` (+ `hidapi`), `reqwest` (rustls ; vérification de version), tray SNI/dbusmenu maison sur `zbus` 6, `zbus` (D-Bus), `bollard` (Docker), `image` + `resvg`, `zip` (Deflate seul, export), `rust-embed`, `ts-rs`.
 - Interface : SvelteKit 3.1 (`adapter-static`), Svelte 5.57, Vite 8, Tailwind 4.3 (polices embarquées `@fontsource-variable/*`), TypeScript 6 (TS 7 exclu par svelte-check/typescript-eslint), pnpm 12.16 (Corepack), Node 24 LTS ; ESLint 10 + Prettier 3, Vitest 5 (+ mode navigateur, couverture v8), Playwright 1.65 (planchers de couverture UI : lignes 86, fonctions 85, branches 77, instructions 89).
 - Persistance : fichiers JSON par appareil (`config/devices/<serial>/`), pas de base de données.
 - Déploiement : un seul binaire `hubergamof` (UI embarquée), service utilisateur systemd + règle udev.
@@ -66,7 +66,7 @@ Détail complet (par crate, flux, API) : `docs/architecture.md` ; modules : `doc
 - `crates/protocol/` (`hubergamof-protocol`) — contrat WebSocket (`ClientMessage`/`ServerMessage`, taggés `type`, camelCase), configuration + `DeviceConfig::validate`, catalogue, `LiveState`. Source unique du contrat, exportée en TS par `ts-rs` vers `ui/src/lib/generated/`.
 - `crates/module-api/` (`hubergamof-module-api`, MPL-2.0, **aucune dépendance GPL**) — traits `ModuleFactory`/`Module` (ne jamais bloquer, `HANDLER_BUDGET` 500 ms), `Command`, `ModuleContext`, descripteurs et réglages (`SettingField`/`SettingKind`), capacités `ModuleCapabilities`, structs `#[non_exhaustive]` construites par constructeurs.
 - `crates/modules/` (`hubergamof-modules`) — modules intégrés : audio, pomodoro, docker, intellij, claude, notifications, teams ; `builtin_registry_with(BuiltinServices)` (`system()` ou `simulated()` pour `--demo` et **tous** les tests) ; briques communes (`background.rs`, `process.rs`, `paths.rs`, `trust.rs`), couche `desktop/`.
-- `crates/manager/` (`hubergamof`, lib `hubergamof_manager` + binaire) — `device/` (backends, matériel : un thread par appareil), `render/` (PNG/JPEG/SVG → RGBA, bande, caches), `strip/`, `config_store/` (JSON, `files.rs` écritures atomiques et privées, zip d'export/import, migrations), `engine/` (`Supervisor` → une tâche `DeviceEngine` par appareil ; `device_engine.rs` + `compose|gestures|surfaces|lock|strip.rs`, `Painter`, `notifications.rs`), `server/` (axum `127.0.0.1`, `security.rs`, `api.rs`, `session.rs`), `tray/`, `launcher.rs`, `screen_lock.rs`, `file_chooser.rs`.
+- `crates/manager/` (`hubergamof`, lib `hubergamof_manager` + binaire) — `device/` (backends, matériel : un thread par appareil), `render/` (PNG/JPEG/SVG → RGBA, bande, caches), `strip/`, `config_store/` (JSON, `files.rs` écritures atomiques et privées, zip d'export/import, migrations), `engine/` (`Supervisor` → une tâche `DeviceEngine` par appareil ; `device_engine.rs` + `compose|gestures|surfaces|lock|strip.rs`, `Painter`, `notifications.rs`), `server/` (axum `127.0.0.1`, `security.rs`, `api.rs`, `session.rs`), `tray/`, `update/` (vérification de nouvelle version : API des releases GitHub, `UpdateHandle`), `launcher.rs`, `screen_lock.rs`, `file_chooser.rs`.
 - `ui/` — SvelteKit statique (`ui/build/`, fallback `200.html`) ; client WebSocket `lib/connection/`, état `lib/deck/` (`DeckState`, `config-edits.ts`, `settings-form.ts`), composants `lib/components/` (`DeckEditor` orchestre), design « thé et bergamote » (`routes/layout.css`, jetons sémantiques sans variante `dark:`) ; e2e `ui/e2e/` (fixture `demo-manager.ts`, axe WCAG 2.2 AA).
 - `packaging/` — unité systemd utilisateur, règle udev, lanceur de bureau, `install.sh`, `package/` (`.deb`, pacman) ; release : `docs/release.md`.
 
@@ -86,6 +86,7 @@ Journal complet et daté : `docs/decisions.md` (y ajouter toute décision) ; sé
 - Placement : un module n'est assignable à une touche que s'il le déclare (`key`), multi-instances seulement si `multiple_instances` (`placement.rs`).
 - Verrouillage de l'ordinateur : deck inerte sauf `usable_when_locked` ; exceptions par page (`lock_safe_pages`, Teams) ; limites dans `docs/security.md`.
 - Teams : extension de navigateur + hôte natif `hubergamof native-host` → socket Unix privé ; aucune connexion tierce.
+- Mises à jour : seule connexion sortante = `api.github.com` (dépôt public, sans jeton, 24 h) ; volet 1 = vérification et affichage (UI, tray), volet 2 (installation signée) à venir ; `--demo` ne touche jamais le réseau.
 - Extensibilité : trait `Module` ; chargement externe (WASM/sous-processus) plus tard, jamais de `.so`. Texte rendu via `usvg`/`resvg` (pas `ab_glyph`, RUSTSEC-2026-0192).
 - Icônes de modules : logos officiels, usage personnel non distribué ; à revoir si le dépôt devient public.
 
@@ -106,6 +107,7 @@ Détail (Docker, notifications animées, Painter, tests du moteur, zbus, Teams�
 ## État du projet
 - Fait : tout le socle (protocole, moteur, rendu, config, serveur web/WebSocket, tray, UI de configuration, images, export/import), bande tactile globale, molette contextuelle, verrouillage, lanceur de bureau, modules audio, pomodoro, docker, intellij, claude, notifications, teams (pont, extension, installateur, rappels de réunions, appel entrant côté module) ; revues des spécialistes faites et corrigées (audit complet du 2026-11-18 : 0 bloquant). Historique : `docs/decisions.md`.
 - À valider sur le vrai Stream Deck+ : latence des molettes avec écritures de bande, appui long de la molette contextuelle, lisibilité du cadre sur les touches, extinction au verrouillage (vrai KDE/GNOME), lanceur de bureau, extension Teams dans Brave (sélecteurs non validés ; reste la détection de la sonnerie et les noms des non lus par D-Bus).
+- En cours : mises à jour — volet 1 (vérification) fait, volet 2 (installation automatique : signature Ed25519 des releases, assistant root + polkit) à faire.
 - Reportés : déduplication des images du `liveState` (étape miroir), écritures d'une frame en lot, hotplug udev, registre des modules vers le gestionnaire, CodeQL/Semgrep (dépôt public), `hubergamof open` : arrêter l'attente quand l'unité est `failed`.
 - Ouvert : option `--bind` pour le conteneur ? Non par défaut (écoute `127.0.0.1` seulement) ; à rouvrir si un usage réel l'exige, avec jeton de session.
 

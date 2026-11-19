@@ -10,6 +10,7 @@ const SERVER_MESSAGE_TYPES = {
 	moduleCatalog: true,
 	config: true,
 	liveState: true,
+	updateStatus: true,
 	error: true,
 	pong: true
 } as const satisfies Record<ServerMessage['type'], true>;

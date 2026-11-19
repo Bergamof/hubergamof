@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{CatalogModule, DeviceConfig, DeviceInfo, LiveState};
+use crate::{CatalogModule, DeviceConfig, DeviceInfo, LiveState, UpdateStatus};
 
 /// Message sent by the UI to the manager.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -58,6 +58,9 @@ pub enum ClientMessage {
         /// Dial index.
         index: u32,
     },
+    /// Check for a newer release now, instead of waiting for the next
+    /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
+    CheckForUpdates,
     /// Keep-alive request, answered by [`ServerMessage::Pong`].
     Ping,
 }
@@ -97,6 +100,13 @@ pub enum ServerMessage {
     LiveState {
         /// Live state.
         state: LiveState,
+    },
+    /// Result of the check for a newer release: sent after `moduleCatalog`
+    /// once a check has started (never while the status is still
+    /// [`UpdateStatus::Unknown`]), then at every change.
+    UpdateStatus {
+        /// Current status.
+        status: UpdateStatus,
     },
     /// A client request failed.
     Error {

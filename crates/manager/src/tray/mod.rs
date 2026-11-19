@@ -18,7 +18,7 @@ use hubergamof_modules::desktop::{Launch, scoped_command};
 use std::sync::Arc;
 use std::time::Duration;
 
-use hubergamof_protocol::DeviceInfo;
+use hubergamof_protocol::{DeviceInfo, UpdateStatus};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -35,6 +35,7 @@ use theme::{apply_theme, follow_theme};
 
 use crate::device::{DeviceDiscovery, DiscoveryEvent};
 use crate::engine::EngineRegistry;
+use crate::update::UpdateHandle;
 use watcher::{Registrar, item_bus_name};
 
 /// Longest wait for the session bus connection and the first registration.
@@ -122,6 +123,7 @@ impl TrayIcon {
         url: String,
         discovery: &DeviceDiscovery,
         engines: EngineRegistry,
+        updates: UpdateHandle,
         quit: Arc<dyn Fn() + Send + Sync>,
     ) -> Option<Self> {
         let (devices, events) = discovery.subscribe();
@@ -154,6 +156,7 @@ impl TrayIcon {
                 events,
             )),
             tokio::spawn(follow_theme(connection.clone(), engines)),
+            tokio::spawn(follow_updates(connection.clone(), updates)),
         ];
         Some(Self { connection, tasks })
     }
@@ -235,6 +238,39 @@ async fn publish_devices(connection: &Connection, labels: Vec<String>) -> zbus::
         .await?;
     item.get_mut().await.set_devices(labels);
     StatusNotifierItem::new_tool_tip(item.signal_emitter()).await
+}
+
+/// Shows in the menu the newer release found by the update check, if any.
+async fn follow_updates(connection: Connection, updates: UpdateHandle) {
+    let mut status = updates.subscribe();
+    loop {
+        let version = match &*status.borrow_and_update() {
+            UpdateStatus::Available { version, .. } => Some(version.clone()),
+            _ => None,
+        };
+        if let Err(error) = publish_update(&connection, version).await {
+            tracing::warn!(%error, "cannot update the system tray menu");
+        }
+        if status.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Updates the update entry of the menu, and tells the host when it changed.
+async fn publish_update(connection: &Connection, version: Option<String>) -> zbus::Result<()> {
+    let menu = connection
+        .object_server()
+        .interface::<_, DbusMenu>(MENU_PATH)
+        .await?;
+    let revision = {
+        let mut menu = menu.get_mut().await;
+        if !menu.menu_mut().set_update(version) {
+            return Ok(());
+        }
+        menu.revision()
+    };
+    DbusMenu::layout_updated(menu.signal_emitter(), revision, menu::ROOT_ID).await
 }
 
 /// `quit` callback sending `true` on `shutdown`.
@@ -450,6 +486,38 @@ mod tests {
         let device = WireLayout::try_from(Variant::from(children[3].clone())).unwrap();
         assert_eq!(label(&device.1), "Deck (B2)");
         assert!(!device.1.contains_key("enabled"));
+    }
+
+    #[tokio::test]
+    async fn a_newer_release_shows_in_the_menu_and_disappears_with_it() {
+        let (tray, host) = connected_pair(&[], EngineRegistry::default(), Arc::new(|| {})).await;
+        publish_update(&tray, Some("2.0.0".into())).await.unwrap();
+        publish_update(&tray, Some("2.0.0".into())).await.unwrap();
+        let (revision, (_, _, children)): (u32, WireLayout) = call(
+            &host,
+            MENU_PATH,
+            MENU_INTERFACE,
+            "GetLayout",
+            &(ROOT_ID, -1_i32, vec!["label".to_owned()]),
+        )
+        .await;
+        assert_eq!(revision, 2);
+        let entry = WireLayout::try_from(Variant::from(children[1].clone())).unwrap();
+        assert_eq!(entry.0, menu::UPDATE_ID);
+        assert_eq!(label(&entry.1), "Mise à jour disponible (2.0.0)");
+
+        publish_update(&tray, None).await.unwrap();
+        let (revision, (_, _, children)): (u32, WireLayout) = call(
+            &host,
+            MENU_PATH,
+            MENU_INTERFACE,
+            "GetLayout",
+            &(ROOT_ID, -1_i32, vec!["label".to_owned()]),
+        )
+        .await;
+        assert_eq!(revision, 3);
+        let second = WireLayout::try_from(Variant::from(children[1].clone())).unwrap();
+        assert_ne!(second.0, menu::UPDATE_ID);
     }
 
     /// Layout revision and the theme entry marked as current, as a host

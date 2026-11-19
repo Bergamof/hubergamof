@@ -33,4 +33,5 @@ export type * from "./ServerMessage";
 export type * from "./SettingField";
 export type * from "./SettingKind";
 export type * from "./StripConfig";
+export type * from "./UpdateStatus";
 export type * from "./serde_json/JsonValue";

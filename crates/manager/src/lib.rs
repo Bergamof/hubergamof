@@ -32,3 +32,4 @@ pub mod teams_extension;
 #[cfg(test)]
 mod testing;
 pub mod tray;
+pub mod update;
