@@ -1,4 +1,5 @@
-# HuBergamof — accès sans root aux Stream Deck Elgato (vendor USB 0fd9), toute la gamme.
+# HuBergamof — accès sans root aux Stream Deck Elgato (vendor USB 0fd9), toute la gamme,
+# et à l'interface HID++ du récepteur Logitech Logi Bolt (souris MX).
 #
 # TAG+="uaccess" laisse systemd-logind accorder l'accès (ACL) à l'utilisateur de la
 # session locale active uniquement, contrairement à MODE="0666" qui ouvrirait le
@@ -10,3 +11,18 @@ SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0fd9", TAG+="uacc
 
 # Nœud hidraw utilisé par hidapi pour piloter l'appareil
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+
+# Récepteur Logitech Logi Bolt (046d:c548) : seule son interface HID++ (n° 2) est
+# ouverte à l'utilisateur de la session. Relevé sur un Bolt réel : cette interface n'a
+# que la collection HID++ (page ff00, usage 1), la saisie des appareils appairés
+# passe par les interfaces 0, 1 et 3, qui restent fermées. Le Unifying (c52b) n'est
+# pas couvert : il fait passer la saisie par le HID++.
+# Deux règles car udev compare les ATTRS d'une règle à un seul parent : l'interface
+# (n° 2) d'abord, l'appareil USB (fabricant, produit) ensuite.
+# Les critères ATTRS valent pour tout ancêtre : un pilote qui créerait un nœud hidraw
+# par appareil appairé (hid-logitech-dj, proposé pour le Bolt) en ferait des
+# descendants de l'interface 2, claviers compris. DEVPATH écarte tout nœud placé sous
+# deux niveaux HID imbriqués (0003:…/0003:…/hidraw/…) : seul le nœud du récepteur
+# reste.
+SUBSYSTEM=="hidraw", SUBSYSTEMS=="usb", ATTRS{bInterfaceNumber}=="02", ENV{HUBERGAMOF_HIDPP}="1"
+SUBSYSTEM=="hidraw", ENV{HUBERGAMOF_HIDPP}=="1", DEVPATH!="*/0003:*/0003:*/hidraw/*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c548", TAG+="uaccess"

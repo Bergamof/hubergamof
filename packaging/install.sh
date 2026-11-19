@@ -86,8 +86,12 @@ install_udev_rule() {
 Règle udev : pour piloter les Stream Deck sans être root, la règle
   $UDEV_RULE_SOURCE
 doit être copiée dans $UDEV_RULE_TARGET, puis udev rechargé.
-Elle accorde l'accès aux appareils Elgato (vendor 0fd9) à l'utilisateur de la
-session locale active uniquement (TAG+="uaccess"). Cela nécessite sudo.
+Elle accorde l'accès aux appareils Elgato (vendor 0fd9) et à l'interface HID++
+du récepteur Logitech Logi Bolt à l'utilisateur de la session locale active
+uniquement (TAG+="uaccess"). Cela nécessite sudo.
+L'accès au récepteur Bolt permet à vos programmes de régler les souris, de détourner
+et de réaffecter des boutons et des touches (voir docs/security.md) : ne reliez pas
+de clavier à ce récepteur, ou utilisez --no-udev.
 
 EOF
 	if ! confirm "Installer la règle udev avec sudo ?"; then
