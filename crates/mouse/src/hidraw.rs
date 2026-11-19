@@ -7,7 +7,7 @@ use hidapi::{DeviceInfo, HidApi, HidDevice};
 use thiserror::Error;
 
 use crate::channel::{Channel, ChannelError, Hidpp};
-use crate::probe::{InterfaceInfo, InterfaceScan, scan_interface};
+use crate::probe::{InterfaceInfo, InterfaceScan, scan_interface_with_misses};
 
 /// USB vendor id of Logitech.
 pub const LOGITECH_VENDOR_ID: u16 = 0x046D;
@@ -151,6 +151,7 @@ pub fn scan_hardware(trace: bool) -> Result<Vec<InterfaceScan>, HidError> {
             )
             .map(str::to_owned),
             open_error: None,
+            misses: Vec::new(),
             devices: Vec::new(),
             trace: Vec::new(),
         };
@@ -165,7 +166,13 @@ pub fn scan_hardware(trace: bool) -> Result<Vec<InterfaceScan>, HidError> {
                     if trace {
                         hidpp = hidpp.with_trace();
                     }
-                    scan.devices = scan_interface(&mut hidpp);
+                    let probe = scan_interface_with_misses(&mut hidpp);
+                    scan.devices = probe.devices;
+                    scan.misses = probe
+                        .misses
+                        .iter()
+                        .map(|(index, miss)| format!("index 0x{index:02X}: {}", miss.describe()))
+                        .collect();
                     scan.trace = hidpp.take_trace();
                 }
                 Err(error) => scan.open_error = Some(error.to_string()),

@@ -176,6 +176,9 @@ fn exit_with(outcome: Result<()>) -> ! {
 
 /// Prints the read-only inventory of the Logitech devices (`mouse-probe`).
 fn run_mouse_probe(trace: bool) -> Result<()> {
+    eprintln!(
+        "Wake the mice now (move them): an index that stays silent is retried for a few seconds."
+    );
     let scans = hubergamof_mouse::hidraw::scan_hardware(trace)?;
     hubergamof_mouse::probe::render(&mut std::io::stdout().lock(), &scans)
         .context("cannot write the report")

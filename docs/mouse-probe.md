@@ -18,7 +18,7 @@ sudo setfacl -m u:$USER:rw /dev/hidrawN
 ```
 
 ## La lancer
-Souris allumée et appairée au récepteur :
+Souris allumée et appairée au récepteur. Une souris endormie ne répond pas : la sonde réessaie pendant quelques secondes chaque emplacement silencieux, **bougez les souris pendant ce temps**. Pour chaque emplacement sans appareil, la sortie donne la raison (« refused … resource error » : rien d'appairé à cet emplacement ; « no answer after N pings » : appairé mais endormi, éteint ou sur un autre canal) :
 
 ```bash
 hubergamof mouse-probe

@@ -10,10 +10,13 @@ use std::io::{self, Write};
 
 use crate::channel::{Channel, Hidpp, HidppError};
 use crate::features::{self, DEVICE_NAME, FEATURE_SET, REPROG_CONTROLS_V4};
-use crate::frame::{DIRECT_DEVICE_INDEX, RECEIVER_DEVICE_INDEXES};
+use crate::frame::{DIRECT_DEVICE_INDEX, DeviceError, RECEIVER_DEVICE_INDEXES};
 
 /// Byte a ping asks the device to echo.
 const PING_ECHO: u8 = 0x5A;
+/// Pings sent to an index that stays silent: a sleeping mouse needs a moment
+/// (and a movement) to wake up, so each silent index is retried for a few seconds.
+pub const PING_ATTEMPTS: u32 = 8;
 /// Characters the device name getter returns per call.
 const NAME_CHUNK: usize = 16;
 
@@ -116,30 +119,102 @@ pub struct InterfaceScan {
     pub skipped: Option<String>,
     /// Why the interface could not be opened, if it could not.
     pub open_error: Option<String>,
+    /// Device indexes where nothing was found, with the reason.
+    pub misses: Vec<String>,
     /// Devices that answered.
     pub devices: Vec<DeviceReport>,
     /// Frames exchanged, when tracing.
     pub trace: Vec<String>,
 }
 
-/// Probes every device index of an interface: the direct one, then the ones a
-/// receiver hands out.
-pub fn scan_interface<C: Channel>(hidpp: &mut Hidpp<C>) -> Vec<DeviceReport> {
-    std::iter::once(DIRECT_DEVICE_INDEX)
-        .chain(RECEIVER_DEVICE_INDEXES)
-        .filter_map(|index| probe_device(hidpp, index))
-        .collect()
+/// Why nothing was found at a device index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Miss {
+    /// No frame came back, in any of the attempts.
+    Silent {
+        /// Number of pings sent.
+        attempts: u32,
+    },
+    /// The device or its receiver answered with an error (a receiver says so
+    /// when no device is paired at that index).
+    Refused(DeviceError),
+    /// The answer did not carry the echo byte of the ping.
+    WrongEcho,
+    /// The interface itself failed.
+    Interface(String),
 }
 
-/// Inventories the device at `device`, `None` when nothing answers there.
-pub fn probe_device<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Option<DeviceReport> {
-    let ping = hidpp
-        .request(device, 0, 1, &[0, 0, PING_ECHO])
-        .ok()
-        .filter(|params| params.get(2) == Some(&PING_ECHO))?;
+impl Miss {
+    /// One line a person can act on.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Silent { attempts } => format!(
+                "no answer after {attempts} pings (device asleep, off, or set to another channel)"
+            ),
+            Self::Refused(error) => format!("refused: {error}"),
+            Self::WrongEcho => "answered, but not to our ping".to_owned(),
+            Self::Interface(message) => format!("interface error: {message}"),
+        }
+    }
+}
+
+/// What probing every index of an interface found.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InterfaceProbe {
+    /// Devices that answered.
+    pub devices: Vec<DeviceReport>,
+    /// Indexes where nothing was found, in the order tried.
+    pub misses: Vec<(u8, Miss)>,
+}
+
+/// Probes every device index of an interface: the direct one, then the ones a
+/// receiver hands out.
+pub fn scan_interface_with_misses<C: Channel>(hidpp: &mut Hidpp<C>) -> InterfaceProbe {
+    let mut probe = InterfaceProbe::default();
+    for index in std::iter::once(DIRECT_DEVICE_INDEX).chain(RECEIVER_DEVICE_INDEXES) {
+        match probe_device(hidpp, index) {
+            Ok(device) => probe.devices.push(device),
+            Err(miss) => probe.misses.push((index, miss)),
+        }
+    }
+    probe
+}
+
+/// The devices found on an interface, without the reasons for the misses.
+pub fn scan_interface<C: Channel>(hidpp: &mut Hidpp<C>) -> Vec<DeviceReport> {
+    scan_interface_with_misses(hidpp).devices
+}
+
+/// Pings the device at `device`, retrying while it stays silent.
+fn ping<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Result<(u8, u8), Miss> {
+    for _ in 0..PING_ATTEMPTS {
+        match hidpp.request(device, 0, 1, &[0, 0, PING_ECHO]) {
+            Ok(params) => {
+                return match params[..] {
+                    [major, minor, PING_ECHO, ..] => Ok((major, minor)),
+                    _ => Err(Miss::WrongEcho),
+                };
+            }
+            Err(HidppError::Timeout(_)) => {}
+            Err(HidppError::Device(error)) => return Err(Miss::Refused(error)),
+            Err(other) => return Err(Miss::Interface(other.to_string())),
+        }
+    }
+    Err(Miss::Silent {
+        attempts: PING_ATTEMPTS,
+    })
+}
+
+/// Inventories the device at `device`, or says why nothing was found there.
+///
+/// # Errors
+/// [`Miss`] when the device does not answer its ping.
+pub fn probe_device<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Result<DeviceReport, Miss> {
+    let protocol = ping(hidpp, device)?;
     let mut report = DeviceReport {
         index: device,
-        protocol: (ping[0], ping[1]),
+        protocol,
         ..DeviceReport::default()
     };
     if let Err(error) = read_features(hidpp, device, &mut report) {
@@ -161,7 +236,7 @@ pub fn probe_device<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Option<Devi
         Ok(None) => {}
         Err(error) => report.warnings.push(format!("buttons: {error}")),
     }
-    Some(report)
+    Ok(report)
 }
 
 /// `IRoot.getFeature`: index of a feature, `None` when the device lacks it.
@@ -339,6 +414,9 @@ pub fn render(out: &mut impl Write, scans: &[InterfaceScan]) -> io::Result<()> {
         for device in &scan.devices {
             render_device(out, device)?;
         }
+        for miss in &scan.misses {
+            writeln!(out, "  {}", clean(miss))?;
+        }
         if !scan.trace.is_empty() {
             writeln!(out, "  Frames:")?;
             for line in &scan.trace {
@@ -493,14 +571,70 @@ mod tests {
         // Echo byte 0x00 instead of the 0x5A we sent.
         let reply = frame(0xFF, 0, function_byte(1), &[4, 5, 0x00]);
         let mut hidpp = Hidpp::new(ScriptedChannel::new().then_frame(reply));
-        assert_eq!(probe_device(&mut hidpp, 0xFF), None);
+        assert_eq!(probe_device(&mut hidpp, 0xFF), Err(Miss::WrongEcho));
     }
 
     #[test]
     fn a_ping_refused_with_an_hidpp20_error_is_not_a_device() {
         let reply = frame(0xFF, 0xFF, 0, &[function_byte(1), 2]);
         let mut hidpp = Hidpp::new(ScriptedChannel::new().then_frame(reply));
-        assert_eq!(probe_device(&mut hidpp, 0xFF), None);
+        assert_eq!(
+            probe_device(&mut hidpp, 0xFF),
+            Err(Miss::Refused(DeviceError::Hidpp20(2)))
+        );
+    }
+
+    #[test]
+    fn a_silent_index_is_retried_then_explained() {
+        let mut hidpp = Hidpp::new(FakeLink::silent());
+        assert_eq!(
+            probe_device(&mut hidpp, 1),
+            Err(Miss::Silent {
+                attempts: PING_ATTEMPTS
+            })
+        );
+        assert_eq!(hidpp.channel().written().len(), PING_ATTEMPTS as usize);
+    }
+
+    #[test]
+    fn a_sleeping_device_that_wakes_up_is_found() {
+        // Two silences, then the answer to the third ping.
+        let reply = frame(0xFF, 0, function_byte(1), &[4, 5, PING_ECHO]);
+        let mut hidpp = Hidpp::new(
+            ScriptedChannel::new()
+                .then_silence()
+                .then_silence()
+                .then_frame(reply),
+        );
+        assert_eq!(ping(&mut hidpp, 0xFF), Ok((4, 5)));
+    }
+
+    #[test]
+    fn the_misses_of_a_receiver_say_why() {
+        let link = FakeLink::receiver(vec![(2, mouse())]);
+        let probe = scan_interface_with_misses(&mut Hidpp::new(link));
+        assert_eq!(probe.devices.len(), 1);
+        let missed: Vec<u8> = probe.misses.iter().map(|(index, _)| *index).collect();
+        assert_eq!(missed, [0xFF, 1, 3, 4, 5, 6]);
+        assert!(
+            probe
+                .misses
+                .iter()
+                .all(|(_, miss)| matches!(miss, Miss::Refused(DeviceError::Hidpp10(8))))
+        );
+        assert!(
+            probe.misses[0]
+                .1
+                .describe()
+                .starts_with("refused: HID++ 1.0 error 0x08")
+        );
+        let silent = Miss::Silent { attempts: 3 }.describe();
+        assert!(
+            silent.contains("3 pings") && silent.contains("asleep"),
+            "{silent}"
+        );
+        assert!(Miss::WrongEcho.describe().contains("not to our ping"));
+        assert!(Miss::Interface("EIO".to_owned()).describe().contains("EIO"));
     }
 
     #[test]
@@ -651,6 +785,7 @@ mod tests {
             },
             skipped: None,
             open_error: None,
+            misses: Vec::new(),
             devices,
             trace: Vec::new(),
         }
@@ -745,10 +880,12 @@ Interface /dev/hidraw9 046d:c548 interface 2 usage ff00/0001 Bolt Receiver
         let mut scan = interface(vec![device]);
         scan.info.product = Some("Prod\u{1b}[0m".to_owned());
         scan.skipped = Some("because".to_owned());
+        scan.misses = vec!["index 0x01: no\u{1b}[0m answer".to_owned()];
         let text = rendered(&[scan]);
         assert!(!text.contains('\u{1b}'), "{text:?}");
         assert!(text.contains("Mouse?]0;title?"), "{text}");
         assert!(text.contains("not probed: because"), "{text}");
+        assert!(text.contains("  index 0x01: no?[0m answer"), "{text}");
     }
 
     #[test]

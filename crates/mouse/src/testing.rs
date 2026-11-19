@@ -255,6 +255,11 @@ impl ScriptedChannel {
         self
     }
 
+    pub fn then_silence(mut self) -> Self {
+        self.replies.push_back(Ok(None));
+        self
+    }
+
     pub fn then_error(mut self, message: &str) -> Self {
         self.replies
             .push_back(Err(ChannelError(message.to_owned())));
