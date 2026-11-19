@@ -49,6 +49,7 @@ const CONFIG = {
 
 async function show(assignment: DialAssignment = VOLUME, config: DeviceConfig = CONFIG, index = 0) {
 	const onassign = vi.fn();
+	const onswap = vi.fn();
 	await render(DialDetails, {
 		index,
 		config,
@@ -61,13 +62,42 @@ async function show(assignment: DialAssignment = VOLUME, config: DeviceConfig = 
 		moduleOf: (kind: string) => MODULES.find((candidate) => candidate.kind === kind),
 		headingId: 'details-heading',
 		onassign,
+		onswap,
 		onapply: vi.fn(),
 		ondiscard: vi.fn()
 	});
-	return { onassign };
+	return { onassign, onswap };
 }
 
 describe('DialDetails', () => {
+	const THREE_DIALS = { ...CONFIG, dials: [VOLUME, VOLUME, VOLUME] } as unknown as DeviceConfig;
+	const previous = () => page.getByRole('button', { name: /Échanger avec la molette précédente/ });
+	const next = () => page.getByRole('button', { name: /Échanger avec la molette suivante/ });
+
+	it('swaps with the next dial, the previous one being missing on the first', async () => {
+		const { onswap } = await show(VOLUME, THREE_DIALS, 0);
+		await expect.element(previous()).toHaveAttribute('aria-disabled', 'true');
+		await previous().click({ force: true });
+		expect(onswap).not.toHaveBeenCalled();
+		await next().click();
+		expect(onswap).toHaveBeenCalledExactlyOnceWith(1);
+	});
+
+	it('swaps with the previous dial, the next one being missing on the last', async () => {
+		const { onswap } = await show(VOLUME, THREE_DIALS, 2);
+		await expect.element(next()).toHaveAttribute('aria-disabled', 'true');
+		await next().click({ force: true });
+		expect(onswap).not.toHaveBeenCalled();
+		await previous().click();
+		expect(onswap).toHaveBeenCalledExactlyOnceWith(1);
+	});
+
+	it('has nothing to swap with on a single dial', async () => {
+		await show();
+		await expect.element(previous()).toHaveAttribute('aria-disabled', 'true');
+		await expect.element(next()).toHaveAttribute('aria-disabled', 'true');
+	});
+
 	it('names the dial and offers the functions, the current one selected', async () => {
 		await show();
 		await expect.element(page.getByRole('heading', { name: 'Molette 1' })).toBeVisible();

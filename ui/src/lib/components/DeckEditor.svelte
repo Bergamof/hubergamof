@@ -19,6 +19,7 @@ selected key or dial.
 		sharedInstance,
 		moveKey,
 		removeKey,
+		swapDials,
 		removedInstance,
 		setBrightness,
 		setLockSleepSeconds,
@@ -231,6 +232,12 @@ selected key or dial.
 		document.getElementById(keyButtonId(neighbour))?.focus();
 	}
 
+	function swap(from: number, to: number) {
+		void deck.edit(swapDials(from, to));
+		selection = { surface: 'dial', index: to };
+		void announce(`Molettes ${from + 1} et ${to + 1} échangées.`);
+	}
+
 	function assign(index: number, choice: DialChoice) {
 		void deck.edit(assignDial(index, choice));
 		void announce(`Fonction de la molette ${index + 1} modifiée.`);
@@ -292,6 +299,7 @@ selected key or dial.
 							{dials}
 							selected={selected?.surface === 'dial' ? selected.index : undefined}
 							onselect={selectDial}
+							onswap={swap}
 						/>
 					</section>
 				{/if}
@@ -352,6 +360,7 @@ selected key or dial.
 						{moduleOf}
 						headingId={detailsHeadingId}
 						onassign={(choice) => assign(index, choice)}
+						onswap={(other) => swap(index, other)}
 						onapply={(changes) => apply(instance, changes)}
 						ondiscard={(fields) => discarded(instance, fields)}
 					/>

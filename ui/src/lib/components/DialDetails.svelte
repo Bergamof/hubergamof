@@ -49,6 +49,8 @@ nothing, and the settings of the module of that function.
 		/** Id of the heading, for the page to bring it into view. */
 		headingId: string;
 		onassign: (choice: DialChoice) => void;
+		/** Swaps this dial with dial `other`. */
+		onswap: (other: number) => void;
 		onapply: (changes: InstanceChanges) => Promise<EditOutcome>;
 		/** Called when the settings editor goes away with refused fields (see `InstanceEditor`). */
 		ondiscard: (fields: string[]) => void;
@@ -66,6 +68,7 @@ nothing, and the settings of the module of that function.
 		moduleOf,
 		headingId,
 		onassign,
+		onswap,
 		onapply,
 		ondiscard
 	}: Props = $props();
@@ -79,6 +82,8 @@ nothing, and the settings of the module of that function.
 	};
 
 	const uid = $props.id();
+	const isFirst = $derived(index === 0);
+	const isLast = $derived(index === config.dials.length - 1);
 	const current = $derived(assignmentOption(assignment));
 	let chosen: string | undefined = $state();
 	/** A module has one dial at most: what another dial already offers is not proposed. */
@@ -121,6 +126,25 @@ nothing, and the settings of the module of that function.
 
 <section aria-labelledby={headingId} class="flex flex-col gap-4">
 	<h2 id={headingId} tabindex="-1" class="text-lg font-semibold">Molette {index + 1}</h2>
+	<!-- aria-disabled rather than disabled: a disabled button would drop the keyboard focus. -->
+	<div class="flex flex-wrap gap-2">
+		<button
+			type="button"
+			class="secondary-button"
+			aria-disabled={isFirst}
+			onclick={() => isFirst || onswap(index - 1)}
+		>
+			<span aria-hidden="true">←</span> Échanger avec la molette précédente
+		</button>
+		<button
+			type="button"
+			class="secondary-button"
+			aria-disabled={isLast}
+			onclick={() => isLast || onswap(index + 1)}
+		>
+			Échanger avec la molette suivante <span aria-hidden="true">→</span>
+		</button>
+	</div>
 	<form class="flex flex-col gap-2" onsubmit={assign}>
 		<label class="font-medium" for="{uid}-function">Fonction</label>
 		<div class="flex flex-wrap gap-2">

@@ -142,6 +142,23 @@ test('déplace une touche à la souris', async ({ page }) => {
 	await expect(page.getByText('Touche déplacée en position 3 sur 5.')).toBeAttached();
 });
 
+test('échange deux molettes à la souris', async ({ page }) => {
+	await open(page);
+	await dial(page, '1 : Contrôle du volume').dragTo(dial(page, '3 : Fonction contextuelle'));
+	await expect(dial(page, '3 : Contrôle du volume')).toBeVisible();
+	await expect(dial(page, '1 : Fonction contextuelle')).toBeVisible();
+	await expect(page.getByText('Molettes 1 et 3 échangées.')).toBeAttached();
+});
+
+test('échange une molette avec sa voisine au clavier', async ({ page }) => {
+	await open(page);
+	await dial(page, '1 : Contrôle du volume').click();
+	await page.getByRole('button', { name: /Échanger avec la molette suivante/ }).click();
+	await expect(page.getByText('Molettes 1 et 2 échangées.')).toBeAttached();
+	await expect(dial(page, '2 : Contrôle du volume')).toHaveAttribute('aria-current', 'true');
+	await expect(dial(page, '1 : Contrôle du pomodoro')).toBeVisible();
+});
+
 test('refuse un réglage invalide, puis enregistre sans bouton un réglage valide', async ({
 	page
 }) => {
