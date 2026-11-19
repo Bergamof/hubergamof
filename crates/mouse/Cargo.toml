@@ -1,0 +1,18 @@
+[package]
+name = "hubergamof-mouse"
+description = "Logitech HID++ 2.0 access for HuBergamof: frames, features and the read-only mouse probe."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Same single Linux backend as the Stream Deck code (hidraw, bundled C sources
+# + system libudev): hidapi accepts exactly one.
+hidapi.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

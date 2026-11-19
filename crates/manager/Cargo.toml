@@ -37,6 +37,7 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "toki
 base64.workspace = true
 hubergamof-module-api.workspace = true
 hubergamof-modules.workspace = true
+hubergamof-mouse.workspace = true
 hubergamof-protocol.workspace = true
 clap.workspace = true
 # Release signature check of the update helper (runs as root): verification
@@ -50,7 +51,7 @@ elgato-streamdeck = { version = "0.14.0", default-features = false }
 futures-util.workspace = true
 # Default backend (`linux-static-hidraw`, bundled C sources + system libudev):
 # elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
-hidapi = "2.6.7"
+hidapi.workspace = true
 image.workspace = true
 # Local time in the system time zone (`/etc/localtime`, system tzdb), for the
 # clock of the touch strip.
