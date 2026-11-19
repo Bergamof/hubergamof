@@ -5,15 +5,20 @@
 //!   exchange [`channel::Hidpp`] on top of it.
 //! - [`features`]: names of the HID++ features this project knows.
 //! - [`probe`]: the **read-only** inventory of a device (features, buttons).
+//! - [`controls`]: the mouse's own ids for the controls of each model.
+//! - [`link`]: the operations on a mouse (battery, sensitivity, wheel, buttons,
+//!   haptics), the part of this crate that writes.
 //! - [`hidraw`]: discovery and `hidapi` channel on real hardware.
 //!
-//! Nothing in this crate writes a setting to a device: the probe only sends
-//! the HID++ *getter* functions listed in [`probe`].
+//! The probe only sends the HID++ *getter* functions listed in [`probe`]; only
+//! [`link`] writes, and only what its operations name.
 
 pub mod channel;
+pub mod controls;
 pub mod features;
 pub mod frame;
 pub mod hidraw;
+pub mod link;
 pub mod probe;
 #[cfg(test)]
 mod testing;

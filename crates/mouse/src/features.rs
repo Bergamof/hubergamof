@@ -9,6 +9,20 @@ pub const FEATURE_SET: u16 = 0x0001;
 pub const DEVICE_NAME: u16 = 0x0005;
 /// Feature id of the remappable buttons (version 4).
 pub const REPROG_CONTROLS_V4: u16 = 0x1B04;
+/// Feature id of the firmware information, which also gives the unit id.
+pub const DEVICE_FIRMWARE: u16 = 0x0003;
+/// Feature id of the unified battery.
+pub const UNIFIED_BATTERY: u16 = 0x1004;
+/// Feature id of the adjustable sensitivity.
+pub const ADJUSTABLE_DPI: u16 = 0x2201;
+/// Feature id of the wheel mode (ratchet, free spin, `SmartShift`).
+pub const SMART_SHIFT_ENHANCED: u16 = 0x2111;
+/// Feature id of the high resolution wheel.
+pub const HIRES_WHEEL: u16 = 0x2121;
+/// Feature id of the thumb wheel.
+pub const THUMB_WHEEL: u16 = 0x2150;
+/// Feature id of the haptic feedback (seen on the MX Master 4).
+pub const HAPTIC: u16 = 0x19B0;
 
 /// Name of a feature id, when known.
 #[must_use]
@@ -17,23 +31,25 @@ pub fn feature_name(id: u16) -> Option<&'static str> {
         ROOT => "Root",
         FEATURE_SET => "FeatureSet",
         0x0002 => "FeatureInfo",
-        0x0003 => "DeviceFirmwareInformation",
+        DEVICE_FIRMWARE => "DeviceFirmwareInformation",
         DEVICE_NAME => "DeviceNameAndType",
         0x1000 => "BatteryStatus",
-        0x1004 => "UnifiedBattery",
+        UNIFIED_BATTERY => "UnifiedBattery",
         0x1814 => "ChangeHost",
         0x1815 => "HostsInfo",
         0x1B00 => "ReprogControls",
         REPROG_CONTROLS_V4 => "ReprogControlsV4",
         0x1D4B => "WirelessDeviceStatus",
+        HAPTIC => "Haptic",
+        0x19C0 => "ForceSensingButton",
         0x2100 => "VerticalScrolling",
         0x2110 => "SmartShift",
-        0x2111 => "SmartShiftEnhanced",
+        SMART_SHIFT_ENHANCED => "SmartShiftEnhanced",
         0x2120 => "HiResScrolling",
-        0x2121 => "HiResWheel",
-        0x2150 => "ThumbWheel",
+        HIRES_WHEEL => "HiResWheel",
+        THUMB_WHEEL => "ThumbWheel",
         0x2200 => "MousePointer",
-        0x2201 => "AdjustableDpi",
+        ADJUSTABLE_DPI => "AdjustableDpi",
         0x2205 => "PointerSpeed",
         0x8100 => "OnboardProfiles",
         0x8110 => "MouseButtonSpy",

@@ -1,10 +1,13 @@
 //! A scripted HID++ device for the tests: answers the getters the probe sends.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use crate::channel::{Channel, ChannelError};
-use crate::features::{DEVICE_NAME, FEATURE_SET, REPROG_CONTROLS_V4};
+use crate::features::{
+    ADJUSTABLE_DPI, DEVICE_FIRMWARE, DEVICE_NAME, FEATURE_SET, HAPTIC, HIRES_WHEEL,
+    REPROG_CONTROLS_V4, SMART_SHIFT_ENHANCED, THUMB_WHEEL, UNIFIED_BATTERY,
+};
 use crate::frame::{LONG_REPORT_ID, LONG_REPORT_LEN};
 
 /// One answer frame, padded to a long report.
@@ -24,6 +27,41 @@ pub struct FakeDevice {
     controls: Vec<[u8; 9]>,
     /// Features whose functions all fail with "invalid function".
     broken: Vec<u16>,
+    /// What the settings of the device currently are.
+    pub state: FakeState,
+}
+
+/// The settings a scripted mouse keeps, as a real one would.
+#[derive(Debug, Clone)]
+pub struct FakeState {
+    pub unit_id: [u8; 4],
+    pub battery: [u8; 3],
+    pub dpi: u16,
+    pub wheel: [u8; 3],
+    pub hires: u8,
+    pub thumb: [u8; 2],
+    pub diverted: BTreeSet<u16>,
+    pub haptic: [u8; 2],
+    pub haptic_mask: u32,
+    /// Waveform ids played, in order.
+    pub played: Vec<u8>,
+}
+
+impl Default for FakeState {
+    fn default() -> Self {
+        Self {
+            unit_id: [0xDE, 0xAD, 0xBE, 0xEF],
+            battery: [82, 4, 0],
+            dpi: 1600,
+            wheel: [2, 10, 50],
+            hires: 0x03,
+            thumb: [0, 0],
+            diverted: BTreeSet::new(),
+            haptic: [1, 75],
+            haptic_mask: 0x0800_7FFF,
+            played: Vec::new(),
+        }
+    }
 }
 
 impl FakeDevice {
@@ -33,7 +71,59 @@ impl FakeDevice {
             name: String::new(),
             controls: Vec::new(),
             broken: Vec::new(),
+            state: FakeState::default(),
         }
+    }
+
+    /// A mouse with the features of the MX Master 4 and the buttons the probe
+    /// read from it.
+    pub fn mx_master_4() -> Self {
+        let device = Self::new()
+            .with_feature(DEVICE_FIRMWARE, 8)
+            .with_name("MX Master 4")
+            .with_feature(UNIFIED_BATTERY, 5)
+            .with_feature(HAPTIC, 0)
+            .with_feature(ADJUSTABLE_DPI, 2)
+            .with_feature(SMART_SHIFT_ENHANCED, 0)
+            .with_feature(HIRES_WHEEL, 1)
+            .with_feature(THUMB_WHEEL, 0);
+        [
+            (0x0050, 0x0038, 0x01, 0x04),
+            (0x0051, 0x0039, 0x01, 0x04),
+            (0x0052, 0x003A, 0x31, 0x05),
+            (0x0053, 0x003C, 0x31, 0x05),
+            (0x0056, 0x003E, 0x31, 0x05),
+            (0x00C3, 0x009C, 0x31, 0x05),
+            (0x00C4, 0x009D, 0x31, 0x05),
+            (0x01A0, 0x0109, 0x31, 0x05),
+        ]
+        .into_iter()
+        .fold(device, |device, (cid, tid, flags, flags2)| {
+            device.with_control(cid, tid, flags, flags2)
+        })
+    }
+
+    /// A mouse with the features of the MX Anywhere 3S: no haptics, no thumb wheel.
+    pub fn mx_anywhere_3s() -> Self {
+        let device = Self::new()
+            .with_feature(DEVICE_FIRMWARE, 4)
+            .with_name("MX Anywhere 3S")
+            .with_feature(UNIFIED_BATTERY, 3)
+            .with_feature(ADJUSTABLE_DPI, 2)
+            .with_feature(SMART_SHIFT_ENHANCED, 0)
+            .with_feature(HIRES_WHEEL, 1);
+        [
+            (0x0050, 0x0038, 0x01, 0x04),
+            (0x0051, 0x0039, 0x01, 0x04),
+            (0x0052, 0x003A, 0x31, 0x05),
+            (0x0053, 0x003C, 0x31, 0x0D),
+            (0x0056, 0x003E, 0x31, 0x0D),
+            (0x00C4, 0x009D, 0x31, 0x05),
+        ]
+        .into_iter()
+        .fold(device, |device, (cid, tid, flags, flags2)| {
+            device.with_control(cid, tid, flags, flags2)
+        })
     }
 
     pub fn with_feature(mut self, id: u16, version: u8) -> Self {
@@ -93,7 +183,7 @@ impl FakeDevice {
     }
 
     /// Params of the answer to `function` of the feature at `index`.
-    fn answer(&self, index: u8, function: u8, params: &[u8]) -> Option<Vec<u8>> {
+    fn answer(&mut self, index: u8, function: u8, params: &[u8]) -> Option<Vec<u8>> {
         let feature = self.feature_at(index)?;
         if self.broken.contains(&feature) {
             return None;
@@ -127,6 +217,81 @@ impl FakeDevice {
             (REPROG_CONTROLS_V4, 0) => Some(vec![u8::try_from(self.controls.len()).ok()?]),
             (REPROG_CONTROLS_V4, 1) => {
                 Some(self.controls.get(usize::from(*params.first()?))?.to_vec())
+            }
+            (REPROG_CONTROLS_V4, 2) => {
+                let cid = u16::from_be_bytes([*params.first()?, *params.get(1)?]);
+                let [hi, lo] = cid.to_be_bytes();
+                Some(vec![
+                    hi,
+                    lo,
+                    u8::from(self.state.diverted.contains(&cid)),
+                    0,
+                    0,
+                ])
+            }
+            (REPROG_CONTROLS_V4, 3) => {
+                let cid = u16::from_be_bytes([*params.first()?, *params.get(1)?]);
+                let flags = *params.get(2)?;
+                if flags & 0x02 != 0 {
+                    if flags & 0x01 != 0 {
+                        self.state.diverted.insert(cid);
+                    } else {
+                        self.state.diverted.remove(&cid);
+                    }
+                }
+                Some(params.iter().copied().take(5).collect())
+            }
+            _ => self.answer_setting(feature, function, params),
+        }
+    }
+    /// The getters and setters of the settings a mouse keeps.
+    fn answer_setting(&mut self, feature: u16, function: u8, params: &[u8]) -> Option<Vec<u8>> {
+        match (feature, function) {
+            (DEVICE_FIRMWARE, 0) => {
+                let [a, b, c, d] = self.state.unit_id;
+                Some(vec![1, a, b, c, d, 0, 0x04])
+            }
+            (UNIFIED_BATTERY, 1) => Some(self.state.battery.to_vec()),
+            (ADJUSTABLE_DPI, 2) => {
+                let [hi, lo] = self.state.dpi.to_be_bytes();
+                Some(vec![0, hi, lo, 0x03, 0xE8])
+            }
+            (ADJUSTABLE_DPI, 3) => {
+                self.state.dpi = u16::from_be_bytes([*params.get(1)?, *params.get(2)?]);
+                Some(params.iter().copied().take(3).collect())
+            }
+            (SMART_SHIFT_ENHANCED, 1) => Some(self.state.wheel.to_vec()),
+            (SMART_SHIFT_ENHANCED, 2) => {
+                // A zero leaves the setting as it is.
+                for (slot, value) in self.state.wheel.iter_mut().zip(params.iter().take(3)) {
+                    if *value != 0 {
+                        *slot = *value;
+                    }
+                }
+                Some(params.iter().copied().take(3).collect())
+            }
+            (HIRES_WHEEL, 1) => Some(vec![self.state.hires]),
+            (HIRES_WHEEL, 2) => {
+                self.state.hires = *params.first()?;
+                Some(vec![self.state.hires])
+            }
+            (THUMB_WHEEL, 1) => Some(self.state.thumb.to_vec()),
+            (THUMB_WHEEL, 2) => {
+                self.state.thumb = [*params.first()?, *params.get(1)?];
+                Some(self.state.thumb.to_vec())
+            }
+            (HAPTIC, 0) => {
+                let [a, b, c, d] = self.state.haptic_mask.to_be_bytes();
+                Some(vec![0, 0, 0, 0, a, b, c, d])
+            }
+            (HAPTIC, 1) => Some(self.state.haptic.to_vec()),
+            (HAPTIC, 2) => {
+                self.state.haptic = [*params.first()?, *params.get(1)?];
+                Some(self.state.haptic.to_vec())
+            }
+            (HAPTIC, 4) => {
+                self.state.played.push(*params.first()?);
+                Some(vec![])
             }
             _ => None,
         }
@@ -185,6 +350,14 @@ impl FakeLink {
         }
     }
 
+    /// The scripted device at an index.
+    pub fn device_at(&self, index: u8) -> Option<&FakeDevice> {
+        self.devices
+            .iter()
+            .find(|(at, _)| *at == index)
+            .map(|(_, device)| device)
+    }
+
     /// Every report written so far.
     pub fn written(&self) -> &[Vec<u8>] {
         &self.written
@@ -210,7 +383,7 @@ impl Channel for FakeLink {
             return Err(ChannelError("short report".to_owned()));
         };
         self.queue.extend(self.noise.clone());
-        match self.devices.iter().find(|(index, _)| index == device) {
+        match self.devices.iter_mut().find(|(index, _)| index == device) {
             Some((_, scripted)) => {
                 if let Some(answer) = scripted.answer(*feature, function_byte >> 4, params) {
                     self.queue

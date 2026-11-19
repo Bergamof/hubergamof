@@ -12,6 +12,7 @@ publish.workspace = true
 # Same single Linux backend as the Stream Deck code (hidraw, bundled C sources
 # + system libudev): hidapi accepts exactly one.
 hidapi.workspace = true
+hubergamof-protocol.workspace = true
 thiserror.workspace = true
 
 [lints]

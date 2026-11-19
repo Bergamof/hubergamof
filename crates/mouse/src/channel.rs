@@ -1,6 +1,7 @@
 //! Byte-level channel to a HID++ interface and the request/answer exchange on
 //! top of it.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -9,6 +10,10 @@ use crate::frame::{Answer, DeviceError, Request};
 
 /// Frames kept in a trace; the rest is counted, not stored.
 pub const MAX_TRACE_LINES: usize = 10_000;
+
+/// Unrelated frames (notifications) kept while a request waits for its answer;
+/// the oldest are dropped past this.
+pub const MAX_PENDING_FRAMES: usize = 256;
 
 /// Time a device is given to answer before a request counts as unanswered.
 pub const ANSWER_TIMEOUT: Duration = Duration::from_millis(500);
@@ -48,6 +53,12 @@ pub enum HidppError {
     /// The device answered something the protocol does not allow.
     #[error("malformed answer: {0}")]
     Malformed(String),
+    /// The device does not have the feature the operation needs.
+    #[error("the device has no {0}")]
+    Unsupported(&'static str),
+    /// The operation was asked something the device must not be sent.
+    #[error("refused: {0}")]
+    InvalidArgument(String),
 }
 
 /// Direction of a traced frame.
@@ -65,6 +76,7 @@ pub struct Hidpp<C> {
     channel: C,
     timeout: Duration,
     trace: Option<Vec<String>>,
+    pending: VecDeque<Vec<u8>>,
 }
 
 impl<C: Channel> Hidpp<C> {
@@ -75,6 +87,7 @@ impl<C: Channel> Hidpp<C> {
             channel,
             timeout: ANSWER_TIMEOUT,
             trace: None,
+            pending: VecDeque::new(),
         }
     }
 
@@ -133,9 +146,33 @@ impl<C: Channel> Hidpp<C> {
             match request.answered_by(&bytes) {
                 Some(Answer::Params(params)) => return Ok(params),
                 Some(Answer::Failed(error)) => return Err(error.into()),
-                None => {}
+                None => self.keep(bytes),
             }
         }
+    }
+
+    /// The next frame that is not the answer to a request: first the ones
+    /// set aside while a request waited, then whatever the device sends within
+    /// `timeout`. `None` when nothing comes.
+    ///
+    /// # Errors
+    /// [`HidppError::Channel`] when the interface fails.
+    pub fn next_frame(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, HidppError> {
+        if let Some(frame) = self.pending.pop_front() {
+            return Ok(Some(frame));
+        }
+        let frame = self.channel.read(timeout)?;
+        if let Some(bytes) = &frame {
+            self.record(Direction::Received, bytes);
+        }
+        Ok(frame)
+    }
+
+    fn keep(&mut self, frame: Vec<u8>) {
+        if self.pending.len() == MAX_PENDING_FRAMES {
+            self.pending.pop_front();
+        }
+        self.pending.push_back(frame);
     }
 
     fn record(&mut self, direction: Direction, bytes: &[u8]) {
@@ -249,6 +286,57 @@ mod tests {
             trace.last().map(String::as_str),
             Some("... trace truncated")
         );
+    }
+
+    #[test]
+    fn frames_that_are_not_the_answer_are_kept_for_later() {
+        let request = Request::new(0xFF, 4, 1, &[]);
+        let notification = frame(0xFF, 4, 0x00, &[7]);
+        let channel = ScriptedChannel::new()
+            .then_frame(notification.clone())
+            .then_frame(frame(0xFF, 4, request.function_byte(), &[42]));
+        let mut hidpp = Hidpp::new(channel).with_timeout(Duration::from_millis(5));
+        assert_eq!(hidpp.request(0xFF, 4, 1, &[]).unwrap()[0], 42);
+        assert_eq!(
+            hidpp.next_frame(Duration::from_millis(1)).unwrap(),
+            Some(notification)
+        );
+        assert_eq!(hidpp.next_frame(Duration::from_millis(1)).unwrap(), None);
+    }
+
+    #[test]
+    fn the_oldest_kept_frames_are_dropped_past_the_limit() {
+        let mut channel = ScriptedChannel::new();
+        for index in 0..=MAX_PENDING_FRAMES {
+            channel =
+                channel.then_frame(frame(0xFF, 9, 0x00, &[u8::try_from(index % 200).unwrap()]));
+        }
+        let request = Request::new(0xFF, 4, 1, &[]);
+        channel = channel.then_frame(frame(0xFF, 4, request.function_byte(), &[1]));
+        let mut hidpp = Hidpp::new(channel);
+        hidpp.request(0xFF, 4, 1, &[]).unwrap();
+        let mut kept = 0;
+        while hidpp
+            .next_frame(Duration::from_millis(1))
+            .unwrap()
+            .is_some()
+        {
+            kept += 1;
+        }
+        assert_eq!(kept, MAX_PENDING_FRAMES);
+    }
+
+    #[test]
+    fn a_frame_read_directly_is_returned_and_traced() {
+        let channel = ScriptedChannel::new().then_frame(frame(0xFF, 4, 0x00, &[1]));
+        let mut hidpp = Hidpp::new(channel).with_trace();
+        assert!(
+            hidpp
+                .next_frame(Duration::from_millis(1))
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(hidpp.take_trace().len(), 1);
     }
 
     #[test]

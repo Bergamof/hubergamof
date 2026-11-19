@@ -1006,6 +1006,7 @@ name = "hubergamof-mouse"
 version = "0.1.0"
 dependencies = [
  "hidapi",
+ "hubergamof-protocol",
  "thiserror",
 ]
 
