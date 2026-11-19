@@ -33,8 +33,13 @@ The release notes open in a new tab.
 		status.type === 'checking' || status.type === 'downloading' || status.type === 'installing'
 	);
 	const canInstall = $derived(settings !== undefined && settings.installSupport !== 'unpackaged');
+	/** The button stays while it works (same element, `aria-disabled`): the focus is not lost. */
 	const installable = $derived(
-		canInstall && (status.type === 'available' || status.type === 'installFailed')
+		canInstall &&
+			(status.type === 'available' ||
+				status.type === 'installFailed' ||
+				status.type === 'downloading' ||
+				status.type === 'installing')
 	);
 </script>
 
@@ -46,7 +51,7 @@ The release notes open in a new tab.
 	]}
 >
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-		<p role="status" class="flex-1">
+		<p role="status" class="flex-1 wrap-anywhere">
 			{#if status.type === 'available'}
 				<strong class="font-semibold">Version {status.version} disponible.</strong>
 				{#if version}Vous utilisez la version {version}.{/if}
@@ -113,13 +118,17 @@ The release notes open in a new tab.
 		</div>
 	</div>
 	{#if canInstall && settings}
-		<label class="flex items-center gap-2" for="{uid}-auto">
+		<label class="flex min-h-9 items-center gap-2" for="{uid}-auto">
 			<input
 				id="{uid}-auto"
 				type="checkbox"
 				class="size-5 accent-ring focus-ring"
 				checked={settings.autoInstall}
-				onchange={(event) => onautoinstall(event.currentTarget.checked)}
+				onchange={(event) => {
+					onautoinstall(event.currentTarget.checked);
+					// Shown as the manager confirms it (`updateSettings`), never as merely asked.
+					event.currentTarget.checked = settings.autoInstall;
+				}}
 			/>
 			Installer automatiquement les mises à jour
 		</label>

@@ -88,13 +88,30 @@ describe('UpdatePanel', () => {
 		expect(oninstall).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not install twice while downloading', async () => {
+	it('keeps the install button, inactive, while the update is under way', async () => {
 		const oninstall = vi.fn();
 		const view = await render(UpdatePanel, props({ status: AVAILABLE, oninstall }));
-		await view.rerender(props({ status: { type: 'downloading', version: '1.2.0' }, oninstall }));
-		// The button is gone while downloading: nothing can start a second installation.
-		expect(document.querySelectorAll('button')).toHaveLength(1);
-		expect(oninstall).not.toHaveBeenCalled();
+		const button = page.getByRole('button', { name: 'Mettre à jour maintenant' });
+		await button.click();
+		expect(oninstall).toHaveBeenCalledTimes(1);
+
+		for (const status of [
+			{ type: 'downloading', version: '1.2.0' },
+			{ type: 'installing', version: '1.2.0' }
+		] as const) {
+			await view.rerender(props({ status, oninstall }));
+			await expect.element(button).toHaveAttribute('aria-disabled', 'true');
+			await button.click({ force: true });
+		}
+		expect(oninstall).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps the focus on the install button once pressed', async () => {
+		const view = await render(UpdatePanel, props({ status: AVAILABLE }));
+		const button = page.getByRole('button', { name: 'Mettre à jour maintenant' });
+		(button.element() as HTMLElement).focus();
+		await view.rerender(props({ status: { type: 'downloading', version: '1.2.0' } }));
+		expect(document.activeElement).toBe(button.element());
 	});
 
 	it('offers to retry a failed installation, with its detail', async () => {
@@ -131,6 +148,15 @@ describe('UpdatePanel', () => {
 			.not.toBeInTheDocument();
 	});
 
+	it('follows the confirmed automatic installation setting', async () => {
+		const view = await render(UpdatePanel, props());
+		const toggle = page.getByRole('checkbox', {
+			name: 'Installer automatiquement les mises à jour'
+		});
+		await view.rerender(props({ settings: { ...CAN_INSTALL, autoInstall: true } }));
+		await expect.element(toggle).toBeChecked();
+	});
+
 	it('shows and changes the automatic installation', async () => {
 		const onautoinstall = vi.fn();
 		await render(UpdatePanel, props({ onautoinstall }));
@@ -140,5 +166,7 @@ describe('UpdatePanel', () => {
 		await expect.element(toggle).not.toBeChecked();
 		await toggle.click();
 		expect(onautoinstall).toHaveBeenLastCalledWith(true);
+		// Only the manager's confirmation checks it.
+		await expect.element(toggle).not.toBeChecked();
 	});
 });

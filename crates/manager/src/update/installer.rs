@@ -555,6 +555,54 @@ mod tests {
         assert!(matches!(error, InstallError::TooLarge), "{error}");
     }
 
+    /// A server answering `body` as a stream, so without a `Content-Length`.
+    async fn serve_streamed(path: &str, body: Vec<u8>) -> String {
+        let app = Router::new().route(
+            path,
+            get(move || {
+                let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+                    body.chunks(1024).map(|chunk| Ok(chunk.to_vec())).collect();
+                async move { axum::body::Body::from_stream(futures_util::stream::iter(chunks)) }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn the_size_limit_holds_for_a_stream_without_content_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = serve_streamed("/big", vec![b'x'; 5000]).await;
+        let downloader = Downloader::unrestricted().unwrap();
+        let error = downloader
+            .fetch(&format!("{base}/big"), &dir.path().join("out"), 4000)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, InstallError::TooLarge), "{error}");
+        downloader
+            .fetch(&format!("{base}/big"), &dir.path().join("fits"), 5000)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_real_downloader_refuses_plain_http() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = serve(&files()).await;
+        let error = Downloader::new()
+            .unwrap()
+            .fetch(
+                &format!("{base}/{CHECKSUMS_FILE}"),
+                &dir.path().join("out"),
+                1024,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, InstallError::Download(_)), "{error}");
+    }
+
     #[tokio::test]
     async fn the_helper_failure_is_passed_on_and_the_folder_still_removed() {
         let work = tempfile::tempdir().unwrap();

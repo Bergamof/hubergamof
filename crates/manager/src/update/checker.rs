@@ -541,11 +541,11 @@ mod tests {
             .wait_for(|settings| !settings.auto_install)
             .await
             .unwrap();
-        tokio::task::yield_now().await;
-        // `spawn_blocking` runs on a real thread: wait for it to have saved.
+        // `spawn_blocking` runs on a real thread: wait for it to have saved,
+        // with simulated time that can run out (a missing save fails the test).
         tokio::time::timeout(Duration::from_secs(5), async {
             while policy.load().auto_install {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await

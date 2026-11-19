@@ -8,7 +8,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
-use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -32,6 +32,11 @@ const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
 /// manager's unprivileged download user.
 const STAGING_DIR_MODE: u32 = 0o755;
 const STAGED_FILE_MODE: u32 = 0o644;
+
+/// `O_NONBLOCK` (the same value on every Linux architecture): opening a file
+/// that was swapped for a FIFO after it was inspected must not block the
+/// helper.
+const OPEN_NONBLOCKING: i32 = 0o4000;
 
 /// Length of a SHA-256 in hexadecimal.
 const SHA256_HEX_LENGTH: usize = 64;
@@ -91,22 +96,7 @@ pub struct SystemInstaller;
 
 impl PackageInstaller for SystemInstaller {
     fn install(&self, format: PackageFormat, package: &Path) -> Result<(), String> {
-        let mut command = match format {
-            PackageFormat::Deb => {
-                let mut command = Command::new("apt-get");
-                command
-                    .env("DEBIAN_FRONTEND", "noninteractive")
-                    .args(["install", "--yes"]);
-                command
-            }
-            PackageFormat::Pacman => {
-                let mut command = Command::new("pacman");
-                command.args(["--upgrade", "--noconfirm"]);
-                command
-            }
-        };
-        let status = command
-            .arg(package)
+        let status = install_command(format, package)
             .stdin(Stdio::null())
             .status()
             .map_err(|error| format!("cannot run the package manager: {error}"))?;
@@ -116,6 +106,27 @@ impl PackageInstaller for SystemInstaller {
             Err(format!("the package manager failed ({status})"))
         }
     }
+}
+
+/// The package manager's command line: arguments apart (no shell), the file
+/// last, after the options.
+fn install_command(format: PackageFormat, package: &Path) -> Command {
+    let mut command = match format {
+        PackageFormat::Deb => {
+            let mut command = Command::new("apt-get");
+            command
+                .env("DEBIAN_FRONTEND", "noninteractive")
+                .args(["install", "--yes"]);
+            command
+        }
+        PackageFormat::Pacman => {
+            let mut command = Command::new("pacman");
+            command.args(["--upgrade", "--noconfirm"]);
+            command
+        }
+    };
+    command.arg(package);
+    command
 }
 
 /// What an update needs from the system.
@@ -196,6 +207,11 @@ fn install_staged(
     package: &[u8],
 ) -> Result<(), ApplyError> {
     let failed = |error: io::Error| ApplyError::Install(error.to_string());
+    // `version_of` only lets plain file names through; this keeps the write
+    // inside the staging folder even if that ever changes.
+    if name.contains(['/', '\0']) {
+        return Err(ApplyError::Unacceptable(name.to_owned()));
+    }
     fs::create_dir_all(environment.staging_root).map_err(failed)?;
     let staging = tempfile::Builder::new()
         .prefix("update-")
@@ -227,7 +243,11 @@ fn read_plain_file(dir: &Path, name: &str, limit: u64) -> Result<Vec<u8>, ApplyE
     if !inspected.is_file() || inspected.len() > limit {
         return Err(ApplyError::Unacceptable(name.to_owned()));
     }
-    let file = File::open(&path).map_err(read_error)?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(OPEN_NONBLOCKING)
+        .open(&path)
+        .map_err(read_error)?;
     let opened = file.metadata().map_err(read_error)?;
     if (opened.dev(), opened.ino()) != (inspected.dev(), inspected.ino()) {
         return Err(ApplyError::Unacceptable(name.to_owned()));
@@ -537,6 +557,174 @@ mod tests {
             .apply(Some(PackageFormat::Deb), &installer)
             .unwrap_err();
         assert!(error.to_string().contains(SIGNATURE_FILE), "{error}");
+    }
+
+    #[test]
+    fn the_signature_is_checked_before_anything_else_is_read() {
+        // Forged signature, and neither the package nor anything else present:
+        // the verdict is the signature's, not a missing file's.
+        let release = Release::signed();
+        fs::remove_file(
+            release
+                .download
+                .path()
+                .join(PackageFormat::Deb.file_name(OFFERED)),
+        )
+        .unwrap();
+        fs::write(release.download.path().join(SIGNATURE_FILE), [1_u8; 64]).unwrap();
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::Signature(_)), "{error}");
+    }
+
+    #[test]
+    fn the_version_is_judged_before_the_package_is_read() {
+        let release = Release::signed();
+        release.write_checksums(&Release::checksums_for(
+            PackageFormat::Deb,
+            INSTALLED,
+            &release.package,
+        ));
+        // The package of that (not newer) version is absent.
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::NotNewer { .. }), "{error}");
+    }
+
+    #[test]
+    fn the_same_package_listed_twice_is_ambiguous() {
+        let release = Release::signed();
+        let line = Release::checksums_for(PackageFormat::Deb, OFFERED, &release.package);
+        release.write_checksums(&format!("{line}{line}"));
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::NoPackage), "{error}");
+    }
+
+    #[test]
+    fn uppercase_hashes_are_not_accepted() {
+        let release = Release::signed();
+        let line = Release::checksums_for(PackageFormat::Deb, OFFERED, &release.package);
+        release.write_checksums(&line.to_uppercase().replace(
+            "HUBERGAMOF_1.1.0_AMD64.DEB",
+            &PackageFormat::Deb.file_name(OFFERED),
+        ));
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::NoPackage), "{error}");
+    }
+
+    #[test]
+    fn a_directory_or_a_fifo_instead_of_a_file_is_refused_without_blocking() {
+        let release = Release::signed();
+        let checksums = release.download.path().join(CHECKSUMS_FILE);
+        fs::remove_file(&checksums).unwrap();
+        fs::create_dir(&checksums).unwrap();
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+
+        fs::remove_dir(&checksums).unwrap();
+        let made = Command::new("mkfifo").arg(&checksums).status().unwrap();
+        assert!(made.success());
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+    }
+
+    #[test]
+    fn a_symbolic_link_for_the_package_is_refused() {
+        let release = Release::signed();
+        let package = release
+            .download
+            .path()
+            .join(PackageFormat::Deb.file_name(OFFERED));
+        let target = release.download.path().join("elsewhere");
+        fs::rename(&package, &target).unwrap();
+        symlink(&target, &package).unwrap();
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+        assert!(installer.installed.borrow().is_empty());
+    }
+
+    #[test]
+    fn the_size_limits_are_exact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
+        fs::write(&path, vec![0_u8; 10]).unwrap();
+        assert_eq!(read_plain_file(dir.path(), "file", 10).unwrap().len(), 10);
+        let error = read_plain_file(dir.path(), "file", 9).unwrap_err();
+        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+    }
+
+    #[test]
+    fn the_staged_package_is_readable_by_the_download_user_and_a_name_cannot_escape() {
+        let release = Release::signed();
+        let staging = release.staging.path();
+        let environment = Environment {
+            key: &release.key,
+            installed: INSTALLED,
+            packages: &Packages(Some(PackageFormat::Deb)),
+            installer: &ModeRecorder,
+            staging_root: staging,
+        };
+        install_staged(&environment, PackageFormat::Deb, "p.deb", b"x").unwrap();
+        for name in ["../escape", "a/b", "a\0b"] {
+            let error = install_staged(&environment, PackageFormat::Deb, name, b"x").unwrap_err();
+            assert!(
+                matches!(error, ApplyError::Unacceptable(_)),
+                "{name:?}: {error}"
+            );
+        }
+        assert!(!staging.join("escape").exists());
+    }
+
+    /// Checks the modes of the staged folder and file while "installing".
+    struct ModeRecorder;
+
+    impl PackageInstaller for ModeRecorder {
+        fn install(&self, _format: PackageFormat, package: &Path) -> Result<(), String> {
+            let file_mode = fs::metadata(package).unwrap().permissions().mode() & 0o777;
+            let dir_mode = fs::metadata(package.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!((dir_mode, file_mode), (STAGING_DIR_MODE, STAGED_FILE_MODE));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_package_managers_are_called_without_a_shell_with_the_file_last() {
+        let package = Path::new("/var/lib/hubergamof/update-x/hubergamof_1.1.0_amd64.deb");
+        let deb = install_command(PackageFormat::Deb, package);
+        assert_eq!(deb.get_program(), "apt-get");
+        let arguments: Vec<_> = deb.get_args().collect();
+        assert_eq!(arguments, ["install", "--yes", package.to_str().unwrap()]);
+        let pacman = install_command(PackageFormat::Pacman, package);
+        assert_eq!(pacman.get_program(), "pacman");
+        let arguments: Vec<_> = pacman.get_args().collect();
+        assert_eq!(
+            arguments,
+            ["--upgrade", "--noconfirm", package.to_str().unwrap()]
+        );
+        // An absolute path can never be taken for an option.
+        assert!(package.is_absolute());
     }
 
     #[test]

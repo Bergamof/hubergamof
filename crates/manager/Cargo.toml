@@ -2,6 +2,8 @@
 name = "hubergamof"
 description = "Stream Deck manager for Linux with a live web configuration UI."
 version.workspace = true
+# Two binaries (the manager and the root update helper): `cargo run` starts the manager.
+default-run = "hubergamof"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

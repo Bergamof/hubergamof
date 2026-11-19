@@ -62,4 +62,9 @@ fn a_missing_folder_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let output = run(&[dir.path().join("absent").as_os_str()]);
     assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("cannot read SHA256SUMS"),
+        "{}",
+        stderr(&output)
+    );
 }
