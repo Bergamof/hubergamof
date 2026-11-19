@@ -27,6 +27,9 @@ source "$packaging/desktop/install-desktop.sh"
 
 readonly INSTALLED_BINARY="/usr/bin/hubergamof"
 readonly INSTALLED_HELPER="/usr/lib/hubergamof/hubergamof-update-helper"
+# Dossier où l'assistant dépose le paquet vérifié : livré par le paquet (root,
+# 0755), jamais créé à l'exécution, pour que personne d'autre n'ait pu le faire.
+readonly STAGING_DIR="/var/lib/hubergamof"
 readonly POLKIT_POLICY="io.github.bergamof.hubergamof.update.policy"
 readonly CONFIG_DIR_SPECIFIER='%E/hubergamof'
 
@@ -37,6 +40,7 @@ helper="$(dirname "$binary")/hubergamof-update-helper"
 
 install -D -m 0755 "$binary" "$root$INSTALLED_BINARY"
 install -D -m 0755 "$helper" "$root$INSTALLED_HELPER"
+install -d -m 0755 "$root$STAGING_DIR"
 install -D -m 0644 "$packaging/polkit/$POLKIT_POLICY" "$root/usr/share/polkit-1/actions/$POLKIT_POLICY"
 install -D -m 0644 "$packaging/udev/70-hubergamof.rules" "$root/usr/lib/udev/rules.d/70-hubergamof.rules"
 

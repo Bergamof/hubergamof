@@ -27,6 +27,18 @@ fn it_wants_exactly_one_folder() {
 }
 
 #[test]
+fn a_relative_folder_is_refused() {
+    // `pkexec` starts in /root: a relative path would not mean what the caller meant.
+    let output = run(&["relative/dir".as_ref()]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("not an acceptable file"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn an_empty_download_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let output = run(&[dir.path().as_os_str()]);
@@ -63,7 +75,7 @@ fn a_missing_folder_is_reported() {
     let output = run(&[dir.path().join("absent").as_os_str()]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("cannot read SHA256SUMS"),
+        stderr(&output).contains("cannot read") && stderr(&output).contains("absent"),
         "{}",
         stderr(&output)
     );

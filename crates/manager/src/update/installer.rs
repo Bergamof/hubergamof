@@ -31,8 +31,13 @@ const POLKIT_REFUSED: [i32; 2] = [126, 127];
 /// Largest signed checksums or signature downloaded.
 const MAX_SMALL_FILE_BYTES: u64 = 64 * 1024;
 
-/// Largest package downloaded; the real ones are around 15 MiB.
-const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
+/// Largest package downloaded (the helper reads it into memory as root); the
+/// real ones are around 15 MiB.
+const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Longest wait for the helper: a stuck package manager must not leave the
+/// update « installing » for ever.
+const HELPER_TIMEOUT: Duration = Duration::from_mins(20);
 
 /// Longest download (connection included).
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(10);
@@ -194,16 +199,16 @@ impl HelperRunner for PkexecHelper {
             program: PRIVILEGE_PROGRAM.into(),
             args: vec![HELPER_PATH.into(), download_dir.as_os_str().to_owned()],
         };
-        let output = tokio::task::spawn_blocking(move || {
-            scoped_command(&launch)
-                .stdin(std::process::Stdio::null())
-                .output()
-        })
-        .await
-        .map_err(|error| InstallError::Helper(format!("cannot run the helper: {error}")))?
-        .map_err(|error| {
-            InstallError::Helper(format!("cannot run {PRIVILEGE_PROGRAM}: {error}"))
-        })?;
+        let mut command = tokio::process::Command::from(scoped_command(&launch));
+        command
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(HELPER_TIMEOUT, command.output())
+            .await
+            .map_err(|_| InstallError::Helper("the installation took too long".to_owned()))?
+            .map_err(|error| {
+                InstallError::Helper(format!("cannot run {PRIVILEGE_PROGRAM}: {error}"))
+            })?;
         if output.status.success() {
             return Ok(());
         }

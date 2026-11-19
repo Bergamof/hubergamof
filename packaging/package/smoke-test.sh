@@ -19,6 +19,7 @@ dist="$3"
 
 readonly BINARY=/usr/bin/hubergamof
 readonly HELPER=/usr/lib/hubergamof/hubergamof-update-helper
+readonly STAGING_DIR=/var/lib/hubergamof
 readonly POLKIT_POLICY=/usr/share/polkit-1/actions/io.github.bergamof.hubergamof.update.policy
 readonly UNIT=/usr/lib/systemd/user/hubergamof.service
 readonly UDEV_RULE=/usr/lib/udev/rules.d/70-hubergamof.rules
@@ -64,6 +65,7 @@ check_files() {
 	done
 	[[ "$(stat -c %a "$BINARY")" == 755 ]] || fail "$BINARY n'est pas en 0755"
 	[[ "$(stat -c %a "$HELPER")" == 755 && "$(stat -c %U "$HELPER")" == root ]] || fail "$HELPER doit être en 0755 et à root"
+	[[ "$(stat -c '%a %U' "$STAGING_DIR")" == '755 root' ]] || fail "$STAGING_DIR doit être en 0755 et à root"
 	grep -qF -- "org.freedesktop.policykit.exec.path\">$HELPER<" "$POLKIT_POLICY" || fail "action polkit sans le chemin de l'assistant"
 	grep -qF -- "$EXPECTED_EXEC_START" "$UNIT" || fail "ExecStart inattendu dans $UNIT"
 	grep -q 'TAG+="uaccess"' "$UDEV_RULE" || fail "règle udev sans uaccess"

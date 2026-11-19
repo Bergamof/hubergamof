@@ -8,10 +8,13 @@
 
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use rustix::fs::{FileType, Mode, OFlags};
+use rustix::io::Errno;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
@@ -25,18 +28,19 @@ const MAX_CHECKSUMS_BYTES: u64 = 64 * 1024;
 /// Largest signature read: an Ed25519 signature is 64 bytes.
 const MAX_SIGNATURE_BYTES: u64 = 64;
 
-/// Largest package read; the real ones are around 15 MiB.
-const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
+/// Largest package read, into memory, as root: the real ones are around 15 MiB.
+const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Permissions of the folder holding the package: readable by the package
 /// manager's unprivileged download user.
 const STAGING_DIR_MODE: u32 = 0o755;
 const STAGED_FILE_MODE: u32 = 0o644;
 
-/// `O_NONBLOCK` (the same value on every Linux architecture): opening a file
-/// that was swapped for a FIFO after it was inspected must not block the
-/// helper.
-const OPEN_NONBLOCKING: i32 = 0o4000;
+/// Mode of the staged package while it is written: the helper only.
+const STAGED_FILE_WRITE_MODE: u32 = 0o600;
+
+/// Owner a staging root must have (root).
+pub const ROOT_UID: u32 = 0;
 
 /// Length of a SHA-256 in hexadecimal.
 const SHA256_HEX_LENGTH: usize = 64;
@@ -76,6 +80,9 @@ pub enum ApplyError {
     /// The package is not the one the signed checksums describe.
     #[error("the package does not match the signed checksums")]
     ChecksumMismatch,
+    /// The staging folder is missing, or others could write in it.
+    #[error("{0} is not a safe staging folder")]
+    UnsafeStaging(String),
     /// The package could not be staged or installed.
     #[error("installation failed: {0}")]
     Install(String),
@@ -114,9 +121,20 @@ fn install_command(format: PackageFormat, package: &Path) -> Command {
     let mut command = match format {
         PackageFormat::Deb => {
             let mut command = Command::new("apt-get");
-            command
-                .env("DEBIAN_FRONTEND", "noninteractive")
-                .args(["install", "--yes"]);
+            // No new Recommends pulled in by an upgrade, existing configuration
+            // files kept without asking, and a wait (not a failure) when
+            // another package manager holds the lock.
+            command.env("DEBIAN_FRONTEND", "noninteractive").args([
+                "install",
+                "--yes",
+                "--no-install-recommends",
+                "--option",
+                "Dpkg::Options::=--force-confdef",
+                "--option",
+                "Dpkg::Options::=--force-confold",
+                "--option",
+                "DPkg::Lock::Timeout=120",
+            ]);
             command
         }
         PackageFormat::Pacman => {
@@ -139,8 +157,12 @@ pub struct Environment<'a> {
     pub packages: &'a dyn SystemPackages,
     /// Installs the checked package.
     pub installer: &'a dyn PackageInstaller,
-    /// Folder under which the checked package is staged.
+    /// Folder under which the checked package is staged: it must already
+    /// exist (the package ships it), belong to `staging_owner` and be
+    /// writable by nobody else.
     pub staging_root: &'a Path,
+    /// Uid that must own `staging_root`: root, except in tests.
+    pub staging_owner: u32,
 }
 
 /// Verifies and installs the release downloaded in `download_dir`; returns
@@ -151,8 +173,9 @@ pub struct Environment<'a> {
 /// [`ApplyError`], without having installed anything, unless the package
 /// manager itself fails.
 pub fn apply(download_dir: &Path, environment: &Environment<'_>) -> Result<Version, ApplyError> {
-    let checksums = read_plain_file(download_dir, CHECKSUMS_FILE, MAX_CHECKSUMS_BYTES)?;
-    let signature = read_plain_file(download_dir, SIGNATURE_FILE, MAX_SIGNATURE_BYTES)?;
+    let directory = open_download_dir(download_dir)?;
+    let checksums = read_plain_file(&directory, CHECKSUMS_FILE, MAX_CHECKSUMS_BYTES)?;
+    let signature = read_plain_file(&directory, SIGNATURE_FILE, MAX_SIGNATURE_BYTES)?;
     environment.key.verify(&checksums, &signature)?;
 
     let format = environment
@@ -167,7 +190,7 @@ pub fn apply(download_dir: &Path, environment: &Environment<'_>) -> Result<Versi
         });
     }
 
-    let package = read_plain_file(download_dir, &name, MAX_PACKAGE_BYTES)?;
+    let package = read_plain_file(&directory, &name, MAX_PACKAGE_BYTES)?;
     if hex(&Sha256::digest(&package)) != expected {
         return Err(ApplyError::ChecksumMismatch);
     }
@@ -200,6 +223,11 @@ fn pick_package(
 }
 
 /// Writes the checked bytes to a folder of its own and installs them.
+///
+/// The folder is made by root inside a folder only root can write in, and the
+/// file is created private (0600), so that nobody holds a way to write into
+/// it between the check and the installation, whatever umask the caller
+/// handed down.
 fn install_staged(
     environment: &Environment<'_>,
     format: PackageFormat,
@@ -212,7 +240,7 @@ fn install_staged(
     if name.contains(['/', '\0']) {
         return Err(ApplyError::Unacceptable(name.to_owned()));
     }
-    fs::create_dir_all(environment.staging_root).map_err(failed)?;
+    check_staging_root(environment.staging_root, environment.staging_owner)?;
     let staging = tempfile::Builder::new()
         .prefix("update-")
         .tempdir_in(environment.staging_root)
@@ -220,8 +248,15 @@ fn install_staged(
     fs::set_permissions(staging.path(), fs::Permissions::from_mode(STAGING_DIR_MODE))
         .map_err(failed)?;
     let path: PathBuf = staging.path().join(name);
-    let mut file = File::create_new(&path).map_err(failed)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(STAGED_FILE_WRITE_MODE)
+        .open(&path)
+        .map_err(failed)?;
     file.write_all(package).map_err(failed)?;
+    // On the descriptor itself: the package manager's unprivileged download
+    // user can then read the file, and no path is involved.
     file.set_permissions(fs::Permissions::from_mode(STAGED_FILE_MODE))
         .map_err(failed)?;
     drop(file);
@@ -231,33 +266,68 @@ fn install_staged(
         .map_err(ApplyError::Install)
 }
 
-/// Reads `dir/name` (at most `limit` bytes): a regular file, not a symbolic
-/// link, and the very one that was inspected.
-fn read_plain_file(dir: &Path, name: &str, limit: u64) -> Result<Vec<u8>, ApplyError> {
-    let path = dir.join(name);
-    let read_error = |source| ApplyError::Read {
+/// The staging root must be a real folder (not a link) of `owner`, closed to
+/// everybody else: whoever could write in it could swap the staged package.
+fn check_staging_root(root: &Path, owner: u32) -> Result<(), ApplyError> {
+    let unsafe_root = || ApplyError::UnsafeStaging(root.display().to_string());
+    let metadata = fs::symlink_metadata(root).map_err(|_| unsafe_root())?;
+    if !metadata.is_dir() || metadata.uid() != owner || metadata.mode() & 0o022 != 0 {
+        return Err(unsafe_root());
+    }
+    Ok(())
+}
+
+/// Opens the download folder once; every file is then read through this
+/// descriptor, so the folder cannot be swapped for another afterwards. The
+/// path must be absolute (`pkexec` starts in `/root`).
+fn open_download_dir(dir: &Path) -> Result<OwnedFd, ApplyError> {
+    let name = dir.display().to_string();
+    if !dir.is_absolute() {
+        return Err(ApplyError::Unacceptable(name));
+    }
+    rustix::fs::open(
+        dir,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|errno| ApplyError::Read {
+        name,
+        source: errno.into(),
+    })
+}
+
+/// Reads `name` from the download folder (at most `limit` bytes): a regular
+/// file, opened without following a link and without blocking (a FIFO would
+/// otherwise hold the helper), and checked on the descriptor actually opened.
+fn read_plain_file(directory: &OwnedFd, name: &str, limit: u64) -> Result<Vec<u8>, ApplyError> {
+    let read_error = |source: io::Error| ApplyError::Read {
         name: name.to_owned(),
         source,
     };
-    let inspected = fs::symlink_metadata(&path).map_err(read_error)?;
-    if !inspected.is_file() || inspected.len() > limit {
-        return Err(ApplyError::Unacceptable(name.to_owned()));
-    }
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(OPEN_NONBLOCKING)
-        .open(&path)
-        .map_err(read_error)?;
-    let opened = file.metadata().map_err(read_error)?;
-    if (opened.dev(), opened.ino()) != (inspected.dev(), inspected.ino()) {
-        return Err(ApplyError::Unacceptable(name.to_owned()));
+    let unacceptable = || ApplyError::Unacceptable(name.to_owned());
+    let descriptor = rustix::fs::openat(
+        directory,
+        name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|errno| match errno {
+        // A link, or a device node that refuses to open that way.
+        Errno::LOOP | Errno::NXIO => unacceptable(),
+        other => read_error(other.into()),
+    })?;
+    let status = rustix::fs::fstat(&descriptor).map_err(|errno| read_error(errno.into()))?;
+    let is_file = FileType::from_raw_mode(status.st_mode) == FileType::RegularFile;
+    if !is_file || u64::try_from(status.st_size).map_or(true, |size| size > limit) {
+        return Err(unacceptable());
     }
     let mut bytes = Vec::new();
-    file.take(limit + 1)
+    File::from(descriptor)
+        .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(read_error)?;
     if bytes.len() as u64 > limit {
-        return Err(ApplyError::Unacceptable(name.to_owned()));
+        return Err(unacceptable());
     }
     Ok(bytes)
 }
@@ -283,6 +353,10 @@ mod tests {
 
     const INSTALLED: Version = Version::new(1, 0, 0);
     const OFFERED: Version = Version::new(1, 1, 0);
+
+    fn owner_of(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().uid()
+    }
 
     struct Packages(Option<PackageFormat>);
 
@@ -371,6 +445,7 @@ mod tests {
                     packages: &Packages(format),
                     installer,
                     staging_root: self.staging.path(),
+                    staging_owner: owner_of(self.staging.path()),
                 },
             )
         }
@@ -666,8 +741,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("file");
         fs::write(&path, vec![0_u8; 10]).unwrap();
-        assert_eq!(read_plain_file(dir.path(), "file", 10).unwrap().len(), 10);
-        let error = read_plain_file(dir.path(), "file", 9).unwrap_err();
+        let directory = open_download_dir(dir.path()).unwrap();
+        assert_eq!(read_plain_file(&directory, "file", 10).unwrap().len(), 10);
+        let error = read_plain_file(&directory, "file", 9).unwrap_err();
         assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
     }
 
@@ -681,6 +757,7 @@ mod tests {
             packages: &Packages(Some(PackageFormat::Deb)),
             installer: &ModeRecorder,
             staging_root: staging,
+            staging_owner: owner_of(staging),
         };
         install_staged(&environment, PackageFormat::Deb, "p.deb", b"x").unwrap();
         for name in ["../escape", "a/b", "a\0b"] {
@@ -710,12 +787,116 @@ mod tests {
     }
 
     #[test]
+    fn a_relative_download_folder_or_a_link_to_one_is_refused() {
+        let error = open_download_dir(Path::new("relative/dir")).unwrap_err();
+        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        symlink(&real, &link).unwrap();
+        assert!(open_download_dir(&real).is_ok());
+        assert!(open_download_dir(&link).is_err());
+        assert!(open_download_dir(&dir.path().join("absent")).is_err());
+    }
+
+    #[test]
+    fn a_link_to_a_fifo_is_refused_without_blocking() {
+        let release = Release::signed();
+        let checksums = release.download.path().join(CHECKSUMS_FILE);
+        fs::remove_file(&checksums).unwrap();
+        let fifo = release.download.path().join("pipe");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        symlink(&fifo, &checksums).unwrap();
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+    }
+
+    #[test]
+    fn a_staging_root_others_could_write_in_is_refused() {
+        let release = Release::signed();
+        let root = release.staging.path();
+        let installer = RecordingInstaller::default();
+        for mode in [0o777, 0o775, 0o757] {
+            fs::set_permissions(root, fs::Permissions::from_mode(mode)).unwrap();
+            let error = release
+                .apply(Some(PackageFormat::Deb), &installer)
+                .unwrap_err();
+            assert!(
+                matches!(error, ApplyError::UnsafeStaging(_)),
+                "{mode:o}: {error}"
+            );
+        }
+        assert!(installer.installed.borrow().is_empty());
+        // Restored, it works.
+        fs::set_permissions(root, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(release.apply(Some(PackageFormat::Deb), &installer).is_ok());
+    }
+
+    #[test]
+    fn a_missing_wrongly_owned_or_linked_staging_root_is_refused() {
+        let release = Release::signed();
+        let installer = RecordingInstaller::default();
+        let base = tempfile::tempdir().unwrap();
+        let missing = base.path().join("absent");
+        let real = base.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = base.path().join("link");
+        symlink(&real, &link).unwrap();
+        let owner = owner_of(&real);
+        for (root, owner) in [(&missing, owner), (&link, owner), (&real, owner + 1)] {
+            let error = apply(
+                release.download.path(),
+                &Environment {
+                    key: &release.key,
+                    installed: INSTALLED,
+                    packages: &Packages(Some(PackageFormat::Deb)),
+                    installer: &installer,
+                    staging_root: root,
+                    staging_owner: owner,
+                },
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, ApplyError::UnsafeStaging(_)),
+                "{}: {error}",
+                root.display()
+            );
+        }
+        assert!(!missing.exists(), "a missing staging root is not created");
+    }
+
+    #[test]
     fn the_package_managers_are_called_without_a_shell_with_the_file_last() {
         let package = Path::new("/var/lib/hubergamof/update-x/hubergamof_1.1.0_amd64.deb");
         let deb = install_command(PackageFormat::Deb, package);
         assert_eq!(deb.get_program(), "apt-get");
         let arguments: Vec<_> = deb.get_args().collect();
-        assert_eq!(arguments, ["install", "--yes", package.to_str().unwrap()]);
+        assert_eq!(
+            arguments,
+            [
+                "install",
+                "--yes",
+                "--no-install-recommends",
+                "--option",
+                "Dpkg::Options::=--force-confdef",
+                "--option",
+                "Dpkg::Options::=--force-confold",
+                "--option",
+                "DPkg::Lock::Timeout=120",
+                package.to_str().unwrap()
+            ]
+        );
         let pacman = install_command(PackageFormat::Pacman, package);
         assert_eq!(pacman.get_program(), "pacman");
         let arguments: Vec<_> = pacman.get_args().collect();

@@ -953,6 +953,7 @@ dependencies = [
  "reqwest",
  "resvg",
  "rust-embed",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

@@ -13,16 +13,21 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use hubergamof_manager::update::apply::{Environment, SystemInstaller, apply};
+use hubergamof_manager::update::apply::{Environment, ROOT_UID, SystemInstaller, apply};
 use hubergamof_manager::update::{Installed, ReleaseKey, Version};
 
-/// Where the checked package is staged (readable by the package manager's
-/// unprivileged download user).
+/// Where the checked package is staged: shipped by the package (root, 0755),
+/// never created here, so nobody else can ever have made it.
 const STAGING_ROOT: &str = "/var/lib/hubergamof";
 
 const PROGRAM: &str = "hubergamof-update-helper";
 
+/// What the helper creates is closed to everybody else: `pkexec` hands down
+/// the caller's umask, which could be 0.
+const PRIVATE_UMASK: u32 = 0o077;
+
 fn main() -> ExitCode {
+    rustix::process::umask(rustix::fs::Mode::from_raw_mode(PRIVATE_UMASK));
     let mut arguments = std::env::args_os().skip(1);
     let (Some(download_dir), None) = (arguments.next(), arguments.next()) else {
         eprintln!("{PROGRAM}: usage: {PROGRAM} <download folder>");
@@ -51,6 +56,7 @@ fn run(download_dir: &Path) -> Result<Version, String> {
             packages: &Installed,
             installer: &SystemInstaller,
             staging_root: Path::new(STAGING_ROOT),
+            staging_owner: ROOT_UID,
         },
     )
     .map_err(|error| error.to_string())
