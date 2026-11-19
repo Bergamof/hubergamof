@@ -348,10 +348,12 @@ test('change la fonction d’une molette seulement sur « Affecter »', async ({
 	await expect(page.getByText(/« Pomodoro » n’est placé nulle part ailleurs/)).toBeVisible();
 	await page.getByRole('button', { name: 'Affecter' }).click();
 	await dial(page, '3 : Navigation').click();
-	await fonction.selectOption({ label: 'Contrôle du pomodoro (Pomodoro, nouveau)' });
+	await fonction.selectOption({ label: 'Contrôle du pomodoro' });
 	await page.getByRole('button', { name: 'Affecter' }).click();
 	await expect(dial(page, '3 : Contrôle du pomodoro')).toBeVisible();
-	await expect(page.getByLabel('Libellé')).toHaveAttribute('placeholder', 'Pomodoro');
+	// The label names a key: a dial has none to edit, only the settings of its module.
+	await expect(page.getByLabel('Libellé')).toHaveCount(0);
+	await expect(page.getByRole('heading', { name: 'Réglages' })).toBeVisible();
 });
 
 test('règle la bande tactile, avec un aperçu qui suit', async ({ page, context }) => {

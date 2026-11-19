@@ -59,6 +59,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Réglage des molettes : la liste des fonctions n'affiche plus l'emplacement ni « nouveau » entre parenthèses (« Contrôle du volume », plus « Contrôle du volume (Audio, touche 1) »), et le champ « Libellé » n'apparaît que sur une touche, plus sur une molette (#68).
 - Module Docker : les touches « Up » et « Down » du projet (et du conteneur) deviennent « Monter » et « Démonter » ; les entrées de la page « Monter » se nomment « Up », « Up build » et « Up no start » ; la page « Démonter » ne change pas.
 - Module Docker : les commandes `docker compose` (up, pull, down) n'ont plus de délai maximal (l'ancien plafond de 15 minutes faisait échouer un `up` qui tire de grosses images) ; seule la lecture des services garde 30 s.
 - Disposition par défaut d'un nouvel appareil : touches Audio, Docker, IntelliJ, Claude, Notifications.

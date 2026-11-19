@@ -82,7 +82,12 @@ type Apply = (changes: InstanceChanges) => Promise<EditOutcome>;
  * as the displayed instance, unless `apply` answers otherwise.
  */
 async function show(
-	options: { apply?: Apply; module?: CatalogModule | null; instance?: ModuleInstance } = {}
+	options: {
+		apply?: Apply;
+		module?: CatalogModule | null;
+		instance?: ModuleInstance;
+		showLabel?: boolean;
+	} = {}
 ) {
 	let current = options.instance ?? INSTANCE;
 	let mounted = true;
@@ -100,6 +105,7 @@ async function show(
 		module: options.module === null ? undefined : (options.module ?? POMODORO),
 		serial: 'DECK',
 		api: {} as ManagerApi,
+		showLabel: options.showLabel,
 		onapply,
 		ondiscard
 	});
@@ -132,6 +138,12 @@ describe('InstanceEditor', () => {
 			.toHaveAccessibleDescription(/^Enregistrés automatiquement/);
 		await expect.element(page.getByRole('button', { name: 'Appliquer' })).not.toBeInTheDocument();
 		expect(onapply).not.toHaveBeenCalled();
+	});
+
+	it('leaves the label out when it is not offered, as for a dial', async () => {
+		await show({ showLabel: false });
+		await expect.element(labelField()).not.toBeInTheDocument();
+		await expect.element(page.getByRole('heading', { name: 'Réglages' })).toBeVisible();
 	});
 
 	it('saves a choice at once', async () => {

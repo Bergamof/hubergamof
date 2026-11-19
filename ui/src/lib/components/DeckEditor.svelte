@@ -84,9 +84,7 @@ selected key or dial.
 		)
 	);
 	const dialCandidates = $derived(
-		config.modules
-			.filter((instance) => (moduleOf(instance.kind)?.dialFunctions.length ?? 0) > 0)
-			.map((instance) => ({ instance, place: placeOf(instance.id) }))
+		config.modules.filter((instance) => (moduleOf(instance.kind)?.dialFunctions.length ?? 0) > 0)
 	);
 
 	const selected = $derived.by(() => {
@@ -107,15 +105,6 @@ selected key or dial.
 				(assignment) => assignment.kind === 'module' && assignment.instance === instance.id
 			)
 		);
-	}
-
-	function placeOf(id: string): string {
-		const key = config.home.indexOf(id);
-		if (key >= 0) return `touche ${key + 1}`;
-		const dial = config.dials.findIndex(
-			(assignment) => assignment.kind === 'module' && assignment.instance === id
-		);
-		return `molette ${dial + 1}`;
 	}
 
 	function keyButtonId(position: number): string {
