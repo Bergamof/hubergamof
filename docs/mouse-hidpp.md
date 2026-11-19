@@ -31,5 +31,8 @@ Propres à la MX Master 4 :
 
 Fonctions inconnues communes aux deux (`0x2250`, `0x2251`, `0x0020`, `0x0021`, `0x0007`, `0x0011`) : non explorées.
 
+## À relever sur le poste
+- `udevadm info -q path /dev/hidraw<N>` pour le nœud du Bolt (son chemin ne doit contenir qu'un niveau `0003:046D:C548.xxxx`) et `ls /sys/bus/usb/devices/*:1.2/0003:046D:C548.*/` : le Bolt n'a pas de nœud enfant aujourd'hui, la règle `DEVPATH` le garde si un pilote en créait.
+
 ## Haptique : ce qui est connu
 Quatre niveaux d'intensité côté Logitech (subtil, faible, moyen, fort), actifs par défaut ; la maquette et le contrat en gardent quatre plus « désactivé ».

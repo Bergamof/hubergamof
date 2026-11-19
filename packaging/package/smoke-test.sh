@@ -71,6 +71,13 @@ check_files() {
 	grep -q 'TAG+="uaccess"' "$UDEV_RULE" || fail "règle udev sans uaccess"
 	# Hors commentaires : l'en-tête de la règle cite MODE="0666" pour expliquer pourquoi on l'évite.
 	if grep -v '^[[:space:]]*#' "$UDEV_RULE" | grep -q 'MODE='; then fail "règle udev ouverte à tous"; fi
+	# Récepteur Logitech : uniquement le Logi Bolt (c548), jamais le Unifying (c52b, la saisie
+	# passe par son HID++), jamais un nœud enfant, et jamais un uaccess sans filtre de produit.
+	local active
+	active="$(grep -v '^[[:space:]]*#' "$UDEV_RULE")"
+	if grep -q 'c52b' <<<"$active"; then fail "règle udev ouverte au récepteur Unifying"; fi
+	grep -qF -- 'DEVPATH!="*/0003:*/0003:*/hidraw/*"' <<<"$active" || fail "règle udev sans exclusion des nœuds enfants"
+	if grep 'idVendor}=="046d"' <<<"$active" | grep -v 'idProduct}=="c548"' | grep -q 'uaccess'; then fail "uaccess Logitech sans filtre de produit"; fi
 }
 
 check_binary() {

@@ -5,7 +5,7 @@
 ## Ce qu'elle fait
 - Ouvre les interfaces HID++ Logitech (récepteurs Logi Bolt et Unifying, câble) et interroge chaque appareil : version du protocole, nom, liste des fonctions (`FeatureSet`), boutons réaffectables (`ReprogControlsV4`).
 - **Lecture seule** : elle n'envoie que des fonctions de lecture (ping, `getFeature`, nombre et description des fonctions et des boutons, nom). Elle ne modifie aucun réglage, ne détourne aucun bouton et ne déclenche aucun effet.
-- N'ouvre que les collections HID++ (voir plus bas) et n'envoie rien aux interfaces de saisie. Le récepteur fait toutefois passer sur son interface HID++ la saisie des appareils appairés : n'ouvrez pas ce nœud à d'autres programmes que la sonde.
+- N'ouvre que les collections HID++ (voir plus bas) et n'envoie rien aux interfaces de saisie. Sur un récepteur **Unifying** le nœud HID++ fait aussi passer la saisie des appareils appairés (canal DJ) : ne l'ouvrez pas à d'autres programmes que la sonde. Sur le **Logi Bolt**, l'interface HID++ ne porte pas la saisie, mais l'accès en écriture a ses risques (`docs/security.md`).
 
 ## Donner l'accès à la sonde
 La règle udev du projet (`make install` ou le paquet) ouvre l'interface HID++ d'un récepteur **Logi Bolt** à l'utilisateur de la session (voir `docs/security.md`) ; débrancher puis rebrancher le récepteur après l'installation. Pour un autre récepteur, deux façons, sans lancer la sonde en root (en root elle écrirait aussi sur des interfaces qu'on n'a pas à toucher) :
