@@ -57,7 +57,7 @@ async function show(assignment: DialAssignment = VOLUME, config: DeviceConfig = 
 		api: {} as ManagerApi,
 		assignment,
 		instance: assignment.kind === 'module' ? instance('audio') : null,
-		candidates: [{ instance: instance('audio'), place: 'molette 1' }],
+		candidates: [instance('audio')],
 		modules: MODULES,
 		moduleOf: (kind: string) => MODULES.find((candidate) => candidate.kind === kind),
 		headingId: 'details-heading',
@@ -106,12 +106,16 @@ describe('DialDetails', () => {
 		for (const name of ['Rien', 'Navigation', 'Fonction contextuelle']) {
 			await expect.element(page.getByRole('option', { name, exact: true })).toBeInTheDocument();
 		}
-		await expect
-			.element(page.getByRole('option', { name: 'Contrôle du volume (Audio, molette 1)' }))
-			.toBeInTheDocument();
-		await expect
-			.element(page.getByRole('option', { name: 'Contrôle du pomodoro (Pomodoro, nouveau)' }))
-			.toBeInTheDocument();
+		const optionsOf = (group: string) =>
+			Array.from(
+				document.querySelectorAll(`optgroup[label="${group}"] option`),
+				(option) => option.textContent
+			);
+		expect(optionsOf('Fonctions des modules configurés')).toEqual(['Contrôle du volume']);
+		expect(optionsOf('Nouveau module (réglages à zéro)')).toContain('Contrôle du pomodoro');
+		// Where a function lives is not repeated in its name: no « (module, touche 1) ».
+		const names = Array.from(document.querySelectorAll('option'), (option) => option.textContent);
+		expect(names.every((name) => !name?.includes('('))).toBe(true);
 	});
 
 	it('tells that the settings are shared with the key of a module that exists once', async () => {
@@ -134,10 +138,10 @@ describe('DialDetails', () => {
 		} as unknown as DeviceConfig;
 		await show({ kind: 'none' }, config, 1);
 		await expect
-			.element(page.getByRole('option', { name: 'Contrôle du volume (Audio, molette 1)' }))
+			.element(page.getByRole('option', { name: 'Contrôle du volume' }))
 			.not.toBeInTheDocument();
 		await expect
-			.element(page.getByRole('option', { name: 'Contrôle du pomodoro (Pomodoro, nouveau)' }))
+			.element(page.getByRole('option', { name: 'Contrôle du pomodoro' }))
 			.toBeInTheDocument();
 	});
 
@@ -145,9 +149,7 @@ describe('DialDetails', () => {
 		const { onassign } = await show();
 		const assign = page.getByRole('button', { name: 'Affecter' });
 		await expect.element(assign).toHaveAttribute('aria-disabled', 'true');
-		await page
-			.getByRole('combobox', { name: 'Fonction' })
-			.selectOptions('Contrôle du pomodoro (Pomodoro, nouveau)');
+		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Contrôle du pomodoro');
 		expect(onassign).not.toHaveBeenCalled();
 		await expect.element(assign).toHaveAttribute('aria-disabled', 'false');
 		await assign.click();
@@ -171,9 +173,7 @@ describe('DialDetails', () => {
 		await expect.element(page.getByText(/fait défiler les lignes de la page/)).toBeVisible();
 		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Fonction contextuelle');
 		await expect.element(page.getByText(/Dépend de la page affichée/)).toBeVisible();
-		await page
-			.getByRole('combobox', { name: 'Fonction' })
-			.selectOptions('Contrôle du volume (Audio, molette 1)');
+		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Contrôle du volume');
 		await expect.element(page.getByText(/Réglage de Audio\./)).toBeVisible();
 	});
 
@@ -191,9 +191,9 @@ describe('DialDetails', () => {
 		await expect.element(page.getByLabelText('Libellé')).not.toBeInTheDocument();
 	});
 
-	it('edits the settings of the module of the function', async () => {
+	it('edits the settings of the module of the function, without the label of a key', async () => {
 		await show();
 		await expect.element(page.getByText(/Réglages de « Audio »/)).toBeVisible();
-		await expect.element(page.getByLabelText('Libellé')).toBeVisible();
+		await expect.element(page.getByLabelText('Libellé')).not.toBeInTheDocument();
 	});
 });
