@@ -25,6 +25,17 @@ const AVATAR = 'img.fui-Avatar__image';
 const CONVERSATION_ID = 'data-fui-tree-item-value';
 /** The Chat application of the left rail: a constant of Teams, in any language. */
 const CHAT_APP = '[data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]';
+/** The Activity application of the rail (the bell): a constant of Teams too. */
+const ACTIVITY_APP = '[data-tid="14d6962d-6eeb-4f48-8890-de55454bb136"]';
+/** The counter of a rail application, next to its button, in the same wrapper. */
+const RAIL_BADGE = '.fui-CounterBadge';
+/** Panels of the rail the manager may ask for, by name. */
+const PANELS = new Map([
+	['activity', ACTIVITY_APP],
+	['chat', CHAT_APP]
+]);
+/** Largest counter reported (the badge says "99+" past 99). */
+const MAX_BADGE = 9999;
 const CALENDAR_SLOT = 'div[role="button"][aria-label]';
 
 /** Most unread names and meetings one report may hold (the manager keeps fewer). */
@@ -184,6 +195,30 @@ export function readMeetings(doc, nowSeconds) {
 }
 
 /**
+ * What the badge next to the rail button `selector` counts: `0` without
+ * badge, `null` when the button is not on screen.
+ * @param {Document} doc
+ * @param {string} selector
+ */
+function railCount(doc, selector) {
+	const button = doc.querySelector(selector);
+	if (!button) return null;
+	const digits = /\d+/.exec(button.parentElement?.querySelector(RAIL_BADGE)?.textContent ?? '');
+	return digits ? Math.min(Number(digits[0]), MAX_BADGE) : 0;
+}
+
+/**
+ * The counters of the Activity and Conversation applications of the rail;
+ * `null` when the rail is not on screen (the previous ones then stay).
+ * @param {Document} doc
+ */
+export function readBadges(doc) {
+	const activity = railCount(doc, ACTIVITY_APP);
+	const chats = railCount(doc, CHAT_APP);
+	return activity === null || chats === null ? null : { type: 'badges', activity, chats };
+}
+
+/**
  * Every report this frame can make now, in the manager's own format.
  * @param {Document} doc
  * @param {string} hostname
@@ -199,8 +234,10 @@ export function readReports(doc, hostname, nowSeconds, context) {
 	if (role !== FrameRole.Teams) return [];
 	const count = unreadCountFromTitle(doc.title);
 	const names = count === 0 ? [] : readUnreadConversations(doc);
+	const badges = readBadges(doc);
 	return [
 		{ type: 'unread', count },
+		...(badges ? [badges] : []),
 		...(names ? [{ type: 'conversations', unread: names }] : []),
 		readCall(doc)
 	];
@@ -241,6 +278,21 @@ export async function openConversation(
 	const item = findConversation(doc, id);
 	if (!(item instanceof HTMLElement)) return false;
 	item.click();
+	return true;
+}
+
+/**
+ * Shows `panel` of the rail (`activity` or `chat`) by clicking its button,
+ * which already being the open panel leaves as it is. Whether the button was
+ * there.
+ * @param {Document} doc
+ * @param {string} panel
+ */
+export function openPanel(doc, panel) {
+	const selector = PANELS.get(panel);
+	const button = selector ? doc.querySelector(selector) : null;
+	if (!(button instanceof HTMLElement)) return false;
+	button.click();
 	return true;
 }
 

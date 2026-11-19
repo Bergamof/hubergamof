@@ -31,6 +31,10 @@ pub(crate) const DEMO_INTELLIJ_CLASS: &str = "jetbrains-idea";
 /// Executable of IntelliJ in the demo.
 pub(crate) const DEMO_INTELLIJ_EXECUTABLE: &str = "/opt/intellij-idea/bin/idea";
 
+/// Class of the Teams window of the demo (the web application of Teams in
+/// Brave, default profile).
+pub(crate) const DEMO_TEAMS_CLASS: &str = "brave-ompifgpmddkgmclendfeacglnodjjndh-Default";
+
 /// A notification sent on the simulated desktop.
 #[derive(Debug, Clone)]
 struct Sent {
@@ -71,7 +75,7 @@ impl SimulatedDesktop {
     }
 
     /// The demo desktop: Claude Desktop and IntelliJ running, each with a
-    /// window.
+    /// window, and Teams open.
     #[must_use]
     pub fn demo() -> Self {
         let desktop = Self::empty();
@@ -82,6 +86,7 @@ impl SimulatedDesktop {
         desktop.set_windows(vec![
             Window::new("claude", DEMO_CLAUDE_CLASS, "Claude"),
             Window::new("intellij", DEMO_INTELLIJ_CLASS, "hubergamof – main.rs"),
+            Window::new("teams", DEMO_TEAMS_CLASS, "Teams"),
         ]);
         desktop
     }

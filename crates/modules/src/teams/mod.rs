@@ -27,15 +27,16 @@ use serde_json::Value;
 use tokio::sync::watch;
 
 pub use bridge::{
-    CallState, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState, is_same_user,
-    socket_path,
+    CallState, RailBadges, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState,
+    is_same_user, socket_path,
 };
 use icons::{
-    ACCEPT, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED, RETURN,
+    ACCEPT, ACTIVITY, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED,
+    RETURN,
 };
 use reminders::MeetingSoon;
 pub use reminders::{TeamsSettings, WallClock};
-use wire::{CallAction, CallPhase, UnreadConversation};
+use wire::{CallAction, CallPhase, Panel, UnreadConversation};
 
 use crate::desktop::{
     AppAttention, AppEvent, AppId, ClassMatch, DesktopApp, DesktopHub, ExecutableMatch,
@@ -69,6 +70,13 @@ const DEFAULT_PROFILE_SUFFIX: &str = "-Default";
 /// Prefix of the identifier of the items that open a conversation.
 const CHAT_ITEM_PREFIX: &str = "chat:";
 
+/// Identifier of the item opening the Activity panel.
+const ACTIVITY_ITEM: &str = "activity";
+
+/// Identifier of the item opening the Conversation panel, for the unread
+/// conversations the list does not name.
+const CONVERSATIONS_ITEM: &str = "chats";
+
 /// Page of the unread conversations.
 const UNREAD_PAGE: &str = "unread";
 
@@ -80,6 +88,7 @@ const UNREAD_TITLE: &str = "Teams · non lus";
 const IN_CALL_LABEL: &str = "En appel";
 const RINGING_LABEL: &str = "Appel";
 const OFFLINE_LABEL: &str = "Hors ligne";
+const CLOSED_LABEL: &str = "Teams fermé";
 const ANSWER_LABEL: &str = "Répondre";
 
 /// Background of the notifications of a meeting and of an incoming call.
@@ -373,6 +382,31 @@ impl Teams {
         commands
     }
 
+    /// The window of Teams is known to be closed: the windows are followed
+    /// and there is none. Unknown (not followed yet, or not at all) is not
+    /// closed.
+    fn window_closed(&self) -> bool {
+        self.app
+            .state()
+            .windows
+            .as_deref()
+            .is_some_and(<[_]>::is_empty)
+    }
+
+    /// Shows `panel` of the rail. Teams is brought to the front only for the
+    /// `surface` given: the Conversation panel is shown without leaving the
+    /// device. Nothing on a locked computer, whatever let the press through.
+    fn show_panel(&mut self, panel: Panel, front: Option<ModuleSurface>) -> Vec<Command> {
+        if self.screen_lock.is_locked() {
+            return Vec::new();
+        }
+        if let Err(error) = self.bridge.open_panel(panel) {
+            tracing::debug!(%error, ?panel, "Teams panel not shown");
+            return Command::alert();
+        }
+        front.map_or_else(Vec::new, |surface| self.bring_to_front(surface))
+    }
+
     /// Shows the conversation `id` in Teams and brings its window to the
     /// front. Only a conversation the extension reported is asked for: a
     /// list that changed since the key was drawn is not followed blindly.
@@ -430,28 +464,41 @@ fn call_notification(caller: Option<&str>) -> Notification {
         .with_context_dial(ContextDial::none().pressing(ANSWER_LABEL))
 }
 
-/// One key per unread conversation, with its avatar or a generic icon, then a
-/// "+N" key for those whose name is unknown. Hidden while the computer is
-/// locked: a name must not be read by someone passing by.
+/// The unread keys, hidden while the computer is locked (a name must not be
+/// read by someone passing by): the Activity counter, the "+N" of the
+/// gap between the Conversation badge and the named conversations
+/// ("+N" or "-N", absent when they agree), then one key per named unread conversation, with its
+/// avatar or a generic icon.
 fn unread_items(state: &TeamsState) -> Vec<PageItem> {
-    let hidden = usize::try_from(state.unread)
-        .unwrap_or(usize::MAX)
-        .saturating_sub(state.conversations.len());
-    let mut items: Vec<PageItem> = state
-        .conversations
-        .iter()
-        .enumerate()
-        .map(|(index, conversation)| conversation_item(index, conversation))
-        .collect();
-    if hidden > 0 {
+    let mut items = Vec::new();
+    let activity = state.activity();
+    if activity > 0 {
         items.push(
             PageItem::new(
-                ItemId("more".into()),
-                KeyContent::with_label(format!("+{hidden}")),
+                ItemId(ACTIVITY_ITEM.into()),
+                KeyContent::with_icon(&ACTIVITY, activity.to_string())
+                    .in_state(KeyState::Attention),
             )
             .hidden_when_locked(true),
         );
     }
+    let gap = state.conversation_gap();
+    if gap != 0 {
+        items.push(
+            PageItem::new(
+                ItemId(CONVERSATIONS_ITEM.into()),
+                KeyContent::with_icon(&CONVERSATION, format!("{gap:+}")),
+            )
+            .hidden_when_locked(true),
+        );
+    }
+    items.extend(
+        state
+            .conversations
+            .iter()
+            .enumerate()
+            .map(|(index, conversation)| conversation_item(index, conversation)),
+    );
     items
 }
 
@@ -492,16 +539,24 @@ fn camera_key(camera_on: Option<bool>) -> KeyContent {
 impl Module for Teams {
     fn key(&self) -> KeyContent {
         let teams = self.changes.borrow();
+        let call_active = teams.connected && teams.call.phase.is_active();
+        // The extension outlives the window it reads: a closed Teams is
+        // told first, whatever the bridge still holds.
+        if !call_active && self.window_closed() {
+            return KeyContent::with_icon(&MODULE_ICON, CLOSED_LABEL).in_state(KeyState::Attention);
+        }
         if !teams.connected {
             // Nothing below is current without the extension: say so rather
             // than showing a quiet "Teams" that hides the missing link.
-            return KeyContent::with_icon(&MODULE_ICON, OFFLINE_LABEL);
+            return KeyContent::with_icon(&MODULE_ICON, OFFLINE_LABEL)
+                .in_state(KeyState::Attention);
         }
+        let total = teams.total_unread();
         let (label, state) = match teams.call.phase {
             CallPhase::InCall => (IN_CALL_LABEL.to_owned(), KeyState::Active),
             CallPhase::Ringing => (RINGING_LABEL.to_owned(), KeyState::Attention),
-            CallPhase::Idle | CallPhase::Prejoin if teams.unread > 0 => {
-                (format!("{} non lus", teams.unread), KeyState::Attention)
+            CallPhase::Idle | CallPhase::Prejoin if total > 0 => {
+                (format!("{total} non lus"), KeyState::Attention)
             }
             CallPhase::Idle | CallPhase::Prejoin => (MODULE_LABEL.to_owned(), KeyState::Normal),
         };
@@ -516,15 +571,19 @@ impl Module for Teams {
     async fn on_key_press(&mut self) -> Vec<Command> {
         let (connected, active, unread) = {
             let state = self.changes.borrow();
-            (state.connected, state.call.phase.is_active(), state.unread)
+            (
+                state.connected,
+                state.call.phase.is_active(),
+                state.total_unread(),
+            )
         };
         if connected && active {
             vec![Command::OpenPage(CALL_PAGE.into())]
-        } else if connected && unread > 0 {
+        } else if !self.window_closed() && connected && unread > 0 {
             vec![Command::OpenPage(UNREAD_PAGE.into())]
         } else {
-            // Nothing to show (or no extension, Teams not being open): Teams
-            // itself comes to the front.
+            // Nothing to show (no window, no extension, nothing unread):
+            // Teams itself comes to the front, or starts.
             self.bring_to_front(ModuleSurface::HomeKey)
         }
     }
@@ -542,6 +601,11 @@ impl Module for Teams {
             page: page.clone(),
             item: item.clone(),
         };
+        match item.0.as_str() {
+            ACTIVITY_ITEM => return self.show_panel(Panel::Activity, Some(surface)),
+            CONVERSATIONS_ITEM => return self.show_panel(Panel::Chat, None),
+            _ => {}
+        }
         if let Some(id) = item.0.strip_prefix(CHAT_ITEM_PREFIX) {
             return self.open_conversation(id, surface);
         }

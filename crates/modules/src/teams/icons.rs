@@ -10,6 +10,8 @@ use crate::icons::{asset, svg};
 /// readable).
 pub(super) static CONVERSATION: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("teams-conversation")));
+/// Bell: the unread items of the Activity panel.
+pub(super) static ACTIVITY: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams-activity")));
 /// Microphone: the microphone is on.
 pub(super) static MICROPHONE: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("audio-microphone")));
@@ -37,6 +39,7 @@ mod tests {
     fn every_icon_is_a_complete_svg_document() {
         for icon in [
             &CONVERSATION,
+            &ACTIVITY,
             &MICROPHONE,
             &MICROPHONE_MUTED,
             &CAMERA,

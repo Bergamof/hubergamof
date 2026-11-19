@@ -5,7 +5,9 @@ import {
 	avatarIcon,
 	frameRole,
 	openConversation,
+	openPanel,
 	performAction,
+	readBadges,
 	readCall,
 	readMeetings,
 	readReports,
@@ -171,6 +173,56 @@ describe('openConversation', () => {
 	});
 });
 
+// The rail of Teams, reduced: the counter is a sibling of the button.
+const ACTIVITY_APP = '14d6962d-6eeb-4f48-8890-de55454bb136';
+const CHAT_RAIL = '86fcd49b-61a2-4701-b771-54728cd291fb';
+function railItem(tid: string, badge?: string) {
+	return `<div role="none"><button data-tid="${tid}"></button>${
+		badge === undefined ? '' : `<div class="fui-Badge fui-CounterBadge">${badge}</div>`
+	}<div>1 conversation avec de nouveaux messages</div></div>`;
+}
+
+describe('readBadges', () => {
+	it('reads the counters of the bell and the bubble', () => {
+		const doc = page(railItem(ACTIVITY_APP, '2') + railItem(CHAT_RAIL, '3'));
+		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 2, chats: 3 });
+	});
+	it('counts a button without badge as zero', () => {
+		const doc = page(railItem(ACTIVITY_APP) + railItem(CHAT_RAIL, '1'));
+		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 0, chats: 1 });
+	});
+	it('caps "99+" and ignores the text around the digits', () => {
+		const doc = page(railItem(ACTIVITY_APP, '99+') + railItem(CHAT_RAIL, '12'));
+		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 99, chats: 12 });
+	});
+	it('learns nothing when the rail is not on screen', () => {
+		expect(readBadges(page('<p/>'))).toBeNull();
+		expect(readBadges(page(railItem(CHAT_RAIL, '1')))).toBeNull();
+	});
+	it('is part of what Teams reports', () => {
+		const doc = page(railItem(ACTIVITY_APP, '1') + railItem(CHAT_RAIL, '1'), '(2) Chat');
+		const types = readReports(doc, 'teams.cloud.microsoft', 0, TOP).map((r) => r.type);
+		expect(types).toContain('badges');
+	});
+});
+
+describe('openPanel', () => {
+	it('clicks the button of the panel, and no other', () => {
+		const doc = page(railItem(ACTIVITY_APP, '1') + railItem(CHAT_RAIL, '1'));
+		const clicked: string[] = [];
+		for (const button of doc.querySelectorAll('button')) {
+			button.addEventListener('click', () => clicked.push(button.dataset.tid!));
+		}
+		expect(openPanel(doc, 'activity')).toBe(true);
+		expect(openPanel(doc, 'chat')).toBe(true);
+		expect(clicked).toEqual([ACTIVITY_APP, CHAT_RAIL]);
+	});
+	it('refuses an unknown panel and a missing button', () => {
+		expect(openPanel(page(railItem(CHAT_RAIL)), 'activity')).toBe(false);
+		expect(openPanel(page(railItem(CHAT_RAIL)), 'settings')).toBe(false);
+	});
+});
+
 describe('readMeetings', () => {
 	const slots = `
 		<div role="button" aria-label="Passée, 08:00 à 09:00, lundi 17 novembre 2026, A"></div>
@@ -322,6 +374,29 @@ describe('start', () => {
 		});
 		rt.deliver({ type: 'do', action: 'hangUp' });
 		expect(click).not.toHaveBeenCalled();
+	});
+
+	it('shows a panel of the rail on request, in the top frame only', () => {
+		const doc = page(railItem(ACTIVITY_APP, '1'));
+		const click = vi.fn();
+		doc.querySelector('button')!.addEventListener('click', click);
+		const sub = runtime();
+		start(doc, sub, {
+			hostname: 'teams.cloud.microsoft',
+			context: { top: false, underTeams: false },
+			setInterval: (() => 0) as never
+		});
+		sub.deliver({ type: 'openPanel', panel: 'activity' });
+		expect(click).not.toHaveBeenCalled();
+		const top = runtime();
+		start(doc, top, {
+			hostname: 'teams.cloud.microsoft',
+			context: TOP,
+			setInterval: (() => 0) as never
+		});
+		top.deliver({ type: 'openPanel', panel: 'activity' });
+		top.deliver({ type: 'openPanel', panel: 7 });
+		expect(click).toHaveBeenCalledOnce();
 	});
 
 	it('clicks on request in the top frame only', () => {
