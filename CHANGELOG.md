@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Molettes : « Affecter » une fonction qui retire un module placé nulle part ailleurs (sauf fonctions du gestionnaire) demande maintenant confirmation, comme le retrait d'une touche ; ses réglages seraient perdus (#69).
 - Interface : les textes d'aide sous les touches (défilement par la molette Navigation, déplacement d'une touche) reviennent à la ligne au lieu d'élargir le panneau qui représente le Stream Deck ; test de composant `KeyGrid` (#67).
 
 ### Ajouté

@@ -153,6 +153,7 @@ describe('DialDetails', () => {
 		expect(onassign).not.toHaveBeenCalled();
 		await expect.element(assign).toHaveAttribute('aria-disabled', 'false');
 		await assign.click();
+		await page.getByRole('button', { name: 'Retirer' }).click();
 		expect(onassign).toHaveBeenCalledOnce();
 		expect(onassign.mock.calls[0]?.[0]).toMatchObject({
 			type: 'new',
@@ -162,10 +163,50 @@ describe('DialDetails', () => {
 	});
 
 	it('assigns a function of the manager', async () => {
-		const { onassign } = await show();
+		const config = { ...CONFIG, dials: [{ kind: 'contextual' }] } as unknown as DeviceConfig;
+		const { onassign } = await show({ kind: 'contextual' }, config);
 		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Navigation');
 		await page.getByRole('button', { name: 'Affecter' }).click();
 		expect(onassign).toHaveBeenCalledWith({ type: 'navigation' });
+	});
+
+	it('asks to confirm before unassigning a module placed nowhere else', async () => {
+		const { onassign } = await show();
+		const select = page.getByRole('combobox', { name: 'Fonction' });
+		await select.selectOptions('Rien');
+		await page.getByRole('button', { name: 'Affecter' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Retirer la fonction de la molette ?' });
+		await expect.element(dialog).toBeVisible();
+		await expect
+			.element(dialog.getByText(/« Audio » n’est placé nulle part ailleurs/))
+			.toBeVisible();
+		expect(onassign).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: 'Annuler' }).click();
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		await expect.element(select).toHaveValue('none');
+		expect(onassign).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: 'Affecter' }).click();
+		await page.getByRole('button', { name: 'Retirer' }).click();
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		expect(onassign).toHaveBeenCalledOnce();
+		expect(onassign).toHaveBeenCalledWith({ type: 'none' });
+	});
+
+	it('asks to confirm when a function of the manager replaces the module', async () => {
+		const { onassign } = await show();
+		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Navigation');
+		await page.getByRole('button', { name: 'Affecter' }).click();
+		await expect.element(page.getByRole('dialog')).toBeVisible();
+		expect(onassign).not.toHaveBeenCalled();
+	});
+
+	it('does not ask when the module stays placed elsewhere', async () => {
+		const config = { ...CONFIG, home: ['audio'] } as unknown as DeviceConfig;
+		const { onassign } = await show(VOLUME, config);
+		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Rien');
+		await page.getByRole('button', { name: 'Affecter' }).click();
+		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
+		expect(onassign).toHaveBeenCalledWith({ type: 'none' });
 	});
 
 	it('says what the function being chosen does', async () => {
@@ -180,7 +221,7 @@ describe('DialDetails', () => {
 	it('warns that a module placed nowhere else is deleted with its settings', async () => {
 		await show();
 		await page.getByRole('combobox', { name: 'Fonction' }).selectOptions('Rien');
-		await expect.element(page.getByText(/« Audio » n’est placé nulle part ailleurs/)).toBeVisible();
+		await expect.element(page.getByText(/il sera supprimé/)).toBeVisible();
 	});
 
 	it('has no settings to edit for a function of the manager', async () => {

@@ -373,8 +373,9 @@ test('change la fonction d’une molette seulement sur « Affecter »', async ({
 	// Once its dial lets it go, the module is deleted with its settings, and a new one can be created.
 	await dial(page, '2 : Contrôle du pomodoro').click();
 	await fonction.selectOption({ label: 'Rien' });
-	await expect(page.getByText(/« Pomodoro » n’est placé nulle part ailleurs/)).toBeVisible();
+	await expect(page.getByText(/il sera supprimé/)).toBeVisible();
 	await page.getByRole('button', { name: 'Affecter' }).click();
+	await page.getByRole('button', { name: 'Retirer' }).click();
 	await dial(page, '3 : Navigation').click();
 	await fonction.selectOption({ label: 'Contrôle du pomodoro' });
 	await page.getByRole('button', { name: 'Affecter' }).click();

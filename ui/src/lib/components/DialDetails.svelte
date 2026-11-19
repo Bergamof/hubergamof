@@ -30,6 +30,7 @@ nothing, and the settings of the module of that function.
 	} from '#lib/deck/dial-options.js';
 	import { dialFunctionName, instanceName } from '#lib/deck/display.js';
 	import type { ManagerApi } from '#lib/api/manager-api.js';
+	import ConfirmDialog from './ConfirmDialog.svelte';
 	import InstanceEditor from './InstanceEditor.svelte';
 
 	interface Props {
@@ -86,6 +87,8 @@ nothing, and the settings of the module of that function.
 	const isLast = $derived(index === config.dials.length - 1);
 	const current = $derived(assignmentOption(assignment));
 	let chosen: string | undefined = $state();
+	/** The assignment waits for confirmation: it would delete a module and its settings. */
+	let confirming = $state(false);
 	/** A module has one dial at most: what another dial already offers is not proposed. */
 	const freeCandidates = $derived(
 		candidates.filter((instance) => !kindOnOtherDial(config, instance.kind, index))
@@ -117,10 +120,16 @@ nothing, and the settings of the module of that function.
 		return HOST_DESCRIPTIONS[pending];
 	});
 
-	function assign(event: SubmitEvent) {
-		event.preventDefault();
+	function applyChoice() {
+		confirming = false;
 		onassign(choice);
 		chosen = undefined;
+	}
+
+	function assign(event: SubmitEvent) {
+		event.preventDefault();
+		if (lost) confirming = true;
+		else applyChoice();
 	}
 </script>
 
@@ -220,3 +229,16 @@ nothing, and the settings of the module of that function.
 		{/key}
 	{/if}
 </section>
+
+<ConfirmDialog
+	open={confirming}
+	title="Retirer la fonction de la molette ?"
+	confirmLabel="Retirer"
+	onconfirm={applyChoice}
+	oncancel={() => (confirming = false)}
+>
+	<p>
+		« {lost ? instanceName(lost, moduleOf(lost.kind)) : ''} » n’est placé nulle part ailleurs : ses réglages
+		seront perdus.
+	</p>
+</ConfirmDialog>
