@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use hubergamof_manager::update::apply::{Environment, ROOT_UID, SystemInstaller, apply};
-use hubergamof_manager::update::wire::{RECEIVE_DEADLINE, Response, read_bundle};
+use hubergamof_manager::update::wire::{RECEIVE_DEADLINE, Response, peer_allowed, read_bundle};
 use hubergamof_manager::update::{Installed, ReleaseKey, Version};
 
 /// Where the checked package is staged: made by systemd for the unit
@@ -50,16 +50,39 @@ fn main() -> ExitCode {
     }
 }
 
+/// Logs who connected and refuses system accounts: the socket is open to every
+/// local user, but a web server or a daemon has no business updating the
+/// package. (Not a socket, in tests: no credentials to read.)
+fn check_peer() -> Result<(), String> {
+    let Ok(credentials) = rustix::net::sockopt::socket_peercred(io::stdin().as_fd()) else {
+        return Ok(());
+    };
+    let uid = credentials.uid.as_raw();
+    eprintln!(
+        "update requested by uid {uid} (pid {})",
+        credentials.pid.as_raw_nonzero()
+    );
+    if peer_allowed(uid) {
+        Ok(())
+    } else {
+        Err("system accounts may not request an update".to_owned())
+    }
+}
+
 fn run() -> Result<Version, String> {
     let key = ReleaseKey::embedded().map_err(|error| error.to_string())?;
     let installed = Version::current().map_err(|error| error.to_string())?;
+    check_peer()?;
     // A peer that stops sending must not hold the single update slot: reads on
-    // the socket time out (not on a pipe, in tests: the overall deadline stays).
-    let _ = rustix::net::sockopt::set_socket_timeout(
+    // the socket time out (on a pipe, in tests, they cannot: the overall
+    // deadline stays).
+    if let Err(error) = rustix::net::sockopt::set_socket_timeout(
         io::stdin().as_fd(),
         rustix::net::sockopt::Timeout::Recv,
         Some(IDLE_TIMEOUT),
-    );
+    ) {
+        eprintln!("no idle timeout on the connection: {error}");
+    }
     let bundle = read_bundle(&mut io::stdin().lock(), Instant::now() + RECEIVE_DEADLINE)
         .map_err(|error| error.to_string())?;
     apply(

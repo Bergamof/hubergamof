@@ -21,8 +21,9 @@ path = "src/lib.rs"
 name = "hubergamof"
 path = "src/main.rs"
 
-# Runs as root, through pkexec: kept apart from the manager so that the code
-# with privileges stays small.
+# Runs as root, started by systemd for each connection to
+# hubergamof-update.socket: kept apart from the manager so that the code with
+# privileges stays small.
 [[bin]]
 name = "hubergamof-update-helper"
 path = "src/bin/hubergamof-update-helper.rs"

@@ -28,6 +28,16 @@ pub const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 /// keep the (single) update slot busy longer than this.
 pub const RECEIVE_DEADLINE: Duration = Duration::from_mins(5);
 
+/// First uid of a human account (`UID_MIN` of `login.defs`); the system
+/// accounts below it (web servers, daemons…) are not served.
+pub const FIRST_USER_UID: u32 = 1000;
+
+/// Whether a peer of this uid may ask for an update: root, or a human account.
+#[must_use]
+pub fn peer_allowed(uid: u32) -> bool {
+    uid == 0 || uid >= FIRST_USER_UID
+}
+
 /// Longest answer line read by the manager.
 pub const MAX_RESPONSE_BYTES: usize = 512;
 
@@ -234,6 +244,16 @@ mod tests {
 
     fn soon() -> Instant {
         Instant::now() + Duration::from_secs(60)
+    }
+
+    #[test]
+    fn only_root_and_human_accounts_are_served() {
+        assert!(peer_allowed(0));
+        assert!(peer_allowed(FIRST_USER_UID));
+        assert!(peer_allowed(65_534 + 1));
+        for system in [1, 33, 100, 999] {
+            assert!(!peer_allowed(system), "{system}");
+        }
     }
 
     #[test]

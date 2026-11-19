@@ -209,12 +209,12 @@ impl SocketChannel {
             .await;
         // A helper that refused without reading everything closes with data
         // pending: the connection is then reset, after the answer was delivered.
-        if let Err(error) = read
-            && line.is_empty()
-        {
-            return Err(InstallError::Helper(format!(
-                "no answer from the update service: {error}"
-            )));
+        if line.is_empty() {
+            // Accepted then dropped (another update runs: one at a time) or gone.
+            tracing::warn!(?read, "no answer from the update service");
+            return Err(InstallError::Helper(
+                "the update service is busy or unavailable, try again later".to_owned(),
+            ));
         }
         Ok(Response::parse(&line))
     }
@@ -617,6 +617,23 @@ mod tests {
         let (path, _helper) = fake_helper(dir.path(), b"\x1b[31mnonsense");
         let error = SocketChannel::at(path).send(&bundle()).await.unwrap_err();
         assert!(error.public_message().contains("unexpected"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_connection_dropped_at_once_is_reported_as_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        tokio::spawn(async move {
+            // Like systemd with a second connection while one update runs.
+            let (stream, _) = listener.accept().await.unwrap();
+            drop(stream);
+        });
+        let error = SocketChannel::at(path).send(&bundle()).await.unwrap_err();
+        assert!(
+            error.public_message().contains("busy or unavailable"),
+            "{error}"
+        );
     }
 
     #[tokio::test]
