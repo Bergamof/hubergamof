@@ -15,4 +15,24 @@ notesUrl: string, } | { "type": "checkFailed",
 /**
  * Human-readable details.
  */
+message: string, } | { "type": "downloading", 
+/**
+ * Version being installed.
+ */
+version: string, } | { "type": "installing", 
+/**
+ * Version being installed.
+ */
+version: string, } | { "type": "installed", 
+/**
+ * Version installed.
+ */
+version: string, } | { "type": "installFailed", 
+/**
+ * Version that could not be installed.
+ */
+version: string, 
+/**
+ * Short description of the failure.
+ */
 message: string, };

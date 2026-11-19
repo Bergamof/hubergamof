@@ -367,6 +367,20 @@ describe('configuration updates', () => {
 		expect(connection.lastSent()).toEqual({ type: 'checkForUpdates' });
 	});
 
+	it('keeps the update settings and relays the install requests', () => {
+		const { connection, state } = following();
+		expect(state.updateSettings).toBeUndefined();
+		connection.receive({
+			type: 'updateSettings',
+			settings: { autoInstall: true, installSupport: 'available' }
+		});
+		expect(state.updateSettings).toEqual({ autoInstall: true, installSupport: 'available' });
+		state.installUpdate();
+		expect(connection.lastSent()).toEqual({ type: 'installUpdate' });
+		state.setAutoInstall(false);
+		expect(connection.lastSent()).toEqual({ type: 'setAutoInstall', enabled: false });
+	});
+
 	it('start again after a reconnection', async () => {
 		const { connection, state } = following();
 		const lost = state.edit(setBrightness(60));

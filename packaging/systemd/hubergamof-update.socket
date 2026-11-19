@@ -1,0 +1,25 @@
+# HuBergamof — socket du service de mise à jour (unité système).
+#
+# Le gestionnaire (processus utilisateur) y envoie la release téléchargée ;
+# systemd lance alors hubergamof-update@.service, en root, avec son propre
+# environnement. Ouverte à tous les utilisateurs locaux : ce qui compte est la
+# signature de la release, vérifiée par le service (voir docs/security.md).
+# Une seule connexion à la fois : une mise à jour en cours en refuse une autre.
+# L'assistant refuse les comptes système (uid 1 à 999) et journalise le pair.
+# Pour refuser les mises à jour automatiques : systemctl disable --now hubergamof-update.socket
+
+[Unit]
+Description=HuBergamof update socket
+
+[Socket]
+ListenStream=/run/hubergamof-update.sock
+SocketMode=0666
+Accept=yes
+MaxConnections=1
+# Avec Accept=yes, des connexions en rafale (refusées comprises) dépasseraient la
+# limite d'activations de systemd et mettraient le socket en échec, hors service
+# jusqu'à un redémarrage : cette limite est désactivée.
+TriggerLimitIntervalSec=0
+
+[Install]
+WantedBy=sockets.target

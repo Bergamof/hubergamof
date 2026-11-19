@@ -1,0 +1,27 @@
+# HuBergamof — service de mise à jour (unité système, une instance par connexion
+# au socket hubergamof-update.socket). La connexion est l'entrée et la sortie de
+# l'assistant ; ce qu'apt ou pacman affichent va au journal.
+#
+# Rien de ce que l'appelant contrôle (environnement, umask, limites, dossier de
+# travail) n'est hérité : systemd fournit les siens.
+
+[Unit]
+Description=Install a signed HuBergamof update
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/hubergamof/hubergamof-update-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# Dossier de travail créé par systemd (root, 0755) pour la durée de l'instance.
+RuntimeDirectory=hubergamof-update
+RuntimeDirectoryMode=0755
+UMask=0022
+# Une installation interrompue n'immobilise pas le socket (une seule connexion) ;
+# la borne est large : tuer dpkg en route laisserait « dpkg was interrupted »
+# (reprise : dpkg --configure -a). Mémoire : le paquet (64 Mio au plus) est tenu
+# en mémoire avant vérification.
+RuntimeMaxSec=1h
+MemoryMax=1G
+KillMode=control-group

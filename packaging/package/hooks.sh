@@ -48,12 +48,33 @@ hubergamof_in_graphical_sessions() {
 	done
 }
 
+HUBERGAMOF_UPDATE_SOCKET="hubergamof-update.socket"
+
+# Le socket du service de mise à jour (unité système) : activé et démarré à
+# l'installation seulement (une mise à jour ne le réactive pas si
+# l'administrateur l'a désactivé : systemctl disable --now hubergamof-update.socket).
+hubergamof_enable_update_socket() {
+	command -v systemctl >/dev/null 2>&1 || return 0
+	hubergamof_systemd_running || return 0
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	[ "${1:-install}" = install ] || return 0
+	systemctl enable --now "$HUBERGAMOF_UPDATE_SOCKET" >/dev/null 2>&1 \
+		|| hubergamof_note "socket des mises à jour non activé : « systemctl enable --now $HUBERGAMOF_UPDATE_SOCKET »."
+}
+
+hubergamof_disable_update_socket() {
+	command -v systemctl >/dev/null 2>&1 || return 0
+	hubergamof_systemd_running || return 0
+	systemctl disable --now "$HUBERGAMOF_UPDATE_SOCKET" >/dev/null 2>&1 || true
+}
+
 # Usage : hubergamof_post_install install|upgrade
 # install : le service est démarré dans les sessions ouvertes. upgrade : il n'est
 # redémarré que là où il tourne déjà (un service arrêté volontairement le reste).
 hubergamof_post_install() {
 	hubergamof_mode="${1:-install}"
 	hubergamof_reload_udev
+	hubergamof_enable_update_socket "$hubergamof_mode"
 	if hubergamof_systemd_running && command -v systemctl >/dev/null 2>&1; then
 		systemctl --global enable "$HUBERGAMOF_UNIT" >/dev/null 2>&1 \
 			|| hubergamof_note "activation globale du service impossible : « systemctl --user enable --now $HUBERGAMOF_UNIT »."
@@ -70,6 +91,7 @@ hubergamof_post_install() {
 }
 
 hubergamof_pre_remove() {
+	hubergamof_disable_update_socket
 	hubergamof_in_graphical_sessions stop "$HUBERGAMOF_UNIT"
 	if hubergamof_systemd_running && command -v systemctl >/dev/null 2>&1; then
 		systemctl --global disable "$HUBERGAMOF_UNIT" >/dev/null 2>&1 || true

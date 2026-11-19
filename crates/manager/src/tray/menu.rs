@@ -22,8 +22,11 @@ pub const THEME_LIGHT_LABEL: &str = "Clair";
 /// Theme entry of the dark theme.
 pub const THEME_DARK_LABEL: &str = "Sombre";
 
-/// Menu entry announcing a newer release; `{}` is its version.
+/// Menu entry announcing a newer release, followed by its version.
 pub const UPDATE_LABEL_PREFIX: &str = "Mise à jour disponible";
+
+/// Menu entry installing a newer release, followed by its version.
+pub const INSTALL_LABEL_PREFIX: &str = "Mettre à jour vers";
 
 /// Shown in the menu when no device is connected.
 pub const NO_DEVICE_LABEL: &str = "Aucun appareil connecté";
@@ -90,8 +93,20 @@ pub enum MenuAction {
     OpenUi,
     /// Applies a theme to the connected devices.
     SetTheme(DeviceTheme),
+    /// Installs the newer release.
+    InstallUpdate,
     /// Stops the manager.
     Quit,
+}
+
+/// A newer release shown in the menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateEntry {
+    /// Its version.
+    pub version: String,
+    /// Whether the entry installs it (otherwise it only opens the interface,
+    /// which shows the release notes).
+    pub installable: bool,
 }
 
 /// The tray menu: device lines plus the layout revision announced through
@@ -103,7 +118,7 @@ pub struct TrayMenu {
     /// connected.
     theme: Option<DeviceTheme>,
     /// Version of the newer release, when there is one.
-    update: Option<String>,
+    update: Option<UpdateEntry>,
     revision: u32,
 }
 
@@ -147,13 +162,13 @@ impl TrayMenu {
         true
     }
 
-    /// Sets the version of the newer release (`None`: up to date or unknown);
+    /// Sets the newer release shown (`None`: up to date or unknown);
     /// returns `true` (and bumps the revision) when it changed.
-    pub fn set_update(&mut self, version: Option<String>) -> bool {
-        if version == self.update {
+    pub fn set_update(&mut self, entry: Option<UpdateEntry>) -> bool {
+        if entry == self.update {
             return false;
         }
-        self.update = version;
+        self.update = entry;
         self.revision = self.revision.wrapping_add(1);
         true
     }
@@ -211,10 +226,17 @@ impl TrayMenu {
     /// Action run by a click on `id`; `None` for the root, separators and the
     /// (disabled) device lines.
     #[must_use]
-    pub fn action(id: i32) -> Option<MenuAction> {
+    pub fn action(&self, id: i32) -> Option<MenuAction> {
         match id {
-            // The interface shows the release notes: the entry opens it.
-            OPEN_UI_ID | UPDATE_ID => Some(MenuAction::OpenUi),
+            OPEN_UI_ID => Some(MenuAction::OpenUi),
+            UPDATE_ID => self.update.as_ref().map(|entry| {
+                if entry.installable {
+                    MenuAction::InstallUpdate
+                } else {
+                    // The interface shows the release notes.
+                    MenuAction::OpenUi
+                }
+            }),
             THEME_LIGHT_ID => Some(MenuAction::SetTheme(DeviceTheme::Light)),
             THEME_DARK_ID => Some(MenuAction::SetTheme(DeviceTheme::Dark)),
             QUIT_ID => Some(MenuAction::Quit),
@@ -300,8 +322,12 @@ impl TrayMenu {
             OPEN_UI_ID => Some(action_properties(OPEN_UI_LABEL, OPEN_UI_ICON)),
             QUIT_ID => Some(action_properties(QUIT_LABEL, QUIT_ICON)),
             UPDATE_ID => {
-                let version = self.update.as_deref()?;
-                let label = format!("{UPDATE_LABEL_PREFIX} ({version})");
+                let entry = self.update.as_ref()?;
+                let label = if entry.installable {
+                    format!("{INSTALL_LABEL_PREFIX} {}", entry.version)
+                } else {
+                    format!("{UPDATE_LABEL_PREFIX} ({})", entry.version)
+                };
                 Some(action_properties(&label, UPDATE_ICON))
             }
             THEME_ID => {
@@ -413,15 +439,15 @@ mod tests {
     #[test]
     fn a_newer_release_adds_an_entry_below_open_that_opens_the_interface() {
         let mut menu = TrayMenu::new(Vec::new());
-        assert!(menu.set_update(Some("1.2.3".into())));
-        assert!(!menu.set_update(Some("1.2.3".into())));
+        assert!(menu.set_update(Some(entry("1.2.3", false))));
+        assert!(!menu.set_update(Some(entry("1.2.3", false))));
         let entries = summary(&menu);
         assert_eq!(entries[0].0, OPEN_UI_ID);
         assert_eq!(
             entries[1],
             (UPDATE_ID, format!("{UPDATE_LABEL_PREFIX} (1.2.3)"), true)
         );
-        assert_eq!(TrayMenu::action(UPDATE_ID), Some(MenuAction::OpenUi));
+        assert_eq!(menu.action(UPDATE_ID), Some(MenuAction::OpenUi));
         assert!(menu.contains(UPDATE_ID));
         assert!(
             menu.all_properties(&[])
@@ -430,12 +456,33 @@ mod tests {
         );
     }
 
+    fn entry(version: &str, installable: bool) -> UpdateEntry {
+        UpdateEntry {
+            version: version.into(),
+            installable,
+        }
+    }
+
+    #[test]
+    fn when_it_can_be_installed_the_entry_installs() {
+        let mut menu = TrayMenu::new(Vec::new());
+        menu.set_update(Some(entry("1.2.3", true)));
+        assert_eq!(
+            summary(&menu)[1],
+            (UPDATE_ID, format!("{INSTALL_LABEL_PREFIX} 1.2.3"), true)
+        );
+        assert_eq!(menu.action(UPDATE_ID), Some(MenuAction::InstallUpdate));
+        // Switching to « cannot install » bumps the layout too.
+        assert!(menu.set_update(Some(entry("1.2.3", false))));
+        assert_eq!(menu.action(UPDATE_ID), Some(MenuAction::OpenUi));
+    }
+
     #[test]
     fn without_a_newer_release_there_is_no_update_entry() {
         let mut menu = TrayMenu::new(Vec::new());
         assert!(!menu.contains(UPDATE_ID));
         assert!(menu.properties(UPDATE_ID, &[]).is_none());
-        menu.set_update(Some("1.2.3".into()));
+        menu.set_update(Some(entry("1.2.3", false)));
         assert!(menu.set_update(None));
         assert!(!menu.contains(UPDATE_ID));
     }
@@ -507,10 +554,16 @@ mod tests {
         let ids: Vec<i32> = summary(&menu).into_iter().map(|(id, ..)| id).collect();
         assert_eq!(ids.first(), Some(&OPEN_UI_ID));
         assert_eq!(ids.last(), Some(&QUIT_ID));
-        assert_eq!(TrayMenu::action(OPEN_UI_ID), Some(MenuAction::OpenUi));
-        assert_eq!(TrayMenu::action(QUIT_ID), Some(MenuAction::Quit));
-        assert_eq!(TrayMenu::action(FIRST_DEVICE_ID), None);
-        assert_eq!(TrayMenu::action(ROOT_ID), None);
+        assert_eq!(
+            TrayMenu::new(Vec::new()).action(OPEN_UI_ID),
+            Some(MenuAction::OpenUi)
+        );
+        assert_eq!(
+            TrayMenu::new(Vec::new()).action(QUIT_ID),
+            Some(MenuAction::Quit)
+        );
+        assert_eq!(TrayMenu::new(Vec::new()).action(FIRST_DEVICE_ID), None);
+        assert_eq!(TrayMenu::new(Vec::new()).action(ROOT_ID), None);
     }
 
     fn theme_entries(menu: &TrayMenu) -> Vec<(String, bool, bool)> {
@@ -546,14 +599,14 @@ mod tests {
         );
         assert_eq!(menu.layout(THEME_ID, Some(0), &[]).unwrap().children, []);
         assert_eq!(
-            TrayMenu::action(THEME_LIGHT_ID),
+            TrayMenu::new(Vec::new()).action(THEME_LIGHT_ID),
             Some(MenuAction::SetTheme(DeviceTheme::Light))
         );
         assert_eq!(
-            TrayMenu::action(THEME_DARK_ID),
+            TrayMenu::new(Vec::new()).action(THEME_DARK_ID),
             Some(MenuAction::SetTheme(DeviceTheme::Dark))
         );
-        assert_eq!(TrayMenu::action(THEME_ID), None);
+        assert_eq!(TrayMenu::new(Vec::new()).action(THEME_ID), None);
         assert!(menu.contains(THEME_DARK_ID));
     }
 

@@ -2,6 +2,8 @@
 name = "hubergamof"
 description = "Stream Deck manager for Linux with a live web configuration UI."
 version.workspace = true
+# Two binaries (the manager and the root update helper): `cargo run` starts the manager.
+default-run = "hubergamof"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,6 +21,13 @@ path = "src/lib.rs"
 name = "hubergamof"
 path = "src/main.rs"
 
+# Runs as root, started by systemd for each connection to
+# hubergamof-update.socket: kept apart from the manager so that the code with
+# privileges stays small.
+[[bin]]
+name = "hubergamof-update-helper"
+path = "src/bin/hubergamof-update-helper.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -30,6 +39,9 @@ hubergamof-module-api.workspace = true
 hubergamof-modules.workspace = true
 hubergamof-protocol.workspace = true
 clap.workspace = true
+# Release signature check of the update helper (runs as root): verification
+# only, no key generation, no serialisation.
+ed25519-dalek = { version = "3.0.0", default-features = false }
 # Synchronous API driven from a dedicated thread per device: the crate's
 # `async` feature relies on `block_in_place` and serialises reads and writes.
 elgato-streamdeck = { version = "0.14.0", default-features = false }
@@ -46,6 +58,8 @@ jiff = "0.2.38"
 lru = "0.19.0"
 mime_guess = "2.0.5"
 reqwest.workspace = true
+# umask and the receive timeout of the helper's socket (the update helper).
+rustix = { version = "1.1.6", features = ["fs", "net", "process"] }
 # SVG rendering without system fonts nor embedded raster images (untrusted input).
 resvg = { version = "0.49.0", default-features = false, features = ["text"] }
 # `allow_missing`: the UI build (`ui/build/`) may be absent (Rust-only CI jobs).

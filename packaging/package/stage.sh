@@ -7,6 +7,10 @@
 # Le service lit sa configuration dans ~/.config/hubergamof (%E = XDG_CONFIG_HOME
 # ou ~/.config, spécificateur systemd).
 #
+# L'assistant des mises à jour (hubergamof-update-helper) est pris à côté du
+# binaire ; systemd le lance en root à chaque connexion au socket
+# hubergamof-update.socket (unités système posées ici).
+#
 # Usage : stage.sh <binaire> <dossier racine>
 set -euo pipefail
 
@@ -23,11 +27,18 @@ packaging="$(dirname "$here")"
 source "$packaging/desktop/install-desktop.sh"
 
 readonly INSTALLED_BINARY="/usr/bin/hubergamof"
+readonly INSTALLED_HELPER="/usr/lib/hubergamof/hubergamof-update-helper"
 readonly CONFIG_DIR_SPECIFIER='%E/hubergamof'
 
 [[ -x "$binary" ]] || { echo "Binaire introuvable : $binary (lancer « make build »)." >&2; exit 1; }
 
+helper="$(dirname "$binary")/hubergamof-update-helper"
+[[ -x "$helper" ]] || { echo "Assistant introuvable : $helper (lancer « make build »)." >&2; exit 1; }
+
 install -D -m 0755 "$binary" "$root$INSTALLED_BINARY"
+install -D -m 0755 "$helper" "$root$INSTALLED_HELPER"
+install -D -m 0644 "$packaging/systemd/hubergamof-update.socket" "$root/usr/lib/systemd/system/hubergamof-update.socket"
+install -D -m 0644 "$packaging/systemd/hubergamof-update@.service" "$root/usr/lib/systemd/system/hubergamof-update@.service"
 install -D -m 0644 "$packaging/udev/70-hubergamof.rules" "$root/usr/lib/udev/rules.d/70-hubergamof.rules"
 
 template="$(<"$packaging/systemd/hubergamof.service")"

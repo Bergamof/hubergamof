@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests des scripts de contrôle et de release (cas passants et refusés) :
 # check-node-version, check-branch-name, check_pactl, next-version, release-notes,
-# wait-for-ci (verdict), set-version, lanceur de bureau (install-desktop.sh et
+# wait-for-ci (verdict), set-version, sign-checksums, lanceur de bureau (install-desktop.sh et
 # sa suppression par uninstall.sh).
 #
 # Usage : test-control-scripts.sh
@@ -399,6 +399,40 @@ if ! "$BASH" "$desktop_dir/remove.sh" "$here/../.." "$desktop_dir" \
 	failures=$((failures + 1))
 fi
 rm -rf "$desktop_dir"
+
+# sign-checksums.sh : signe avec la clé du secret, refuse une autre clé ou rien à signer.
+sign_dir="$(mktemp -d)"
+openssl genpkey -algorithm ed25519 -out "$sign_dir/good.key" 2>/dev/null
+openssl pkey -in "$sign_dir/good.key" -pubout -out "$sign_dir/good.pub"
+openssl genpkey -algorithm ed25519 -out "$sign_dir/other.key" 2>/dev/null
+expect_signing() { # expect_signing <ok|ko> <fichier de clé privée ou "none"> <présence de SHA256SUMS : yes|no> <libellé>
+	local expected="$1" key="$2" sums="$3" label="$4" status=0 dist
+	dist="$(mktemp -d)"
+	[[ "$sums" == yes ]] && echo "abc  paquet.deb" >"$dist/SHA256SUMS"
+	if [[ "$key" == none ]]; then
+		(unset RELEASE_SIGNING_KEY; "$here/sign-checksums.sh" "$dist" "$sign_dir/good.pub" >/dev/null 2>&1) || status=$?
+	else
+		(RELEASE_SIGNING_KEY="$(<"$key")" "$here/sign-checksums.sh" "$dist" "$sign_dir/good.pub" >/dev/null 2>&1) || status=$?
+	fi
+	if [[ "$expected" == ok ]]; then
+		if [[ $status -ne 0 ]] || ! openssl pkeyutl -verify -rawin -pubin -inkey "$sign_dir/good.pub" \
+			-in "$dist/SHA256SUMS" -sigfile "$dist/SHA256SUMS.sig" >/dev/null 2>&1; then
+			echo "ÉCHEC : sign-checksums.sh, $label (code $status)" >&2
+			failures=$((failures + 1))
+		fi
+	elif [[ $status -ne 1 || -e "$dist/SHA256SUMS.sig" ]]; then
+		echo "ÉCHEC : sign-checksums.sh, $label (attendu un refus sans signature, code $status)" >&2
+		failures=$((failures + 1))
+	fi
+	rm -rf "$dist"
+}
+expect_signing ok "$sign_dir/good.key" yes "la bonne clé signe"
+expect_signing ko "$sign_dir/other.key" yes "une autre clé est refusée"
+expect_signing ko none yes "sans secret"
+expect_signing ko "$sign_dir/good.key" no "sans SHA256SUMS"
+echo "pas une clé" >"$sign_dir/garbage.key"
+expect_signing ko "$sign_dir/garbage.key" yes "un secret qui n'est pas une clé"
+rm -rf "$sign_dir"
 
 if [[ $failures -ne 0 ]]; then
 	echo "$failures test(s) en échec." >&2

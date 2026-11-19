@@ -17,6 +17,7 @@
 mod archive;
 mod defaults;
 mod files;
+pub(crate) use files::write_bytes_atomically;
 mod migration;
 
 use std::collections::{BTreeMap, HashSet};
@@ -45,7 +46,6 @@ use tokio::io::AsyncReadExt as _;
 
 use self::files::{
     io_error, read_config, restrict_existing_dir, set_invalid_aside, write_atomically,
-    write_bytes_atomically,
 };
 use crate::placement::{PlacementChange, normalize};
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};

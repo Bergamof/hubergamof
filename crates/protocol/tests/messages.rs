@@ -5,8 +5,9 @@
 use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
     DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode, ImageSize,
-    KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView,
-    ServerMessage, SettingField, SettingKind, StripConfig, UpdateStatus,
+    InstallSupport, KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor,
+    ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, StripConfig,
+    UpdateSettings, UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -193,6 +194,67 @@ fn client_check_for_updates() {
         &ClientMessage::CheckForUpdates,
         &json!({ "type": "checkForUpdates" }),
     );
+}
+
+#[test]
+fn client_install_requests() {
+    assert_wire_format(
+        &ClientMessage::InstallUpdate,
+        &json!({ "type": "installUpdate" }),
+    );
+    assert_wire_format(
+        &ClientMessage::SetAutoInstall { enabled: false },
+        &json!({ "type": "setAutoInstall", "enabled": false }),
+    );
+}
+
+#[test]
+fn server_update_settings() {
+    assert_wire_format(
+        &ServerMessage::UpdateSettings {
+            settings: UpdateSettings {
+                auto_install: true,
+                install_support: InstallSupport::Unpackaged,
+            },
+        },
+        &json!({
+            "type": "updateSettings",
+            "settings": { "autoInstall": true, "installSupport": "unpackaged" }
+        }),
+    );
+}
+
+#[test]
+fn server_install_progress_statuses() {
+    for (status, expected) in [
+        (
+            UpdateStatus::Downloading {
+                version: "1.2.0".into(),
+            },
+            json!({ "type": "downloading", "version": "1.2.0" }),
+        ),
+        (
+            UpdateStatus::Installing {
+                version: "1.2.0".into(),
+            },
+            json!({ "type": "installing", "version": "1.2.0" }),
+        ),
+        (
+            UpdateStatus::Installed {
+                version: "1.2.0".into(),
+            },
+            json!({ "type": "installed", "version": "1.2.0" }),
+        ),
+        (
+            UpdateStatus::InstallFailed {
+                version: "1.2.0".into(),
+                message: "signature mismatch".into(),
+            },
+            json!({ "type": "installFailed", "version": "1.2.0", "message": "signature mismatch" }),
+        ),
+    ] {
+        assert_wire_format(&status, &expected);
+    }
 }
 
 #[test]

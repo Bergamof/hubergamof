@@ -81,7 +81,7 @@ pub(super) const PRIVATE_DIR_MODE: u32 = 0o700;
 
 /// Writes `bytes` to a temporary file next to `path`, flushes it to disk and
 /// renames it over `path`: readers see either the old or the new content.
-pub(super) fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), ConfigStoreError> {
+pub(crate) fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), ConfigStoreError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     create_private_dir(dir)?;
     let mut file = NamedTempFile::new_in(dir).map_err(|source| io_error(dir, source))?;

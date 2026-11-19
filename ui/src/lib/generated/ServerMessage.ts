@@ -4,6 +4,7 @@ import type { DeviceConfig } from "./DeviceConfig";
 import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
 import type { LiveState } from "./LiveState";
+import type { UpdateSettings } from "./UpdateSettings";
 import type { UpdateStatus } from "./UpdateStatus";
 
 /**
@@ -33,7 +34,11 @@ config: DeviceConfig, } | { "type": "liveState",
 /**
  * Live state.
  */
-state: LiveState, } | { "type": "updateStatus", 
+state: LiveState, } | { "type": "updateSettings", 
+/**
+ * Current settings.
+ */
+settings: UpdateSettings, } | { "type": "updateStatus", 
 /**
  * Current status.
  */

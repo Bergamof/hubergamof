@@ -38,6 +38,8 @@ sudo pacman -U hubergamof-X.Y.Z-1-x86_64.pkg.tar.zst
 
 Le paquet installe les dépendances nécessaires (dont `pactl` et un serveur de son pour le module Audio), la règle udev et le service utilisateur, qu'il démarre dans les sessions graphiques ouvertes. Docker est facultatif (module Docker : l'utilisateur doit être dans le groupe `docker`). La configuration est dans `~/.config/hubergamof`. Détails, numérotation et fabrication des releases : [`docs/release.md`](docs/release.md).
 
+**Mises à jour** : installé par paquet, le gestionnaire cherche une nouvelle release une fois par jour (API GitHub du dépôt, sans jeton) et l'installe seul — téléchargement, puis un service système (activé par socket systemd, sans mot de passe) vérifie la signature Ed25519 de la release et l'installe par `apt`/`pacman`. L'interface (pied de page) montre la version, un interrupteur « Installer automatiquement les mises à jour » et un bouton de recherche ; le menu du tray propose « Mettre à jour vers X.Y.Z ». `hubergamof --no-update-check` supprime toute connexion sortante. Installé depuis les sources, il annonce la nouvelle version sans l'installer.
+
 ### Depuis les sources
 
 Prérequis : voir [Développement](#prérequis).
@@ -81,6 +83,8 @@ Le module Teams lit Teams (version web, `teams.cloud.microsoft`) dans Brave par 
 Le module a besoin de la fenêtre de Teams en application Brave (PWA) pour la mettre au premier plan ; sous GNOME, la fenêtre n'est pas amenée devant (le bureau l'interdit) mais signalée par une notification. Détail : `docs/modules.md` (module teams).
 
 ## Vie privée
+
+Le gestionnaire ne fait qu'une connexion sortante : une requête par jour à l'API des releases de GitHub (`api.github.com`, sans identifiant ni donnée vous concernant, User-Agent générique) pour savoir si une nouvelle version existe, et, si vous gardez l'installation automatique, le téléchargement du paquet depuis GitHub. `--no-update-check` la supprime.
 
 L'extension de Teams ne lit que le nombre de conversations non lues, leur nom et leur avatar, l'état de l'appel (micro, caméra) et le calendrier quand vous l'ouvrez : jamais le contenu des messages ; ces données restent sur votre machine (socket Unix privé) et ne sont ni écrites sur le disque ni journalisées.
 

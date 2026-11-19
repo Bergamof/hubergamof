@@ -3,7 +3,9 @@
 #                version déduite des commits depuis le dernier tag (1.0.0 au début),
 #                niveau minimal au choix (jamais en dessous des commits) ;
 #   2. build   : binaire, paquets .deb et Arch, tests d'installation en conteneur ;
-#   3. publish : release GitHub (livrables, SHA256SUMS, notes) et tag vX.Y.Z.
+#   3. sign    : SHA256SUMS et sa signature Ed25519, seul job qui voit la clé privée
+#                (environnement « release », runner neuf, aucun code du projet exécuté) ;
+#   4. publish : release GitHub (livrables, SHA256SUMS et sa signature, notes) et tag vX.Y.Z.
 # La version n'est jamais committée : elle vient du tag, fixée dans la copie de
 # travail de la CI (set-version.sh). Build sans cache : une release ne repart
 # jamais d'un cache. Voir docs/release.md.
@@ -118,9 +120,6 @@ jobs:
         run: make package-lint
       - name: Install packages in clean containers
         run: make package-smoke
-      - name: Checksums
-        working-directory: dist
-        run: sha256sum -- *.deb *.pkg.tar.zst > SHA256SUMS
       - name: Upload packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -129,9 +128,52 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # La clé de signature vaut une exécution en root sur toutes les installations :
+  # elle n'est donnée qu'à ce job. Il ne lance ni make, ni pnpm, ni cargo (aucune
+  # dépendance du projet ne s'exécute à côté de la clé), sur un runner qui n'a
+  # pas servi au build. Le secret `RELEASE_SIGNING_KEY` se range dans
+  # l'environnement « release » (réservé à main, avec relecteur obligatoire).
+  sign:
+    name: Signature
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # Télécharger les paquets du job build.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - name: Download packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --name release-packages --dir dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.deb *.pkg.tar.zst > SHA256SUMS
+      # Signature de SHA256SUMS (Ed25519) : l'assistant de mise à jour des
+      # installations existantes ne se fie qu'à elle. Le script la vérifie avec la
+      # clé publique du dépôt avant de rendre la main.
+      - name: Sign the checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: .github/scripts/sign-checksums.sh dist
+      - name: Upload checksums
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-checksums
+          path: |
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publication
-    needs: [gate, build]
+    needs: [gate, build, sign]
     runs-on: ubuntu-latest
     permissions:
       # Créer la release et le tag.
@@ -147,7 +189,9 @@ jobs:
       - name: Download packages
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download "$GITHUB_RUN_ID" --name release-packages --dir dist
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name release-packages --dir dist
+          gh run download "$GITHUB_RUN_ID" --name release-checksums --dir dist
       - name: Write the release notes
         env:
           VERSION: ${{ needs.gate.outputs.version }}
