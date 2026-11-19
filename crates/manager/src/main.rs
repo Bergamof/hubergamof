@@ -30,8 +30,8 @@ use hubergamof_manager::teams_extension::{self, Browser, Locations};
 use hubergamof_manager::tray::{TrayIcon, quit_on};
 use hubergamof_manager::update::{
     self, Downloader, FIRST_CHECK_DELAY, FilePolicyStore, GithubReleases, Installed, Installer,
-    MemoryPolicyStore, PackageInstaller, PkexecHelper, SimulatedInstaller, SimulatedReleases,
-    SystemPackages, UnsupportedInstaller, UpdateHandle, UpdateParts, UpdatePolicy, Version,
+    MemoryPolicyStore, PackageInstaller, SimulatedInstaller, SimulatedReleases, SocketChannel,
+    SystemPackages, UnsupportedInstaller, UpdateHandle, UpdateParts, UpdatePolicy, Version, wire,
 };
 use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
@@ -388,21 +388,21 @@ fn system_update_parts(
     })
 }
 
-/// Installs through the helper when this is a system package that ships it;
-/// otherwise (sources, container) the release is only announced.
+/// Installs through the helper when this is a system package whose update
+/// socket is there; otherwise (sources, container) the release is only
+/// announced.
 fn system_installer() -> Arc<dyn Installer> {
-    let packaged = Installed
-        .installed_format()
-        .filter(|_| std::path::Path::new(update::HELPER_PATH).is_file());
-    let (Some(format), Some(work_dir)) = (packaged, update::download_dir_from_env()) else {
+    use std::os::unix::fs::FileTypeExt as _;
+    let socket_present =
+        std::fs::metadata(wire::SOCKET_PATH).is_ok_and(|metadata| metadata.file_type().is_socket());
+    let Some(format) = Installed.installed_format().filter(|_| socket_present) else {
         return Arc::new(UnsupportedInstaller);
     };
     match Downloader::new() {
         Ok(downloader) => Arc::new(PackageInstaller::new(
             format,
             downloader,
-            Box::new(PkexecHelper),
-            work_dir,
+            Box::new(SocketChannel::system()),
         )),
         Err(error) => {
             tracing::warn!(%error, "updates cannot be installed");

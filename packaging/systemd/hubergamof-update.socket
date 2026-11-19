@@ -1,0 +1,19 @@
+# HuBergamof — socket du service de mise à jour (unité système).
+#
+# Le gestionnaire (processus utilisateur) y envoie la release téléchargée ;
+# systemd lance alors hubergamof-update@.service, en root, avec son propre
+# environnement. Ouverte à tous les utilisateurs locaux : ce qui compte est la
+# signature de la release, vérifiée par le service (voir docs/security.md).
+# Une seule connexion à la fois : une mise à jour en cours en refuse une autre.
+
+[Unit]
+Description=HuBergamof update socket
+
+[Socket]
+ListenStream=/run/hubergamof-update.sock
+SocketMode=0666
+Accept=yes
+MaxConnections=1
+
+[Install]
+WantedBy=sockets.target

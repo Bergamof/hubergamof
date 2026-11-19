@@ -9,9 +9,8 @@ arch=('x86_64')
 url='https://github.com/Bergamof/hubergamof'
 license=('GPL-3.0-or-later')
 # libpulse apporte pactl (module Audio) ; pulse-native-provider = pipewire-pulse ou pulseaudio ;
-# hicolor-icon-theme : thème des icônes du lanceur de bureau (exigé par namcap) ;
-# polkit apporte pkexec (assistant des mises à jour automatiques).
-depends=('systemd-libs' 'libpulse' 'pulse-native-provider' 'xdg-utils' 'hicolor-icon-theme' 'polkit')
+# hicolor-icon-theme : thème des icônes du lanceur de bureau (exigé par namcap).
+depends=('systemd-libs' 'libpulse' 'pulse-native-provider' 'xdg-utils' 'hicolor-icon-theme')
 optdepends=(
 	'docker: module Docker (groupe docker requis)'
 	'xdg-desktop-portal: sélecteur de fichier natif'

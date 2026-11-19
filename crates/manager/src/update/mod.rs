@@ -8,13 +8,14 @@ mod policy;
 mod signature;
 mod source;
 mod version;
+pub mod wire;
 
 pub use checker::{
     CHECK_INTERVAL, FIRST_CHECK_DELAY, MIN_CHECK_SPACING, UpdateHandle, UpdateParts, start,
 };
 pub use installer::{
-    Downloader, HELPER_PATH, InstallError, InstallStage, Installer, PackageInstaller, PkexecHelper,
-    SimulatedInstaller, UnsupportedInstaller, download_dir_from_env,
+    Downloader, InstallError, InstallStage, Installer, PackageInstaller, SimulatedInstaller,
+    SocketChannel, UnsupportedInstaller, UpdateChannel,
 };
 pub use package::{CHECKSUMS_FILE, Installed, PackageFormat, SIGNATURE_FILE, SystemPackages};
 pub use policy::{FilePolicyStore, MemoryPolicyStore, POLICY_FILE, PolicyStore, UpdatePolicy};

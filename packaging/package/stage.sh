@@ -7,8 +7,9 @@
 # Le service lit sa configuration dans ~/.config/hubergamof (%E = XDG_CONFIG_HOME
 # ou ~/.config, spécificateur systemd).
 #
-# L'assistant des mises à jour (hubergamof-update-helper, lancé en root par
-# pkexec) est pris à côté du binaire, avec l'action polkit qui l'autorise.
+# L'assistant des mises à jour (hubergamof-update-helper) est pris à côté du
+# binaire ; systemd le lance en root à chaque connexion au socket
+# hubergamof-update.socket (unités système posées ici).
 #
 # Usage : stage.sh <binaire> <dossier racine>
 set -euo pipefail
@@ -27,10 +28,6 @@ source "$packaging/desktop/install-desktop.sh"
 
 readonly INSTALLED_BINARY="/usr/bin/hubergamof"
 readonly INSTALLED_HELPER="/usr/lib/hubergamof/hubergamof-update-helper"
-# Dossier où l'assistant dépose le paquet vérifié : livré par le paquet (root,
-# 0755), jamais créé à l'exécution, pour que personne d'autre n'ait pu le faire.
-readonly STAGING_DIR="/var/lib/hubergamof"
-readonly POLKIT_POLICY="io.github.bergamof.hubergamof.update.policy"
 readonly CONFIG_DIR_SPECIFIER='%E/hubergamof'
 
 [[ -x "$binary" ]] || { echo "Binaire introuvable : $binary (lancer « make build »)." >&2; exit 1; }
@@ -40,8 +37,8 @@ helper="$(dirname "$binary")/hubergamof-update-helper"
 
 install -D -m 0755 "$binary" "$root$INSTALLED_BINARY"
 install -D -m 0755 "$helper" "$root$INSTALLED_HELPER"
-install -d -m 0755 "$root$STAGING_DIR"
-install -D -m 0644 "$packaging/polkit/$POLKIT_POLICY" "$root/usr/share/polkit-1/actions/$POLKIT_POLICY"
+install -D -m 0644 "$packaging/systemd/hubergamof-update.socket" "$root/usr/lib/systemd/system/hubergamof-update.socket"
+install -D -m 0644 "$packaging/systemd/hubergamof-update@.service" "$root/usr/lib/systemd/system/hubergamof-update@.service"
 install -D -m 0644 "$packaging/udev/70-hubergamof.rules" "$root/usr/lib/udev/rules.d/70-hubergamof.rules"
 
 template="$(<"$packaging/systemd/hubergamof.service")"

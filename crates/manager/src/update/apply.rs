@@ -1,35 +1,26 @@
-//! What the update helper does, as root, with a download folder it does not
-//! trust: verifies the release signature, then the package against it, and
-//! only then hands the package it checked to the system's package manager.
+//! What the update helper does, as root, with a bundle it does not trust:
+//! verifies the release signature, then the package against it, and only then
+//! hands the package it checked to the system's package manager.
 //!
-//! The folder belongs to the user who asked: every file is read once, from a
-//! regular file, into memory; what is hashed is what is installed (copied
-//! into a folder of its own), so nothing can be swapped in between.
+//! The bundle arrives as bytes on the helper's socket (see [`super::wire`]),
+//! so there is no file of the caller's to race against: what is hashed is what
+//! is written to a folder only root can write in, and installed from there.
 
-use std::fs::{self, File};
-use std::io::{self, Read as _, Write as _};
-use std::os::fd::OwnedFd;
+use std::fs;
+use std::io::{self, Write as _};
+use std::os::fd::AsFd as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use rustix::fs::{FileType, Mode, OFlags};
-use rustix::io::Errno;
+use rustix::fs::Mode;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-use super::package::{CHECKSUMS_FILE, PackageFormat, SIGNATURE_FILE, SystemPackages};
+use super::package::{PackageFormat, SystemPackages};
 use super::signature::{ReleaseKey, SignatureError};
 use super::version::Version;
-
-/// Largest `SHA256SUMS` read: it lists two packages.
-const MAX_CHECKSUMS_BYTES: u64 = 64 * 1024;
-
-/// Largest signature read: an Ed25519 signature is 64 bytes.
-const MAX_SIGNATURE_BYTES: u64 = 64;
-
-/// Largest package read, into memory, as root: the real ones are around 15 MiB.
-const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+use super::wire::Bundle;
 
 /// Permissions of the folder holding the package: readable by the package
 /// manager's unprivileged download user.
@@ -54,17 +45,6 @@ const SHA256_HEX_LENGTH: usize = 64;
 /// Why an update is refused or fails.
 #[derive(Debug, Error)]
 pub enum ApplyError {
-    /// A file of the download folder cannot be read.
-    #[error("cannot read {name}: {source}")]
-    Read {
-        /// File name.
-        name: String,
-        /// Cause.
-        source: io::Error,
-    },
-    /// A file is not a plain file, or is larger than any release file.
-    #[error("{0} is not an acceptable file")]
-    Unacceptable(String),
     /// The signature of `SHA256SUMS` is not the release key's.
     #[error("{0}")]
     Signature(#[from] SignatureError),
@@ -86,6 +66,9 @@ pub enum ApplyError {
     /// The package is not the one the signed checksums describe.
     #[error("the package does not match the signed checksums")]
     ChecksumMismatch,
+    /// A name that is not a plain file name.
+    #[error("{0} is not an acceptable file name")]
+    Unacceptable(String),
     /// The staging folder is missing, or others could write in it.
     #[error("{0} is not a safe staging folder")]
     UnsafeStaging(String),
@@ -112,8 +95,19 @@ impl PackageInstaller for SystemInstaller {
         // The helper runs with a private umask for what it creates itself; the
         // package manager and the hooks it runs get the usual one.
         rustix::process::umask(Mode::from_raw_mode(PACKAGE_MANAGER_UMASK));
+        // The helper's standard output is the socket the answer goes back on:
+        // what the package manager prints goes to the log (standard error).
+        let log = io::stderr()
+            .as_fd()
+            .try_clone_to_owned()
+            .map_err(|error| format!("cannot reach the log: {error}"))?;
         let status = install_command(format, package)
             .stdin(Stdio::null())
+            .stdout(Stdio::from(
+                log.try_clone()
+                    .map_err(|error| format!("cannot reach the log: {error}"))?,
+            ))
+            .stderr(Stdio::from(log))
             .status()
             .map_err(|error| format!("cannot run the package manager: {error}"))?;
         if status.success() {
@@ -167,43 +161,40 @@ pub struct Environment<'a> {
     /// Installs the checked package.
     pub installer: &'a dyn PackageInstaller,
     /// Folder under which the checked package is staged: it must already
-    /// exist (the package ships it), belong to `staging_owner` and be
+    /// exist (systemd makes it for the unit), belong to `staging_owner` and be
     /// writable by nobody else.
     pub staging_root: &'a Path,
     /// Uid that must own `staging_root`: root, except in tests.
     pub staging_owner: u32,
 }
 
-/// Verifies and installs the release downloaded in `download_dir`; returns
-/// the version installed.
+/// Verifies and installs the release in `bundle`; returns the version
+/// installed.
 ///
 /// # Errors
 ///
 /// [`ApplyError`], without having installed anything, unless the package
 /// manager itself fails.
-pub fn apply(download_dir: &Path, environment: &Environment<'_>) -> Result<Version, ApplyError> {
-    let directory = open_download_dir(download_dir)?;
-    let checksums = read_plain_file(&directory, CHECKSUMS_FILE, MAX_CHECKSUMS_BYTES)?;
-    let signature = read_plain_file(&directory, SIGNATURE_FILE, MAX_SIGNATURE_BYTES)?;
-    environment.key.verify(&checksums, &signature)?;
+pub fn apply(bundle: &Bundle, environment: &Environment<'_>) -> Result<Version, ApplyError> {
+    environment
+        .key
+        .verify(&bundle.checksums, &bundle.signature)?;
 
     let format = environment
         .packages
         .installed_format()
         .ok_or(ApplyError::NotPackaged)?;
-    let (name, version, expected) = pick_package(&checksums, format)?;
+    let (name, version, expected) = pick_package(&bundle.checksums, format)?;
     if version <= environment.installed {
         return Err(ApplyError::NotNewer {
             offered: version,
             installed: environment.installed,
         });
     }
-
-    let package = read_plain_file(&directory, &name, MAX_PACKAGE_BYTES)?;
-    if hex(&Sha256::digest(&package)) != expected {
+    if hex(&Sha256::digest(&bundle.package)) != expected {
         return Err(ApplyError::ChecksumMismatch);
     }
-    install_staged(environment, format, &name, &package)?;
+    install_staged(environment, format, &name, &bundle.package)?;
     Ok(version)
 }
 
@@ -304,61 +295,6 @@ fn check_staging_root(root: &Path, owner: u32) -> Result<(), ApplyError> {
     Ok(())
 }
 
-/// Opens the download folder once; every file is then read through this
-/// descriptor, so the folder cannot be swapped for another afterwards. The
-/// path must be absolute (`pkexec` starts in `/root`).
-fn open_download_dir(dir: &Path) -> Result<OwnedFd, ApplyError> {
-    let name = dir.display().to_string();
-    if !dir.is_absolute() {
-        return Err(ApplyError::Unacceptable(name));
-    }
-    rustix::fs::open(
-        dir,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|errno| ApplyError::Read {
-        name,
-        source: errno.into(),
-    })
-}
-
-/// Reads `name` from the download folder (at most `limit` bytes): a regular
-/// file, opened without following a link and without blocking (a FIFO would
-/// otherwise hold the helper), and checked on the descriptor actually opened.
-fn read_plain_file(directory: &OwnedFd, name: &str, limit: u64) -> Result<Vec<u8>, ApplyError> {
-    let read_error = |source: io::Error| ApplyError::Read {
-        name: name.to_owned(),
-        source,
-    };
-    let unacceptable = || ApplyError::Unacceptable(name.to_owned());
-    let descriptor = rustix::fs::openat(
-        directory,
-        name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|errno| match errno {
-        // A link, or a device node that refuses to open that way.
-        Errno::LOOP | Errno::NXIO => unacceptable(),
-        other => read_error(other.into()),
-    })?;
-    let status = rustix::fs::fstat(&descriptor).map_err(|errno| read_error(errno.into()))?;
-    let is_file = FileType::from_raw_mode(status.st_mode) == FileType::RegularFile;
-    if !is_file || u64::try_from(status.st_size).map_or(true, |size| size > limit) {
-        return Err(unacceptable());
-    }
-    let mut bytes = Vec::new();
-    File::from(descriptor)
-        .take(limit + 1)
-        .read_to_end(&mut bytes)
-        .map_err(read_error)?;
-    if bytes.len() as u64 > limit {
-        return Err(unacceptable());
-    }
-    Ok(bytes)
-}
-
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut text, byte| {
@@ -413,50 +349,63 @@ mod tests {
         }
     }
 
+    /// Checks the modes of the staged folder and file while "installing".
+    struct ModeRecorder;
+
+    impl PackageInstaller for ModeRecorder {
+        fn install(&self, _format: PackageFormat, package: &Path) -> Result<(), String> {
+            let file_mode = fs::metadata(package).unwrap().permissions().mode() & 0o777;
+            let dir_mode = fs::metadata(package.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!((dir_mode, file_mode), (STAGING_DIR_MODE, STAGED_FILE_MODE));
+            Ok(())
+        }
+    }
+
     struct Release {
-        download: TempDir,
         staging: TempDir,
         key: ReleaseKey,
         signing: ed25519_dalek::SigningKey,
-        package: Vec<u8>,
+        bundle: Bundle,
+    }
+
+    fn checksums_for(format: PackageFormat, version: Version, bytes: &[u8]) -> String {
+        format!(
+            "{}  {}\n",
+            hex(&Sha256::digest(bytes)),
+            format.file_name(version)
+        )
     }
 
     impl Release {
         /// A correctly signed release of `OFFERED`, for the deb format.
         fn signed() -> Self {
             let (signing, pem) = test_keys(1);
-            let release = Self {
-                download: TempDir::new().unwrap(),
+            let mut release = Self {
                 staging: TempDir::new().unwrap(),
                 key: ReleaseKey::from_pem(&pem).unwrap(),
                 signing,
-                package: b"package bytes".to_vec(),
+                bundle: Bundle {
+                    checksums: Vec::new(),
+                    signature: Vec::new(),
+                    package: b"package bytes".to_vec(),
+                },
             };
-            release.write_package(PackageFormat::Deb, OFFERED, &release.package);
-            release.write_checksums(&Release::checksums_for(
+            release.sign(&checksums_for(
                 PackageFormat::Deb,
                 OFFERED,
-                &release.package,
+                b"package bytes",
             ));
             release
         }
 
-        fn checksums_for(format: PackageFormat, version: Version, bytes: &[u8]) -> String {
-            format!(
-                "{}  {}\n",
-                hex(&Sha256::digest(bytes)),
-                format.file_name(version)
-            )
-        }
-
-        fn write_package(&self, format: PackageFormat, version: Version, bytes: &[u8]) {
-            fs::write(self.download.path().join(format.file_name(version)), bytes).unwrap();
-        }
-
-        fn write_checksums(&self, text: &str) {
-            fs::write(self.download.path().join(CHECKSUMS_FILE), text).unwrap();
-            let signature = self.signing.sign(text.as_bytes()).to_bytes();
-            fs::write(self.download.path().join(SIGNATURE_FILE), signature).unwrap();
+        /// Replaces the checksums by `text`, correctly signed.
+        fn sign(&mut self, text: &str) {
+            self.bundle.checksums = text.as_bytes().to_vec();
+            self.bundle.signature = self.signing.sign(text.as_bytes()).to_bytes().to_vec();
         }
 
         fn apply(
@@ -465,7 +414,7 @@ mod tests {
             installer: &RecordingInstaller,
         ) -> Result<Version, ApplyError> {
             apply(
-                self.download.path(),
+                &self.bundle,
                 &Environment {
                     key: &self.key,
                     installed: INSTALLED,
@@ -490,7 +439,7 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, PackageFormat::Deb);
         assert_eq!(calls[0].1, PackageFormat::Deb.file_name(OFFERED));
-        assert_eq!(calls[0].2, release.package);
+        assert_eq!(calls[0].2, release.bundle.package);
         // Nothing is left behind once the staging folder is dropped.
         assert_eq!(fs::read_dir(release.staging.path()).unwrap().count(), 0);
     }
@@ -508,15 +457,9 @@ mod tests {
 
     #[test]
     fn a_forged_signature_installs_nothing() {
-        let release = Release::signed();
+        let mut release = Release::signed();
         let (other, _) = test_keys(2);
-        let signature =
-            other.sign(&fs::read(release.download.path().join(CHECKSUMS_FILE)).unwrap());
-        fs::write(
-            release.download.path().join(SIGNATURE_FILE),
-            signature.to_bytes(),
-        )
-        .unwrap();
+        release.bundle.signature = other.sign(&release.bundle.checksums).to_bytes().to_vec();
         let installer = RecordingInstaller::default();
         let error = release
             .apply(Some(PackageFormat::Deb), &installer)
@@ -530,11 +473,8 @@ mod tests {
 
     #[test]
     fn edited_checksums_no_longer_match_their_signature() {
-        let release = Release::signed();
-        let path = release.download.path().join(CHECKSUMS_FILE);
-        let mut text = fs::read_to_string(&path).unwrap();
-        text.push('\n');
-        fs::write(&path, text).unwrap();
+        let mut release = Release::signed();
+        release.bundle.checksums.push(b'\n');
         let installer = RecordingInstaller::default();
         let error = release
             .apply(Some(PackageFormat::Deb), &installer)
@@ -543,9 +483,26 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_signature_is_refused() {
+        let mut release = Release::signed();
+        release.bundle.signature.truncate(10);
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ApplyError::Signature(SignatureError::MalformedSignature)
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_swapped_package_fails_the_checksum() {
-        let release = Release::signed();
-        release.write_package(PackageFormat::Deb, OFFERED, b"malicious bytes");
+        let mut release = Release::signed();
+        release.bundle.package = b"malicious bytes".to_vec();
         let installer = RecordingInstaller::default();
         let error = release
             .apply(Some(PackageFormat::Deb), &installer)
@@ -557,12 +514,11 @@ mod tests {
     #[test]
     fn an_older_or_same_signed_release_is_refused() {
         for version in [INSTALLED, Version::new(0, 9, 0)] {
-            let release = Release::signed();
-            release.write_package(PackageFormat::Deb, version, &release.package);
-            release.write_checksums(&Release::checksums_for(
+            let mut release = Release::signed();
+            release.sign(&checksums_for(
                 PackageFormat::Deb,
                 version,
-                &release.package,
+                b"package bytes",
             ));
             let installer = RecordingInstaller::default();
             let error = release
@@ -571,6 +527,33 @@ mod tests {
             assert!(matches!(error, ApplyError::NotNewer { .. }), "{error}");
             assert!(installer.installed.borrow().is_empty());
         }
+    }
+
+    #[test]
+    fn the_version_is_judged_before_the_package_is_looked_at() {
+        let mut release = Release::signed();
+        release.sign(&checksums_for(
+            PackageFormat::Deb,
+            INSTALLED,
+            b"package bytes",
+        ));
+        // Not even the right package: the (not newer) version is what is refused.
+        release.bundle.package = b"other".to_vec();
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::NotNewer { .. }), "{error}");
+    }
+
+    #[test]
+    fn the_signature_is_checked_before_anything_else() {
+        // Forged signature on checksums that also list nothing usable.
+        let mut release = Release::signed();
+        release.bundle.checksums = b"not even checksums".to_vec();
+        let installer = RecordingInstaller::default();
+        let error = release.apply(None, &installer).unwrap_err();
+        assert!(matches!(error, ApplyError::Signature(_)), "{error}");
     }
 
     #[test]
@@ -583,11 +566,22 @@ mod tests {
 
     #[test]
     fn two_packages_of_one_format_are_ambiguous() {
-        let release = Release::signed();
-        let first = Release::checksums_for(PackageFormat::Deb, OFFERED, &release.package);
-        let second =
-            Release::checksums_for(PackageFormat::Deb, Version::new(1, 2, 0), &release.package);
-        release.write_checksums(&format!("{first}{second}"));
+        let mut release = Release::signed();
+        let first = checksums_for(PackageFormat::Deb, OFFERED, b"package bytes");
+        let second = checksums_for(PackageFormat::Deb, Version::new(1, 2, 0), b"package bytes");
+        release.sign(&format!("{first}{second}"));
+        let installer = RecordingInstaller::default();
+        let error = release
+            .apply(Some(PackageFormat::Deb), &installer)
+            .unwrap_err();
+        assert!(matches!(error, ApplyError::NoPackage), "{error}");
+    }
+
+    #[test]
+    fn the_same_package_listed_twice_is_ambiguous() {
+        let mut release = Release::signed();
+        let line = checksums_for(PackageFormat::Deb, OFFERED, b"package bytes");
+        release.sign(&format!("{line}{line}"));
         let installer = RecordingInstaller::default();
         let error = release
             .apply(Some(PackageFormat::Deb), &installer)
@@ -597,14 +591,15 @@ mod tests {
 
     #[test]
     fn checksum_lines_with_bad_hashes_or_paths_are_ignored() {
-        let release = Release::signed();
         let name = PackageFormat::Deb.file_name(OFFERED);
         for line in [
             format!("{}  {name}\n", "G".repeat(64)),
+            format!("{}  {name}\n", hex(&Sha256::digest(b"x")).to_uppercase()),
             format!("abcd  {name}\n"),
             format!("{}  ../{name}\n", "a".repeat(64)),
         ] {
-            release.write_checksums(&line);
+            let mut release = Release::signed();
+            release.sign(&line);
             let installer = RecordingInstaller::default();
             let error = release
                 .apply(Some(PackageFormat::Deb), &installer)
@@ -615,11 +610,11 @@ mod tests {
 
     #[test]
     fn binary_mode_checksum_lines_are_understood() {
-        let release = Release::signed();
+        let mut release = Release::signed();
         let name = PackageFormat::Deb.file_name(OFFERED);
-        release.write_checksums(&format!(
+        release.sign(&format!(
             "{} *{name}\n",
-            hex(&Sha256::digest(&release.package))
+            hex(&Sha256::digest(b"package bytes"))
         ));
         let installer = RecordingInstaller::default();
         assert_eq!(
@@ -629,79 +624,11 @@ mod tests {
     }
 
     #[test]
-    fn symbolic_links_and_oversized_files_are_refused() {
-        let release = Release::signed();
-        let target = release.download.path().join("elsewhere");
-        fs::write(&target, b"x").unwrap();
-        let link = release.download.path().join(SIGNATURE_FILE);
-        fs::remove_file(&link).unwrap();
-        symlink(&target, &link).unwrap();
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
-
-        fs::remove_file(&link).unwrap();
-        fs::write(&link, [0_u8; 65]).unwrap();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
-    }
-
-    #[test]
-    fn missing_files_are_reported_by_name() {
-        let release = Release::signed();
-        fs::remove_file(release.download.path().join(SIGNATURE_FILE)).unwrap();
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(error.to_string().contains(SIGNATURE_FILE), "{error}");
-    }
-
-    #[test]
-    fn the_signature_is_checked_before_anything_else_is_read() {
-        // Forged signature, and neither the package nor anything else present:
-        // the verdict is the signature's, not a missing file's.
-        let release = Release::signed();
-        fs::remove_file(
-            release
-                .download
-                .path()
-                .join(PackageFormat::Deb.file_name(OFFERED)),
-        )
-        .unwrap();
-        fs::write(release.download.path().join(SIGNATURE_FILE), [1_u8; 64]).unwrap();
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Signature(_)), "{error}");
-    }
-
-    #[test]
-    fn the_version_is_judged_before_the_package_is_read() {
-        let release = Release::signed();
-        release.write_checksums(&Release::checksums_for(
-            PackageFormat::Deb,
-            INSTALLED,
-            &release.package,
-        ));
-        // The package of that (not newer) version is absent.
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::NotNewer { .. }), "{error}");
-    }
-
-    #[test]
-    fn the_same_package_listed_twice_is_ambiguous() {
-        let release = Release::signed();
-        let line = Release::checksums_for(PackageFormat::Deb, OFFERED, &release.package);
-        release.write_checksums(&format!("{line}{line}"));
+    fn non_text_checksums_are_refused() {
+        let mut release = Release::signed();
+        let bytes = vec![0xff, 0xfe, b'\n'];
+        release.bundle.signature = release.signing.sign(&bytes).to_bytes().to_vec();
+        release.bundle.checksums = bytes;
         let installer = RecordingInstaller::default();
         let error = release
             .apply(Some(PackageFormat::Deb), &installer)
@@ -710,68 +637,16 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_hashes_are_not_accepted() {
+    fn a_failing_package_manager_is_reported() {
         let release = Release::signed();
-        let line = Release::checksums_for(PackageFormat::Deb, OFFERED, &release.package);
-        release.write_checksums(&line.to_uppercase().replace(
-            "HUBERGAMOF_1.1.0_AMD64.DEB",
-            &PackageFormat::Deb.file_name(OFFERED),
-        ));
-        let installer = RecordingInstaller::default();
+        let installer = RecordingInstaller {
+            fail: true,
+            ..RecordingInstaller::default()
+        };
         let error = release
             .apply(Some(PackageFormat::Deb), &installer)
             .unwrap_err();
-        assert!(matches!(error, ApplyError::NoPackage), "{error}");
-    }
-
-    #[test]
-    fn a_directory_or_a_fifo_instead_of_a_file_is_refused_without_blocking() {
-        let release = Release::signed();
-        let checksums = release.download.path().join(CHECKSUMS_FILE);
-        fs::remove_file(&checksums).unwrap();
-        fs::create_dir(&checksums).unwrap();
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
-
-        fs::remove_dir(&checksums).unwrap();
-        let made = Command::new("mkfifo").arg(&checksums).status().unwrap();
-        assert!(made.success());
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
-    }
-
-    #[test]
-    fn a_symbolic_link_for_the_package_is_refused() {
-        let release = Release::signed();
-        let package = release
-            .download
-            .path()
-            .join(PackageFormat::Deb.file_name(OFFERED));
-        let target = release.download.path().join("elsewhere");
-        fs::rename(&package, &target).unwrap();
-        symlink(&target, &package).unwrap();
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
-        assert!(installer.installed.borrow().is_empty());
-    }
-
-    #[test]
-    fn the_size_limits_are_exact() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("file");
-        fs::write(&path, vec![0_u8; 10]).unwrap();
-        let directory = open_download_dir(dir.path()).unwrap();
-        assert_eq!(read_plain_file(&directory, "file", 10).unwrap().len(), 10);
-        let error = read_plain_file(&directory, "file", 9).unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
+        assert!(matches!(error, ApplyError::Install(message) if message == "boom"));
     }
 
     #[test]
@@ -795,58 +670,6 @@ mod tests {
             );
         }
         assert!(!staging.join("escape").exists());
-    }
-
-    /// Checks the modes of the staged folder and file while "installing".
-    struct ModeRecorder;
-
-    impl PackageInstaller for ModeRecorder {
-        fn install(&self, _format: PackageFormat, package: &Path) -> Result<(), String> {
-            let file_mode = fs::metadata(package).unwrap().permissions().mode() & 0o777;
-            let dir_mode = fs::metadata(package.parent().unwrap())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777;
-            assert_eq!((dir_mode, file_mode), (STAGING_DIR_MODE, STAGED_FILE_MODE));
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn a_relative_download_folder_or_a_link_to_one_is_refused() {
-        let error = open_download_dir(Path::new("relative/dir")).unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
-
-        let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("real");
-        fs::create_dir(&real).unwrap();
-        let link = dir.path().join("link");
-        symlink(&real, &link).unwrap();
-        assert!(open_download_dir(&real).is_ok());
-        assert!(open_download_dir(&link).is_err());
-        assert!(open_download_dir(&dir.path().join("absent")).is_err());
-    }
-
-    #[test]
-    fn a_link_to_a_fifo_is_refused_without_blocking() {
-        let release = Release::signed();
-        let checksums = release.download.path().join(CHECKSUMS_FILE);
-        fs::remove_file(&checksums).unwrap();
-        let fifo = release.download.path().join("pipe");
-        assert!(
-            Command::new("mkfifo")
-                .arg(&fifo)
-                .status()
-                .unwrap()
-                .success()
-        );
-        symlink(&fifo, &checksums).unwrap();
-        let installer = RecordingInstaller::default();
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Unacceptable(_)), "{error}");
     }
 
     #[test]
@@ -883,7 +706,7 @@ mod tests {
         let owner = owner_of(&real);
         for (root, owner) in [(&missing, owner), (&link, owner), (&real, owner + 1)] {
             let error = apply(
-                release.download.path(),
+                &release.bundle,
                 &Environment {
                     key: &release.key,
                     installed: INSTALLED,
@@ -919,7 +742,7 @@ mod tests {
 
     #[test]
     fn the_package_managers_are_called_without_a_shell_with_the_file_last() {
-        let package = Path::new("/var/lib/hubergamof/update-x/hubergamof_1.1.0_amd64.deb");
+        let package = Path::new("/run/hubergamof-update/update-x/hubergamof_1.1.0_amd64.deb");
         let deb = install_command(PackageFormat::Deb, package);
         assert_eq!(deb.get_program(), "apt-get");
         let arguments: Vec<_> = deb.get_args().collect();
@@ -947,18 +770,5 @@ mod tests {
         );
         // An absolute path can never be taken for an option.
         assert!(package.is_absolute());
-    }
-
-    #[test]
-    fn a_failing_package_manager_is_reported() {
-        let release = Release::signed();
-        let installer = RecordingInstaller {
-            fail: true,
-            ..RecordingInstaller::default()
-        };
-        let error = release
-            .apply(Some(PackageFormat::Deb), &installer)
-            .unwrap_err();
-        assert!(matches!(error, ApplyError::Install(message) if message == "boom"));
     }
 }

@@ -48,12 +48,31 @@ hubergamof_in_graphical_sessions() {
 	done
 }
 
+HUBERGAMOF_UPDATE_SOCKET="hubergamof-update.socket"
+
+# Le socket du service de mise à jour (unité système) : activé et démarré, sans
+# effet s'il tourne déjà (une mise à jour en cours le garde : aucun redémarrage).
+hubergamof_enable_update_socket() {
+	command -v systemctl >/dev/null 2>&1 || return 0
+	hubergamof_systemd_running || return 0
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	systemctl enable --now "$HUBERGAMOF_UPDATE_SOCKET" >/dev/null 2>&1 \
+		|| hubergamof_note "socket des mises à jour non activé : « systemctl enable --now $HUBERGAMOF_UPDATE_SOCKET »."
+}
+
+hubergamof_disable_update_socket() {
+	command -v systemctl >/dev/null 2>&1 || return 0
+	hubergamof_systemd_running || return 0
+	systemctl disable --now "$HUBERGAMOF_UPDATE_SOCKET" >/dev/null 2>&1 || true
+}
+
 # Usage : hubergamof_post_install install|upgrade
 # install : le service est démarré dans les sessions ouvertes. upgrade : il n'est
 # redémarré que là où il tourne déjà (un service arrêté volontairement le reste).
 hubergamof_post_install() {
 	hubergamof_mode="${1:-install}"
 	hubergamof_reload_udev
+	hubergamof_enable_update_socket
 	if hubergamof_systemd_running && command -v systemctl >/dev/null 2>&1; then
 		systemctl --global enable "$HUBERGAMOF_UNIT" >/dev/null 2>&1 \
 			|| hubergamof_note "activation globale du service impossible : « systemctl --user enable --now $HUBERGAMOF_UNIT »."
@@ -70,6 +89,7 @@ hubergamof_post_install() {
 }
 
 hubergamof_pre_remove() {
+	hubergamof_disable_update_socket
 	hubergamof_in_graphical_sessions stop "$HUBERGAMOF_UNIT"
 	if hubergamof_systemd_running && command -v systemctl >/dev/null 2>&1; then
 		systemctl --global disable "$HUBERGAMOF_UNIT" >/dev/null 2>&1 || true
@@ -77,8 +97,6 @@ hubergamof_pre_remove() {
 }
 
 hubergamof_post_remove() {
-	# Ce qu'une mise à jour interrompue a laissé dans le dossier de l'assistant.
-	rm -rf -- /var/lib/hubergamof/update-* 2>/dev/null || true
 	hubergamof_in_graphical_sessions daemon-reload
 	hubergamof_reload_udev
 }
