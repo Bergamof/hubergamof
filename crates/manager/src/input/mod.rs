@@ -23,6 +23,16 @@ pub trait Injector: Send {
     /// The I/O error of the virtual device.
     fn send(&mut self, key: Key, pressed: bool) -> io::Result<()>;
 
+    /// Moves the pointer one pixel and back, so that the desktop reports where
+    /// it is to the window under it (a compositor that gives a client the
+    /// position of the pointer only when it moves). Does nothing by default.
+    ///
+    /// # Errors
+    /// See [`Injector::send`].
+    fn nudge_pointer(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Presses then releases a key or a button.
     ///
     /// # Errors

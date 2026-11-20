@@ -431,8 +431,13 @@ async fn run_mouse_test(model: Option<MouseModelArg>, action: Action) -> Result<
 /// Shows the radial menu for a few seconds (`radial-preview`).
 async fn run_radial_preview(seconds: u64) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        radial::preview::run(Duration::from_secs(seconds), &mut std::io::stdout().lock())
-            .context("cannot show the radial menu")
+        let actions = ButtonActions::uinput(watch::channel(false).1);
+        radial::preview::run(
+            Duration::from_secs(seconds),
+            &mut std::io::stdout().lock(),
+            || actions.nudge_pointer(),
+        )
+        .context("cannot show the radial menu")
     })
     .await
     .context("the radial menu task failed")?
@@ -644,12 +649,17 @@ fn start_mouse_service(
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
     let service = serves_mice(cli).then(|| {
         let locked = services.screen_lock.watch();
+        let actions = ButtonActions::uinput(locked.clone());
         let menu = RadialService::start(
             hub.subscribe_radial_menu(),
-            locked.clone(),
+            locked,
             &tokio::runtime::Handle::current(),
+            {
+                let actions = actions.clone();
+                move || actions.nudge_pointer()
+            },
         );
-        let actions = ButtonActions::uinput(locked).with_radial(menu.handle());
+        let actions = actions.with_radial(menu.handle());
         let supervisor = MouseSupervisor::start(
             HidrawSource,
             services.store.clone(),

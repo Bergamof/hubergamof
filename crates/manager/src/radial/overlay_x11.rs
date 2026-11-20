@@ -177,6 +177,8 @@ impl X11Overlay {
             renderer: TextRenderer::new()?,
             events: Arc::clone(&events),
             wake_atom: waker.atom,
+            // Under a Wayland session X clients are XWayland's.
+            trust_enter: std::env::var_os("WAYLAND_DISPLAY").is_none(),
             ticker: Arc::clone(&ticker),
             shown: None,
             mapped: false,
@@ -464,11 +466,12 @@ enum Seen {
     Ignored,
 }
 
-/// What `event` is. Another X client can send any event to any window
+/// What `event` is, `trust_enter` telling whether the position of an enter can
+/// be taken for where the pointer is. Another X client can send any event to any window
 /// (`SendEvent`), and x11rb hands it over like a real one: only what the server
 /// generated counts, and the one message of ours, which is of a type nobody else
 /// has a reason to use.
-fn interpret(event: &Event, wake: Atom) -> Seen {
+fn interpret(event: &Event, wake: Atom, trust_enter: bool) -> Seen {
     if let Event::ClientMessage(message) = event {
         return if message.type_ == wake {
             Seen::Wake
@@ -480,7 +483,10 @@ fn interpret(event: &Event, wake: Atom) -> Seen {
         return Seen::Ignored;
     }
     match event {
-        Event::EnterNotify(event) => Seen::Pointer(Point::new(
+        // The position that comes with the window being shown under the
+        // pointer is the right one on Xorg; under XWayland it is the last the X
+        // clients saw, which can be anywhere.
+        Event::EnterNotify(event) if trust_enter => Seen::Pointer(Point::new(
             f64::from(event.event_x),
             f64::from(event.event_y),
         )),
@@ -515,6 +521,8 @@ struct State {
     renderer: TextRenderer,
     events: Report,
     wake_atom: Atom,
+    /// The position of an enter is where the pointer is (Xorg, not `XWayland`).
+    trust_enter: bool,
     ticker: Arc<Ticker>,
     shown: Option<Shown>,
     /// The window manager has shown the window (and not taken it away since).
@@ -544,7 +552,7 @@ impl State {
             }
             let seen: Vec<Seen> = batch
                 .iter()
-                .map(|event| interpret(event, self.wake_atom))
+                .map(|event| interpret(event, self.wake_atom, self.trust_enter))
                 .collect();
             if !self.handle(seen) {
                 return Ok(());
@@ -898,15 +906,15 @@ mod tests {
     fn what_the_server_generates_is_taken() {
         let motion = parsed(&raw_event(MOTION_NOTIFY, 0, 120, 340));
         assert_eq!(
-            interpret(&motion, WAKE),
+            interpret(&motion, WAKE, true),
             Seen::Pointer(Point::new(120.0, 340.0))
         );
         let click = parsed(&raw_event(BUTTON_PRESS, 1, 0, 0));
-        assert_eq!(interpret(&click, WAKE), Seen::Click);
+        assert_eq!(interpret(&click, WAKE, true), Seen::Click);
         let escape = parsed(&raw_event(KEY_PRESS, KEYCODE_ESCAPE, 0, 0));
-        assert_eq!(interpret(&escape, WAKE), Seen::Escape);
+        assert_eq!(interpret(&escape, WAKE, true), Seen::Escape);
         let other_key = parsed(&raw_event(KEY_PRESS, KEYCODE_ESCAPE + 1, 0, 0));
-        assert_eq!(interpret(&other_key, WAKE), Seen::Ignored);
+        assert_eq!(interpret(&other_key, WAKE, true), Seen::Ignored);
     }
 
     #[test]
@@ -919,8 +927,25 @@ mod tests {
             (KEY_PRESS, KEYCODE_ESCAPE),
         ] {
             let forged = parsed(&raw_event(kind | SENT_BY_A_CLIENT, detail, 10, 10));
-            assert_eq!(interpret(&forged, WAKE), Seen::Ignored, "kind {kind}");
+            assert_eq!(interpret(&forged, WAKE, true), Seen::Ignored, "kind {kind}");
         }
+    }
+
+    #[test]
+    fn the_position_of_an_enter_is_taken_only_where_it_can_be_trusted() {
+        use x11rb::protocol::xproto::EnterNotifyEvent;
+        use x11rb::x11_utils::TryParse;
+        const ENTER_NOTIFY: u8 = 7;
+        let enter = Event::EnterNotify(
+            EnterNotifyEvent::try_parse(&raw_event(ENTER_NOTIFY, 0, 55, 66))
+                .unwrap()
+                .0,
+        );
+        assert_eq!(
+            interpret(&enter, WAKE, true),
+            Seen::Pointer(Point::new(55.0, 66.0))
+        );
+        assert_eq!(interpret(&enter, WAKE, false), Seen::Ignored);
     }
 
     #[test]
@@ -928,8 +953,8 @@ mod tests {
         use x11rb::protocol::xproto::ClientMessageEvent;
         let ours = Event::ClientMessage(ClientMessageEvent::new(32, 1, WAKE, [0_u32; 5]));
         let theirs = Event::ClientMessage(ClientMessageEvent::new(32, 1, WAKE + 1, [0_u32; 5]));
-        assert_eq!(interpret(&ours, WAKE), Seen::Wake);
-        assert_eq!(interpret(&theirs, WAKE), Seen::Ignored);
+        assert_eq!(interpret(&ours, WAKE, true), Seen::Wake);
+        assert_eq!(interpret(&theirs, WAKE, true), Seen::Ignored);
     }
 
     #[test]

@@ -49,8 +49,9 @@ impl UinputInjector {
         let device = UInputHandle::new(file);
         device.set_evbit(EventKind::Key)?;
         device.set_evbit(EventKind::Synchronize)?;
-        // Relative axes, declared and never used: a device with buttons but no
-        // axis is taken for a keyboard, whose buttons the desktop ignores.
+        // Relative axes, so that the desktop takes the device for a mouse (a
+        // device with buttons but no axis is a keyboard, whose buttons it
+        // ignores); only used for a one pixel nudge of the pointer.
         device.set_evbit(EventKind::Relative)?;
         device.set_relbit(RelativeAxis::X)?;
         device.set_relbit(RelativeAxis::Y)?;
@@ -77,7 +78,37 @@ impl UinputInjector {
     }
 }
 
+/// Linux `REL_X` step of a nudge, in device units: the smallest there is.
+const NUDGE_STEP: i32 = 1;
+
+impl UinputInjector {
+    fn write_all(&self, events: &[sys::input_event]) -> io::Result<()> {
+        let written = self.device.write(events)?;
+        if written == events.len() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "the virtual device took only part of the events",
+            ))
+        }
+    }
+
+    fn move_pointer_by(&self, dx: i32) -> io::Result<()> {
+        let time = EventTime::default();
+        self.write_all(&[
+            InputEvent::from(input_linux::RelativeEvent::new(time, RelativeAxis::X, dx)).into_raw(),
+            InputEvent::from(SynchronizeEvent::report(time)).into_raw(),
+        ])
+    }
+}
+
 impl Injector for UinputInjector {
+    fn nudge_pointer(&mut self) -> io::Result<()> {
+        self.move_pointer_by(NUDGE_STEP)?;
+        self.move_pointer_by(-NUDGE_STEP)
+    }
+
     fn send(&mut self, key: Key, pressed: bool) -> io::Result<()> {
         let time = EventTime::default();
         let events = [
@@ -188,6 +219,23 @@ mod tests {
                 (key_event, code, 1),
                 (report, 0, 0),
                 (key_event, code, 0),
+                (report, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_nudge_is_one_unit_right_then_one_left_each_with_its_report() {
+        let relative = u16::try_from(sys::EV_REL).unwrap();
+        let report = u16::try_from(sys::EV_SYN).unwrap();
+        let axis = u16::try_from(sys::REL_X).unwrap();
+        let events = written_by(|injector| injector.nudge_pointer().unwrap());
+        assert_eq!(
+            events,
+            [
+                (relative, axis, 1),
+                (report, 0, 0),
+                (relative, axis, -1),
                 (report, 0, 0),
             ]
         );

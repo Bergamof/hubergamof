@@ -112,6 +112,15 @@ impl ButtonActions {
         device.as_mut().map(|injector| job(injector.as_mut()))
     }
 
+    /// Moves the pointer one pixel and back, for a window that waits to hear
+    /// where it is. Nothing while locked. A failure is only reported: the menu
+    /// then waits for the person to move the mouse.
+    pub fn nudge_pointer(&self) {
+        if let Some(Err(error)) = self.with_device(|device| device.nudge_pointer()) {
+            tracing::debug!(%error, "cannot nudge the pointer for the radial menu");
+        }
+    }
+
     /// Releases a key held down, if the device is still there (a closed
     /// device has released everything). A release that fails closes the device
     /// for the same reason: the system then lets go of the key.
@@ -585,6 +594,31 @@ mod tests {
         dispatcher.handle(release(BACK), Some(&click));
         dispatcher.handle(press(BACK), Some(&click));
         assert_eq!(*attempts.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn a_nudge_goes_to_the_device_and_nothing_goes_while_locked() {
+        struct Nudged(Arc<Mutex<u32>>);
+        impl Injector for Nudged {
+            fn send(&mut self, _: Key, _: bool) -> io::Result<()> {
+                Ok(())
+            }
+            fn nudge_pointer(&mut self) -> io::Result<()> {
+                *self.0.lock().unwrap() += 1;
+                Ok(())
+            }
+        }
+        let nudges = Arc::new(Mutex::new(0));
+        let (lock, locked) = watch::channel(false);
+        let actions = ButtonActions::new(locked, {
+            let nudges = Arc::clone(&nudges);
+            move || Ok(Box::new(Nudged(Arc::clone(&nudges))) as Box<dyn Injector>)
+        });
+        actions.nudge_pointer();
+        assert_eq!(*nudges.lock().unwrap(), 1);
+        lock.send_replace(true);
+        actions.nudge_pointer();
+        assert_eq!(*nudges.lock().unwrap(), 1, "nothing while locked");
     }
 
     fn left_click() -> ButtonAction {
