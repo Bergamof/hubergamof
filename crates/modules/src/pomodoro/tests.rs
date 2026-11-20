@@ -785,3 +785,38 @@ async fn pressing_the_notification_after_a_manual_start_does_not_pause() {
         .await;
     assert_eq!(pomodoro.module.key().state, KeyState::Active);
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_radial_actions_start_pause_skip_and_reset_the_timer() {
+    let mut pomodoro = Harness::new(&json!({}));
+    assert_eq!(pomodoro.module.on_radial_action("toggle").await, []);
+    assert_eq!(pomodoro.key().state, KeyState::Active, "started");
+    assert_eq!(pomodoro.module.on_radial_action("toggle").await, []);
+    assert_eq!(pomodoro.key().state, KeyState::Normal, "paused");
+
+    pomodoro.module.on_radial_action("toggle").await;
+    pomodoro.module.on_radial_action("skip").await;
+    assert_eq!(label(&pomodoro.key()), "05:00 Pause");
+    assert_eq!(pomodoro.key().state, KeyState::Active, "still running");
+
+    pomodoro.module.on_radial_action("reset").await;
+    assert_ready(&pomodoro.widget(), "Focus 1/4 · prêt", "25:00");
+    assert_eq!(pomodoro.key().state, KeyState::Normal);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unknown_radial_action_changes_nothing() {
+    let mut pomodoro = Harness::new(&json!({}));
+    assert_eq!(pomodoro.module.on_radial_action("explode").await, []);
+    assert_eq!(pomodoro.module.on_radial_action("").await, []);
+    assert_eq!(pomodoro.key().state, KeyState::Normal);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_radial_action_closes_the_menu_it_replaces() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.press_dial().await;
+    assert!(pomodoro.popup().is_some());
+    pomodoro.module.on_radial_action("toggle").await;
+    assert!(pomodoro.popup().is_none());
+}

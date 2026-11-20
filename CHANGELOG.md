@@ -20,6 +20,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Souris Logitech MX, étape 6a (actions des modules) : choisir une entrée du menu circulaire lance l'action du module sur ton Stream Deck : Pomodoro (démarrer ou pause, passer, remise à zéro), Audio (couper le micro, couper le son), Teams (micro, caméra, raccrocher), IntelliJ (ouvrir). Les modules déclarent ces actions dans l'API (`radial_actions`, `on_radial_action`).
 - Menu circulaire sous GNOME : le menu se place d'après un vrai mouvement du pointeur (impulsion d'un pixel par le périphérique virtuel pendant qu'il attend sa position) au lieu de la position d'entrée de XWayland, qui pouvait être périmée.
 - Souris Logitech MX, étape 5e (GNOME/X11) : sur un bureau sans layer-shell (Ubuntu/GNOME), le menu circulaire s'affiche dans une fenêtre X11 plein écran transparente (Xorg, ou XWayland sous une session Wayland) ; le gestionnaire essaie d'abord layer-shell (KDE) puis X11. `hubergamof radial-preview` l'essaie aussi.
 - Souris Logitech MX, étape 5d (branchement) : avec `--mice`, le bouton lié au menu circulaire l'ouvre : appui court, le menu reste ouvert et un clic choisit ; appui maintenu, relâcher sur un pétale choisit. Il se ferme au verrouillage de l'ordinateur et si la souris disparaît bouton enfoncé. Choisir une entrée n'a pas encore d'effet (les actions des modules viennent ensuite).

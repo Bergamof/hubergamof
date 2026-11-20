@@ -670,3 +670,32 @@ async fn a_missing_or_old_pactl_shows_no_widget_and_recovers() {
         assert_eq!(harness.percent(), Some(40));
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_radial_actions_mute_the_default_microphone_and_the_default_output() {
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(harness.module.on_radial_action("mute-microphone").await, []);
+    harness.settle().await;
+    assert!(harness.audio.state().sources[0].muted);
+    assert!(!harness.speakers().muted, "the output is left alone");
+
+    assert_eq!(harness.module.on_radial_action("mute-speakers").await, []);
+    harness.settle().await;
+    assert!(harness.speakers().muted);
+
+    // Each one flips back.
+    harness.module.on_radial_action("mute-microphone").await;
+    harness.module.on_radial_action("mute-speakers").await;
+    harness.settle().await;
+    assert!(!harness.audio.state().sources[0].muted);
+    assert!(!harness.speakers().muted);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unknown_radial_action_mutes_nothing() {
+    let mut harness = Harness::start(&json!({})).await;
+    assert_eq!(harness.module.on_radial_action("unknown").await, []);
+    harness.settle().await;
+    assert!(!harness.audio.state().sources[0].muted);
+    assert!(!harness.speakers().muted);
+}

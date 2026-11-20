@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
     ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId,
-    PageItem, SettingField, SettingKind,
+    PageItem, RadialActionDescriptor, SettingField, SettingKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -108,6 +108,9 @@ impl IntellijFactory {
 }
 
 /// Kind, capabilities and settings of the IntelliJ module.
+/// Radial action of the module (`on_radial_action`).
+const RADIAL_OPEN: &str = "open";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: INTELLIJ_KIND.into(),
@@ -161,6 +164,14 @@ impl IntellijSettings {
 impl ModuleFactory for IntellijFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
+        vec![RadialActionDescriptor::new(
+            RADIAL_OPEN,
+            "Ouvrir IntelliJ",
+            "Lance IntelliJ, ou le met au premier plan.",
+        )]
     }
 
     fn icon(&self) -> Option<ImageData> {
@@ -380,6 +391,14 @@ impl Module for Intellij {
         if self.app.state().is_running() {
             return vec![Command::OpenPage(MAIN_PAGE.into())];
         }
+        self.launch(Opening::Application, ModuleSurface::HomeKey, Vec::new())
+    }
+
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        if action != RADIAL_OPEN {
+            return Vec::new();
+        }
+        self.app.acknowledge();
         self.launch(Opening::Application, ModuleSurface::HomeKey, Vec::new())
     }
 

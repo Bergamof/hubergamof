@@ -18,13 +18,13 @@ use hubergamof_manager::config_store::ConfigStore;
 use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::device::{self, DeviceDiscovery};
-use hubergamof_manager::engine::{EngineServices, Supervisor};
+use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::MouseHub;
-use hubergamof_manager::radial::{self, service::RadialService};
+use hubergamof_manager::radial::{self, actions::ModuleActions, service::RadialService};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
@@ -562,8 +562,11 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
-    let (mouse_hub, mice) = start_mouse_service(&cli, &services)?;
-    let supervisor = Supervisor::start(&discovery, services);
+    // The mice run the actions of the modules of the devices: the engines are
+    // known to the menu before the supervisor starts them.
+    let engines = EngineRegistry::default();
+    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines)?;
+    let supervisor = Supervisor::start_in(&discovery, services, engines);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
         discovery: discovery.clone(),
@@ -645,6 +648,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
 fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
+    engines: &EngineRegistry,
 ) -> Result<(MouseHub, Option<MiceService>)> {
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
     let service = serves_mice(cli).then(|| {
@@ -657,6 +661,11 @@ fn start_mouse_service(
             {
                 let actions = actions.clone();
                 move || actions.nudge_pointer()
+            },
+            {
+                let module_actions =
+                    ModuleActions::new(engines.clone(), tokio::runtime::Handle::current());
+                move |entry| module_actions.run(entry)
             },
         );
         let actions = actions.with_radial(menu.handle());

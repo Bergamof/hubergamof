@@ -118,13 +118,12 @@ pub enum RadialConfigError {
 }
 
 impl RadialMenuConfig {
-    /// The menu of a first start: Pomodoro, Teams, Audio and `IntelliJ` shown,
-    /// the other modules listed and hidden.
+    /// The menu of a first start: Pomodoro, Teams, Audio and `IntelliJ`, the
+    /// modules that offer radial actions, each doing its first action.
     ///
-    /// Provisional: the module and action ids are written here by hand until
-    /// the modules declare their radial entries (module API, step 4), from
-    /// which the host will build this menu; a test in the modules crate will
-    /// then check that each exists.
+    /// The ids are written here by hand, the protocol knowing no module; a test
+    /// of the manager checks that each exists among the actions the built-in
+    /// modules declare.
     #[must_use]
     pub fn default_menu() -> Self {
         let entry = |module: &str, action: &str, enabled: bool| RadialEntryConfig {
@@ -141,12 +140,9 @@ impl RadialMenuConfig {
             haptics: true,
             entries: vec![
                 entry("pomodoro", "toggle", true),
-                entry("teams", "mic", true),
-                entry("audio", "mute", true),
-                entry("intellij", "run", true),
-                entry("docker", "start", false),
-                entry("claude", "accept", false),
-                entry("notifications", "read", false),
+                entry("teams", "mute", true),
+                entry("audio", "mute-microphone", true),
+                entry("intellij", "open", true),
             ],
             revision: 0,
         }
@@ -209,7 +205,11 @@ mod tests {
         assert_eq!(menu.validate(), Ok(()));
         let shown: Vec<&str> = menu.shown().map(|entry| entry.module.0.as_str()).collect();
         assert_eq!(shown, ["pomodoro", "teams", "audio", "intellij"]);
-        assert_eq!(menu.entries.len(), 7);
+        assert_eq!(
+            menu.entries.len(),
+            4,
+            "only the modules that offer actions are listed"
+        );
     }
 
     #[test]

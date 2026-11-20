@@ -101,6 +101,8 @@ pub(super) struct Probe {
     pub(super) focus: Arc<Mutex<Option<usize>>>,
     /// Indexes of the items of the list pages that are ticked.
     pub(super) checked: Arc<Mutex<Vec<usize>>>,
+    /// Radial actions that reached list instances, in order.
+    pub(super) radial_actions: Arc<Mutex<Vec<String>>>,
 }
 
 /// Wall clock a test sets.
@@ -211,6 +213,15 @@ impl Module for List {
     async fn on_key_press(&mut self) -> Vec<Command> {
         self.presses += 1;
         vec![Command::OpenPage(LIST_PAGE.into())]
+    }
+
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        self.probe
+            .radial_actions
+            .lock()
+            .unwrap()
+            .push(action.to_owned());
+        Vec::new()
     }
 
     fn page(&self, page: &PageId) -> Option<PageContent> {

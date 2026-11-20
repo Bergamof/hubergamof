@@ -2,8 +2,7 @@
 //! window, and takes what the mice, the window, the configuration and the
 //! screen lock tell it, one event at a time.
 //!
-//! What a chosen entry does (the actions of the modules) comes later: for now
-//! the choice is only logged.
+//! What a chosen entry does is up to the `chooser` the service is given.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -127,6 +126,7 @@ impl RadialService {
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
         nudge: impl Fn() + Send + Sync + 'static,
+        chooser: impl Fn(&RadialEntryConfig) + Send + 'static,
     ) -> Self {
         Self::start_on(
             |events| {
@@ -140,6 +140,7 @@ impl RadialService {
                 }
             },
             Arc::new(nudge),
+            Box::new(chooser),
             config,
             locked,
             runtime,
@@ -151,6 +152,7 @@ impl RadialService {
     fn start_on<S: Surface + Send + 'static>(
         make_surface: impl FnOnce(mpsc::UnboundedSender<Event>) -> Option<S> + Send + 'static,
         nudge: Arc<dyn Fn() + Send + Sync>,
+        chooser: Chooser,
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
@@ -172,7 +174,7 @@ impl RadialService {
             .name("radial-menu".to_owned())
             .spawn(move || {
                 let surface = make_surface(window_events);
-                let mut menu = Menu::new(&first, locked, surface, Box::new(log_choice), wake);
+                let mut menu = Menu::new(&first, locked, surface, chooser, wake);
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -220,14 +222,6 @@ struct PointerWake {
     nudge: Arc<dyn Fn() + Send + Sync>,
     /// Asks for [`Event::Nudge`]s to come, after the window is opened.
     schedule: Box<dyn Fn() + Send>,
-}
-
-/// Until the modules offer actions, a choice is only logged.
-fn log_choice(entry: &RadialEntryConfig) {
-    tracing::info!(
-        module = %entry.module,
-        "radial entry chosen (the actions of the modules are not available yet)"
-    );
 }
 
 /// Passes the changes of the configuration and of the lock to the menu, until
@@ -665,6 +659,7 @@ mod tests {
         let service = RadialService::start_on(
             move |_| Some(for_menu),
             Arc::new(|| {}),
+            Box::new(|_| {}),
             config,
             locked,
             &tokio::runtime::Handle::current(),

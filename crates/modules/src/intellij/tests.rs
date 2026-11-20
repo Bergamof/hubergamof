@@ -555,3 +555,32 @@ fn intellij_is_followed_by_its_windows_and_launcher() {
             .matches_executable(&PathBuf::from(DEMO_INTELLIJ_EXECUTABLE))
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_radial_open_action_starts_a_closed_intellij_like_the_home_key() {
+    let setup = Setup::new(SimulatedDesktop::empty(), demo_catalog());
+    let mut harness = setup.instance(&json!({})).await;
+    assert_eq!(harness.module.on_radial_action("open").await, []);
+    assert_eq!(harness.next_commands().await, [home_feedback(Feedback::Ok)]);
+    assert_eq!(setup.desktop.launches(), [launch(&[])]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_radial_open_alerts_on_the_home_key() {
+    let setup = Setup::new(SimulatedDesktop::empty(), demo_catalog());
+    let mut harness = setup.instance(&json!({})).await;
+    setup.desktop.fail_actions(true);
+    assert_eq!(harness.module.on_radial_action("open").await, []);
+    assert_eq!(
+        harness.next_commands().await,
+        [home_feedback(Feedback::Alert)]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unknown_radial_action_launches_nothing() {
+    let setup = Setup::new(SimulatedDesktop::empty(), demo_catalog());
+    let mut harness = setup.instance(&json!({})).await;
+    assert_eq!(harness.module.on_radial_action("unknown").await, []);
+    assert_eq!(setup.desktop.launches(), []);
+}

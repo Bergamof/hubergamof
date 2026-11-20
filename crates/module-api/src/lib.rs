@@ -157,6 +157,7 @@ mod images;
 mod module;
 mod notification;
 mod paths;
+mod radial;
 mod strip;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -180,6 +181,7 @@ pub use notification::{
     UnreadNotifications,
 };
 pub use paths::{expand_home, is_setting_path};
+pub use radial::RadialActionDescriptor;
 pub use strip::{
     ContextDial, DialHint, MAX_POPUP_ENTRIES, PomodoroState, PomodoroWidget, PopupEntry, PopupIcon,
     StripPopup, StripWidget, VolumeWidget,

@@ -71,6 +71,7 @@ pub(crate) enum Call {
     ContextPress(PageId),
     ContextLongPress(PageId),
     NotificationPress(NotificationId),
+    RadialAction(String),
     Event(ModuleEvent),
 }
 
@@ -467,6 +468,9 @@ fn invoke(module: &mut dyn Module, call: Call) -> HandlerFuture<'_> {
         }
         Call::NotificationPress(id) => {
             Box::pin(async move { module.on_notification_press(id).await })
+        }
+        Call::RadialAction(action) => {
+            Box::pin(async move { module.on_radial_action(&action).await })
         }
         Call::Event(event) => module.on_event(event),
     }
