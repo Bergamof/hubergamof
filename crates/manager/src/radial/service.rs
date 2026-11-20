@@ -5,21 +5,30 @@
 //! What a chosen entry does (the actions of the modules) comes later: for now
 //! the choice is only logged.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 use tokio::sync::{mpsc, watch};
 
-use super::controller::{Controller, Effect, View, WindowEvent};
+use super::backend;
+use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
-use super::overlay::{Content, Overlay};
 use super::paint::DEFAULT_PALETTE;
+use super::window::Surface;
 
 /// What the screen is taken to be until the window reports its size.
 const UNKNOWN_SCREEN: Size = Size {
     width: 1920.0,
     height: 1080.0,
 };
+
+/// Time between two nudges of the pointer while the menu waits to be placed,
+/// the first one included: the window needs a moment to be shown.
+pub(super) const NUDGE_PERIOD: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// Nudges tried at most for one opening.
+pub(super) const NUDGE_TRIES: u32 = 6;
 
 /// What the menu is asked to do and told about.
 #[derive(Debug)]
@@ -31,6 +40,8 @@ enum Event {
     /// The mouse that held the button is gone: the menu gives up.
     Cancel,
     Window(WindowEvent),
+    /// Time to nudge the pointer, if the menu is still waiting for it.
+    Nudge,
     Config(Box<RadialMenuConfig>),
     Locked(bool),
     /// The service is dropped.
@@ -88,40 +99,11 @@ impl Probe {
                 Event::Release(_) => "release",
                 Event::Cancel => "cancel",
                 Event::Stop => "stop",
+                Event::Nudge => "nudge",
                 _ => "other",
             });
         }
         sent
-    }
-}
-
-/// What the menu is shown on: the window.
-pub trait Surface {
-    /// Shows the window; the menu is drawn once it is placed.
-    fn open(&self, content: Content);
-    /// Draws the menu at its place.
-    fn place(&self, view: View);
-    /// Draws the menu again.
-    fn redraw(&self, view: View);
-    /// Hides the window.
-    fn close(&self);
-}
-
-impl Surface for Overlay {
-    fn open(&self, content: Content) {
-        Self::open(self, content);
-    }
-
-    fn place(&self, view: View) {
-        Self::place(self, view);
-    }
-
-    fn redraw(&self, view: View) {
-        Self::redraw(self, view);
-    }
-
-    fn close(&self) {
-        Self::close(self);
     }
 }
 
@@ -144,15 +126,20 @@ impl RadialService {
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
+        nudge: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         Self::start_on(
-            |events| match Overlay::start(move |event| events.send(Event::Window(event)).is_ok()) {
-                Ok(overlay) => Some(overlay),
-                Err(error) => {
-                    tracing::warn!(%error, "the radial menu has no window: it will not open");
-                    None
+            |events| {
+                let report = Arc::new(move |event| events.send(Event::Window(event)).is_ok());
+                match backend::start(report) {
+                    Ok(window) => Some(window),
+                    Err(error) => {
+                        tracing::warn!(%error, "the radial menu has no window: it will not open");
+                        None
+                    }
                 }
             },
+            Arc::new(nudge),
             config,
             locked,
             runtime,
@@ -163,6 +150,7 @@ impl RadialService {
     /// reports to.
     fn start_on<S: Surface + Send + 'static>(
         make_surface: impl FnOnce(mpsc::UnboundedSender<Event>) -> Option<S> + Send + 'static,
+        nudge: Arc<dyn Fn() + Send + Sync>,
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
@@ -171,11 +159,20 @@ impl RadialService {
         let first = config.borrow().clone();
         runtime.spawn(follow(config, locked.clone(), events.clone()));
         let window_events = events.clone();
+        let wake = PointerWake {
+            nudge,
+            schedule: {
+                let (runtime, events) = (runtime.clone(), events.clone());
+                Box::new(move || {
+                    runtime.spawn(nudges(events.clone()));
+                })
+            },
+        };
         let thread = std::thread::Builder::new()
             .name("radial-menu".to_owned())
             .spawn(move || {
                 let surface = make_surface(window_events);
-                let mut menu = Menu::new(&first, locked, surface, Box::new(log_choice));
+                let mut menu = Menu::new(&first, locked, surface, Box::new(log_choice), wake);
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -203,6 +200,26 @@ impl Drop for RadialService {
             let _ = thread.join();
         }
     }
+}
+
+/// Asks, a few times, that the pointer be nudged: the window is not shown at
+/// once, and one that is shown under a pointer that does not move is not told
+/// where it is.
+async fn nudges(events: mpsc::UnboundedSender<Event>) {
+    for _ in 0..NUDGE_TRIES {
+        tokio::time::sleep(NUDGE_PERIOD).await;
+        if events.send(Event::Nudge).is_err() {
+            return;
+        }
+    }
+}
+
+/// How the menu learns where the pointer is when the desktop does not say.
+struct PointerWake {
+    /// Moves the pointer one pixel and back.
+    nudge: Arc<dyn Fn() + Send + Sync>,
+    /// Asks for [`Event::Nudge`]s to come, after the window is opened.
+    schedule: Box<dyn Fn() + Send>,
 }
 
 /// Until the modules offer actions, a choice is only logged.
@@ -246,6 +263,7 @@ struct Menu<S: Surface> {
     controller: Controller,
     surface: Option<S>,
     chooser: Chooser,
+    wake: PointerWake,
     animate: bool,
     /// Read when a press comes and when an entry is chosen, not only when the
     /// change is told: a press or a click queued before the news of a lock
@@ -262,11 +280,13 @@ impl<S: Surface> Menu<S> {
         locked: watch::Receiver<bool>,
         surface: Option<S>,
         chooser: Chooser,
+        wake: PointerWake,
     ) -> Self {
         Self {
             controller: Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN),
             surface,
             chooser,
+            wake,
             animate: config.animate,
             locked,
             started: Instant::now(),
@@ -280,6 +300,13 @@ impl<S: Surface> Menu<S> {
             Event::Release(at) => self
                 .controller
                 .release(at.saturating_duration_since(self.started)),
+            Event::Nudge => {
+                // Still waiting for the pointer to say where it is.
+                if self.controller.is_open() && self.controller.view().is_none() {
+                    (self.wake.nudge)();
+                }
+                Vec::new()
+            }
             Event::Stop => Vec::new(),
             Event::Cancel | Event::Window(WindowEvent::Escape) => {
                 self.controller.window(WindowEvent::Escape)
@@ -334,6 +361,7 @@ impl<S: Surface> Menu<S> {
                     let content = self.controller.content(DEFAULT_PALETTE, self.animate);
                     if let (Some(surface), Some(content)) = (&self.surface, content) {
                         surface.open(content);
+                        (self.wake.schedule)();
                     }
                 }
                 Effect::Place(view) => self.with_surface(|surface| surface.place(view)),
@@ -376,11 +404,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::radial::controller::View;
     use crate::radial::geometry::Point;
+    use crate::radial::window::Content;
 
     /// A window that notes what it is asked.
     #[derive(Clone, Default)]
-    struct Notes(Arc<Mutex<Vec<String>>>);
+    struct Notes(Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>);
 
     impl Notes {
         fn push(&self, note: &str) {
@@ -389,6 +419,15 @@ mod tests {
 
         fn all(&self) -> Vec<String> {
             self.0.lock().unwrap().clone()
+        }
+
+        /// What the pointer wake was asked, apart from what the window was.
+        fn push_wake(&self, note: &str) {
+            self.1.lock().unwrap().push(note.to_owned());
+        }
+
+        fn wakes(&self) -> Vec<String> {
+            self.1.lock().unwrap().clone()
         }
     }
 
@@ -410,6 +449,15 @@ mod tests {
         }
     }
 
+    /// A pointer wake that writes `nudge` and `schedule` in `notes`.
+    fn quiet_wake(notes: &Notes) -> PointerWake {
+        let (for_nudge, for_schedule) = (notes.clone(), notes.clone());
+        PointerWake {
+            nudge: Arc::new(move || for_nudge.push_wake("nudge")),
+            schedule: Box::new(move || for_schedule.push_wake("schedule")),
+        }
+    }
+
     /// A menu on `notes`, and what sets whether the computer is locked.
     fn menu(notes: &Notes, locked: bool, chosen: &Notes) -> (Menu<Notes>, watch::Sender<bool>) {
         let chosen = chosen.clone();
@@ -419,6 +467,7 @@ mod tests {
             locked,
             Some(notes.clone()),
             Box::new(move |entry| chosen.push(&entry.module.to_string())),
+            quiet_wake(notes),
         );
         (menu, lock)
     }
@@ -518,6 +567,7 @@ mod tests {
             locked,
             None,
             Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
+            quiet_wake(&Notes::default()),
         );
         menu.handle(Event::Press(menu.started));
         menu.handle(Event::Press(menu.started));
@@ -537,6 +587,29 @@ mod tests {
         assert!(!menu.animate);
         menu.handle(Event::Press(at(&menu, 0)));
         assert_eq!(notes.all(), ["open 3"]);
+    }
+
+    #[test]
+    fn opening_asks_for_nudges_and_a_nudge_only_comes_while_the_menu_waits_for_the_pointer() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
+        menu.handle(Event::Nudge);
+        assert_eq!(
+            notes.wakes(),
+            [] as [String; 0],
+            "closed: nothing to nudge for"
+        );
+        menu.handle(Event::Press(at(&menu, 0)));
+        assert_eq!(notes.wakes(), ["schedule"]);
+        menu.handle(Event::Nudge);
+        menu.handle(Event::Nudge);
+        // The pointer says where it is: the menu is placed, no more nudges.
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            900.0, 500.0,
+        ))));
+        menu.handle(Event::Nudge);
+        assert_eq!(notes.wakes(), ["schedule", "nudge", "nudge"]);
+        assert_eq!(notes.all(), ["open 4", "place"]);
     }
 
     #[test]
@@ -591,6 +664,7 @@ mod tests {
         let for_menu = notes.clone();
         let service = RadialService::start_on(
             move |_| Some(for_menu),
+            Arc::new(|| {}),
             config,
             locked,
             &tokio::runtime::Handle::current(),

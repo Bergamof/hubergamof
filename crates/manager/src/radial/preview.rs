@@ -4,16 +4,18 @@
 //! hover lights a petal, a click chooses it, Escape closes.
 
 use std::io::Write;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use hubergamof_protocol::RadialMenuConfig;
 use thiserror::Error;
 
+use super::backend::{self, NoWindow};
 use super::controller::{Controller, Effect};
 use super::geometry::{DEFAULT_RING, Size};
-use super::overlay::{Overlay, OverlayError};
 use super::paint::DEFAULT_PALETTE;
+use super::service::{NUDGE_PERIOD, NUDGE_TRIES};
+use super::window::Surface;
 
 /// What the screen is taken to be until the window reports its size.
 const UNKNOWN_SCREEN: Size = Size {
@@ -26,7 +28,7 @@ const UNKNOWN_SCREEN: Size = Size {
 pub enum PreviewError {
     /// The window cannot be started.
     #[error(transparent)]
-    Overlay(#[from] OverlayError),
+    NoWindow(#[from] NoWindow),
     /// The menu has no entry to show.
     #[error("the radial menu shows no entry")]
     NoEntry,
@@ -39,14 +41,15 @@ pub enum PreviewError {
 }
 
 /// Shows the default menu for at most `duration`, reporting on `out` what the
-/// person chooses.
+/// person chooses. `nudge` moves the pointer a pixel and back, tried while the
+/// menu is not placed, as the service does.
 ///
 /// # Errors
 ///
 /// [`PreviewError`] when the window cannot start or the report cannot be written.
-pub fn run(duration: Duration, out: &mut impl Write) -> Result<(), PreviewError> {
+pub fn run(duration: Duration, out: &mut impl Write, nudge: impl Fn()) -> Result<(), PreviewError> {
     let (events, window_events) = mpsc::channel();
-    let overlay = Overlay::start(move |event| events.send(event).is_ok())?;
+    let overlay = backend::start(Arc::new(move |event| events.send(event).is_ok()))?;
     let mut controller = Controller::new(
         &RadialMenuConfig::default_menu(),
         DEFAULT_RING,
@@ -64,6 +67,7 @@ pub fn run(duration: Duration, out: &mut impl Write) -> Result<(), PreviewError>
         "Move the pointer over a petal and click it; Escape closes."
     )?;
     let mut content = Some(content);
+    let mut nudges_left = NUDGE_TRIES;
     loop {
         for effect in effects.drain(..) {
             match effect {
@@ -86,9 +90,20 @@ pub fn run(duration: Duration, out: &mut impl Write) -> Result<(), PreviewError>
             writeln!(out, "Time is up.")?;
             return Ok(());
         };
-        match window_events.recv_timeout(left) {
+        let waiting_for_the_pointer = controller.view().is_none() && nudges_left > 0;
+        let wait = if waiting_for_the_pointer {
+            left.min(NUDGE_PERIOD)
+        } else {
+            left
+        };
+        match window_events.recv_timeout(wait) {
             Ok(event) => effects = controller.window(event),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if waiting_for_the_pointer {
+                    nudges_left -= 1;
+                    nudge();
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(PreviewError::WindowGone),
         }
     }

@@ -76,6 +76,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+x11rb.workspace = true
 # System tray (StatusNotifierItem + dbusmenu) on the Tokio runtime only, without
 # zbus's own runtime nor the ObjectManager.
 zbus = { workspace = true, features = ["proxy", "service"] }
