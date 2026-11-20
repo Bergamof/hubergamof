@@ -64,6 +64,12 @@ impl Layout {
         self.ring
     }
 
+    /// Number of petals.
+    #[must_use]
+    pub const fn count(&self) -> usize {
+        self.count
+    }
+
     /// The petal `offset` (from the middle of the menu) is on. `None` in the
     /// hole, past the edge, and in a gap: the void selects nothing.
     #[must_use]
@@ -83,6 +89,54 @@ impl Layout {
         let gap_applies = self.count > 1 && nearest_side < FRAC_PI_2;
         let distance_to_side = radius * nearest_side.sin();
         (!gap_applies || distance_to_side >= self.ring.gap / 2.0).then_some(petal)
+    }
+}
+
+/// The four corners of one petal, from the middle of the menu: the sides are
+/// the straight lines between the inner and the outer corners, the edges are
+/// arcs of the inner and outer circles.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Outline {
+    /// Inner corner of the side the petal starts at (its anticlockwise side).
+    pub inner_start: Point,
+    /// Outer corner of the same side.
+    pub outer_start: Point,
+    /// Outer corner of the side the petal ends at (its clockwise side).
+    pub outer_end: Point,
+    /// Inner corner of the same side.
+    pub inner_end: Point,
+}
+
+impl Layout {
+    /// The shape of petal `petal`, to draw it. `None` for a menu of a single
+    /// petal (a whole ring, no sides) and for a petal that does not exist.
+    #[must_use]
+    pub fn outline(&self, petal: usize) -> Option<Outline> {
+        if self.count < 2 || petal >= self.count {
+            return None;
+        }
+        let step = TAU / count_as_f64(self.count);
+        let start = (count_as_f64(petal) - 0.5) * step;
+        let end = start + step;
+        let half_gap = self.ring.gap / 2.0;
+        // Each side is pulled `half_gap` into its petal, along the normal.
+        let corner = |angle: f64, radius: f64, normal_sign: f64| {
+            let along = (radius * radius - half_gap * half_gap).max(0.0).sqrt();
+            let (sin, cos) = angle.sin_cos();
+            // `outward` is the direction of the side, `clockwise` its normal.
+            let outward = Point::new(sin, -cos);
+            let clockwise = Point::new(cos, sin);
+            Point::new(
+                along * outward.x + normal_sign * half_gap * clockwise.x,
+                along * outward.y + normal_sign * half_gap * clockwise.y,
+            )
+        };
+        Some(Outline {
+            inner_start: corner(start, self.ring.inner, 1.0),
+            outer_start: corner(start, self.ring.outer, 1.0),
+            outer_end: corner(end, self.ring.outer, -1.0),
+            inner_end: corner(end, self.ring.inner, -1.0),
+        })
     }
 }
 
@@ -209,6 +263,49 @@ mod tests {
         // Down and to the right is the second petal, down and to the left the third.
         assert_eq!(menu.petal_at(Point::new(60.0, 50.0)), Some(1));
         assert_eq!(menu.petal_at(Point::new(-60.0, 50.0)), Some(2));
+    }
+
+    #[test]
+    fn the_corners_of_a_petal_are_on_its_side_of_the_gap() {
+        let menu = layout(4);
+        let outline = menu.outline(0).unwrap();
+        for corner in [
+            outline.inner_start,
+            outline.outer_start,
+            outline.outer_end,
+            outline.inner_end,
+        ] {
+            let radius = corner.x.hypot(corner.y);
+            assert!(
+                (radius - RING.inner).abs() < 1e-9 || (radius - RING.outer).abs() < 1e-9,
+                "on the inner or the outer circle"
+            );
+        }
+        // The side is parallel to the diagonal, half a gap away from it.
+        let distance = |corner: Point| (corner.x + corner.y).abs() / 2.0_f64.sqrt();
+        assert!((distance(outline.outer_end) - RING.gap / 2.0).abs() < 1e-9);
+        assert!((distance(outline.inner_end) - RING.gap / 2.0).abs() < 1e-9);
+        // One pixel from the middle of the side along its normal (the side is at
+        // 45 degrees): inside the petal on one side, in the gap on the other.
+        let middle = Point::new(
+            f64::midpoint(outline.outer_end.x, outline.inner_end.x),
+            f64::midpoint(outline.outer_end.y, outline.inner_end.y),
+        );
+        let normal = 1.0 / 2.0_f64.sqrt();
+        let from_middle = |toward_gap: f64| {
+            Point::new(
+                middle.x + toward_gap * normal,
+                middle.y + toward_gap * normal,
+            )
+        };
+        assert_eq!(menu.petal_at(from_middle(-1.0)), Some(0));
+        assert_eq!(menu.petal_at(from_middle(1.0)), None);
+    }
+
+    #[test]
+    fn a_single_petal_or_a_missing_one_has_no_outline() {
+        assert_eq!(layout(1).outline(0), None);
+        assert_eq!(layout(4).outline(4), None);
     }
 
     const SCREEN: Size = Size {

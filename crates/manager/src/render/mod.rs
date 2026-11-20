@@ -33,10 +33,12 @@ use resvg::usvg;
 use thiserror::Error;
 
 pub use notification::{NotificationActionLook, NotificationImage, NotificationLook};
+pub(crate) use source::svg_color;
 pub use source::{
     ImageKind, ImageSource, MAX_SOURCE_BYTES, MAX_SOURCE_DIMENSION, check_source_length,
 };
 pub use strip::is_system_panel;
+pub(crate) use text::escape_xml;
 pub use text::{FONT_DATA, FONT_FAMILY, FontWeight, LineStyle, TextLine, TextRenderer};
 
 use crate::cache::SegmentedLru;
