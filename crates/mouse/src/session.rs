@@ -362,9 +362,29 @@ impl<C: Channel> MouseSession<C> {
         &mut self,
         config: &MouseConfig,
         stop: &AtomicBool,
+        notify: impl FnMut(Notice),
+    ) -> Result<(), HidppError> {
+        self.serve_with_updates(config, stop, || None, notify)
+    }
+
+    /// Like [`MouseSession::serve`], and applies the configuration `updates`
+    /// gives (asked about at every turn of the loop, at least every 200 ms)
+    /// to the mouse being served. An update that cannot be applied is
+    /// reported and the service goes on with what was applied.
+    ///
+    /// The buttons held when an update comes are reported as released: the
+    /// update may have given their control back.
+    ///
+    /// # Errors
+    /// See [`MouseSession::serve`].
+    pub fn serve_with_updates(
+        &mut self,
+        config: &MouseConfig,
+        stop: &AtomicBool,
+        mut updates: impl FnMut() -> Option<MouseConfig>,
         mut notify: impl FnMut(Notice),
     ) -> Result<(), HidppError> {
-        let served = self.serve_buttons(config, stop, &mut notify);
+        let served = self.serve_buttons(config, stop, &mut updates, &mut notify);
         for event in self.release_held() {
             notify(Notice::Button(event));
         }
@@ -377,6 +397,7 @@ impl<C: Channel> MouseSession<C> {
         &mut self,
         config: &MouseConfig,
         stop: &AtomicBool,
+        updates: &mut impl FnMut() -> Option<MouseConfig>,
         notify: &mut impl FnMut(Notice),
     ) -> Result<(), HidppError> {
         // What a previous run left diverted: a refusal is reported, a mouse that
@@ -395,9 +416,39 @@ impl<C: Channel> MouseSession<C> {
             notify(Notice::Problem(problem));
         }
         while !stop.load(Ordering::Relaxed) {
+            if let Some(update) = updates() {
+                self.apply_update(&update, notify)?;
+            }
             for event in self.poll(SERVE_STEP)? {
                 notify(Notice::Button(event));
             }
+        }
+        Ok(())
+    }
+
+    /// Applies a configuration received while serving. What the mouse refuses
+    /// is reported; only a mouse that stops answering ends the service.
+    fn apply_update(
+        &mut self,
+        config: &MouseConfig,
+        notify: &mut impl FnMut(Notice),
+    ) -> Result<(), HidppError> {
+        // Reported once the update is applied (or has failed), the held
+        // buttons being released whatever happens.
+        let released = self.release_held();
+        let applied = self.apply(config);
+        for event in released {
+            notify(Notice::Button(event));
+        }
+        match applied {
+            Ok(problems) => problems
+                .into_iter()
+                .for_each(|problem| notify(Notice::Problem(problem))),
+            Err(error) if is_fatal(&error) => return Err(error),
+            Err(error) => notify(Notice::Problem(ApplyProblem {
+                setting: "new configuration",
+                error,
+            })),
         }
         Ok(())
     }
@@ -1166,6 +1217,151 @@ mod tests {
         assert!(
             attempts < 3 + 20,
             "a gone mouse is not asked for every button for long: {attempts}"
+        );
+    }
+
+    /// What serving with updates gave: the sensitivity and the number of
+    /// diverted buttons at each turn of the loop, the problems reported, and
+    /// how the service ended.
+    type Served = (Vec<(u16, usize)>, Vec<&'static str>, Result<(), HidppError>);
+
+    /// Serves, giving `updates` in order, one per turn of the loop, and stops
+    /// once they are given.
+    fn serve_updates(
+        session: &mut MouseSession<Shared>,
+        shared: &Shared,
+        updates: Vec<MouseConfig>,
+    ) -> Served {
+        let stop = AtomicBool::new(false);
+        let mut remaining = updates.into_iter();
+        let mut seen = Vec::new();
+        let mut problems = Vec::new();
+        let served = session.serve_with_updates(
+            &config(),
+            &stop,
+            || {
+                let state = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+                seen.push((state.dpi, state.diverted.len()));
+                let next = remaining.next();
+                if next.is_none() {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                next
+            },
+            |notice| {
+                if let Notice::Problem(problem) = notice {
+                    problems.push(problem.setting);
+                }
+            },
+        );
+        (seen, problems, served)
+    }
+
+    #[test]
+    fn a_configuration_received_while_serving_is_applied_to_the_mouse() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let mut update = config();
+        update.pointer.dpi = 2400;
+        update
+            .bindings
+            .insert(MouseControlId::Back, ButtonAction::None);
+        let (seen, problems, served) = serve_updates(&mut session, &shared, vec![update]);
+        served.unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
+        // The first turn finds the first configuration applied, the second
+        // the update: new sensitivity, one more button diverted.
+        assert_eq!(seen, [(1600, 1), (2400, 2)]);
+        let state = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert_eq!(
+            (state.dpi, state.diverted.len()),
+            (1600, 0),
+            "all given back"
+        );
+    }
+
+    #[test]
+    fn successive_updates_are_applied_in_order() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let with_dpi = |dpi| {
+            let mut update = config();
+            update.pointer.dpi = dpi;
+            update
+        };
+        let (seen, _, served) =
+            serve_updates(&mut session, &shared, vec![with_dpi(1200), with_dpi(1400)]);
+        served.unwrap();
+        assert_eq!(
+            seen.iter().map(|(dpi, _)| *dpi).collect::<Vec<_>>(),
+            [1600, 1200, 1400]
+        );
+    }
+
+    #[test]
+    fn an_update_the_mouse_cannot_take_is_reported_and_the_service_goes_on() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let other_model = MouseConfig::default_for("serial", MouseModel::MxAnywhere3S);
+        let (seen, problems, served) = serve_updates(&mut session, &shared, vec![other_model]);
+        served.unwrap();
+        assert_eq!(problems, ["new configuration"]);
+        assert_eq!(seen.len(), 2, "it went on to the next turn");
+        assert_eq!(seen[1].0, 1600, "nothing of the refused update was written");
+    }
+
+    #[test]
+    fn an_update_to_a_mouse_that_stopped_answering_ends_the_service() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let stop = AtomicBool::new(false);
+        let mut update = Some(config());
+        let served = session.serve_with_updates(
+            &config(),
+            &stop,
+            || {
+                shared.0.borrow_mut().fall_silent();
+                update.take()
+            },
+            |_| {},
+        );
+        assert!(matches!(served, Err(HidppError::Timeout(_))), "{served:?}");
+    }
+
+    #[test]
+    fn the_buttons_held_when_an_update_comes_are_reported_released() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let (mut session, shared) = shared_session(device);
+        shared
+            .0
+            .borrow_mut()
+            .push_incoming([frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
+        let stop = AtomicBool::new(false);
+        let mut turn = 0;
+        let mut events = Vec::new();
+        session
+            .serve_with_updates(
+                &config(),
+                &stop,
+                || {
+                    turn += 1;
+                    match turn {
+                        2 => Some(config()),
+                        3 => {
+                            stop.store(true, Ordering::Relaxed);
+                            None
+                        }
+                        _ => None,
+                    }
+                },
+                |notice| {
+                    if let Notice::Button(event) = notice {
+                        events.push(event.pressed);
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            events,
+            [true, false],
+            "pressed, then released by the update"
         );
     }
 }

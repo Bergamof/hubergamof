@@ -279,8 +279,8 @@ fn spawn_mouse<C: Channel + Send + 'static>(
 /// Serves one mouse until `stop` or until it is gone: loads its configuration
 /// (the first time, created from what the mouse is set to, so that serving it
 /// changes nothing until the person does), applies it, reports its buttons
-/// through `notify` with the mouse's serial, and puts the settings back at
-/// the end.
+/// through `notify` with the mouse's serial, applies the configurations the
+/// interface saves while it is served, and puts the settings back at the end.
 fn serve_mouse<C: Channel>(
     found: FoundMouse<C>,
     store: &ConfigStore,
@@ -307,7 +307,7 @@ fn serve_mouse<C: Channel>(
     tracing::info!(%model, "mouse attached");
     tracing::debug!(%serial, "mouse unit");
     // Listed for the interface for as long as the mouse is served.
-    let _listed = hub.register(
+    let mut listed = hub.register(
         MouseInfo {
             serial: serial.clone(),
             model,
@@ -316,7 +316,17 @@ fn serve_mouse<C: Channel>(
         },
         config.clone(),
     );
-    match session.serve(&config, stop, |notice| notify(&serial, notice)) {
+    let updates = listed.updates();
+    let next_update = || {
+        // A configuration saved since the last turn, the latest one.
+        updates
+            .has_changed()
+            .unwrap_or(false)
+            .then(|| updates.borrow_and_update().clone())
+    };
+    match session.serve_with_updates(&config, stop, next_update, |notice| {
+        notify(&serial, notice);
+    }) {
         Ok(()) => tracing::info!(%model, "mouse released"),
         Err(error) => tracing::warn!(%model, %error, "mouse lost"),
     }
@@ -502,6 +512,56 @@ mod tests {
             (after.dpi, after.wheel, after.hires, after.haptic),
             (before.dpi, before.wheel, before.hires, before.haptic)
         );
+    }
+
+    #[test]
+    fn a_configuration_saved_while_the_mouse_is_served_reaches_the_mouse_and_is_kept() {
+        let (_dir, store) = store();
+        let hub = hub_of(&store);
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let fake = FakeLink::direct(device).with_incoming(vec![
+            frame(DEVICE, reprog, 0x00, &[0, 0x53]),
+            frame(DEVICE, reprog, 0x00, &[]),
+        ]);
+        let shared = Shared(Rc::new(RefCell::new(fake)));
+        let stop = AtomicBool::new(false);
+        let mut dpi_when_released = None;
+        serve_mouse(
+            found(shared.clone(), Some(UNIT), 2),
+            &store,
+            &hub,
+            &stop,
+            |_, notice| {
+                let Notice::Button(event) = notice else {
+                    return;
+                };
+                if event.pressed {
+                    // The interface saves a new configuration.
+                    let mut config = hub.subscribe_config("deadbeef").unwrap().borrow().clone();
+                    config.pointer.dpi = 2400;
+                    hub.update_mouse("deadbeef", config).unwrap();
+                } else {
+                    dpi_when_released = Some(state(&shared).dpi);
+                    stop.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert_eq!(
+            dpi_when_released,
+            Some(2400),
+            "applied to the mouse being served"
+        );
+        assert_eq!(
+            state(&shared).dpi,
+            1600,
+            "and the mouse's own sensitivity is back"
+        );
+        let stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        assert_eq!((stored.pointer.dpi, stored.revision), (2400, 2));
     }
 
     #[test]
