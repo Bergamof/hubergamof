@@ -673,6 +673,7 @@ fn start_mouse_service(
                     let _ = module_actions.run(entry);
                 }
             },
+            Arc::new(hub.clone()),
         );
         let actions = actions.with_radial(menu.handle());
         let supervisor = MouseSupervisor::start(

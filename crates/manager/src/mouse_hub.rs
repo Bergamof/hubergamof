@@ -312,6 +312,18 @@ impl HapticOutput for MouseHub {
     fn play(&self, play: &HapticPlay) {
         self.play_at(play, Instant::now());
     }
+
+    fn play_waveform(&self, waveform: HapticWaveform) {
+        for entry in self.entries().iter() {
+            let config = entry.config.borrow();
+            if !entry.info.capabilities.haptics || config.haptics.level == HapticLevel::Off {
+                continue;
+            }
+            // A full queue (a stuck mouse) drops it; a mouse just released has
+            // nobody to signal.
+            let _ = entry.haptics.try_send(waveform);
+        }
+    }
 }
 
 /// A mouse listed as connected; it is removed when this is dropped.
@@ -676,6 +688,31 @@ mod tests {
             hub.play_at(&step_end(), start + HAPTIC_MIN_GAP * turn);
         }
         assert_eq!(played(&mouse).len(), HAPTIC_QUEUE);
+    }
+
+    #[test]
+    fn a_waveform_is_played_on_the_mice_that_can_unless_their_haptics_are_off() {
+        let (_dir, hub) = hub();
+        let on = register(&hub, "a");
+        let mut silenced = config("b");
+        silenced.haptics.level = HapticLevel::Off;
+        let off = registered_with(&hub, silenced);
+        let anywhere = hub.register(
+            info("c", MouseModel::MxAnywhere3S),
+            MouseConfig::default_for("c", MouseModel::MxAnywhere3S),
+        );
+        hub.play_waveform(HapticWaveform::SubtleCollision);
+        hub.play_waveform(HapticWaveform::SubtleCollision);
+        // No gap applies: the feel of the menu is not an event of a module.
+        assert_eq!(
+            played(&on),
+            [
+                HapticWaveform::SubtleCollision,
+                HapticWaveform::SubtleCollision
+            ]
+        );
+        assert_eq!(played(&off), []);
+        assert_eq!(played(&anywhere), []);
     }
 
     #[test]

@@ -20,6 +20,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Souris Logitech MX, étape 6c (haptique du menu) : le menu circulaire se sent : une vibration légère à l'ouverture, une plus fine quand le pointeur aborde un pétale, une nette au choix ; l'option « haptique » du menu les coupe, et le niveau « coupé » de la souris aussi. La souris reçoit désormais ses ordres toutes les 40 ms (200 ms avant), pour que la vibration suive le pointeur.
 - Souris Logitech MX, étape 6b (haptique des modules) : les modules signalent des événements sur la souris à retour haptique (MX Master 4) : fin d'étape du Pomodoro, appel entrant, réunion qui approche et nouveau message de Teams, micro ou son coupé depuis le menu circulaire ; chaque événement a une onde par défaut, que le réglage de la souris peut changer ou couper. Les modules déclarent leurs événements dans l'API (`haptic_events`, `Command::haptic`).
 - Souris Logitech MX, étape 6a (actions des modules) : choisir une entrée du menu circulaire lance l'action du module sur ton Stream Deck : Pomodoro (démarrer ou pause, passer, remise à zéro), Audio (couper le micro, couper le son), Teams (micro, caméra, raccrocher), IntelliJ (ouvrir). Les modules déclarent ces actions dans l'API (`radial_actions`, `on_radial_action`).
 - Menu circulaire sous GNOME : le menu se place d'après un vrai mouvement du pointeur (impulsion d'un pixel par le périphérique virtuel pendant qu'il attend sa position) au lieu de la position d'entrée de XWayland, qui pouvait être périmée.
