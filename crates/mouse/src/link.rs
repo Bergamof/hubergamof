@@ -525,7 +525,7 @@ impl<C: Channel> MouseLink<C> {
     /// mouse that comes back.
     ///
     /// # Errors
-    /// The first [`HidppError`] met.
+    /// The first [`HidppError`] met, after trying every button.
     pub fn release_buttons(&mut self) -> Result<(), HidppError> {
         let controls: Vec<MouseControlId> = self
             .model
@@ -535,12 +535,20 @@ impl<C: Channel> MouseLink<C> {
             .map(|control| control.id)
             .filter(|id| cid(self.model, *id).is_some())
             .collect();
+        // Best effort: one control that answers badly must not leave the
+        // following ones diverted, this being the recovery path.
+        let mut first_error = None;
         for control in controls {
-            if self.is_diverted(control)? {
-                self.set_diverted(control, false)?;
+            let given_back = match self.is_diverted(control) {
+                Ok(true) => self.set_diverted(control, false),
+                Ok(false) => Ok(()),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = given_back {
+                first_error.get_or_insert(error);
             }
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     fn read_haptic_waveforms(&mut self) -> Result<u32, HidppError> {

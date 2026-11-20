@@ -4,6 +4,8 @@
 //! Nothing here runs by itself: every write is an action a person typed.
 
 use std::io::{self, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use hubergamof_protocol::{HapticLevel, HapticWaveform, MouseControlId, WheelMode};
@@ -71,7 +73,8 @@ pub enum DiagnosticError {
     Output(#[from] io::Error),
 }
 
-/// Does the action on the mouse and writes what it found or did.
+/// Does the action on the mouse and writes what it found or did. Watching the
+/// buttons ends early, giving them back, when `stop` is raised.
 ///
 /// # Errors
 /// [`DiagnosticError`] when the mouse refuses, does not answer, or the output
@@ -80,6 +83,7 @@ pub fn run<C: Channel>(
     link: &mut MouseLink<C>,
     action: &Action,
     out: &mut impl Write,
+    stop: &AtomicBool,
 ) -> Result<(), DiagnosticError> {
     match action {
         Action::Info => info(link, out),
@@ -103,7 +107,7 @@ pub fn run<C: Channel>(
             )?;
             Ok(())
         }
-        Action::Buttons(duration) => watch_buttons(link, *duration, out),
+        Action::Buttons(duration) => watch_buttons(link, *duration, out, stop),
         Action::Release => {
             link.release_buttons()?;
             writeln!(out, "Every button of the {} is given back.", link.model())?;
@@ -119,7 +123,6 @@ fn info<C: Channel>(link: &mut MouseLink<C>, out: &mut impl Write) -> Result<(),
         link.model(),
         link.device()
     )?;
-    writeln!(out, "  unit id: {}", link.unit_id()?)?;
     let battery = link.battery()?;
     writeln!(
         out,
@@ -187,6 +190,7 @@ fn watch_buttons<C: Channel>(
     link: &mut MouseLink<C>,
     duration: Duration,
     out: &mut impl Write,
+    stop: &AtomicBool,
 ) -> Result<(), DiagnosticError> {
     link.release_buttons()?;
     let watched: Vec<MouseControlId> = link
@@ -197,8 +201,12 @@ fn watch_buttons<C: Channel>(
         .filter(|control| !control.locked && cid(link.model(), control.id).is_some())
         .map(|control| control.id)
         .collect();
-    let result = divert_and_print(link, &watched, duration, out);
+    // A panic must not leave the buttons dead either.
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        divert_and_print(link, &watched, duration, out, stop)
+    }));
     let released = link.release_buttons();
+    let result = outcome.unwrap_or_else(|panic| resume_unwind(panic));
     result?;
     released?;
     writeln!(out, "Buttons given back.")?;
@@ -210,6 +218,7 @@ fn divert_and_print<C: Channel>(
     watched: &[MouseControlId],
     duration: Duration,
     out: &mut impl Write,
+    stop: &AtomicBool,
 ) -> Result<(), DiagnosticError> {
     for control in watched {
         link.set_diverted(*control, true)?;
@@ -224,7 +233,7 @@ fn divert_and_print<C: Channel>(
     let started = Instant::now();
     let mut tracker = ButtonTracker::default();
     let mut dropped = link.hidpp_mut().dropped_frames();
-    while started.elapsed() < duration {
+    while started.elapsed() < duration && !stop.load(Ordering::Relaxed) {
         let Some(bytes) = link.hidpp_mut().next_frame(WATCH_STEP)? else {
             continue;
         };
@@ -263,6 +272,8 @@ mod tests {
     use crate::testing::{FakeDevice, FakeLink, frame};
 
     const DEVICE: u8 = 0xFF;
+    /// A stop request that never comes.
+    static NEVER: AtomicBool = AtomicBool::new(false);
 
     fn link(device: FakeDevice) -> MouseLink<FakeLink> {
         MouseLink::connect(Hidpp::new(FakeLink::direct(device)), DEVICE).unwrap()
@@ -270,7 +281,7 @@ mod tests {
 
     fn output(link: &mut MouseLink<FakeLink>, action: &Action) -> String {
         let mut out = Vec::new();
-        run(link, action, &mut out).unwrap();
+        run(link, action, &mut out, &NEVER).unwrap();
         String::from_utf8(out).unwrap()
     }
 
@@ -302,7 +313,11 @@ mod tests {
             "SharpStateChange",
             "sharp state change",
         ] {
-            assert!(parse_waveform(typed).is_some(), "{typed}");
+            assert_eq!(
+                parse_waveform(typed).map(|w| format!("{w:?}").to_lowercase()),
+                Some(typed.replace(['-', '_', ' '], "").to_lowercase()),
+                "{typed}"
+            );
         }
         assert_eq!(
             parse_waveform("whisper-collision"),
@@ -322,7 +337,6 @@ mod tests {
         let text = output(&mut link, &Action::Info);
         for expected in [
             "MX Master 4 at device index 0xFF",
-            "unit id: deadbeef",
             "battery: Some(82)",
             "sensitivity: 1600 dpi",
             "wheel: mode 2",
@@ -407,7 +421,7 @@ mod tests {
     fn a_refused_change_is_an_error_and_prints_no_success() {
         let mut link = link(FakeDevice::mx_master_4());
         let mut out = Vec::new();
-        let error = run(&mut link, &Action::Dpi(225), &mut out).unwrap_err();
+        let error = run(&mut link, &Action::Dpi(225), &mut out, &NEVER).unwrap_err();
         assert!(matches!(
             error,
             DiagnosticError::Mouse(HidppError::InvalidArgument(_))
@@ -418,7 +432,7 @@ mod tests {
             waveform: HapticWaveform::Knock,
             level: None,
         };
-        assert!(run(&mut anywhere, &play, &mut out).is_err());
+        assert!(run(&mut anywhere, &play, &mut out, &NEVER).is_err());
     }
 
     #[test]
@@ -452,6 +466,7 @@ mod tests {
             &mut link,
             &Action::Buttons(Duration::from_millis(300)),
             &mut out,
+            &NEVER,
         )
         .unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -485,6 +500,7 @@ mod tests {
             &mut link,
             &Action::Buttons(Duration::from_millis(50)),
             &mut Closed,
+            &NEVER,
         )
         .unwrap_err();
         assert!(matches!(error, DiagnosticError::Output(_)));
@@ -493,5 +509,92 @@ mod tests {
             "released although the output failed"
         );
         assert_eq!(link.model(), MouseModel::MxMaster4);
+    }
+
+    #[test]
+    fn a_stop_request_ends_the_watch_and_gives_the_buttons_back() {
+        let mut link = link(FakeDevice::mx_master_4());
+        let stop = AtomicBool::new(true);
+        let mut out = Vec::new();
+        let started = Instant::now();
+        run(
+            &mut link,
+            &Action::Buttons(Duration::from_secs(3600)),
+            &mut out,
+            &stop,
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .ends_with("Buttons given back.\n")
+        );
+        assert!(state(&link).diverted.is_empty());
+    }
+
+    #[test]
+    fn a_read_failure_while_watching_still_gives_the_buttons_back() {
+        let fake = FakeLink::direct(FakeDevice::mx_master_4()).with_broken_reads();
+        let mut link = MouseLink::connect(Hidpp::new(fake), DEVICE).unwrap();
+        let mut out = Vec::new();
+        let error = run(
+            &mut link,
+            &Action::Buttons(Duration::from_secs(60)),
+            &mut out,
+            &NEVER,
+        )
+        .unwrap_err();
+        assert!(matches!(error, DiagnosticError::Mouse(_)), "{error}");
+        assert!(state(&link).diverted.is_empty());
+    }
+
+    #[test]
+    fn the_sensitivity_bounds_and_steps_are_enforced() {
+        let mut link = link(FakeDevice::mx_master_4());
+        for dpi in [0, 199, 225, 8050, u16::MAX] {
+            let mut out = Vec::new();
+            assert!(
+                run(&mut link, &Action::Dpi(dpi), &mut out, &NEVER).is_err(),
+                "{dpi}"
+            );
+        }
+        for dpi in [200, 8000] {
+            output(&mut link, &Action::Dpi(dpi));
+            assert_eq!(state(&link).dpi, dpi);
+        }
+    }
+
+    #[test]
+    fn the_wheel_threshold_is_bounded_and_every_mode_is_set() {
+        let mut link = link(FakeDevice::mx_master_4());
+        for threshold in [0, 51, u8::MAX] {
+            let action = Action::Wheel {
+                mode: WheelMode::Auto,
+                threshold,
+            };
+            assert!(
+                run(&mut link, &action, &mut Vec::new(), &NEVER).is_err(),
+                "{threshold}"
+            );
+        }
+        for mode in [WheelMode::Ratchet, WheelMode::Free, WheelMode::Auto] {
+            let text = output(
+                &mut link,
+                &Action::Wheel {
+                    mode,
+                    threshold: 30,
+                },
+            );
+            assert!(text.contains(&format!("Wheel set to {mode:?}")), "{text}");
+        }
+    }
+
+    #[test]
+    fn watching_for_no_time_diverts_and_gives_back() {
+        let mut link = link(FakeDevice::mx_master_4());
+        let text = output(&mut link, &Action::Buttons(Duration::ZERO));
+        assert!(text.ends_with("Buttons given back.\n"), "{text}");
+        assert!(state(&link).diverted.is_empty());
     }
 }

@@ -9,6 +9,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -37,7 +38,9 @@ use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_mouse::diagnostics::{self, Action, parse_waveform};
 use hubergamof_protocol::CatalogModule;
-use hubergamof_protocol::{HapticLevel, HapticWaveform, MouseModel, WheelMode};
+use hubergamof_protocol::{
+    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseModel, WHEEL_THRESHOLD_RANGE, WheelMode,
+};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -227,6 +230,7 @@ enum MouseTestAction {
     /// Set the sensitivity, 200 to 8000 dpi in steps of 50.
     Dpi {
         /// Dots per inch.
+        #[arg(value_parser = parse_dpi)]
         value: u16,
     },
     /// Set how the wheel turns.
@@ -235,17 +239,54 @@ enum MouseTestAction {
         #[arg(value_enum)]
         mode: WheelModeArg,
         /// Speed from which the automatic mode frees the wheel, 1 to 50.
-        #[arg(long, default_value_t = 20)]
+        #[arg(long, default_value_t = DEFAULT_WHEEL_THRESHOLD, value_parser = parse_wheel_threshold)]
         threshold: u8,
     },
     /// Divert the buttons and print their presses, then give them back.
     Buttons {
         /// How long to watch, in seconds.
-        #[arg(long, default_value_t = 20)]
+        #[arg(long, default_value_t = DEFAULT_WATCH_SECONDS, value_parser = clap::value_parser!(u64).range(1..=MAX_WATCH_SECONDS))]
         seconds: u64,
     },
     /// Give back every diverted button (after a crash).
     Release,
+}
+
+/// Threshold of the automatic wheel mode when none is given.
+const DEFAULT_WHEEL_THRESHOLD: u8 = 20;
+/// Length of `mouse-test buttons` when none is given, and its longest.
+const DEFAULT_WATCH_SECONDS: u64 = 20;
+const MAX_WATCH_SECONDS: u64 = 300;
+
+/// Refuses a sensitivity the mouse would refuse, before looking for it.
+fn parse_dpi(text: &str) -> Result<u16, String> {
+    let dpi: u16 = text
+        .parse()
+        .map_err(|_| format!("{text:?} is not a number"))?;
+    if DPI_RANGE.contains(&dpi) && (dpi - DPI_RANGE.start()).is_multiple_of(DPI_STEP) {
+        Ok(dpi)
+    } else {
+        Err(format!(
+            "{} to {} dpi in steps of {DPI_STEP}",
+            DPI_RANGE.start(),
+            DPI_RANGE.end()
+        ))
+    }
+}
+
+fn parse_wheel_threshold(text: &str) -> Result<u8, String> {
+    let threshold: u8 = text
+        .parse()
+        .map_err(|_| format!("{text:?} is not a number"))?;
+    if WHEEL_THRESHOLD_RANGE.contains(&threshold) {
+        Ok(threshold)
+    } else {
+        Err(format!(
+            "{} to {}",
+            WHEEL_THRESHOLD_RANGE.start(),
+            WHEEL_THRESHOLD_RANGE.end()
+        ))
+    }
 }
 
 fn parse_waveform_arg(text: &str) -> Result<HapticWaveform, String> {
@@ -304,7 +345,7 @@ async fn main() -> Result<()> {
         Some(Command::NativeHost { origin }) => exit_with(run_native_host(&origin).await),
         Some(Command::InstallExtension { browser }) => install_extension(browser),
         Some(Command::MouseProbe { trace }) => run_mouse_probe(trace),
-        Some(Command::MouseTest { model, action }) => run_mouse_test(model, &action.into()),
+        Some(Command::MouseTest { model, action }) => run_mouse_test(model, action.into()).await,
         None => run_manager(cli).await,
     }
 }
@@ -327,11 +368,47 @@ fn exit_with(outcome: Result<()>) -> ! {
 }
 
 /// Does one action on a Logitech mouse and says what happened (`mouse-test`).
-fn run_mouse_test(model: Option<MouseModelArg>, action: &Action) -> Result<()> {
+///
+/// Ctrl-C, SIGTERM and SIGHUP end a watch of the buttons early, after giving
+/// them back: a dead process would leave them diverted.
+async fn run_mouse_test(model: Option<MouseModelArg>, action: Action) -> Result<()> {
+    if matches!(action, Action::Buttons(_) | Action::Release) {
+        eprintln!(
+            "Stop the HuBergamof service, Solaar and logiops first: they divert the same buttons."
+        );
+    }
     eprintln!("Looking for the mouse (move it to wake it)...");
-    let mut link = hubergamof_mouse::hidraw::find_mouse(model.map(Into::into))?;
-    diagnostics::run(&mut link, action, &mut std::io::stdout().lock())?;
-    Ok(())
+    let stop = Arc::new(AtomicBool::new(false));
+    let waiter = tokio::spawn({
+        let stop = Arc::clone(&stop);
+        async move {
+            termination_requested().await;
+            stop.store(true, Ordering::Relaxed);
+        }
+    });
+    let outcome = tokio::task::spawn_blocking(move || {
+        let mut link = hubergamof_mouse::hidraw::find_mouse(model.map(Into::into))?;
+        diagnostics::run(&mut link, &action, &mut std::io::stdout().lock(), &stop)?;
+        anyhow::Ok(())
+    })
+    .await;
+    waiter.abort();
+    outcome.context("the mouse task failed")?
+}
+
+/// Returns when the person asks the program to stop.
+async fn termination_requested() {
+    let (Ok(mut terminate), Ok(mut hangup)) = (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::hangup()),
+    ) else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+        _ = hangup.recv() => {}
+    }
 }
 
 /// Prints the read-only inventory of the Logitech devices (`mouse-probe`).
@@ -893,6 +970,14 @@ mod tests {
             &["mouse-test", "haptic", "fire"],
             &["mouse-test", "dpi"],
             &["mouse-test", "dpi", "fast"],
+            &["mouse-test", "dpi", "225"],
+            &["mouse-test", "dpi", "70000"],
+            &["mouse-test", "wheel", "auto", "--threshold", "0"],
+            &["mouse-test", "wheel", "auto", "--threshold", "300"],
+            &["mouse-test", "buttons", "--seconds", "0"],
+            &["mouse-test", "buttons", "--seconds", "301"],
+            &["mouse-test", "buttons", "--seconds", "-1"],
+            &["mouse-test", "haptic", "knock", "--level", "loud"],
             &["mouse-test", "wheel", "turbo"],
             &["mouse-test", "--model", "mx-keys", "info"],
         ] {

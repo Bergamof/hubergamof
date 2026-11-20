@@ -215,6 +215,7 @@ pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>
     let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
     let mut probed = HashSet::new();
     let mut found = Vec::new();
+    let mut setup_error = None;
     for info in api.device_list().filter(|info| {
         info.vendor_id() == LOGITECH_VENDOR_ID
             && skip_reason(
@@ -237,19 +238,34 @@ pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>
                 continue;
             }
             match MouseLink::connect(hidpp, index) {
-                Ok(link) if wanted.is_none_or(|model| model == link.model()) => found.push(link),
-                _ => {}
+                Ok(link) => found.push((link.model(), link.device(), link)),
+                // A device that is not a supported mouse: not worth reporting.
+                Err(HidppError::NotSupportedMouse(_)) => {}
+                Err(error) => setup_error = Some(error),
             }
         }
     }
-    let names: Vec<String> = found
-        .iter()
-        .map(|link| format!("{} at index {}", link.model(), link.device()))
-        .collect();
+    pick(found, wanted, setup_error)
+}
+
+/// The mouse to use among those that answered: the only one of the wanted
+/// model (or the only one at all when none is wanted).
+fn pick<T>(
+    mut found: Vec<(MouseModel, u8, T)>,
+    wanted: Option<MouseModel>,
+    setup_error: Option<HidppError>,
+) -> Result<T, FindError> {
+    found.retain(|(model, _, _)| wanted.is_none_or(|wanted| wanted == *model));
     match found.len() {
-        0 => Err(FindError::NoMouse),
-        1 => Ok(found.remove(0)),
-        _ => Err(FindError::Several(names.join(", "))),
+        0 => Err(setup_error.map_or(FindError::NoMouse, FindError::Mouse)),
+        1 => Ok(found.remove(0).2),
+        _ => Err(FindError::Several(
+            found
+                .iter()
+                .map(|(model, index, _)| format!("{model} at index {index}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
     }
 }
 
@@ -356,12 +372,70 @@ mod tests {
     }
 
     #[test]
-    fn finding_a_mouse_without_hardware_ends_cleanly() {
-        // No Logitech receiver (or no udev) here: an error that says what to do,
-        // never a panic; with a receiver and mice around, a mouse is found.
-        if let Err(error) = find_mouse(None) {
-            assert_ne!(error.to_string(), "");
-        }
+    fn nothing_answering_is_reported_as_no_mouse() {
+        let error = pick::<()>(Vec::new(), None, None).unwrap_err();
+        assert!(matches!(error, FindError::NoMouse), "{error}");
+    }
+
+    #[test]
+    fn a_setup_failure_is_reported_when_nothing_else_answered() {
+        let error =
+            pick::<()>(Vec::new(), None, Some(HidppError::Timeout(Duration::ZERO))).unwrap_err();
+        assert!(
+            matches!(error, FindError::Mouse(HidppError::Timeout(Duration::ZERO))),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_only_mouse_is_chosen_with_or_without_a_wanted_model() {
+        let found = || vec![(MouseModel::MxMaster4, 2, "master")];
+        assert_eq!(pick(found(), None, None).unwrap(), "master");
+        assert_eq!(
+            pick(found(), Some(MouseModel::MxMaster4), None).unwrap(),
+            "master"
+        );
+    }
+
+    #[test]
+    fn the_wanted_model_picks_among_several_and_a_missing_one_finds_nothing() {
+        let found = || {
+            vec![
+                (MouseModel::MxAnywhere3S, 1, "anywhere"),
+                (MouseModel::MxMaster4, 2, "master"),
+            ]
+        };
+        assert_eq!(
+            pick(found(), Some(MouseModel::MxAnywhere3S), None).unwrap(),
+            "anywhere"
+        );
+        let error = pick(
+            vec![(MouseModel::MxMaster4, 2, ())],
+            Some(MouseModel::MxAnywhere3S),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(error, FindError::NoMouse), "{error}");
+    }
+
+    #[test]
+    fn several_mice_without_a_wanted_model_are_named() {
+        let error = pick(
+            vec![
+                (MouseModel::MxAnywhere3S, 1, ()),
+                (MouseModel::MxMaster4, 2, ()),
+            ],
+            None,
+            None,
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(matches!(error, FindError::Several(_)));
+        assert!(
+            message.contains("at index 1") && message.contains("at index 2"),
+            "{message}"
+        );
+        assert!(message.contains("--model"), "{message}");
     }
 
     #[test]
