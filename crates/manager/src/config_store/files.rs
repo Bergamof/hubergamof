@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hubergamof_protocol::DeviceConfig;
+use serde::Serialize;
 use tempfile::NamedTempFile;
 
-use super::{ConfigStoreError, INVALID_BACKUP_PREFIX, LoadOutcome, migration};
+use super::{ConfigStoreError, LoadOutcome, migration};
 
 pub(super) fn set_invalid_aside(
     path: &Path,
@@ -40,7 +41,10 @@ pub(super) fn read_config(path: &Path) -> Result<Option<DeviceConfig>, ConfigSto
         })
 }
 
-pub(super) fn write_atomically(path: &Path, config: &DeviceConfig) -> Result<(), ConfigStoreError> {
+pub(super) fn write_atomically<T: Serialize>(
+    path: &Path,
+    config: &T,
+) -> Result<(), ConfigStoreError> {
     let mut json = serde_json::to_vec_pretty(config).map_err(|source| ConfigStoreError::Json {
         path: path.to_owned(),
         source,
@@ -76,6 +80,10 @@ pub(super) fn restrict_existing_dir(dir: &Path) -> Result<(), ConfigStoreError> 
         .map_err(|source| io_error(dir, source))
 }
 
+/// Between a file name and the time, in the name of an invalid file set aside
+/// (`config.json.invalid-1700000000`).
+const INVALID_SUFFIX: &str = ".invalid-";
+
 /// Mode of the folders the store creates.
 pub(super) const PRIVATE_DIR_MODE: u32 = 0o700;
 
@@ -101,7 +109,11 @@ pub(super) fn backup_path(path: &Path) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let base = format!("{INVALID_BACKUP_PREFIX}{timestamp}");
+    let name = path.file_name().map_or_else(
+        || "config".into(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let base = format!("{name}{INVALID_SUFFIX}{timestamp}");
     let mut candidate = dir.join(&base);
     let mut attempt = 1_u32;
     while candidate.exists() {

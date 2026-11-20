@@ -5,6 +5,8 @@
 //! ```text
 //! devices/<serial>/config.json   pretty-printed DeviceConfig
 //! devices/<serial>/images/       content-addressed images (<sha256>.<ext>)
+//! devices/<serial>/mouse.json    MouseConfig of a mouse (`mouse.rs`)
+//! radial-menu.json               RadialMenuConfig (`mouse.rs`)
 //! ```
 //!
 //! Writes are atomic (temporary file + `rename`) and guarded by the
@@ -17,6 +19,7 @@
 mod archive;
 mod defaults;
 mod files;
+mod mouse;
 pub(crate) use files::write_bytes_atomically;
 mod migration;
 
@@ -30,7 +33,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode, ModuleInstance,
-    ModuleInstanceId, is_safe_image_name,
+    ModuleInstanceId, MouseConfigError, MouseModel, RadialConfigError, is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -58,6 +61,10 @@ pub const CONFIG_FILE: &str = "config.json";
 pub const IMAGES_DIR: &str = "images";
 /// Prefix of the backup name given to an invalid configuration file.
 pub const INVALID_BACKUP_PREFIX: &str = "config.json.invalid-";
+/// Mouse configuration file name inside a device directory.
+pub const MOUSE_FILE: &str = "mouse.json";
+/// File name, at the root, of the radial menu configuration.
+pub const RADIAL_MENU_FILE: &str = "radial-menu.json";
 
 /// Most images a device stores: far more than its keys use, bounding what
 /// uploads may pile up before unused ones are removed at the next load.
@@ -109,6 +116,14 @@ pub enum ConfigStoreError {
         /// Serial in the configuration.
         found: String,
     },
+    /// The mouse configuration is for another model of mouse.
+    #[error("mouse configuration is for a {found}, expected a {expected}")]
+    ModelMismatch {
+        /// Model of the mouse.
+        expected: MouseModel,
+        /// Model in the configuration.
+        found: MouseModel,
+    },
     /// The update was based on an outdated revision.
     #[error("revision {provided} is stale (current revision is {current})")]
     StaleRevision {
@@ -141,6 +156,12 @@ pub enum ConfigStoreError {
         /// Why.
         reason: String,
     },
+    /// The mouse configuration is inconsistent with its model.
+    #[error("invalid mouse configuration: {0}")]
+    InvalidMouse(#[from] MouseConfigError),
+    /// The radial menu configuration is inconsistent.
+    #[error("invalid radial menu configuration: {0}")]
+    InvalidRadialMenu(#[from] RadialConfigError),
     /// The archive cannot be read.
     #[error(transparent)]
     Archive(#[from] ArchiveError),
@@ -157,6 +178,9 @@ impl ConfigStoreError {
             Self::StaleRevision { .. } => ErrorCode::StaleRevision,
             Self::InvalidSerial(_) => ErrorCode::UnknownDevice,
             Self::Invalid(_)
+            | Self::InvalidMouse(_)
+            | Self::ModelMismatch { .. }
+            | Self::InvalidRadialMenu(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
             | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,
@@ -190,14 +214,17 @@ pub enum LoadOutcome {
     },
 }
 
-/// Result of [`ConfigStore::load`].
+/// A configuration with how it was obtained.
 #[derive(Debug, Clone)]
-pub struct LoadedConfig {
+pub struct Loaded<T> {
     /// Configuration to use.
-    pub config: DeviceConfig,
+    pub config: T,
     /// Where it came from.
     pub outcome: LoadOutcome,
 }
+
+/// Result of [`ConfigStore::load`].
+pub type LoadedConfig = Loaded<DeviceConfig>;
 
 /// Configuration store rooted at the `--config-dir` directory. Cheap to
 /// clone; clones share the write lock.
@@ -758,5 +785,7 @@ fn is_safe_serial(serial: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+#[cfg(test)]
+mod mouse_tests;
 #[cfg(test)]
 mod tests;
