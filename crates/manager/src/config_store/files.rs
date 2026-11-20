@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hubergamof_protocol::DeviceConfig;
+use serde::Serialize;
 use tempfile::NamedTempFile;
 
 use super::{ConfigStoreError, LoadOutcome, migration};
@@ -40,7 +41,10 @@ pub(super) fn read_config(path: &Path) -> Result<Option<DeviceConfig>, ConfigSto
         })
 }
 
-pub(super) fn write_atomically(path: &Path, config: &DeviceConfig) -> Result<(), ConfigStoreError> {
+pub(super) fn write_atomically<T: Serialize>(
+    path: &Path,
+    config: &T,
+) -> Result<(), ConfigStoreError> {
     let mut json = serde_json::to_vec_pretty(config).map_err(|source| ConfigStoreError::Json {
         path: path.to_owned(),
         source,

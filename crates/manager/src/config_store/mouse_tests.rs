@@ -52,13 +52,15 @@ fn saving_bumps_the_revision_and_is_read_back() {
 
 #[test]
 fn an_outdated_revision_is_refused_and_changes_nothing() {
-    let (_dir, store) = store();
+    let (dir, store) = store();
     let first = store
         .load_mouse(SERIAL, MouseModel::MxMaster4)
         .unwrap()
         .config;
     store.save_mouse(first.clone()).unwrap();
+    let before = fs::read(mouse_path(&dir)).unwrap();
     let error = store.save_mouse(first).unwrap_err();
+    assert_eq!(fs::read(mouse_path(&dir)).unwrap(), before);
     assert!(matches!(
         error,
         ConfigStoreError::StaleRevision {
@@ -87,17 +89,17 @@ fn an_inconsistent_mouse_configuration_is_refused() {
 
 #[test]
 fn an_unsafe_serial_never_reaches_the_disk() {
-    let (_dir, store) = store();
+    let (dir, store) = store();
     let error = store
         .load_mouse("../etc", MouseModel::MxMaster4)
         .unwrap_err();
     assert!(matches!(error, ConfigStoreError::InvalidSerial(_)));
-    let mut config = MouseConfig::default_for("../etc", MouseModel::MxMaster4);
-    config.serial = "../etc".into();
+    let config = MouseConfig::default_for("../etc", MouseModel::MxMaster4);
     assert!(matches!(
         store.save_mouse(config).unwrap_err(),
         ConfigStoreError::InvalidSerial(_)
     ));
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -207,4 +209,90 @@ fn the_documents_are_private_to_the_user() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o700);
+}
+
+#[test]
+fn a_file_of_another_model_is_set_aside() {
+    let (dir, store) = store();
+    let path = mouse_path(&dir);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let other = MouseConfig::default_for(SERIAL, MouseModel::MxAnywhere3S);
+    fs::write(&path, serde_json::to_vec(&other).unwrap()).unwrap();
+    let loaded = store.load_mouse(SERIAL, MouseModel::MxMaster4).unwrap();
+    assert!(matches!(
+        loaded.outcome,
+        LoadOutcome::ReplacedInvalid { .. }
+    ));
+    assert_eq!(loaded.config.model, MouseModel::MxMaster4);
+}
+
+#[test]
+fn a_file_of_an_unknown_schema_is_set_aside_not_lost() {
+    let (dir, store) = store();
+    let path = mouse_path(&dir);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for schema in [0, 2] {
+        let mut newer = MouseConfig::default_for(SERIAL, MouseModel::MxMaster4);
+        newer.schema_version = schema;
+        let bytes = serde_json::to_vec(&newer).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let loaded = store.load_mouse(SERIAL, MouseModel::MxMaster4).unwrap();
+        let LoadOutcome::ReplacedInvalid { backup } = loaded.outcome else {
+            panic!("schema {schema} was accepted");
+        };
+        assert_eq!(fs::read(backup).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn a_stored_revision_is_read_back_and_guards_the_next_save() {
+    let (dir, store) = store();
+    let path = mouse_path(&dir);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut stored = MouseConfig::default_for(SERIAL, MouseModel::MxMaster4);
+    stored.revision = 5;
+    fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    let loaded = store.load_mouse(SERIAL, MouseModel::MxMaster4).unwrap();
+    assert_eq!(loaded.config.revision, 5);
+    let stale = MouseConfig::default_for(SERIAL, MouseModel::MxMaster4);
+    assert!(matches!(
+        store.save_mouse(stale).unwrap_err(),
+        ConfigStoreError::StaleRevision {
+            current: 5,
+            provided: 0
+        }
+    ));
+    assert_eq!(store.save_mouse(loaded.config).unwrap().revision, 6);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_open_folder_is_tightened_on_load() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, store) = store();
+    let folder = mouse_path(&dir).parent().unwrap().to_owned();
+    fs::create_dir_all(&folder).unwrap();
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    store.load_mouse(SERIAL, MouseModel::MxMaster4).unwrap();
+    assert_eq!(
+        fs::metadata(&folder).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let file = fs::metadata(mouse_path(&dir)).unwrap().permissions().mode();
+    assert_eq!(file & 0o077, 0, "the file is private too");
+}
+
+#[test]
+fn saving_over_a_corrupt_file_fails_and_keeps_it() {
+    let (dir, store) = store();
+    let config = store
+        .load_mouse(SERIAL, MouseModel::MxMaster4)
+        .unwrap()
+        .config;
+    fs::write(mouse_path(&dir), b"{ not json").unwrap();
+    assert!(matches!(
+        store.save_mouse(config).unwrap_err(),
+        ConfigStoreError::Json { .. }
+    ));
+    assert_eq!(fs::read(mouse_path(&dir)).unwrap(), b"{ not json");
 }

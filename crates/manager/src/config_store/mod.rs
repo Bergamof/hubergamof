@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode, ModuleInstance,
-    ModuleInstanceId, MouseConfigError, RadialConfigError, is_safe_image_name,
+    ModuleInstanceId, MouseConfigError, MouseModel, RadialConfigError, is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -116,6 +116,14 @@ pub enum ConfigStoreError {
         /// Serial in the configuration.
         found: String,
     },
+    /// The mouse configuration is for another model of mouse.
+    #[error("mouse configuration is for a {found}, expected a {expected}")]
+    ModelMismatch {
+        /// Model of the mouse.
+        expected: MouseModel,
+        /// Model in the configuration.
+        found: MouseModel,
+    },
     /// The update was based on an outdated revision.
     #[error("revision {provided} is stale (current revision is {current})")]
     StaleRevision {
@@ -171,6 +179,7 @@ impl ConfigStoreError {
             Self::InvalidSerial(_) => ErrorCode::UnknownDevice,
             Self::Invalid(_)
             | Self::InvalidMouse(_)
+            | Self::ModelMismatch { .. }
             | Self::InvalidRadialMenu(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
@@ -205,14 +214,17 @@ pub enum LoadOutcome {
     },
 }
 
-/// Result of [`ConfigStore::load`].
+/// A configuration with how it was obtained.
 #[derive(Debug, Clone)]
-pub struct LoadedConfig {
+pub struct Loaded<T> {
     /// Configuration to use.
-    pub config: DeviceConfig,
+    pub config: T,
     /// Where it came from.
     pub outcome: LoadOutcome,
 }
+
+/// Result of [`ConfigStore::load`].
+pub type LoadedConfig = Loaded<DeviceConfig>;
 
 /// Configuration store rooted at the `--config-dir` directory. Cheap to
 /// clone; clones share the write lock.

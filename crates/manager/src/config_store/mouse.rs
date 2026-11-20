@@ -11,8 +11,8 @@ use hubergamof_protocol::{MouseConfig, MouseModel, RadialMenuConfig};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::files::{io_error, set_invalid_aside, write_bytes_atomically};
-use super::{ConfigStore, ConfigStoreError, LoadOutcome, MOUSE_FILE, RADIAL_MENU_FILE};
+use super::files::{io_error, set_invalid_aside, write_atomically};
+use super::{ConfigStore, ConfigStoreError, LoadOutcome, Loaded, MOUSE_FILE, RADIAL_MENU_FILE};
 
 /// A document of the store that carries a revision and checks itself.
 trait Document: Serialize + DeserializeOwned {
@@ -45,18 +45,14 @@ impl Document for RadialMenuConfig {
     }
 }
 
-/// A configuration with how it was obtained.
-#[derive(Debug, Clone)]
-pub struct Loaded<T> {
-    /// The configuration to use.
-    pub config: T,
-    /// Where it came from.
-    pub outcome: LoadOutcome,
-}
-
 impl ConfigStore {
     /// Loads the configuration of a mouse, creating it from defaults when
-    /// missing and setting an invalid or foreign file aside.
+    /// missing. A file that is invalid, from another mouse or model, or of a
+    /// schema this version does not know is set aside (never overwritten or
+    /// migrated) and replaced by defaults.
+    ///
+    /// Like the rest of the store, the guard against concurrent writers is the
+    /// store's own lock: another process writing the same files is not covered.
     ///
     /// # Errors
     /// [`ConfigStoreError::InvalidSerial`] or [`ConfigStoreError::Io`].
@@ -67,18 +63,25 @@ impl ConfigStore {
     ) -> Result<Loaded<MouseConfig>, ConfigStoreError> {
         let _guard = self.lock();
         let path = self.device_dir(serial)?.join(MOUSE_FILE);
+        self.make_device_private(serial)?;
         load_or_default(
             &path,
             |config: &MouseConfig| {
-                // Another mouse's file under this name is not ours to use.
-                if config.serial == serial {
-                    config.check()
-                } else {
-                    Err(ConfigStoreError::SerialMismatch {
+                // Another mouse's file under this name is not ours to use: its
+                // bindings would name controls this one may not have.
+                if config.serial != serial {
+                    return Err(ConfigStoreError::SerialMismatch {
                         expected: serial.to_owned(),
                         found: config.serial.clone(),
-                    })
+                    });
                 }
+                if config.model != model {
+                    return Err(ConfigStoreError::ModelMismatch {
+                        expected: model,
+                        found: config.model,
+                    });
+                }
+                config.check()
             },
             || MouseConfig::default_for(serial, model),
         )
@@ -124,7 +127,7 @@ impl ConfigStore {
 /// none or the stored one was invalid (set aside, not overwritten).
 fn load_or_default<T: Document>(
     path: &Path,
-    check: impl Fn(&T) -> Result<(), ConfigStoreError>,
+    accept: impl Fn(&T) -> Result<(), ConfigStoreError>,
     default: impl FnOnce() -> T,
 ) -> Result<Loaded<T>, ConfigStoreError> {
     let outcome = match fs::read(path) {
@@ -134,7 +137,7 @@ fn load_or_default<T: Document>(
                     path: path.to_owned(),
                     source,
                 });
-            match parsed.and_then(|config| check(&config).map(|()| config)) {
+            match parsed.and_then(|config| accept(&config).map(|()| config)) {
                 Ok(config) => {
                     return Ok(Loaded {
                         config,
@@ -148,7 +151,7 @@ fn load_or_default<T: Document>(
         Err(error) => return Err(io_error(path, error)),
     };
     let config = default();
-    write_document(path, &config)?;
+    write_atomically(path, &config)?;
     Ok(Loaded { config, outcome })
 }
 
@@ -171,15 +174,6 @@ fn save_document<T: Document>(path: &Path, mut config: T) -> Result<T, ConfigSto
     }
     config.check()?;
     config.set_revision(current + 1);
-    write_document(path, &config)?;
+    write_atomically(path, &config)?;
     Ok(config)
-}
-
-fn write_document<T: Serialize>(path: &Path, config: &T) -> Result<(), ConfigStoreError> {
-    let mut json = serde_json::to_vec_pretty(config).map_err(|source| ConfigStoreError::Json {
-        path: path.to_owned(),
-        source,
-    })?;
-    json.push(b'\n');
-    write_bytes_atomically(path, &json)
 }
