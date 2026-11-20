@@ -37,6 +37,12 @@ pub enum Notice {
 /// the stop request again: the delay with which it reacts to it.
 const SERVE_STEP: Duration = Duration::from_millis(200);
 
+/// An error after which the mouse cannot be served: it stopped answering or
+/// its channel failed. Any other is a refusal, and the rest can go on.
+fn is_fatal(error: &HidppError) -> bool {
+    matches!(error, HidppError::Timeout(_) | HidppError::Channel(_))
+}
+
 /// A mouse and what is known about its buttons.
 ///
 /// Dropping the session gives the diverted buttons back, as well as a gone
@@ -98,7 +104,7 @@ impl<C: Channel> MouseSession<C> {
         let mut problems = Vec::new();
         let mut attempt = |setting: &'static str, result: Result<(), HidppError>| match result {
             Ok(()) | Err(HidppError::Unsupported(_)) => Ok(()),
-            Err(error @ (HidppError::Timeout(_) | HidppError::Channel(_))) => Err(error),
+            Err(error) if is_fatal(&error) => Err(error),
             Err(error) => {
                 problems.push(ApplyProblem { setting, error });
                 Ok(())
@@ -207,7 +213,17 @@ impl<C: Channel> MouseSession<C> {
         stop: &AtomicBool,
         notify: &mut impl FnMut(Notice),
     ) -> Result<(), HidppError> {
-        self.give_back()?;
+        // What a previous run left diverted: a refusal is reported, a mouse that
+        // does not answer ends the service.
+        if let Err(error) = self.give_back() {
+            if is_fatal(&error) {
+                return Err(error);
+            }
+            notify(Notice::Problem(ApplyProblem {
+                setting: "buttons left by a previous run",
+                error,
+            }));
+        }
         for problem in self.apply(config)? {
             notify(Notice::Problem(problem));
         }
@@ -224,17 +240,22 @@ impl<C: Channel> MouseSession<C> {
     /// # Errors
     /// The first [`HidppError`] met.
     pub fn give_back(&mut self) -> Result<(), HidppError> {
-        self.link.release_buttons()?;
-        self.buttons_diverted = false;
-        Ok(())
+        let result = self.link.release_buttons();
+        // A mouse that does not answer will not at the drop either; one that
+        // refused something might.
+        if !matches!(&result, Err(error) if !is_fatal(error)) {
+            self.buttons_diverted = false;
+        }
+        result
     }
 }
 
 impl<C: Channel> Drop for MouseSession<C> {
     fn drop(&mut self) {
         if self.buttons_diverted {
-            // Nothing to do with a failure: the mouse forgets them by itself
-            // when it reconnects.
+            // Nothing to do with a failure: a mouse that is gone cannot be asked,
+            // and is expected to forget them when it reconnects (to be checked
+            // on the hardware, docs/mouse-hidpp.md).
             let _ = self.link.release_buttons();
         }
     }
@@ -745,7 +766,70 @@ mod tests {
         let fake = FakeLink::direct(FakeDevice::mx_master_4()).with_broken_reads();
         let mut session = session_with(fake);
         let stop = AtomicBool::new(false);
-        assert!(session.serve(&config(), &stop, |_| {}).is_err());
+        let served = session.serve(&config(), &stop, |_| {});
+        assert!(matches!(served, Err(HidppError::Channel(_))), "{served:?}");
         assert!(state(&session).diverted.is_empty());
+    }
+
+    #[test]
+    fn serving_with_a_configuration_of_another_model_ends_at_once() {
+        let mut session = session(FakeDevice::mx_master_4());
+        let other = MouseConfig::default_for("serial", MouseModel::MxAnywhere3S);
+        let stop = AtomicBool::new(false);
+        let served = session.serve(&other, &stop, |_| {});
+        assert!(
+            matches!(served, Err(HidppError::InvalidArgument(_))),
+            "{served:?}"
+        );
+    }
+
+    #[test]
+    fn serving_reports_a_refusal_to_give_back_and_goes_on() {
+        let device = FakeDevice::mx_master_4().with_broken_feature(REPROG_CONTROLS_V4);
+        let mut session = session(device);
+        let stop = AtomicBool::new(true);
+        let mut problems = Vec::new();
+        let served = session.serve(&config(), &stop, |notice| {
+            if let Notice::Problem(problem) = notice {
+                problems.push(problem.setting);
+            }
+        });
+        assert_eq!(problems.first(), Some(&"buttons left by a previous run"));
+        assert!(served.is_err(), "the final give back is refused too");
+    }
+
+    #[test]
+    fn a_failed_final_give_back_is_returned_after_the_releases_were_reported() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let (mut session, shared) = shared_session(device);
+        shared
+            .0
+            .borrow_mut()
+            .push_incoming([frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
+        let stop = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let served = session.serve(&config(), &stop, |notice| {
+            if let Notice::Button(event) = notice {
+                seen.push(event.pressed);
+                if event.pressed {
+                    shared.0.borrow_mut().refuse_writes();
+                    stop.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+        assert_eq!(seen, [true, false], "the release is reported first");
+        assert!(matches!(served, Err(HidppError::Channel(_))), "{served:?}");
+    }
+
+    #[test]
+    fn a_session_whose_mouse_stopped_answering_does_not_retry_when_dropped() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        session.apply(&config()).unwrap();
+        shared.0.borrow_mut().fall_silent();
+        assert!(matches!(session.give_back(), Err(HidppError::Timeout(_))));
+        let written = shared.0.borrow().written().len();
+        drop(session);
+        assert_eq!(shared.0.borrow().written().len(), written);
     }
 }

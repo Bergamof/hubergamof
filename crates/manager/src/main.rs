@@ -511,6 +511,9 @@ async fn run_manager(cli: Cli) -> Result<()> {
         "hubergamof starting"
     );
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    // A closed terminal must not kill the process before the mice are given
+    // back.
+    let mut hangup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
     let (shutdown, stopping) = watch::channel(false);
 
     let services = services(
@@ -584,6 +587,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let outcome = tokio::select! {
         signal = tokio::signal::ctrl_c() => signal.context("cannot listen for Ctrl-C"),
         _ = terminate.recv() => Ok(()),
+        _ = hangup.recv() => Ok(()),
         () = wait_for_quit(stopping) => Ok(()),
         result = &mut server_task => server_outcome(result),
     };
@@ -602,8 +606,12 @@ async fn run_manager(cli: Cli) -> Result<()> {
 
 /// Starts serving the mice, with `--mice` and on real hardware only.
 fn start_mice(cli: &Cli, store: &ConfigStore) -> Option<MouseSupervisor> {
-    (cli.mice && !cli.demo)
-        .then(|| MouseSupervisor::start(HidrawSource, store.clone(), SCAN_INTERVAL))
+    serves_mice(cli).then(|| MouseSupervisor::start(HidrawSource, store.clone(), SCAN_INTERVAL))
+}
+
+/// `--demo` never touches the hardware, whatever else is asked.
+fn serves_mice(cli: &Cli) -> bool {
+    cli.mice && !cli.demo
 }
 
 /// Gives the buttons of the mice back and stops serving them.
@@ -949,7 +957,13 @@ mod tests {
     #[test]
     fn serving_the_mice_is_opt_in() {
         assert!(!Cli::try_parse_from(["hubergamof"]).unwrap().mice);
-        assert!(Cli::try_parse_from(["hubergamof", "--mice"]).unwrap().mice);
+        let mice = Cli::try_parse_from(["hubergamof", "--mice"]).unwrap();
+        assert!(mice.mice && serves_mice(&mice));
+        let demo = Cli::try_parse_from(["hubergamof", "--mice", "--demo"]).unwrap();
+        assert!(
+            demo.mice && !serves_mice(&demo),
+            "the demo never serves mice"
+        );
     }
 
     #[test]
