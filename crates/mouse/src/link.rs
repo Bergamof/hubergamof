@@ -280,6 +280,12 @@ impl<C: Channel> MouseLink<C> {
         self.hidpp.channel()
     }
 
+    /// The underlying channel, for tests to feed it.
+    #[cfg(test)]
+    pub(crate) fn hidpp_channel_mut(&mut self) -> &mut C {
+        self.hidpp.channel_mut()
+    }
+
     /// The controls a notification says are held down, when it is a
     /// diverted-button notification **of this mouse** (a receiver carries
     /// several, and their feature indexes are alike). Control ids this model

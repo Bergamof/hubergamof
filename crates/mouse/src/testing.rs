@@ -403,6 +403,21 @@ impl FakeLink {
         self
     }
 
+    /// From now on the interface never answers (the mouse went to sleep).
+    pub fn fall_silent(&mut self) {
+        self.mode = LinkMode::Silent;
+    }
+
+    /// From now on the interface refuses every write (the mouse is gone).
+    pub fn refuse_writes(&mut self) {
+        self.mode = LinkMode::RefusingWrites;
+    }
+
+    /// More frames the device sends, once the link is in use.
+    pub fn push_incoming(&mut self, frames: impl IntoIterator<Item = Vec<u8>>) {
+        self.queue.extend(frames);
+    }
+
     /// A frame sent before every answer (a notification).
     pub fn with_noise(mut self, frame: Vec<u8>) -> Self {
         self.noise = Some(frame);

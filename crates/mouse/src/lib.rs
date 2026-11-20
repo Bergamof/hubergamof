@@ -9,6 +9,8 @@
 //! - [`diagnostics`]: the actions of `hubergamof mouse-test`, run on a link.
 //! - [`link`]: the operations on a mouse (battery, sensitivity, wheel, buttons,
 //!   haptics), the part of this crate that writes.
+//! - [`session`]: a mouse in use, its configuration applied and its buttons
+//!   followed.
 //! - [`hidraw`]: discovery and `hidapi` channel on real hardware.
 //!
 //! The probe only sends the HID++ *getter* functions listed in [`probe`]; only
@@ -22,5 +24,6 @@ pub mod frame;
 pub mod hidraw;
 pub mod link;
 pub mod probe;
+pub mod session;
 #[cfg(test)]
 mod testing;

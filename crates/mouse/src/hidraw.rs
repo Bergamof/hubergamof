@@ -10,7 +10,7 @@ use hubergamof_protocol::MouseModel;
 
 use crate::channel::{Channel, ChannelError, Hidpp, HidppError};
 use crate::frame::{DIRECT_DEVICE_INDEX, RECEIVER_DEVICE_INDEXES};
-use crate::link::MouseLink;
+use crate::link::{MouseLink, UnitId};
 use crate::probe::{InterfaceInfo, InterfaceScan, ping, scan_interface_with_misses};
 
 /// USB vendor id of Logitech.
@@ -206,15 +206,45 @@ pub enum FindError {
     Mouse(#[from] HidppError),
 }
 
-/// Finds a supported mouse among the Logitech HID++ interfaces: the one of the
-/// wanted model, or the only one when none is wanted.
+/// Where a mouse was found: its hidraw node and its index on that node (the
+/// receiver gives one index to each paired mouse).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MouseKey {
+    /// The hidraw node.
+    pub path: String,
+    /// The device index on it.
+    pub index: u8,
+}
+
+/// A connected mouse and where it was found.
+pub struct FoundMouse {
+    /// Where.
+    pub key: MouseKey,
+    /// Its unit id, `None` when it could not be read: what tells one physical
+    /// mouse from another when two paths lead to it.
+    pub unit: Option<UnitId>,
+    /// The mouse.
+    pub link: MouseLink<HidrawChannel>,
+}
+
+/// Every supported mouse on the Logitech HID++ interfaces, except the places
+/// in `owned`, which are not even spoken to: another thread reads their
+/// answers, and a request here could be mistaken for one of its own.
+///
+/// A mouse that answers but cannot be set up is left out; the last such
+/// failure is returned with the mice. A mouse reached twice (two nodes) is
+/// returned once, the first found.
+///
+/// Requests carry one fixed software id: another program speaking HID++ to
+/// the same mouse at the same time (`mouse-test`, Solaar, logiops) can be
+/// mistaken for this one. Stop the others first.
 ///
 /// # Errors
-/// [`FindError`] when none, or more than one, answers.
-pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>, FindError> {
+/// [`FindError::Hid`] when the HID layer cannot start.
+pub fn find_mice(owned: &[MouseKey]) -> Result<(Vec<FoundMouse>, Option<HidppError>), FindError> {
     let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
     let mut probed = HashSet::new();
-    let mut found = Vec::new();
+    let mut found: Vec<FoundMouse> = Vec::new();
     let mut setup_error = None;
     for info in api.device_list().filter(|info| {
         info.vendor_id() == LOGITECH_VENDOR_ID
@@ -229,7 +259,15 @@ pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>
         if !probed.insert(info.path().to_owned()) {
             continue;
         }
+        let path = info.path().to_string_lossy().into_owned();
         for index in std::iter::once(DIRECT_DEVICE_INDEX).chain(RECEIVER_DEVICE_INDEXES) {
+            let key = MouseKey {
+                path: path.clone(),
+                index,
+            };
+            if owned.contains(&key) {
+                continue;
+            }
             let Ok(device) = api.open_path(info.path()) else {
                 break;
             };
@@ -238,14 +276,34 @@ pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>
                 continue;
             }
             match MouseLink::connect(hidpp, index) {
-                Ok(link) => found.push((link.model(), link.device(), link)),
+                Ok(mut link) => {
+                    let unit = link.unit_id().ok();
+                    if unit.is_some() && found.iter().any(|other| other.unit == unit) {
+                        continue;
+                    }
+                    found.push(FoundMouse { key, unit, link });
+                }
                 // A device that is not a supported mouse: not worth reporting.
                 Err(HidppError::NotSupportedMouse(_)) => {}
                 Err(error) => setup_error = Some(error),
             }
         }
     }
-    pick(found, wanted, setup_error)
+    Ok((found, setup_error))
+}
+
+/// Finds a supported mouse among the Logitech HID++ interfaces: the one of the
+/// wanted model, or the only one when none is wanted.
+///
+/// # Errors
+/// [`FindError`] when none, or more than one, answers.
+pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>, FindError> {
+    let (found, setup_error) = find_mice(&[])?;
+    let candidates = found
+        .into_iter()
+        .map(|mouse| (mouse.link.model(), mouse.link.device(), mouse.link))
+        .collect();
+    pick(candidates, wanted, setup_error)
 }
 
 /// The mouse to use among those that answered: the only one of the wanted
