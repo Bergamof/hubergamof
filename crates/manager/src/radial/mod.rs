@@ -8,3 +8,4 @@ pub mod interaction;
 pub mod overlay;
 pub mod paint;
 pub mod preview;
+pub mod service;

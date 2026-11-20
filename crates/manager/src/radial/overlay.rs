@@ -7,7 +7,6 @@
 //! surface covers the output: the pointer's first position over it is where
 //! the menu opens (`WindowEvent::Pointer`).
 
-use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use image::RgbaImage;
@@ -88,6 +87,9 @@ pub struct Content {
     pub animate: bool,
 }
 
+/// Tells the host what happens in the window; `false` when the host is gone.
+pub type Report = Box<dyn Fn(WindowEvent) -> bool + Send>;
+
 /// What the window is asked to do.
 #[derive(Debug)]
 enum Command {
@@ -125,13 +127,15 @@ pub struct Overlay {
 
 impl Overlay {
     /// Connects to the compositor and starts the thread of the window, which
-    /// reports the pointer, the clicks and Escape on `events`.
+    /// reports the pointer, the clicks and Escape to `events`.
     ///
     /// # Errors
     ///
     /// [`OverlayError`] when there is no compositor, it has no layer-shell, or
     /// the thread cannot start.
-    pub fn start(events: Sender<WindowEvent>) -> Result<Self, OverlayError> {
+    pub fn start(
+        events: impl Fn(WindowEvent) -> bool + Send + 'static,
+    ) -> Result<Self, OverlayError> {
         let connection = Connection::connect_to_env()
             .map_err(|error| OverlayError::Connect(error.to_string()))?;
         let (globals, queue) = registry_queue_init::<State>(&connection)
@@ -156,7 +160,7 @@ impl Overlay {
             pool,
             renderer: TextRenderer::new()?,
             queue: handle,
-            events,
+            events: Box::new(events),
             pointer: None,
             keyboard: None,
             window: None,
@@ -265,7 +269,7 @@ struct State {
     pool: SlotPool,
     renderer: TextRenderer,
     queue: QueueHandle<State>,
-    events: Sender<WindowEvent>,
+    events: Report,
     pointer: Option<ThemedPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     window: Option<Window>,
@@ -312,7 +316,7 @@ impl State {
     fn give_up(&mut self) {
         self.window = None;
         // The host may be gone: nothing to tell then, the window is closed anyway.
-        let _ = self.events.send(WindowEvent::Escape);
+        let _ = (self.events)(WindowEvent::Escape);
     }
 
     fn stop(&mut self) {
@@ -421,7 +425,7 @@ impl State {
     /// Tells the host; a host that is gone cannot close the window, so the
     /// window closes itself.
     fn report(&mut self, event: WindowEvent) {
-        if self.events.send(event).is_err() {
+        if !(self.events)(event) {
             self.window = None;
         }
     }
