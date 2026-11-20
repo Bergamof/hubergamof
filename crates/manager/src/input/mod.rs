@@ -79,6 +79,8 @@ pub struct RecordingInjector {
     pub events: Vec<(Key, bool)>,
     /// The key whose pressing fails, when set.
     pub failing: Option<Key>,
+    /// The key whose releasing fails, when set.
+    pub failing_release: Option<Key>,
 }
 
 #[cfg(test)]
@@ -86,6 +88,10 @@ impl Injector for RecordingInjector {
     fn send(&mut self, key: Key, pressed: bool) -> io::Result<()> {
         if pressed && self.failing == Some(key) {
             return Err(io::Error::other("refused"));
+        }
+        if !pressed && self.failing_release == Some(key) {
+            self.events.push((key, false));
+            return Err(io::Error::other("release refused"));
         }
         self.events.push((key, pressed));
         Ok(())
@@ -141,16 +147,58 @@ mod tests {
     }
 
     #[test]
-    fn every_mouse_button_has_its_own_key() {
-        let keys = [
-            MouseButton::Left,
-            MouseButton::Right,
-            MouseButton::Middle,
-            MouseButton::Back,
-            MouseButton::Forward,
-        ]
-        .map(key_of_button);
-        let distinct: std::collections::BTreeSet<_> = keys.iter().collect();
-        assert_eq!(distinct.len(), keys.len());
+    fn every_mouse_button_is_its_own_key() {
+        assert_eq!(key_of_button(MouseButton::Left), Key::ButtonLeft);
+        assert_eq!(key_of_button(MouseButton::Right), Key::ButtonRight);
+        assert_eq!(key_of_button(MouseButton::Middle), Key::ButtonMiddle);
+        assert_eq!(key_of_button(MouseButton::Back), Key::ButtonSide);
+        assert_eq!(key_of_button(MouseButton::Forward), Key::ButtonExtra);
+    }
+
+    #[test]
+    fn a_tap_that_cannot_press_does_not_release() {
+        let mut injector = RecordingInjector {
+            failing: Some(Key::ButtonLeft),
+            ..RecordingInjector::default()
+        };
+        assert!(injector.tap(Key::ButtonLeft).is_err());
+        assert_eq!(injector.events, []);
+    }
+
+    #[test]
+    fn a_shortcut_that_fails_on_its_first_key_sends_nothing() {
+        let mut injector = RecordingInjector {
+            failing: Some(Key::LeftCtrl),
+            ..RecordingInjector::default()
+        };
+        assert!(injector.tap_shortcut(&[Key::LeftCtrl, Key::M]).is_err());
+        assert_eq!(injector.events, []);
+    }
+
+    #[test]
+    fn a_shortcut_that_fails_to_release_still_tries_every_key_and_keeps_the_first_error() {
+        let mut injector = RecordingInjector {
+            failing_release: Some(Key::M),
+            ..RecordingInjector::default()
+        };
+        let error = injector.tap_shortcut(&[Key::LeftCtrl, Key::M]).unwrap_err();
+        assert_eq!(error.to_string(), "release refused");
+        assert_eq!(
+            injector.events,
+            [
+                (Key::LeftCtrl, true),
+                (Key::M, true),
+                (Key::M, false),
+                (Key::LeftCtrl, false),
+            ],
+            "the modifier is released although the key was not"
+        );
+    }
+
+    #[test]
+    fn an_empty_shortcut_sends_nothing() {
+        let mut injector = RecordingInjector::default();
+        injector.tap_shortcut(&[]).unwrap();
+        assert_eq!(injector.events, []);
     }
 }

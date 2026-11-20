@@ -55,7 +55,9 @@ hidapi.workspace = true
 image.workspace = true
 # Local time in the system time zone (`/etc/localtime`, system tzdb), for the
 # clock of the touch strip.
+input-linux.workspace = true
 jiff = "0.2.38"
+libc.workspace = true
 lru = "0.19.0"
 mime_guess = "2.0.5"
 reqwest.workspace = true
@@ -77,8 +79,6 @@ tracing-subscriber.workspace = true
 # zbus's own runtime nor the ObjectManager.
 zbus = { workspace = true, features = ["proxy", "service"] }
 zip.workspace = true
-input-linux = "0.7.1"
-libc = "0.2.191"
 
 [dev-dependencies]
 hubergamof-mouse = { workspace = true, features = ["test-support"] }

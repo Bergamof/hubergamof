@@ -115,6 +115,9 @@ pub enum ShortcutError {
     /// A key that is not in the list.
     #[error("unknown key `{0}`")]
     UnknownKey(String),
+    /// A combination that logs out, restarts or switches the console.
+    #[error("reserved combination (Ctrl+Alt with Delete, Backspace or a function key)")]
+    Reserved,
 }
 
 /// The key a name stands for, in any case, `None` outside the list.
@@ -126,8 +129,14 @@ pub fn key_named(name: &str) -> Option<Key> {
         (Some(letter @ 'a'..='z'), None) => LETTERS.get(usize::from(letter as u8 - b'a')).copied(),
         (Some(digit @ '0'..='9'), None) => DIGITS.get(usize::from(digit as u8 - b'0')).copied(),
         (Some('f'), Some(_)) => {
-            let number: usize = lower[1..].parse().ok()?;
-            FUNCTION_KEYS.get(number.checked_sub(1)?).copied()
+            // Digits only, no sign and no leading zero: `f+1` and `f01` name nothing.
+            let digits = &lower[1..];
+            if digits.starts_with('0') || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            FUNCTION_KEYS
+                .get(digits.parse::<usize>().ok()?.checked_sub(1)?)
+                .copied()
         }
         _ => NAMED
             .iter()
@@ -152,7 +161,21 @@ pub fn parse_shortcut(text: &str) -> Result<Vec<Key>, ShortcutError> {
     if keys.len() > MAX_SHORTCUT_KEYS {
         return Err(ShortcutError::TooLong);
     }
+    if is_reserved(&keys) {
+        return Err(ShortcutError::Reserved);
+    }
     Ok(keys)
+}
+
+/// Ctrl+Alt with Delete (the logout dialog), Backspace (the end of the graphical
+/// session on some desktops) or a function key (a switch of console): not
+/// something a mouse button should do by itself.
+fn is_reserved(keys: &[Key]) -> bool {
+    keys.contains(&Key::LeftCtrl)
+        && keys.contains(&Key::LeftAlt)
+        && keys
+            .iter()
+            .any(|key| *key == Key::Delete || *key == Key::Backspace || FUNCTION_KEYS.contains(key))
 }
 
 /// Every key a shortcut can press, once each.
@@ -172,25 +195,74 @@ pub(super) fn all_keys() -> Vec<Key> {
 mod tests {
     use super::*;
 
+    /// The names and the keys they stand for, written by hand (not read from
+    /// the table they check).
+    const REFERENCE: [(&str, Key); 36] = [
+        ("ctrl", Key::LeftCtrl),
+        ("control", Key::LeftCtrl),
+        ("shift", Key::LeftShift),
+        ("alt", Key::LeftAlt),
+        ("super", Key::LeftMeta),
+        ("meta", Key::LeftMeta),
+        ("win", Key::LeftMeta),
+        ("enter", Key::Enter),
+        ("return", Key::Enter),
+        ("esc", Key::Esc),
+        ("escape", Key::Esc),
+        ("tab", Key::Tab),
+        ("space", Key::Space),
+        ("backspace", Key::Backspace),
+        ("delete", Key::Delete),
+        ("del", Key::Delete),
+        ("insert", Key::Insert),
+        ("home", Key::Home),
+        ("end", Key::End),
+        ("pageup", Key::PageUp),
+        ("pagedown", Key::PageDown),
+        ("up", Key::Up),
+        ("down", Key::Down),
+        ("left", Key::Left),
+        ("right", Key::Right),
+        ("minus", Key::Minus),
+        ("equal", Key::Equal),
+        ("comma", Key::Comma),
+        ("dot", Key::Dot),
+        ("slash", Key::Slash),
+        ("playpause", Key::PlayPause),
+        ("nextsong", Key::NextSong),
+        ("previoussong", Key::PreviousSong),
+        ("mute", Key::Mute),
+        ("volumeup", Key::VolumeUp),
+        ("volumedown", Key::VolumeDown),
+    ];
+
     #[test]
-    fn letters_digits_and_function_keys_are_named_in_any_case() {
-        assert_eq!(key_named("a"), Some(Key::A));
-        assert_eq!(key_named("M"), Some(Key::M));
-        assert_eq!(key_named("z"), Some(Key::Z));
-        assert_eq!(key_named("0"), Some(Key::Num0));
-        assert_eq!(key_named("9"), Some(Key::Num9));
-        assert_eq!(key_named("F1"), Some(Key::F1));
-        assert_eq!(key_named("f12"), Some(Key::F12));
+    fn every_name_stands_for_its_key_in_any_case() {
+        for (name, key) in REFERENCE {
+            assert_eq!(key_named(name), Some(key), "{name}");
+            assert_eq!(key_named(&name.to_ascii_uppercase()), Some(key), "{name}");
+        }
     }
 
     #[test]
-    fn named_keys_and_their_aliases() {
-        assert_eq!(key_named("Ctrl"), Some(Key::LeftCtrl));
-        assert_eq!(key_named("CONTROL"), Some(Key::LeftCtrl));
-        assert_eq!(key_named("Super"), key_named("meta"));
-        assert_eq!(key_named("Return"), Some(Key::Enter));
-        assert_eq!(key_named("PageDown"), Some(Key::PageDown));
-        assert_eq!(key_named("VolumeUp"), Some(Key::VolumeUp));
+    fn letters_digits_and_function_keys_are_each_their_own() {
+        for letter in 'a'..='z' {
+            let key = key_named(&letter.to_string()).unwrap();
+            assert_eq!(format!("{key:?}"), letter.to_ascii_uppercase().to_string());
+            assert_eq!(
+                key_named(&letter.to_ascii_uppercase().to_string()),
+                Some(key)
+            );
+        }
+        for digit in 0..=9 {
+            let key = key_named(&digit.to_string()).unwrap();
+            assert_eq!(format!("{key:?}"), format!("Num{digit}"));
+        }
+        for number in 1..=12 {
+            let key = key_named(&format!("f{number}")).unwrap();
+            assert_eq!(format!("{key:?}"), format!("F{number}"));
+            assert_eq!(key_named(&format!("F{number}")), Some(key));
+        }
     }
 
     #[test]
@@ -200,17 +272,31 @@ mod tests {
             "f0",
             "f13",
             "ff",
+            "f-1",
+            "f+1",
+            "f01",
+            "f001",
+            "f012",
+            "f 1",
+            "f１",
             "10",
             "power",
             "sysrq",
             "capslock",
             "sleep",
             "poweroff",
+            "wakeup",
+            "compose",
             "ab",
             "é",
+            "ſ",
+            "İ",
+            "Ｃtrl",
             "ctrl ",
+            " ctrl",
             "KEY_POWER",
             "btn_left",
+            "pgup",
         ] {
             assert_eq!(key_named(name), None, "{name:?}");
         }
@@ -223,49 +309,158 @@ mod tests {
             Ok(vec![Key::LeftCtrl, Key::LeftShift, Key::M])
         );
         assert_eq!(parse_shortcut("F5"), Ok(vec![Key::F5]));
+        assert_eq!(
+            parse_shortcut("cTrL+sHiFt+m"),
+            Ok(vec![Key::LeftCtrl, Key::LeftShift, Key::M])
+        );
+        assert_eq!(
+            parse_shortcut("Control+Return"),
+            Ok(vec![Key::LeftCtrl, Key::Enter])
+        );
+        assert_eq!(parse_shortcut("Win+Esc"), Ok(vec![Key::LeftMeta, Key::Esc]));
     }
 
     #[test]
-    fn a_shortcut_with_nothing_or_too_much_or_an_unknown_key_is_refused() {
+    fn shortcuts_the_contract_accepts_are_known_or_refused_with_the_name() {
+        assert_eq!(
+            parse_shortcut("Ctrl+Alt+Delete"),
+            Err(ShortcutError::Reserved)
+        );
+        assert_eq!(parse_shortcut("Super+L"), Ok(vec![Key::LeftMeta, Key::L]));
+        assert_eq!(
+            parse_shortcut("Ctrl+Shift+Esc"),
+            Ok(vec![Key::LeftCtrl, Key::LeftShift, Key::Esc])
+        );
+        assert_eq!(
+            parse_shortcut("a-b"),
+            Err(ShortcutError::UnknownKey("a-b".to_owned()))
+        );
+        assert_eq!(
+            parse_shortcut("x_y"),
+            Err(ShortcutError::UnknownKey("x_y".to_owned()))
+        );
+    }
+
+    #[test]
+    fn what_the_contract_validates_never_makes_the_parser_fail_badly() {
+        use hubergamof_protocol::{ButtonAction, MouseConfig, MouseControlId, MouseModel};
+        for keys in [
+            "Ctrl+Alt+Delete",
+            "a-b",
+            "x_y",
+            "Ctrl+Power",
+            "F13",
+            "Ctrl+Shift+Alt+Super+A+B+C",
+        ] {
+            let mut config = MouseConfig::default_for("s", MouseModel::MxMaster4);
+            config.bindings.insert(
+                MouseControlId::Back,
+                ButtonAction::Shortcut {
+                    keys: keys.to_owned(),
+                },
+            );
+            // Valid for the contract: the characters are right. The list decides.
+            assert!(config.validate().is_ok(), "{keys}");
+            let parsed = parse_shortcut(keys);
+            assert!(
+                matches!(
+                    parsed,
+                    Ok(_)
+                        | Err(ShortcutError::UnknownKey(_)
+                            | ShortcutError::TooLong
+                            | ShortcutError::Reserved)
+                ),
+                "{keys}: {parsed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn combinations_that_log_out_or_switch_console_are_reserved() {
+        for shortcut in [
+            "Ctrl+Alt+Delete",
+            "alt+ctrl+del",
+            "Ctrl+Alt+Backspace",
+            "Ctrl+Alt+F1",
+            "Ctrl+Alt+F12",
+            "Ctrl+Alt+Shift+F3",
+        ] {
+            assert_eq!(
+                parse_shortcut(shortcut),
+                Err(ShortcutError::Reserved),
+                "{shortcut}"
+            );
+        }
+        for shortcut in [
+            "Ctrl+Delete",
+            "Alt+F4",
+            "Ctrl+Alt+T",
+            "Ctrl+Alt+Left",
+            "Alt+Delete",
+        ] {
+            assert!(parse_shortcut(shortcut).is_ok(), "{shortcut}");
+        }
+    }
+
+    #[test]
+    fn badly_formed_shortcuts_are_refused() {
+        let unknown = |name: &str| Err(ShortcutError::UnknownKey(name.to_owned()));
         assert_eq!(parse_shortcut(""), Err(ShortcutError::Empty));
-        assert_eq!(
-            parse_shortcut("Ctrl++M"),
-            Err(ShortcutError::UnknownKey(String::new()))
-        );
-        assert_eq!(
-            parse_shortcut("Ctrl+Power"),
-            Err(ShortcutError::UnknownKey("Power".to_owned()))
-        );
-        assert_eq!(parse_shortcut("a+b+c+d+e+f+g"), Err(ShortcutError::TooLong));
+        assert_eq!(parse_shortcut("+"), unknown(""));
+        assert_eq!(parse_shortcut("+Ctrl"), unknown(""));
+        assert_eq!(parse_shortcut("Ctrl+"), unknown(""));
+        assert_eq!(parse_shortcut("Ctrl++M"), unknown(""));
+        assert_eq!(parse_shortcut("Ctrl + M"), unknown("Ctrl "));
+        assert_eq!(parse_shortcut(" Ctrl+M"), unknown(" Ctrl"));
+        assert_eq!(parse_shortcut("Ctrl+Power"), unknown("Power"));
+        assert_eq!(parse_shortcut("Ctrl+é"), unknown("é"));
+        assert_eq!(parse_shortcut("Ｃtrl+M"), unknown("Ｃtrl"));
+    }
+
+    #[test]
+    fn a_shortcut_is_at_most_six_keys_and_the_unknown_key_is_reported_first() {
         assert!(
             parse_shortcut("a+b+c+d+e+f").is_ok(),
             "six keys are allowed"
         );
+        assert_eq!(parse_shortcut("a+b+c+d+e+f+g"), Err(ShortcutError::TooLong));
+        assert_eq!(
+            parse_shortcut("a+b+c+d+e+f+power"),
+            Err(ShortcutError::UnknownKey("power".to_owned())),
+            "the name is checked before the length"
+        );
+        assert!(
+            parse_shortcut("ctrl+control").is_ok(),
+            "a repeated key is pressed twice, which is harmless"
+        );
     }
 
     #[test]
-    fn everything_the_protocol_accepts_as_a_shortcut_is_either_known_or_refused_cleanly() {
-        // The contract only checks characters: the list is what limits.
-        for shortcut in ["Ctrl+Alt+Delete", "Super+L", "Ctrl+Shift+Esc", "a-b", "x_y"] {
-            let parsed = parse_shortcut(shortcut);
-            assert!(parsed.is_ok() || matches!(parsed, Err(ShortcutError::UnknownKey(_))));
-        }
-    }
-
-    #[test]
-    fn the_list_of_keys_has_no_duplicate_and_every_name_resolves() {
+    fn the_keys_the_virtual_device_declares_are_exactly_the_ones_a_shortcut_can_name() {
         let all = all_keys();
+        // 26 letters, 10 digits, 12 function keys, 30 other keys (36 names).
+        assert_eq!(all.len(), 78);
         let distinct: std::collections::BTreeSet<_> = all.iter().collect();
         assert_eq!(distinct.len(), all.len());
-        for (name, key) in NAMED {
-            assert_eq!(key_named(name), Some(*key));
+        let nameable: std::collections::BTreeSet<Key> = ('a'..='z')
+            .map(|letter| letter.to_string())
+            .chain((0..=9).map(|digit| digit.to_string()))
+            .chain((1..=12).map(|number| format!("f{number}")))
+            .chain(REFERENCE.iter().map(|(name, _)| (*name).to_owned()))
+            .filter_map(|name| key_named(&name))
+            .collect();
+        assert_eq!(nameable, all.iter().copied().collect());
+        for dangerous in [
+            Key::Power,
+            Key::Sleep,
+            Key::Wakeup,
+            Key::Sysrq,
+            Key::CapsLock,
+            Key::Compose,
+            Key::ButtonLeft,
+            Key::ButtonRight,
+        ] {
+            assert!(!all.contains(&dangerous), "{dangerous:?}");
         }
-        assert_eq!(
-            all.len(),
-            26 + 10 + 12 + {
-                let named: std::collections::BTreeSet<_> = NAMED.iter().map(|(_, k)| k).collect();
-                named.len()
-            }
-        );
     }
 }

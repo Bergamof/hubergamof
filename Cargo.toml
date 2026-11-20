@@ -23,6 +23,10 @@ clap = { version = "4.6.7", features = ["derive"] }
 # Hidraw access shared by the Stream Deck backend and the Logitech HID++ crate:
 # the default Linux backend (bundled C sources + system libudev); hidapi accepts exactly one.
 hidapi = "2.6.7"
+# Virtual input device (/dev/uinput) behind a safe API: the code of this repository
+# cannot use `unsafe`. (`evdev` pulls `bitvec`, flagged unmaintained.)
+input-linux = "0.7.1"
+libc = "0.2.191"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 # HTTPS client of the update check: rustls with the system trust store, no

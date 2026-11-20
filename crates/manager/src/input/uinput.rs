@@ -6,8 +6,8 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 
 use input_linux::{
-    EventKind, EventTime, InputEvent, InputId, Key, KeyEvent, KeyState, SynchronizeEvent,
-    UInputHandle, sys,
+    EventKind, EventTime, InputEvent, InputId, Key, KeyEvent, KeyState, RelativeAxis,
+    SynchronizeEvent, UInputHandle, sys,
 };
 
 use super::keys::all_keys;
@@ -49,6 +49,11 @@ impl UinputInjector {
         let device = UInputHandle::new(file);
         device.set_evbit(EventKind::Key)?;
         device.set_evbit(EventKind::Synchronize)?;
+        // Relative axes, declared and never used: a device with buttons but no
+        // axis is taken for a keyboard, whose buttons the desktop ignores.
+        device.set_evbit(EventKind::Relative)?;
+        device.set_relbit(RelativeAxis::X)?;
+        device.set_relbit(RelativeAxis::Y)?;
         for key in all_keys() {
             device.set_keybit(key)?;
         }
@@ -79,19 +84,35 @@ impl Injector for UinputInjector {
             InputEvent::from(KeyEvent::new(time, key, KeyState::pressed(pressed))).into_raw(),
             InputEvent::from(SynchronizeEvent::report(time)).into_raw(),
         ];
-        self.device.write(&events).map(|_| ())
+        let written = self.device.write(&events)?;
+        if written == events.len() {
+            Ok(())
+        } else {
+            // A key without its report would stay pending.
+            Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "the virtual device took only part of the events",
+            ))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read as _;
+
     use super::*;
 
+    /// Size of a `struct input_event` on a 64-bit system: a 16 byte time, then
+    /// the type, the code (2 bytes each) and the value (4 bytes).
+    const EVENT_SIZE: usize = 24;
+
     #[test]
-    fn a_device_that_does_not_exist_is_an_error_not_a_panic() {
+    fn a_device_that_does_not_exist_is_a_not_found_error() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("uinput");
-        assert!(UinputInjector::open_at(&missing).is_err());
+        let error = UinputInjector::open_at(&missing).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
@@ -99,6 +120,76 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("not-uinput");
         std::fs::write(&path, b"").unwrap();
+        // The device ioctls do not exist on a plain file.
         assert!(UinputInjector::open_at(&path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_device_that_cannot_be_written_is_a_permission_error() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("uinput");
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let error = UinputInjector::open_at(&path).err().unwrap();
+        // Root opens anything: the case is only checked for ordinary users.
+        if error.kind() != io::ErrorKind::PermissionDenied {
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0
+            );
+        }
+    }
+
+    /// What an injector writes to a plain file, as (type, code, value) triples.
+    fn written_by(send: impl FnOnce(&mut UinputInjector)) -> Vec<(u16, u16, i32)> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .read(true)
+            .open(&path)
+            .unwrap();
+        let mut injector = UinputInjector {
+            device: UInputHandle::new(file),
+        };
+        send(&mut injector);
+        let mut bytes = Vec::new();
+        File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+        bytes
+            .as_chunks::<EVENT_SIZE>()
+            .0
+            .iter()
+            .map(|event| {
+                (
+                    u16::from_ne_bytes([event[16], event[17]]),
+                    u16::from_ne_bytes([event[18], event[19]]),
+                    i32::from_ne_bytes([event[20], event[21], event[22], event[23]]),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_key_is_sent_as_a_key_event_followed_by_a_report() {
+        let key_event = u16::try_from(sys::EV_KEY).unwrap();
+        let report = u16::try_from(sys::EV_SYN).unwrap();
+        let code = u16::try_from(sys::KEY_A).unwrap();
+        let events = written_by(|injector| {
+            injector.send(Key::A, true).unwrap();
+            injector.send(Key::A, false).unwrap();
+        });
+        assert_eq!(
+            events,
+            [
+                (key_event, code, 1),
+                (report, 0, 0),
+                (key_event, code, 0),
+                (report, 0, 0),
+            ]
+        );
     }
 }

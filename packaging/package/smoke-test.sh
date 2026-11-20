@@ -25,6 +25,8 @@ readonly UNIT=/usr/lib/systemd/user/hubergamof.service
 readonly UDEV_RULE=/usr/lib/udev/rules.d/70-hubergamof.rules
 # shellcheck source=packaging/desktop/install-desktop.sh
 source "$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/desktop/install-desktop.sh"
+CHECK_UDEV_RULE="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")/check-udev-rule.sh"
+readonly CHECK_UDEV_RULE
 readonly DESKTOP_ENTRY="/usr/share/$DESKTOP_ENTRY_TARGET"
 # Lanceur et icônes, tels que stage.sh les pose.
 mapfile -t DESKTOP_FILES < <(desktop_entry_files | sed 's|^|/usr/share/|')
@@ -68,20 +70,8 @@ check_files() {
 	grep -qF -- 'ListenStream=/run/hubergamof-update.sock' "$UPDATE_SOCKET_UNIT" || fail "socket des mises à jour inattendu"
 	grep -qF -- "ExecStart=$HELPER" "$UPDATE_SERVICE_UNIT" || fail "service des mises à jour sans l'assistant"
 	grep -qF -- "$EXPECTED_EXEC_START" "$UNIT" || fail "ExecStart inattendu dans $UNIT"
-	grep -q 'TAG+="uaccess"' "$UDEV_RULE" || fail "règle udev sans uaccess"
-	# Hors commentaires : l'en-tête de la règle cite MODE="0666" pour expliquer pourquoi on l'évite.
-	if grep -v '^[[:space:]]*#' "$UDEV_RULE" | grep -q 'MODE='; then fail "règle udev ouverte à tous"; fi
-	# Récepteur Logitech : uniquement le Logi Bolt (c548), jamais le Unifying (c52b, la saisie
-	# passe par son HID++), jamais un nœud enfant, et jamais un uaccess sans filtre de produit.
-	local active
-	active="$(grep -v '^[[:space:]]*#' "$UDEV_RULE")"
-	if grep -q 'c52b' <<<"$active"; then fail "règle udev ouverte au récepteur Unifying"; fi
-	grep -qF -- 'DEVPATH!="*/0003:*/0003:*/hidraw/*"' <<<"$active" || fail "règle udev sans exclusion des nœuds enfants"
-	if grep 'idVendor}=="046d"' <<<"$active" | grep -v 'idProduct}=="c548"' | grep -q 'uaccess'; then fail "uaccess Logitech sans filtre de produit"; fi
-	# /dev/uinput : un nœud précis, ouvert par uaccess (jamais par un mode), sans autre nœud nommé.
-	grep -qF -- 'KERNEL=="uinput"' <<<"$active" || fail "règle udev sans /dev/uinput"
-	if grep -F 'KERNEL==' <<<"$active" | grep -vF 'KERNEL=="uinput"' | grep -q .; then fail "règle udev par nom de nœud autre que uinput"; fi
-	if grep -F 'KERNEL=="uinput"' <<<"$active" | grep -qv 'TAG+="uaccess"'; then fail "uinput sans uaccess"; fi
+	# Invariants de sécurité de la règle (testés par `make test-scripts`).
+	"$CHECK_UDEV_RULE" "$UDEV_RULE" || fail "règle udev non conforme"
 }
 
 check_binary() {

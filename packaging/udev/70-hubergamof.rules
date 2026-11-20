@@ -30,7 +30,8 @@ SUBSYSTEM=="hidraw", ENV{HUBERGAMOF_HIDPP}=="1", DEVPATH!="*/0003:*/0003:*/hidra
 
 # /dev/uinput : l'utilisateur de la session locale active peut créer un périphérique
 # d'entrée virtuel, par lequel le gestionnaire envoie les clics et les raccourcis liés aux
-# boutons des souris. static_node fait créer le nœud (et charger le module uinput) dès
-# le démarrage. Même règle que les paquets qui émulent des manettes (Steam) : voir
-# docs/security.md pour ce que cela ouvre.
+# boutons des souris. static_node applique l'étiquette au nœud statique avant tout
+# événement udev (le nœud et le chargement du module uinput viennent de kmod-static-nodes
+# et de la première ouverture). Même règle que les paquets qui émulent des manettes
+# (Steam) : voir docs/security.md pour ce que cela ouvre.
 KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
