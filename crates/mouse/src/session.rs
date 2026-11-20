@@ -39,6 +39,15 @@ pub enum Notice {
     Button(ButtonEvent),
 }
 
+/// What the person asks of a mouse while it is served.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Request {
+    /// Apply a configuration.
+    Apply(MouseConfig),
+    /// Switch the wheel between ratchet and free spin.
+    ToggleWheelMode,
+}
+
 /// How long [`MouseSession::serve`] waits for the buttons before looking at
 /// the stop request again: the delay with which it reacts to it.
 const SERVE_STEP: Duration = Duration::from_millis(200);
@@ -73,8 +82,10 @@ const HIRES_BIT: u8 = 0x02;
 const NATURAL_BIT: u8 = 0x04;
 /// Bit of the second thumb wheel byte for the reversed direction.
 const THUMB_INVERT_BIT: u8 = 0x01;
-/// The wheel mode byte of a ratchet; `1` is free spin.
+/// The wheel mode byte of a ratchet.
 const WHEEL_RATCHET: u8 = 2;
+/// The wheel mode byte of a free spinning wheel.
+const WHEEL_FREE: u8 = 1;
 /// The auto-disengage value of a wheel that never frees itself.
 const NEVER_FREE: u8 = 255;
 
@@ -417,9 +428,25 @@ impl<C: Channel> MouseSession<C> {
         config: &MouseConfig,
         stop: &AtomicBool,
         mut updates: impl FnMut() -> Option<MouseConfig>,
+        notify: impl FnMut(Notice),
+    ) -> Result<(), HidppError> {
+        self.serve_with_requests(config, stop, || updates().map(Request::Apply), notify)
+    }
+
+    /// Like [`MouseSession::serve_with_updates`], for any [`Request`]: what
+    /// the person asked of the mouse (a configuration, a toggle of the wheel)
+    /// while it is served.
+    ///
+    /// # Errors
+    /// See [`MouseSession::serve`].
+    pub fn serve_with_requests(
+        &mut self,
+        config: &MouseConfig,
+        stop: &AtomicBool,
+        mut requests: impl FnMut() -> Option<Request>,
         mut notify: impl FnMut(Notice),
     ) -> Result<(), HidppError> {
-        let served = self.serve_buttons(config, stop, &mut updates, &mut notify);
+        let served = self.serve_buttons(config, stop, &mut requests, &mut notify);
         for event in self.release_held() {
             notify(Notice::Button(event));
         }
@@ -432,7 +459,7 @@ impl<C: Channel> MouseSession<C> {
         &mut self,
         config: &MouseConfig,
         stop: &AtomicBool,
-        updates: &mut impl FnMut() -> Option<MouseConfig>,
+        requests: &mut impl FnMut() -> Option<Request>,
         notify: &mut impl FnMut(Notice),
     ) -> Result<(), HidppError> {
         // What a previous run left diverted: a refusal is reported, a mouse that
@@ -451,11 +478,15 @@ impl<C: Channel> MouseSession<C> {
             notify(Notice::Problem(problem));
         }
         while !stop.load(Ordering::Relaxed) {
-            let update = match updates() {
-                Some(update) => {
+            let update = match requests() {
+                Some(Request::Apply(update)) => {
                     // Newer than one that had to wait.
                     self.pending = None;
                     Some(update)
+                }
+                Some(Request::ToggleWheelMode) => {
+                    self.toggle_wheel_mode(notify)?;
+                    None
                 }
                 None => self.pending.take(),
             };
@@ -470,6 +501,31 @@ impl<C: Channel> MouseSession<C> {
             }
         }
         Ok(())
+    }
+
+    /// Switches the wheel between ratchet and free spin, as it is now (a
+    /// toggle does not touch the configuration, and the mouse's own mode is
+    /// back at the end). What the mouse refuses is reported.
+    fn toggle_wheel_mode(&mut self, notify: &mut impl FnMut(Notice)) -> Result<(), HidppError> {
+        let toggled = self.link.wheel().and_then(|wheel| {
+            let mode = if wheel.mode == WHEEL_RATCHET {
+                WHEEL_FREE
+            } else {
+                WHEEL_RATCHET
+            };
+            self.link.write_wheel(WheelState { mode, ..wheel })
+        });
+        match toggled {
+            Ok(()) => Ok(()),
+            Err(error) if is_fatal(&error) => Err(error),
+            Err(error) => {
+                notify(Notice::Problem(ApplyProblem {
+                    setting: "wheel mode",
+                    error,
+                }));
+                Ok(())
+            }
+        }
     }
 
     /// Applies a configuration received while serving. What the mouse refuses
@@ -1622,5 +1678,103 @@ mod tests {
             "given up after a few turns: {}",
             turn.get()
         );
+    }
+
+    #[test]
+    fn the_wheel_is_toggled_between_ratchet_and_free_spin_and_given_back() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut modes = Vec::new();
+        let served = session.serve_with_requests(
+            &config(),
+            &stop,
+            || {
+                turn.set(turn.get() + 1);
+                modes.push(shared.0.borrow().device_at(DEVICE).unwrap().state.wheel[0]);
+                match turn.get() {
+                    2 | 3 => Some(Request::ToggleWheelMode),
+                    5 => {
+                        stop.store(true, Ordering::Relaxed);
+                        None
+                    }
+                    _ => None,
+                }
+            },
+            |_| {},
+        );
+        served.unwrap();
+        // Ratchet (2) at first, free (1) after one toggle, ratchet after two.
+        assert_eq!(modes, [2, 2, 1, 2, 2]);
+        let state = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert_eq!(
+            state.wheel,
+            [2, 10, 50],
+            "the mouse's own settings are back"
+        );
+    }
+
+    #[test]
+    fn a_toggle_keeps_the_rest_of_the_wheel_state() {
+        let mut device = FakeDevice::mx_master_4();
+        device.state.wheel = [2, 17, 33];
+        let (mut session, shared) = shared_session(device);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut during = None;
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                || {
+                    turn.set(turn.get() + 1);
+                    match turn.get() {
+                        1 => Some(Request::ToggleWheelMode),
+                        2 => {
+                            during = Some(shared.0.borrow().device_at(DEVICE).unwrap().state.wheel);
+                            stop.store(true, Ordering::Relaxed);
+                            None
+                        }
+                        _ => None,
+                    }
+                },
+                |_| {},
+            )
+            .unwrap();
+        // The configuration put its threshold (20); the torque is the mouse's.
+        assert_eq!(during, Some([1, 20, 33]));
+    }
+
+    #[test]
+    fn a_toggle_the_mouse_refuses_is_reported_and_the_service_goes_on() {
+        let device =
+            FakeDevice::mx_master_4().with_broken_feature(crate::features::SMART_SHIFT_ENHANCED);
+        let (mut session, _shared) = shared_session(device);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut problems = Vec::new();
+        let served = session.serve_with_requests(
+            &config(),
+            &stop,
+            || {
+                turn.set(turn.get() + 1);
+                match turn.get() {
+                    1 => Some(Request::ToggleWheelMode),
+                    3 => {
+                        stop.store(true, Ordering::Relaxed);
+                        None
+                    }
+                    _ => None,
+                }
+            },
+            |notice| {
+                if let Notice::Problem(problem) = notice {
+                    problems.push(problem.setting);
+                }
+            },
+        );
+        served.unwrap();
+        assert!(problems.contains(&"wheel mode"), "{problems:?}");
+        assert!(turn.get() >= 3, "it went on");
     }
 }
