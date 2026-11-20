@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The scripted HID++ devices of the tests, for the crates that test code
+# using a mouse.
+test-support = []
+
 [dependencies]
 # Same single Linux backend as the Stream Deck code (hidraw, bundled C sources
 # + system libudev): hidapi accepts exactly one.

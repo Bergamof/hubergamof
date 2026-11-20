@@ -21,6 +21,7 @@ use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
+use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
@@ -63,6 +64,10 @@ const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 // The manager's options make no sense with a command and are refused before
 // it; the global `--port` goes after it (`hubergamof open --port 9000`).
 #[command(version, about, args_conflicts_with_subcommands = true)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each command-line switch is its own flag"
+)]
 struct Cli {
     /// Use a simulated device instead of real hardware.
     #[arg(long)]
@@ -89,6 +94,12 @@ struct Cli {
     /// Do not show the system tray icon.
     #[arg(long)]
     no_tray: bool,
+
+    /// Serve Logitech MX mice (Logi Bolt receiver): apply their configuration
+    /// and take over their buttons. Experimental, off until the mouse menu
+    /// and actions exist: a diverted button does nothing for now.
+    #[arg(long)]
+    mice: bool,
 
     /// Never look for a newer release: the manager then makes no connection
     /// to the Internet at all.
@@ -500,6 +511,9 @@ async fn run_manager(cli: Cli) -> Result<()> {
         "hubergamof starting"
     );
     let mut terminate = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    // A closed terminal must not kill the process before the mice are given
+    // back.
+    let mut hangup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
     let (shutdown, stopping) = watch::channel(false);
 
     let services = services(
@@ -512,6 +526,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
+    let mice = start_mice(&cli, &services.store);
     let supervisor = Supervisor::start(&discovery, services);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -536,6 +551,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         Ok(server) => server,
         Err(error) => {
             supervisor.shutdown().await;
+            stop_mice(mice).await;
             return Err(error).context("cannot start the web interface");
         }
     };
@@ -548,6 +564,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
             shutdown.send_replace(true);
             stop_server(server_task).await;
             supervisor.shutdown().await;
+            stop_mice(mice).await;
             return Err(error);
         }
     };
@@ -570,6 +587,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let outcome = tokio::select! {
         signal = tokio::signal::ctrl_c() => signal.context("cannot listen for Ctrl-C"),
         _ = terminate.recv() => Ok(()),
+        _ = hangup.recv() => Ok(()),
         () = wait_for_quit(stopping) => Ok(()),
         result = &mut server_task => server_outcome(result),
     };
@@ -577,12 +595,30 @@ async fn run_manager(cli: Cli) -> Result<()> {
     shutdown.send_replace(true);
     stop_server(server_task).await;
     supervisor.shutdown().await;
+    stop_mice(mice).await;
     shutdown_devices(&discovery, source).await;
     if let Some(tray) = tray {
         tray.stop().await;
     }
     tracing::info!("bye");
     outcome
+}
+
+/// Starts serving the mice, with `--mice` and on real hardware only.
+fn start_mice(cli: &Cli, store: &ConfigStore) -> Option<MouseSupervisor> {
+    serves_mice(cli).then(|| MouseSupervisor::start(HidrawSource, store.clone(), SCAN_INTERVAL))
+}
+
+/// `--demo` never touches the hardware, whatever else is asked.
+fn serves_mice(cli: &Cli) -> bool {
+    cli.mice && !cli.demo
+}
+
+/// Gives the buttons of the mice back and stops serving them.
+async fn stop_mice(mice: Option<MouseSupervisor>) {
+    if let Some(mice) = mice {
+        mice.shutdown().await;
+    }
 }
 
 /// Release announced by `--demo`: far above any real one, so the interface
@@ -916,6 +952,18 @@ mod tests {
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
         let cli = Cli::try_parse_from(["hubergamof", "native-host"]).unwrap();
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
+    }
+
+    #[test]
+    fn serving_the_mice_is_opt_in() {
+        assert!(!Cli::try_parse_from(["hubergamof"]).unwrap().mice);
+        let mice = Cli::try_parse_from(["hubergamof", "--mice"]).unwrap();
+        assert!(mice.mice && serves_mice(&mice));
+        let demo = Cli::try_parse_from(["hubergamof", "--mice", "--demo"]).unwrap();
+        assert!(
+            demo.mice && !serves_mice(&demo),
+            "the demo never serves mice"
+        );
     }
 
     #[test]

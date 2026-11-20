@@ -217,14 +217,14 @@ pub struct MouseKey {
 }
 
 /// A connected mouse and where it was found.
-pub struct FoundMouse {
+pub struct FoundMouse<C = HidrawChannel> {
     /// Where.
     pub key: MouseKey,
     /// Its unit id, `None` when it could not be read: what tells one physical
     /// mouse from another when two paths lead to it.
     pub unit: Option<UnitId>,
     /// The mouse.
-    pub link: MouseLink<HidrawChannel>,
+    pub link: MouseLink<C>,
 }
 
 /// Every supported mouse on the Logitech HID++ interfaces, except the places

@@ -75,6 +75,9 @@ hubergamof mouse-test --model master4 release
 - `dpi N` (200 à 8000, pas de 50) et `wheel ratchet|free|auto [--threshold 1..50]` règlent puis relisent.
 - `buttons` détourne tous les boutons sauf les clics gauche et droit, affiche chaque appui et chaque relâchement pendant la durée donnée, puis les rend. Ctrl+C, SIGTERM ou la fermeture du terminal arrêtent la surveillance en rendant les boutons ; si le processus est tué net (`kill -9`) ou plante, `release` les rend, et la souris les oublie de toute façon à sa prochaine reconnexion. Arrêtez avant le service, Solaar et logiops, qui détournent les mêmes boutons. Les bornes (`dpi` 200 à 8000 par 50, `--threshold` 1 à 50, `--seconds` 1 à 300) sont refusées avant même de chercher la souris.
 
+## Veille et réveil (à observer)
+Sur le récepteur, une souris qui s'endort laisse son nœud hidraw ouvert et muet : le moteur ne s'en aperçoit pas (le fil continue sans erreur) et ne réapplique rien au réveil ; les détournements sont probablement perdus à l'endormissement (hypothèse, non vérifiée). Le récepteur annonce les connexions par des notifications HID++ 1.0 (sous-id `0x41`) dont le format reste à relever sur le matériel avant de les traiter (réappliquer la configuration à la reconnexion, rendre les boutons tenus à la déconnexion). Ouvert tant que ce n'est pas fait ; `--mice` reste désactivé par défaut.
+
 ## Un seul interlocuteur par souris
 Toutes nos requêtes portent le même identifiant logiciel (`0x0B`) : un autre programme qui parle HID++ à la même souris en même temps (`mouse-test` pendant que le service tourne, Solaar, logiops, Options+) peut voir ses réponses confondues avec les nôtres, et `mouse-test buttons|release` défait les détournements du service. Le gestionnaire ne sonde jamais un (nœud, index) qu'il tient déjà (`find_mice`) ; les autres programmes sont à arrêter à la main. Une souris atteinte par deux nœuds n'est prise en charge qu'une fois (identifiant d'unité).
 

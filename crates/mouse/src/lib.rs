@@ -25,5 +25,5 @@ pub mod hidraw;
 pub mod link;
 pub mod probe;
 pub mod session;
-#[cfg(test)]
-mod testing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;

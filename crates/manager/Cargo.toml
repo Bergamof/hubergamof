@@ -79,6 +79,7 @@ zbus = { workspace = true, features = ["proxy", "service"] }
 zip.workspace = true
 
 [dev-dependencies]
+hubergamof-mouse = { workspace = true, features = ["test-support"] }
 futures-util = { workspace = true, features = ["sink"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = "0.30.0"

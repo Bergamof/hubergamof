@@ -5,6 +5,16 @@
 //! real mouse agrees. That is what the checks on the hardware are for
 //! (`docs/mouse-hidpp.md`).
 
+// A test double, public for the tests of the crates that use a mouse: its
+// builders and fields are self-explanatory and nothing here is a public API.
+#![allow(
+    missing_docs,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::new_without_default,
+    clippy::assigning_clones
+)]
+
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
@@ -316,6 +326,9 @@ impl FakeDevice {
     }
 }
 
+/// How long an idle read of the scripted link takes at most.
+const IDLE_READ: Duration = Duration::from_millis(2);
+
 /// How an interface misbehaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkMode {
@@ -459,10 +472,15 @@ impl Channel for FakeLink {
         Ok(())
     }
 
-    fn read(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
+    fn read(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
         match self.queue.pop_front() {
             None if self.mode == LinkMode::BrokenReads => {
                 Err(ChannelError("read failed".to_owned()))
+            }
+            None => {
+                // A real read waits; a loop on this link must not spin a core.
+                std::thread::sleep(timeout.min(IDLE_READ));
+                Ok(None)
             }
             frame => Ok(frame),
         }
