@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isReserved, keyName, modifierName, shortcutLabel, shortcutOf } from './shortcut.js';
+import {
+	isReserved,
+	keyName,
+	modifierName,
+	normalizeShortcut,
+	shortcutLabel,
+	shortcutOf
+} from './shortcut.js';
 
 describe('keyName', () => {
 	it.each([
@@ -59,5 +66,21 @@ describe('shortcutLabel', () => {
 	it('writes the keys the way the person reads them', () => {
 		expect(shortcutLabel('ctrl+shift+m')).toBe('Ctrl + Maj + M');
 		expect(shortcutLabel('super+left')).toBe('Super + ←');
+	});
+});
+
+describe('normalizeShortcut', () => {
+	it('reads what a person types', () => {
+		expect(normalizeShortcut('Ctrl + Maj + M')).toBe('ctrl+shift+m');
+		expect(normalizeShortcut('control+win+return')).toBe('ctrl+super+enter');
+		expect(normalizeShortcut('F5')).toBe('f5');
+	});
+
+	it('refuses unknown keys, nothing and too many keys', () => {
+		expect(normalizeShortcut('ctrl+banane')).toBeUndefined();
+		expect(normalizeShortcut('')).toBeUndefined();
+		expect(normalizeShortcut('ctrl++m')).toBeUndefined();
+		expect(normalizeShortcut('a+b+c+d+e+f+g')).toBeUndefined();
+		expect(normalizeShortcut('f13')).toBeUndefined();
 	});
 });

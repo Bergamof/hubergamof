@@ -616,3 +616,59 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await expectAccessible(page, 'confirmation de suppression');
 	});
 }
+
+// The demo also lists a simulated MX Master 4: its configuration is saved as a real mouse's.
+
+async function openMouse(page: Page) {
+	await open(page);
+	await page.getByRole('button', { name: 'Souris' }).click();
+	await expect(page.getByRole('heading', { name: 'MX Master 4' })).toBeVisible();
+}
+
+test('configure les boutons, le pointeur et les vibrations de la souris, et les retrouve', async ({
+	page
+}) => {
+	await openMouse(page);
+	await expect(page.getByRole('button', { name: 'Souris' })).toHaveAttribute(
+		'aria-current',
+		'page'
+	);
+
+	await page.getByLabel('Action de : Bouton arrière').selectOption('shortcut');
+	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).fill('Ctrl + Maj + M');
+	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).press('Enter');
+	await expect(page.getByText('Modifications enregistrées.')).toBeVisible();
+
+	await page.getByLabel('Force des vibrations').selectOption('high');
+	await page.getByRole('checkbox', { name: "Fin d'une étape" }).uncheck();
+	await expect(page.getByText('Modifications enregistrées.')).toBeVisible();
+
+	await page.reload();
+	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
+	await page.getByRole('button', { name: 'Souris' }).click();
+	await expect(page.getByLabel('Raccourci de : Bouton arrière', { exact: true })).toHaveValue(
+		'ctrl+shift+m'
+	);
+	await expect(page.getByLabel('Force des vibrations')).toHaveValue('high');
+	await expect(page.getByRole('checkbox', { name: "Fin d'une étape" })).not.toBeChecked();
+});
+
+test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {
+	await openMouse(page);
+	await expect(page.getByText(/4 actuellement/)).toBeVisible();
+	await page.getByRole('button', { name: 'Descendre : Pomodoro' }).click();
+	await expect(page.getByText('Modifications enregistrées.')).toBeVisible();
+	await page.getByRole('checkbox', { name: 'Teams' }).uncheck();
+	await expect(page.getByText(/3 actuellement/)).toBeVisible();
+	await expect(page.getByRole('checkbox', { name: 'Pomodoro' })).toBeDisabled();
+});
+
+for (const colorScheme of ['light', 'dark'] as const) {
+	test(`la page de la souris reste accessible (thème ${colorScheme})`, async ({ page }) => {
+		await page.emulateMedia({ colorScheme });
+		await openMouse(page);
+		await expectAccessible(page, 'page de la souris');
+		await page.getByLabel('Action de : Bouton arrière').selectOption('shortcut');
+		await expectAccessible(page, 'raccourci en cours de saisie');
+	});
+}

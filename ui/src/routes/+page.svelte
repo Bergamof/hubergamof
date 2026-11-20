@@ -5,6 +5,7 @@
 	import { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
+	import MouseEditor from '#lib/components/MouseEditor.svelte';
 	import UpdatePanel from '#lib/components/UpdatePanel.svelte';
 	import Notices from '#lib/components/Notices.svelte';
 	import BrandWordmark from '#lib/components/BrandWordmark.svelte';
@@ -17,11 +18,28 @@
 	let connection = $state<ManagerConnection>();
 	let deck = $state<DeckState>();
 
-	const isOnline = $derived(connection?.status === 'open');
-	/** The page then shows its own alert about the lost connection: the header does not repeat it. */
-	const offlineAlertShown = $derived(
-		!isOnline && deck?.device !== undefined && deck.config !== undefined
+	type Section = 'deck' | 'mouse';
+	/** What the person asked to see; what is shown also depends on what is connected. */
+	let wanted = $state<Section>('deck');
+	const hasDecks = $derived((deck?.devices.length ?? 0) > 0);
+	const hasMice = $derived((deck?.mice.mice.length ?? 0) > 0);
+	const section: Section = $derived(
+		hasMice && (wanted === 'mouse' || !hasDecks) ? 'mouse' : 'deck'
 	);
+	const SECTIONS: readonly { value: Section; label: string }[] = [
+		{ value: 'deck', label: 'Stream Deck' },
+		{ value: 'mouse', label: 'Souris' }
+	];
+
+	const isOnline = $derived(connection?.status === 'open');
+	/** The editor shown: the mouse one, or the deck one, once its configuration is known. */
+	const editorShown = $derived(
+		section === 'mouse'
+			? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
+			: deck?.device !== undefined && deck.config !== undefined
+	);
+	/** The page then shows its own alert about the lost connection: the header does not repeat it. */
+	const offlineAlertShown = $derived(!isOnline && editorShown);
 
 	let editor: HTMLDivElement | undefined = $state();
 	/** Focused control of the editor when the connection was lost, focused again once back. */
@@ -60,7 +78,11 @@
 </script>
 
 <svelte:head>
-	<title>{deck?.device ? `${deck.device.displayName} · HuBergamof` : 'HuBergamof'}</title>
+	<title>
+		{(section === 'mouse' ? deck?.mice.mouse : deck?.device)
+			? `${(section === 'mouse' ? deck?.mice.mouse : deck?.device)?.displayName} · HuBergamof`
+			: 'HuBergamof'}
+	</title>
 </svelte:head>
 
 {#snippet hero(message: string, detail?: string)}
@@ -90,7 +112,7 @@
 	</header>
 
 	<main id={MAIN_ID} tabindex="-1" class="flex flex-1 flex-col gap-6 outline-none">
-		{#if deck?.device && deck.config}
+		{#if deck && editorShown}
 			{#if !isOnline}
 				<p
 					role="alert"
@@ -101,24 +123,61 @@
 				</p>
 			{/if}
 			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline}>
-				<DeviceSelector
-					devices={deck.devices}
-					selected={deck.selectedSerial}
-					onselect={(serial) => deck?.select(serial)}
-				/>
+				{#if hasDecks && hasMice}
+					<nav aria-label="Appareils à configurer" class="flex gap-2">
+						{#each SECTIONS as choice (choice.value)}
+							<button
+								type="button"
+								class={[
+									'rounded-full border px-4 py-1.5 font-medium focus-ring',
+									section === choice.value
+										? 'border-accent bg-accent text-on-accent'
+										: 'border-line bg-surface text-muted'
+								]}
+								aria-current={section === choice.value ? 'page' : undefined}
+								onclick={() => (wanted = choice.value)}
+							>
+								{choice.label}
+							</button>
+						{/each}
+					</nav>
+				{/if}
+				{#if section === 'mouse' && deck.mice.mouse && deck.mice.config}
+					<DeviceSelector
+						devices={deck.mice.mice}
+						selected={deck.mice.selectedSerial}
+						label="Souris"
+						onselect={(serial) => deck?.mice.select(serial)}
+					/>
+				{:else if deck.device}
+					<DeviceSelector
+						devices={deck.devices}
+						selected={deck.selectedSerial}
+						onselect={(serial) => deck?.select(serial)}
+					/>
+				{/if}
 				<Notices
 					notices={deck.notices}
 					fallbackFocusId={MAIN_ID}
 					ondismiss={(id) => deck?.dismiss(id)}
 				/>
-				<DeckEditor {deck} device={deck.device} config={deck.config} {api} />
+				{#if section === 'mouse' && deck.mice.mouse && deck.mice.config}
+					<MouseEditor
+						{deck}
+						mouse={deck.mice.mouse}
+						config={deck.mice.config}
+						radialMenu={deck.mice.radialMenu}
+					/>
+				{:else if deck.device && deck.config}
+					<DeckEditor {deck} device={deck.device} config={deck.config} {api} />
+				{/if}
 			</div>
 		{:else if !isOnline || !deck}
 			{@render hero(
 				'Connexion au gestionnaire…',
 				'Si rien ne se passe, vérifiez que le service hubergamof est lancé.'
 			)}
-		{:else if deck.devices.length === 0}
+		{:else if !hasDecks && !hasMice}
 			{@render hero('Aucun appareil connecté')}
 		{:else}
 			<Notices

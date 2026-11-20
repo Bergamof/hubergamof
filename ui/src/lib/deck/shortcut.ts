@@ -131,3 +131,38 @@ export function shortcutLabel(shortcut: string): string {
 		.map((name) => LABELS[name] ?? name.toUpperCase())
 		.join(' + ');
 }
+
+/** Other spellings the manager accepts, by the name they stand for. */
+const ALIASES: Readonly<Record<string, string>> = {
+	maj: 'shift',
+	control: 'ctrl',
+	meta: 'super',
+	win: 'super',
+	return: 'enter',
+	escape: 'esc',
+	del: 'delete'
+};
+
+const KNOWN_NAMES: ReadonlySet<string> = new Set([
+	...'abcdefghijklmnopqrstuvwxyz0123456789',
+	...Array.from({ length: 12 }, (_, index) => `f${index + 1}`),
+	...Object.values(MODIFIERS),
+	...Object.values(NAMED)
+]);
+
+/**
+ * The shortcut typed by hand (`Ctrl + Shift + M`, `ctrl+shift+m`) written as the manager
+ * reads it, `undefined` when a key is unknown or there are none or too many.
+ */
+export function normalizeShortcut(text: string): string | undefined {
+	const names = text
+		.split('+')
+		.map((name) => name.trim().toLowerCase())
+		.map((name) => ALIASES[name] ?? name);
+	if (names.length > MAX_SHORTCUT_KEYS || !names.every((name) => KNOWN_NAMES.has(name))) {
+		return undefined;
+	}
+	const unique = [...new Set(names)];
+	const modifiers = MODIFIER_ORDER.filter((name) => unique.includes(name));
+	return [...modifiers, ...unique.filter((name) => !MODIFIER_ORDER.includes(name))].join('+');
+}
