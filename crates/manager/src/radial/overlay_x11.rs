@@ -17,9 +17,9 @@ use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
-    AtomEnum, ClientMessageEvent, ColormapAlloc, ConnectionExt as _, CreateGCAux, CreateWindowAux,
-    EventMask, GrabMode, GrabStatus, ImageFormat, PropMode, VisualClass, Visualid, Window,
-    WindowClass,
+    Atom, AtomEnum, ClientMessageEvent, ColormapAlloc, ConnectionExt as _, CreateGCAux,
+    CreateWindowAux, EventMask, GrabMode, GrabStatus, ImageFormat, PropMode, VisualClass, Visualid,
+    Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -55,6 +55,13 @@ const BLUE_MASK: u32 = 0x0000_00ff;
 
 /// Time between two frames while the menu opens.
 const FRAME_PERIOD: Duration = Duration::from_millis(16);
+
+/// Name of the atom of the message that wakes the thread.
+const WAKE_ATOM_NAME: &[u8] = b"_HUBERGAMOF_RADIAL_WAKE";
+
+/// Most X events taken before the commands of the host are looked at: a client
+/// that floods the window cannot keep `Stop` from being read.
+const MAX_BATCH: usize = 256;
 
 /// Name of the window, and class for the window manager's rules.
 const WINDOW_NAME: &str = "HuBergamof radial menu";
@@ -111,6 +118,9 @@ pub struct X11Overlay {
 struct Waker {
     connection: Arc<RustConnection>,
     window: Window,
+    /// Type of the message that wakes the thread: an atom of ours, so that no
+    /// other message is taken for a wake-up.
+    atom: Atom,
 }
 
 impl std::fmt::Debug for Waker {
@@ -124,7 +134,7 @@ impl std::fmt::Debug for Waker {
 
 impl Waker {
     fn wake(&self) {
-        let message = ClientMessageEvent::new(32, self.window, AtomEnum::STRING, [0_u32; 5]);
+        let message = ClientMessageEvent::new(32, self.window, self.atom, [0_u32; 5]);
         // A connection that is gone ends the thread by itself.
         let _ = self
             .connection
@@ -152,12 +162,12 @@ impl X11Overlay {
         let waker = Waker {
             connection: Arc::clone(&connection),
             window,
+            atom: intern(&connection, WAKE_ATOM_NAME)?,
         };
         let (commands, received) = mpsc::channel();
         let ticker = Arc::new(Ticker::default());
-        spawn_ticker(&ticker, &waker)?;
         let mut state = State {
-            connection,
+            connection: Arc::clone(&connection),
             window,
             gc: 0,
             screen: Size {
@@ -166,26 +176,39 @@ impl X11Overlay {
             },
             renderer: TextRenderer::new()?,
             events: Arc::clone(&events),
-            ticker,
+            wake_atom: waker.atom,
+            ticker: Arc::clone(&ticker),
             shown: None,
+            mapped: false,
             last_pointer: None,
         };
         state.make_gc()?;
         let thread = std::thread::Builder::new()
             .name("radial-overlay-x11".to_owned())
             .spawn(move || {
-                // Told when the thread ends, whatever the way.
+                // Told when the thread ends, whatever the way (an error, a
+                // panic unwinding), and after the window is cleaned up: the
+                // host must not go on with a menu that has no window.
                 let _gone = Gone(events);
+                let _cleanup = Cleanup {
+                    connection: Arc::clone(&state.connection),
+                    window: state.window,
+                    ticker: Arc::clone(&state.ticker),
+                };
                 if let Err(error) = state.run(&received) {
                     tracing::error!(%error, "the radial menu window stopped");
                 }
             })
             .map_err(|error| X11Error::Thread(error.to_string()))?;
-        Ok(Self {
+        // From here the overlay owns the thread: if the ticker cannot start,
+        // dropping the overlay stops it.
+        let overlay = Self {
             commands,
             waker,
             thread: Some(thread),
-        })
+        };
+        spawn_ticker(&ticker, &overlay.waker)?;
+        Ok(overlay)
     }
 
     fn send(&self, command: Command) {
@@ -284,17 +307,39 @@ fn make_window(
     Ok(window)
 }
 
+fn intern(connection: &RustConnection, name: &[u8]) -> Result<Atom, X11Error> {
+    connection
+        .intern_atom(false, name)
+        .map_err(X11Error::request)?
+        .reply()
+        .map(|reply| reply.atom)
+        .map_err(X11Error::request)
+}
+
+/// What a thread that ends leaves behind it is taken away, whatever the way it
+/// ended: the keyboard grab, the window (a window left mapped would cover the
+/// screen and swallow every click), and the ticker.
+struct Cleanup {
+    connection: Arc<RustConnection>,
+    window: Window,
+    ticker: Arc<Ticker>,
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        self.ticker.stop();
+        // Each fails without harm when the server is gone.
+        let _ = self.connection.ungrab_keyboard(CURRENT_TIME);
+        let _ = self.connection.unmap_window(self.window);
+        let _ = self.connection.destroy_window(self.window);
+        let _ = self.connection.flush();
+    }
+}
+
 /// Name, class and the state the window manager reads at the map: full screen,
 /// above the others.
 fn set_properties(connection: &RustConnection, window: Window) -> Result<(), X11Error> {
-    let atom = |name: &[u8]| -> Result<u32, X11Error> {
-        connection
-            .intern_atom(false, name)
-            .map_err(X11Error::request)?
-            .reply()
-            .map(|reply| reply.atom)
-            .map_err(X11Error::request)
-    };
+    let atom = |name: &[u8]| intern(connection, name);
     let state = atom(b"_NET_WM_STATE")?;
     let fullscreen = atom(b"_NET_WM_STATE_FULLSCREEN")?;
     let above = atom(b"_NET_WM_STATE_ABOVE")?;
@@ -402,6 +447,58 @@ fn spawn_ticker(ticker: &Arc<Ticker>, waker: &Waker) -> Result<(), X11Error> {
         .map_err(|error| X11Error::Thread(error.to_string()))
 }
 
+/// What an X event comes to, once the events another client could have forged
+/// are put aside.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Seen {
+    Pointer(Point),
+    Click,
+    Escape,
+    Mapped,
+    Unmapped,
+    Exposed,
+    Resized(u16, u16),
+    Destroyed,
+    /// The message that wakes the thread.
+    Wake,
+    Ignored,
+}
+
+/// What `event` is. Another X client can send any event to any window
+/// (`SendEvent`), and x11rb hands it over like a real one: only what the server
+/// generated counts, and the one message of ours, which is of a type nobody else
+/// has a reason to use.
+fn interpret(event: &Event, wake: Atom) -> Seen {
+    if let Event::ClientMessage(message) = event {
+        return if message.type_ == wake {
+            Seen::Wake
+        } else {
+            Seen::Ignored
+        };
+    }
+    if !event.server_generated() {
+        return Seen::Ignored;
+    }
+    match event {
+        Event::EnterNotify(event) => Seen::Pointer(Point::new(
+            f64::from(event.event_x),
+            f64::from(event.event_y),
+        )),
+        Event::MotionNotify(event) => Seen::Pointer(Point::new(
+            f64::from(event.event_x),
+            f64::from(event.event_y),
+        )),
+        Event::ButtonPress(_) => Seen::Click,
+        Event::KeyPress(event) if event.detail == KEYCODE_ESCAPE => Seen::Escape,
+        Event::MapNotify(_) => Seen::Mapped,
+        Event::UnmapNotify(_) => Seen::Unmapped,
+        Event::Expose(_) => Seen::Exposed,
+        Event::ConfigureNotify(event) => Seen::Resized(event.width, event.height),
+        Event::DestroyNotify(_) => Seen::Destroyed,
+        _ => Seen::Ignored,
+    }
+}
+
 /// What is on screen.
 struct Shown {
     content: Content,
@@ -417,8 +514,11 @@ struct State {
     screen: Size,
     renderer: TextRenderer,
     events: Report,
+    wake_atom: Atom,
     ticker: Arc<Ticker>,
     shown: Option<Shown>,
+    /// The window manager has shown the window (and not taken it away since).
+    mapped: bool,
     /// Where the pointer was last reported, to not repeat it.
     last_pointer: Option<Point>,
 }
@@ -436,18 +536,21 @@ impl State {
     /// Waits for what the host asks (a wake-up) and for X, until told to stop.
     fn run(&mut self, commands: &Receiver<Command>) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            let first = self.connection.wait_for_event()?;
-            let mut batch = vec![first];
-            while let Some(event) = self.connection.poll_for_event()? {
+            let mut batch = vec![self.connection.wait_for_event()?];
+            while batch.len() < MAX_BATCH
+                && let Some(event) = self.connection.poll_for_event()?
+            {
                 batch.push(event);
             }
-            if !self.handle_events(batch) {
-                self.ticker.stop();
+            let seen: Vec<Seen> = batch
+                .iter()
+                .map(|event| interpret(event, self.wake_atom))
+                .collect();
+            if !self.handle(seen) {
                 return Ok(());
             }
             while let Ok(command) = commands.try_recv() {
                 if !self.command(command) {
-                    self.ticker.stop();
                     return Ok(());
                 }
             }
@@ -455,45 +558,52 @@ impl State {
         }
     }
 
-    /// `false` when the connection says the server is going away.
-    fn handle_events(&mut self, events: Vec<Event>) -> bool {
+    /// `false` when the window is destroyed under us.
+    fn handle(&mut self, seen: Vec<Seen>) -> bool {
         let mut pointer = None;
-        for event in events {
-            match event {
-                Event::EnterNotify(event) => {
-                    pointer = Some(Point::new(
-                        f64::from(event.event_x),
-                        f64::from(event.event_y),
-                    ));
-                }
-                Event::MotionNotify(event) => {
-                    pointer = Some(Point::new(
-                        f64::from(event.event_x),
-                        f64::from(event.event_y),
-                    ));
-                }
-                Event::ButtonPress(_) if self.shown.is_some() => {
+        let mut exposed = false;
+        for seen in seen {
+            match seen {
+                Seen::Pointer(position) => pointer = Some(position),
+                Seen::Click if self.shown.is_some() => {
                     self.report_pointer(pointer.take());
                     self.report(WindowEvent::Click);
                 }
-                Event::KeyPress(event)
-                    if event.detail == KEYCODE_ESCAPE && self.shown.is_some() =>
-                {
-                    self.give_up();
+                Seen::Escape if self.shown.is_some() => self.give_up(),
+                Seen::Mapped => self.mapped_by_the_window_manager(),
+                Seen::Unmapped => {
+                    // Something else took the window away while the menu is
+                    // shown: the menu is given up. A late notice of an earlier
+                    // closing, with the window not shown again yet, is not.
+                    if self.mapped && self.shown.is_some() {
+                        self.give_up();
+                    }
+                    self.mapped = false;
                 }
-                Event::MapNotify(_) => self.take_the_keyboard(),
-                Event::Expose(_) => self.draw(),
-                Event::UnmapNotify(_) if self.shown.is_some() => {
-                    // Something else took the window away: the menu is given up.
-                    self.give_up();
-                }
-                Event::ConfigureNotify(event) => self.resized(event.width, event.height),
-                Event::DestroyNotify(_) => return false,
-                _ => {}
+                Seen::Exposed => exposed = true,
+                Seen::Resized(width, height) => self.resized(width, height),
+                Seen::Destroyed => return false,
+                Seen::Click | Seen::Escape | Seen::Wake | Seen::Ignored => {}
             }
         }
         self.report_pointer(pointer);
+        if exposed {
+            self.draw();
+        }
         true
+    }
+
+    /// The window manager shows the window when it gets to the request, which
+    /// can be after the menu was closed: then it is hidden again at once, with
+    /// no grab of the keyboard.
+    fn mapped_by_the_window_manager(&mut self) {
+        self.mapped = true;
+        if self.shown.is_some() {
+            self.take_the_keyboard();
+        } else {
+            let _ = self.connection.unmap_window(self.window);
+            let _ = self.connection.flush();
+        }
     }
 
     /// Escape comes to the window that has the keyboard: the focus when the
@@ -584,6 +694,7 @@ impl State {
 
     fn hide(&mut self) {
         self.shown = None;
+        self.mapped = false;
         self.ticker.set_shown(false);
         // Both fail without harm when the server is gone.
         let _ = self.connection.ungrab_keyboard(CURRENT_TIME);
@@ -754,6 +865,71 @@ mod tests {
         }];
         assert_eq!(alpha_visual(&screen(depths)), None);
         assert_eq!(alpha_visual(&screen(Vec::new())), None);
+    }
+
+    /// The 32 bytes of an event of `kind`, with the pointer or key fields given.
+    fn raw_event(kind: u8, detail: u8, x: i16, y: i16) -> [u8; 32] {
+        let mut bytes = [0_u8; 32];
+        bytes[0] = kind;
+        bytes[1] = detail;
+        bytes[24..26].copy_from_slice(&x.to_ne_bytes());
+        bytes[26..28].copy_from_slice(&y.to_ne_bytes());
+        bytes
+    }
+
+    fn parsed(raw: &[u8; 32]) -> Event {
+        use x11rb::protocol::xproto::{ButtonPressEvent, KeyPressEvent, MotionNotifyEvent};
+        use x11rb::x11_utils::TryParse;
+        match raw[0] & 0x7f {
+            2 => Event::KeyPress(KeyPressEvent::try_parse(raw).unwrap().0),
+            4 => Event::ButtonPress(ButtonPressEvent::try_parse(raw).unwrap().0),
+            6 => Event::MotionNotify(MotionNotifyEvent::try_parse(raw).unwrap().0),
+            other => panic!("not an event of this test: {other}"),
+        }
+    }
+
+    const WAKE: Atom = 777;
+    const KEY_PRESS: u8 = 2;
+    const BUTTON_PRESS: u8 = 4;
+    const MOTION_NOTIFY: u8 = 6;
+    const SENT_BY_A_CLIENT: u8 = 0x80;
+
+    #[test]
+    fn what_the_server_generates_is_taken() {
+        let motion = parsed(&raw_event(MOTION_NOTIFY, 0, 120, 340));
+        assert_eq!(
+            interpret(&motion, WAKE),
+            Seen::Pointer(Point::new(120.0, 340.0))
+        );
+        let click = parsed(&raw_event(BUTTON_PRESS, 1, 0, 0));
+        assert_eq!(interpret(&click, WAKE), Seen::Click);
+        let escape = parsed(&raw_event(KEY_PRESS, KEYCODE_ESCAPE, 0, 0));
+        assert_eq!(interpret(&escape, WAKE), Seen::Escape);
+        let other_key = parsed(&raw_event(KEY_PRESS, KEYCODE_ESCAPE + 1, 0, 0));
+        assert_eq!(interpret(&other_key, WAKE), Seen::Ignored);
+    }
+
+    #[test]
+    fn what_another_client_sends_is_ignored() {
+        // The same events, with the bit `SendEvent` sets: a click that would
+        // choose a petal, a motion that would light one, an Escape.
+        for (kind, detail) in [
+            (MOTION_NOTIFY, 0),
+            (BUTTON_PRESS, 1),
+            (KEY_PRESS, KEYCODE_ESCAPE),
+        ] {
+            let forged = parsed(&raw_event(kind | SENT_BY_A_CLIENT, detail, 10, 10));
+            assert_eq!(interpret(&forged, WAKE), Seen::Ignored, "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn only_the_message_of_our_own_type_wakes_the_thread() {
+        use x11rb::protocol::xproto::ClientMessageEvent;
+        let ours = Event::ClientMessage(ClientMessageEvent::new(32, 1, WAKE, [0_u32; 5]));
+        let theirs = Event::ClientMessage(ClientMessageEvent::new(32, 1, WAKE + 1, [0_u32; 5]));
+        assert_eq!(interpret(&ours, WAKE), Seen::Wake);
+        assert_eq!(interpret(&theirs, WAKE), Seen::Ignored);
     }
 
     #[test]
