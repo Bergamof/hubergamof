@@ -753,6 +753,47 @@ mod tests {
     }
 
     #[test]
+    fn a_button_held_when_the_service_ends_is_let_go_of() {
+        use crate::input::Key;
+        let (_dir, store) = store();
+        let mut stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        stored.bindings.insert(
+            MouseControlId::Back,
+            ButtonAction::Click {
+                button: hubergamof_protocol::MouseButton::Middle,
+            },
+        );
+        store.save_mouse(stored).unwrap();
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        // A press and no release: the mouse is stopped while the button is down.
+        let shared = Shared(Rc::new(RefCell::new(
+            FakeLink::direct(device).with_incoming(vec![frame(DEVICE, reprog, 0x00, &[0, 0x53])]),
+        )));
+        let recorder = Recorder::default();
+        let stop = AtomicBool::new(false);
+        serve_mouse(
+            found(shared, Some(UNIT), 2),
+            &store,
+            &hub_of(&store),
+            &recording_actions(&recorder, false),
+            &stop,
+            |_, notice| {
+                if matches!(notice, Notice::Button(event) if event.pressed) {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            [(Key::ButtonMiddle, true), (Key::ButtonMiddle, false)]
+        );
+    }
+
+    #[test]
     fn a_button_bound_to_the_wheel_toggle_switches_the_wheel_and_it_is_given_back() {
         let recorder = Recorder::default();
         let mut during = Vec::new();

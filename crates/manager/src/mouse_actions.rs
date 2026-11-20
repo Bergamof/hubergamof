@@ -76,32 +76,48 @@ impl ButtonActions {
     }
 
     /// Runs `job` on the device, opening it first; `None` (and nothing done)
-    /// while locked.
+    /// while locked. The lock is read with the device held, so that no thread
+    /// reopens a device another one has just closed for the lock.
     fn with_device<T>(
         &self,
         job: impl FnOnce(&mut dyn Injector) -> io::Result<T>,
     ) -> Option<io::Result<T>> {
+        let mut device = self.injector();
         if *self.shared.locked.borrow() {
-            self.injector().take();
+            device.take();
             return None;
         }
-        let mut device = self.injector();
         if device.is_none() {
             match (self.shared.opener)() {
                 Ok(opened) => *device = Some(opened),
                 Err(error) => return Some(Err(error)),
+            }
+            // Opening takes a moment: the lock may have come meanwhile.
+            if *self.shared.locked.borrow() {
+                device.take();
+                return None;
             }
         }
         device.as_mut().map(|injector| job(injector.as_mut()))
     }
 
     /// Releases a key held down, if the device is still there (a closed
-    /// device has released everything).
+    /// device has released everything). A release that fails closes the device
+    /// for the same reason: the system then lets go of the key.
     fn release(&self, key: Key) -> io::Result<()> {
-        match self.injector().as_mut() {
-            Some(injector) => injector.send(key, false),
-            None => Ok(()),
+        let mut device = self.injector();
+        if *self.shared.locked.borrow() {
+            device.take();
+            return Ok(());
         }
+        let Some(injector) = device.as_mut() else {
+            return Ok(());
+        };
+        let outcome = injector.send(key, false);
+        if outcome.is_err() {
+            device.take();
+        }
+        outcome
     }
 }
 
@@ -138,14 +154,29 @@ impl ButtonDispatcher {
             if let Some(action) = action {
                 self.press(event.control, action);
             }
-        } else if let Some(key) = self.held.remove(&event.control)
-            && let Err(error) = self.actions.release(key)
-        {
+        } else {
+            self.release_control(event.control);
+        }
+    }
+
+    /// Lets go of the key `control` holds, unless another button of this
+    /// mouse still holds the same one.
+    fn release_control(&mut self, control: MouseControlId) {
+        let Some(key) = self.held.remove(&control) else {
+            return;
+        };
+        if self.held.values().any(|held| *held == key) {
+            return;
+        }
+        if let Err(error) = self.actions.release(key) {
             tracing::warn!(%error, "cannot release a key of a mouse button");
         }
     }
 
     fn press(&mut self, control: MouseControlId, action: &ButtonAction) {
+        // A press without the release before it (a lost event) must not leave
+        // the earlier key held with nobody to let it go.
+        self.release_control(control);
         match action {
             ButtonAction::None => {}
             ButtonAction::Click { button } => {
@@ -168,7 +199,13 @@ impl ButtonDispatcher {
                 }
                 Err(error) => tracing::warn!(%error, "a shortcut that cannot be pressed"),
             },
-            ButtonAction::ToggleWheelMode => self.requests.push_back(Request::ToggleWheelMode),
+            ButtonAction::ToggleWheelMode => {
+                // Two toggles cancel out: one waiting is enough, and the mouse
+                // is written to once.
+                if !self.requests.contains(&Request::ToggleWheelMode) {
+                    self.requests.push_back(Request::ToggleWheelMode);
+                }
+            }
             ButtonAction::RadialMenu | ButtonAction::Module { .. } => {
                 tracing::debug!(%control, "the radial menu and the module actions are not available yet");
             }
@@ -185,6 +222,17 @@ impl ButtonDispatcher {
             tracing::warn!(%error, "cannot send keys or clicks (is /dev/uinput open to you? docs/security.md)");
         }
         Some(outcome)
+    }
+}
+
+impl Drop for ButtonDispatcher {
+    /// A thread that ends in a panic with a button held must not leave its
+    /// key down on the device the other mice keep open.
+    fn drop(&mut self) {
+        let controls: Vec<_> = self.held.keys().copied().collect();
+        for control in controls {
+            self.release_control(control);
+        }
     }
 }
 
@@ -211,29 +259,64 @@ mod tests {
         }
     }
 
+    /// The device as the dispatcher holds it: counts its closings, and can be
+    /// made to fail on a release.
+    struct Device {
+        recorder: Recorder,
+        closed: Arc<Mutex<u32>>,
+        fail_release: bool,
+    }
+
+    impl Injector for Device {
+        fn send(&mut self, key: Key, pressed: bool) -> io::Result<()> {
+            if !pressed && self.fail_release {
+                return Err(io::Error::from(io::ErrorKind::WriteZero));
+            }
+            self.recorder.send(key, pressed)
+        }
+    }
+
+    impl Drop for Device {
+        fn drop(&mut self) {
+            *self.closed.lock().unwrap() += 1;
+        }
+    }
+
     struct Rig {
         recorder: Recorder,
         lock: watch::Sender<bool>,
         opened: Arc<Mutex<u32>>,
+        closed: Arc<Mutex<u32>>,
         dispatcher: ButtonDispatcher,
     }
 
     fn rig() -> Rig {
+        rig_with(false)
+    }
+
+    fn rig_with(fail_release: bool) -> Rig {
         let recorder = Recorder::default();
         let (lock, locked) = watch::channel(false);
         let opened = Arc::new(Mutex::new(0));
+        let closed = Arc::new(Mutex::new(0));
         let actions = ButtonActions::new(locked, {
             let recorder = recorder.clone();
             let opened = Arc::clone(&opened);
+            let closed = Arc::clone(&closed);
             move || {
                 *opened.lock().unwrap() += 1;
-                Ok(Box::new(recorder.clone()) as Box<dyn Injector>)
+                Ok(Box::new(Device {
+                    recorder: recorder.clone(),
+                    closed: Arc::clone(&closed),
+                    fail_release,
+                }) as Box<dyn Injector>)
             }
         });
         Rig {
             recorder,
             lock,
             opened,
+            closed,
             dispatcher: ButtonDispatcher::new(actions),
         }
     }
@@ -355,13 +438,16 @@ mod tests {
         );
         assert_eq!(
             rig.dispatcher.next_request(),
-            Some(Request::ToggleWheelMode)
+            Some(Request::ToggleWheelMode),
+            "two toggles waiting cancel out: one is asked"
         );
+        assert_eq!(rig.dispatcher.next_request(), None);
+        rig.dispatcher
+            .handle(press(BACK), Some(&ButtonAction::ToggleWheelMode));
         assert_eq!(
             rig.dispatcher.next_request(),
             Some(Request::ToggleWheelMode)
         );
-        assert_eq!(rig.dispatcher.next_request(), None);
         assert_eq!(rig.recorder.events(), []);
     }
 
@@ -394,6 +480,7 @@ mod tests {
             Some(&ButtonAction::DoubleClick),
         );
         assert_eq!(rig.recorder.events().len(), before, "nothing was sent");
+        assert_eq!(*rig.closed.lock().unwrap(), 1, "the device was closed");
         // Unlocked, the next action opens a new device.
         rig.lock.send_replace(false);
         rig.dispatcher.handle(press(BACK), Some(&click));
@@ -419,5 +506,87 @@ mod tests {
         dispatcher.handle(release(BACK), Some(&click));
         dispatcher.handle(press(BACK), Some(&click));
         assert_eq!(*attempts.lock().unwrap(), 2);
+    }
+
+    fn left_click() -> ButtonAction {
+        ButtonAction::Click {
+            button: MouseButton::Left,
+        }
+    }
+
+    #[test]
+    fn a_key_held_by_two_buttons_is_released_with_the_last_one() {
+        let mut rig = rig();
+        let click = left_click();
+        rig.dispatcher.handle(press(BACK), Some(&click));
+        rig.dispatcher
+            .handle(press(MouseControlId::Forward), Some(&click));
+        rig.dispatcher.handle(release(BACK), Some(&click));
+        assert_eq!(rig.recorder.events().last(), Some(&(Key::ButtonLeft, true)));
+        rig.dispatcher
+            .handle(release(MouseControlId::Forward), Some(&click));
+        assert_eq!(
+            rig.recorder.events().last(),
+            Some(&(Key::ButtonLeft, false))
+        );
+    }
+
+    #[test]
+    fn a_press_without_the_release_before_it_lets_go_of_the_earlier_key() {
+        let mut rig = rig();
+        rig.dispatcher.handle(press(BACK), Some(&left_click()));
+        rig.dispatcher.handle(
+            press(BACK),
+            Some(&ButtonAction::Click {
+                button: MouseButton::Right,
+            }),
+        );
+        assert_eq!(
+            rig.recorder.events(),
+            [
+                (Key::ButtonLeft, true),
+                (Key::ButtonLeft, false),
+                (Key::ButtonRight, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dispatcher_that_ends_lets_go_of_what_it_holds() {
+        let mut rig = rig();
+        rig.dispatcher.handle(press(BACK), Some(&left_click()));
+        drop(rig.dispatcher);
+        assert_eq!(
+            rig.recorder.events(),
+            [(Key::ButtonLeft, true), (Key::ButtonLeft, false)]
+        );
+    }
+
+    #[test]
+    fn a_release_that_fails_closes_the_device_so_that_the_key_comes_up() {
+        let mut rig = rig_with(true);
+        rig.dispatcher.handle(press(BACK), Some(&left_click()));
+        rig.dispatcher.handle(release(BACK), Some(&left_click()));
+        assert_eq!(*rig.closed.lock().unwrap(), 1);
+        rig.dispatcher.handle(press(BACK), Some(&left_click()));
+        assert_eq!(*rig.opened.lock().unwrap(), 2, "reopened when needed");
+    }
+
+    #[test]
+    fn a_lock_that_comes_while_the_device_opens_stops_the_keys() {
+        let recorder = Recorder::default();
+        let (lock, locked) = watch::channel(false);
+        let actions = ButtonActions::new(locked, {
+            let recorder = recorder.clone();
+            move || {
+                lock.send_replace(true);
+                Ok(Box::new(recorder.clone()) as Box<dyn Injector>)
+            }
+        });
+        let mut dispatcher = ButtonDispatcher::new(actions);
+        dispatcher.handle(press(BACK), Some(&left_click()));
+        dispatcher.handle(press(BACK), Some(&left_click()));
+        assert_eq!(recorder.events(), []);
+        assert!(dispatcher.held.is_empty());
     }
 }
