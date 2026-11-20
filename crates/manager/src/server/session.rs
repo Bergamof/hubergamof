@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use super::errors::client_message;
+use super::mouse_feed::{Failure, MouseFeed};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
     ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage, UpdateSettings, UpdateStatus,
@@ -68,6 +69,7 @@ enum Event {
     LiveDue,
     UpdateChanged(Result<(), watch::error::RecvError>),
     SettingsChanged(Result<(), watch::error::RecvError>),
+    Mouse(Option<ServerMessage>),
     Shutdown,
 }
 
@@ -81,6 +83,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let shutdown = state.shutdown.clone();
     let updates = state.context.updates.subscribe();
     let update_settings = state.context.updates.subscribe_settings();
+    let mouse = MouseFeed::new(&state.context.mice);
     let mut session = Session {
         socket,
         state,
@@ -88,6 +91,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         engine_changes,
         updates,
         update_settings,
+        mouse,
         shutdown,
         selection: Selection::None,
     };
@@ -101,6 +105,7 @@ struct Session {
     engine_changes: watch::Receiver<()>,
     updates: watch::Receiver<UpdateStatus>,
     update_settings: watch::Receiver<UpdateSettings>,
+    mouse: MouseFeed,
     shutdown: watch::Receiver<bool>,
     selection: Selection,
 }
@@ -116,6 +121,9 @@ impl Session {
             modules: self.state.context.catalog.to_vec(),
         })
         .await?;
+        for message in self.mouse.initial() {
+            self.send(&message).await?;
+        }
         self.send_update_settings().await?;
         if *self.updates.borrow() != UpdateStatus::Unknown {
             self.send_update_status().await?;
@@ -134,11 +142,16 @@ impl Session {
                     self.selection = Selection::None;
                 }
                 Event::LiveDue => self.send_live_state().await?,
+                Event::Mouse(Some(message)) => self.send(&message).await?,
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
                 // Unreachable while the context holds its handle (it keeps the
-                // channels open); harmless if it ever happens.
-                Event::SettingsChanged(Err(_)) | Event::UpdateChanged(Err(_)) => {}
+                // channels open); harmless if it ever happens. A mouse feed with
+                // nothing to say: the mouse followed went away, the list of mice
+                // tells the client.
+                Event::SettingsChanged(Err(_))
+                | Event::UpdateChanged(Err(_))
+                | Event::Mouse(None) => {}
                 Event::Shutdown => {
                     self.close().await;
                     return Err(Closed);
@@ -176,6 +189,7 @@ impl Session {
             () = sleep_until_some(live_due) => Event::LiveDue,
             result = self.updates.changed() => Event::UpdateChanged(result),
             result = self.update_settings.changed() => Event::SettingsChanged(result),
+            message = self.mouse.next_change() => Event::Mouse(message),
         }
     }
 
@@ -224,6 +238,20 @@ impl Session {
             }
             ClientMessage::UpdateConfig { serial, config } => {
                 return self.update_config(serial, config).await;
+            }
+            ClientMessage::SelectMouse { serial } => {
+                let selected = self.mouse.select(&serial);
+                return self
+                    .answer_mouse(selected.map(|message| vec![message]))
+                    .await;
+            }
+            ClientMessage::UpdateMouseConfig { serial, config } => {
+                let saved = self.mouse.update_mouse(serial, config).await;
+                return self.answer_mouse(saved).await;
+            }
+            ClientMessage::UpdateRadialMenu { config } => {
+                let saved = self.mouse.update_radial_menu(config).await;
+                return self.answer_mouse(saved).await;
             }
             ClientMessage::PressKey { .. }
             | ClientMessage::RotateDial { .. }
@@ -285,6 +313,22 @@ impl Session {
                     Some(config) => self.send(&ServerMessage::Config { serial, config }).await,
                     None => Ok(()),
                 }
+            }
+            Err(failure) => self.send_error(failure.code, &failure.message).await,
+        }
+    }
+
+    /// Sends what a mouse request answers, or the failure.
+    async fn answer_mouse(
+        &mut self,
+        answer: Result<Vec<ServerMessage>, Failure>,
+    ) -> Result<(), Closed> {
+        match answer {
+            Ok(messages) => {
+                for message in messages {
+                    self.send(&message).await?;
+                }
+                Ok(())
             }
             Err(failure) => self.send_error(failure.code, &failure.message).await,
         }

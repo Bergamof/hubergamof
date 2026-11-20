@@ -23,10 +23,12 @@ use hubergamof_mouse::channel::Channel;
 use hubergamof_mouse::hidraw::{FoundMouse, HidrawChannel, MouseKey, find_mice};
 use hubergamof_mouse::link::UnitId;
 use hubergamof_mouse::session::{MouseSession, Notice};
+use hubergamof_protocol::MouseInfo;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::config_store::ConfigStore;
+use crate::mouse_hub::MouseHub;
 
 /// Delay between two searches for mice not served yet.
 pub const SCAN_INTERVAL: Duration = Duration::from_secs(5);
@@ -132,12 +134,18 @@ pub struct MouseSupervisor {
 impl MouseSupervisor {
     /// Starts looking for mice every `scan_interval`.
     #[must_use]
-    pub fn start<S: MouseSource>(source: S, store: ConfigStore, scan_interval: Duration) -> Self {
+    pub fn start<S: MouseSource>(
+        source: S,
+        store: ConfigStore,
+        hub: MouseHub,
+        scan_interval: Duration,
+    ) -> Self {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let (stop, stopped) = oneshot::channel();
         let task = tokio::spawn(supervise(
             source,
             store,
+            hub,
             scan_interval,
             stopped,
             Arc::clone(&stop_flag),
@@ -163,6 +171,7 @@ impl MouseSupervisor {
 async fn supervise<S: MouseSource>(
     source: S,
     store: ConfigStore,
+    hub: MouseHub,
     scan_interval: Duration,
     mut stopped: oneshot::Receiver<()>,
     stop_flag: Arc<AtomicBool>,
@@ -187,7 +196,7 @@ async fn supervise<S: MouseSource>(
             Ok(found) => {
                 workers.forget_finished();
                 for mouse in found {
-                    workers.extend(spawn_mouse(mouse, &running, &store, &stop_flag));
+                    workers.extend(spawn_mouse(mouse, &running, &store, &hub, &stop_flag));
                 }
             }
             Err(error) => tracing::warn!(%error, "searching for mice failed"),
@@ -242,6 +251,7 @@ fn spawn_mouse<C: Channel + Send + 'static>(
     mouse: FoundMouse<C>,
     running: &Running,
     store: &ConfigStore,
+    hub: &MouseHub,
     stop_flag: &Arc<AtomicBool>,
 ) -> Option<thread::JoinHandle<()>> {
     let Some(guard) = running.claim(mouse.key.clone(), mouse.unit) else {
@@ -250,10 +260,11 @@ fn spawn_mouse<C: Channel + Send + 'static>(
     };
     let name = format!("mouse-{}-{}", mouse.key.path, mouse.key.index);
     let store = store.clone();
+    let hub = hub.clone();
     let stop_flag = Arc::clone(stop_flag);
     let spawned = thread::Builder::new().name(name).spawn(move || {
         let _guard = guard;
-        serve_mouse(mouse, &store, &stop_flag, log_notice);
+        serve_mouse(mouse, &store, &hub, &stop_flag, log_notice);
     });
     match spawned {
         Ok(handle) => Some(handle),
@@ -271,6 +282,7 @@ fn spawn_mouse<C: Channel + Send + 'static>(
 fn serve_mouse<C: Channel>(
     found: FoundMouse<C>,
     store: &ConfigStore,
+    hub: &MouseHub,
     stop: &AtomicBool,
     mut notify: impl FnMut(&str, Notice),
 ) {
@@ -291,6 +303,16 @@ fn serve_mouse<C: Channel>(
     // someone looks for it, not in logs pasted into bug reports.
     tracing::info!(%model, "mouse attached");
     tracing::debug!(%serial, "mouse unit");
+    // Listed for the interface for as long as the mouse is served.
+    let _listed = hub.register(
+        MouseInfo {
+            serial: serial.clone(),
+            model,
+            display_name: model.display_name().to_owned(),
+            capabilities: model.capabilities(),
+        },
+        config.clone(),
+    );
     let mut session = MouseSession::new(found.link);
     match session.serve(&config, stop, |notice| notify(&serial, notice)) {
         Ok(()) => tracing::info!(%model, "mouse released"),
@@ -337,6 +359,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(dir.path(), Arc::new(builtin_registry()));
         (dir, store)
+    }
+
+    fn hub_of(store: &ConfigStore) -> MouseHub {
+        MouseHub::new(store.clone()).unwrap()
     }
 
     fn key(index: u8) -> MouseKey {
@@ -393,6 +419,7 @@ mod tests {
         serve_mouse(
             found(shared.clone(), Some(UNIT), 2),
             &store,
+            &hub_of(&store),
             &stop,
             |serial, notice| {
                 assert_eq!(serial, "deadbeef");
@@ -418,9 +445,13 @@ mod tests {
     fn a_mouse_without_a_unit_id_is_left_alone() {
         let (dir, store) = store();
         let stop = AtomicBool::new(true);
-        serve_mouse(found(pressing_back(), None, 2), &store, &stop, |_, _| {
-            panic!("nothing to report")
-        });
+        serve_mouse(
+            found(pressing_back(), None, 2),
+            &store,
+            &hub_of(&store),
+            &stop,
+            |_, _| panic!("nothing to report"),
+        );
         assert!(!dir.path().join("devices").exists());
     }
 
@@ -433,7 +464,9 @@ mod tests {
         let mouse = found(shared.clone(), Some(UNIT), 2);
         let written = shared.0.borrow().written().len();
         let stop = AtomicBool::new(true);
-        serve_mouse(mouse, &store, &stop, |_, _| panic!("nothing to report"));
+        serve_mouse(mouse, &store, &hub_of(&store), &stop, |_, _| {
+            panic!("nothing to report")
+        });
         assert_eq!(
             shared.0.borrow().written().len(),
             written,
@@ -454,6 +487,7 @@ mod tests {
         serve_mouse(
             found(shared.clone(), Some(UNIT), 2),
             &store,
+            &hub_of(&store),
             &stop,
             |_, _| {},
         );
@@ -594,7 +628,12 @@ mod tests {
         let (_dir, store) = store();
         let (served, mut served_rx) = unbounded_channel();
         let (source, mut scans) = Scripted::new(vec![probe(1, 2, Behaviour::Serve, &served)]);
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_millis(10));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_millis(10),
+        );
         assert_eq!(next(&mut scans).await, [], "the first scan skips nothing");
         assert_eq!(next(&mut served_rx).await, 1);
         assert_eq!(
@@ -613,7 +652,12 @@ mod tests {
             probe(1, 1, Behaviour::Serve, &served),
             probe(2, 2, Behaviour::Serve, &served),
         ]);
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_millis(10));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_millis(10),
+        );
         let mut labels = vec![next(&mut served_rx).await, next(&mut served_rx).await];
         labels.sort_unstable();
         assert_eq!(labels, [1, 2]);
@@ -637,7 +681,12 @@ mod tests {
             probe(1, 2, Behaviour::Vanish, &served),
             probe(2, 2, Behaviour::Serve, &served),
         ]);
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_millis(10));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_millis(10),
+        );
         assert_eq!(next(&mut served_rx).await, 1);
         assert_eq!(next(&mut served_rx).await, 2);
         supervisor.shutdown().await;
@@ -651,7 +700,12 @@ mod tests {
             probe(1, 2, Behaviour::Panic, &served),
             probe(2, 2, Behaviour::Serve, &served),
         ]);
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_millis(10));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_millis(10),
+        );
         assert_eq!(next(&mut served_rx).await, 1);
         assert_eq!(next(&mut served_rx).await, 2);
         supervisor.shutdown().await;
@@ -663,7 +717,12 @@ mod tests {
         let (served, mut served_rx) = unbounded_channel();
         let (mut source, _scans) = Scripted::new(vec![probe(1, 2, Behaviour::Serve, &served)]);
         source.fail_first_scan = true;
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_millis(10));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_millis(10),
+        );
         assert_eq!(next(&mut served_rx).await, 1, "the next scan found it");
         supervisor.shutdown().await;
     }
@@ -674,7 +733,12 @@ mod tests {
         let (mut source, mut scans) = Scripted::new(Vec::new());
         let (release, blocked) = mpsc::channel();
         source.block_first_scan = Some(blocked);
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_secs(3600));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_secs(3600),
+        );
         // The scan has started, and is stuck.
         next(&mut scans).await;
         tokio::time::timeout(WAIT, supervisor.shutdown())
@@ -687,7 +751,12 @@ mod tests {
     async fn the_supervisor_stops_with_no_mouse_at_all() {
         let (_dir, store) = store();
         let (source, _scans) = Scripted::new(Vec::new());
-        let supervisor = MouseSupervisor::start(source, store, Duration::from_secs(3600));
+        let supervisor = MouseSupervisor::start(
+            source,
+            store.clone(),
+            hub_of(&store),
+            Duration::from_secs(3600),
+        );
         tokio::time::timeout(WAIT, supervisor.shutdown())
             .await
             .expect("the shutdown does not wait for the next scan");

@@ -19,6 +19,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Souris Logitech MX, étape 3d : contrat WebSocket des souris. `mice` (souris connectées), `mouseConfig` et `radialMenu` du gestionnaire vers l'interface ; `selectMouse`, `updateMouseConfig` et `updateRadialMenu` en sens inverse (révision, validation, diffusion à tous les clients comme pour les appareils). `MouseHub` tient l'état partagé ; le menu circulaire est configurable même sans souris connectée.
 - Souris Logitech MX, étape 3c : option `--mice` (désactivée par défaut) : le gestionnaire cherche les souris du récepteur Logi Bolt toutes les 5 s, charge `mouse.json` de chacune (créé avec les valeurs par défaut), l'applique, suit ses boutons détournés et les rend à l'arrêt, à la déconnexion ou en cas d'erreur. Les boutons ne déclenchent encore aucune action.
 - Souris Logitech MX, étape 3b : `MouseSession` applique un `MouseConfig` à une souris (sensibilité, molette, molette du pouce, force haptique, boutons détournés selon les liaisons, sans réécrire ce qui est déjà bon), suit les appuis et rend tout ; `find_mice` retrouve toutes les souris sans toucher à celles déjà prises en charge.
 - Souris Logitech MX, étape 3a : persistance de `devices/<serial>/mouse.json` et `radial-menu.json` dans le `ConfigStore` (création des valeurs par défaut, révision, validation, fichier invalide mis de côté sous `<nom>.invalid-<heure>`, dossiers privés).

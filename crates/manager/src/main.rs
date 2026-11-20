@@ -22,6 +22,7 @@ use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
+use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
@@ -526,7 +527,8 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
-    let mice = start_mice(&cli, &services.store);
+    let mouse_hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
+    let mice = start_mice(&cli, &services.store, &mouse_hub);
     let supervisor = Supervisor::start(&discovery, services);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -538,6 +540,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         renderer,
         file_picker: file_picker(cli.file_chooser_answer.clone()),
         updates: updates.clone(),
+        mice: mouse_hub,
     };
     let server = match Server::bind(
         cli.port,
@@ -605,8 +608,9 @@ async fn run_manager(cli: Cli) -> Result<()> {
 }
 
 /// Starts serving the mice, with `--mice` and on real hardware only.
-fn start_mice(cli: &Cli, store: &ConfigStore) -> Option<MouseSupervisor> {
-    serves_mice(cli).then(|| MouseSupervisor::start(HidrawSource, store.clone(), SCAN_INTERVAL))
+fn start_mice(cli: &Cli, store: &ConfigStore, hub: &MouseHub) -> Option<MouseSupervisor> {
+    serves_mice(cli)
+        .then(|| MouseSupervisor::start(HidrawSource, store.clone(), hub.clone(), SCAN_INTERVAL))
 }
 
 /// `--demo` never touches the hardware, whatever else is asked.

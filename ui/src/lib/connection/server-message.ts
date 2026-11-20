@@ -7,6 +7,9 @@ import type { ServerMessage } from '#lib/generated/index.js';
 const SERVER_MESSAGE_TYPES = {
 	hello: true,
 	devices: true,
+	mice: true,
+	mouseConfig: true,
+	radialMenu: true,
 	moduleCatalog: true,
 	config: true,
 	liveState: true,

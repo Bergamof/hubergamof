@@ -16,6 +16,8 @@
 //! - [`tray`]: the system tray icon (`StatusNotifierItem`).
 //! - [`mouse_engine`]: one thread per Logitech mouse, applying its
 //!   configuration and following its buttons.
+//! - [`mouse_hub`]: the mice connected and the mouse and radial menu
+//!   configurations, as the web interface follows them.
 //! - [`launcher`]: `hubergamof open`, starting the service and opening the UI
 //!   from the desktop launcher.
 
@@ -26,6 +28,7 @@ pub mod engine;
 pub mod file_chooser;
 pub mod launcher;
 pub mod mouse_engine;
+pub mod mouse_hub;
 pub mod placement;
 pub mod render;
 pub mod screen_lock;

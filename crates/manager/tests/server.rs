@@ -16,6 +16,7 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
+use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
@@ -32,8 +33,8 @@ use hubergamof_module_api::{
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, ModuleInstance,
-    ServerMessage, UpdateSettings, UpdateStatus,
+    ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, ModuleInstance, MouseConfig,
+    MouseInfo, MouseModel, RadialMenuConfig, ServerMessage, UpdateSettings, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -47,6 +48,9 @@ use tower::ServiceExt as _;
 const PORT: u16 = 7878;
 const HOST: &str = "127.0.0.1:7878";
 const DEV_ORIGIN: &str = "http://localhost:5173";
+/// Messages a client receives on connection: `hello`, `devices`,
+/// `moduleCatalog`, `mice`, `radialMenu` and `updateSettings`.
+const GREETING_MESSAGES: usize = 6;
 const WAIT: Duration = Duration::from_secs(5);
 const COUNTER_KIND: &str = "counter";
 
@@ -165,10 +169,11 @@ impl Devices {
             engines: supervisor.engines(),
             catalog,
             simulated_input: SimulatedInput::Accepted,
-            store,
+            store: store.clone(),
             renderer,
             file_picker: Arc::new(NoFilePicker),
             updates: UpdateHandle::inactive(),
+            mice: MouseHub::new(store.clone()).unwrap(),
         };
         Self {
             _dir: dir,
@@ -237,11 +242,12 @@ impl Running {
         Ok(Client(stream))
     }
 
-    /// Client past the `hello`, `devices`, `moduleCatalog` and `updateSettings` greeting.
+    /// Client past the `hello`, `devices`, `moduleCatalog`, `mice`, `radialMenu` and
+    /// `updateSettings` greeting.
     async fn connect(&self) -> Client {
         let own_origin = format!("http://127.0.0.1:{}", self.port);
         let mut client = self.connect_with(Some(&own_origin)).await.unwrap();
-        for _ in 0..4 {
+        for _ in 0..GREETING_MESSAGES {
             client.receive().await;
         }
         client
@@ -617,6 +623,11 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         }
         other => panic!("expected the catalog, got {other:?}"),
     }
+    assert_eq!(client.receive().await, ServerMessage::Mice { mice: vec![] });
+    assert!(matches!(
+        client.receive().await,
+        ServerMessage::RadialMenu { config } if config.revision == 0
+    ));
     // Nothing can be installed through the inactive handle of the test server.
     assert_eq!(
         client.receive().await,
@@ -628,6 +639,186 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         }
     );
     client.ping().await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn the_radial_menu_is_followed_by_every_client_and_unknown_mice_are_refused() {
+    let server = Running::start().await;
+    let mut author = server.connect().await;
+    let mut observer = server.connect().await;
+
+    author
+        .send(&ClientMessage::SelectMouse {
+            serial: "nobody".into(),
+        })
+        .await;
+    assert!(matches!(
+        author.receive().await,
+        ServerMessage::Error {
+            code: ErrorCode::UnknownDevice,
+            ..
+        }
+    ));
+
+    let mut menu = RadialMenuConfig::default_menu();
+    menu.animate = !menu.animate;
+    author
+        .send(&ClientMessage::UpdateRadialMenu {
+            config: menu.clone(),
+        })
+        .await;
+    for client in [&mut author, &mut observer] {
+        assert!(matches!(
+            client.receive().await,
+            ServerMessage::RadialMenu { config } if config.revision == 1 && config.animate == menu.animate
+        ));
+    }
+    // The same revision again is now outdated.
+    author
+        .send(&ClientMessage::UpdateRadialMenu { config: menu })
+        .await;
+    assert!(matches!(
+        author.receive().await,
+        ServerMessage::Error {
+            code: ErrorCode::StaleRevision,
+            ..
+        }
+    ));
+    server.stop().await;
+}
+
+/// A mouse connected to the test server, as a mouse thread lists it.
+fn connect_mouse(
+    server: &Running,
+    serial: &str,
+) -> hubergamof_manager::mouse_hub::MouseRegistration {
+    let model = MouseModel::MxMaster4;
+    server.devices.context.mice.register(
+        MouseInfo {
+            serial: serial.to_owned(),
+            model,
+            display_name: model.display_name().to_owned(),
+            capabilities: model.capabilities(),
+        },
+        MouseConfig::default_for(serial, model),
+    )
+}
+
+#[tokio::test]
+async fn a_client_connecting_while_a_mouse_is_there_is_told_about_it() {
+    let server = Running::start().await;
+    let _mouse = connect_mouse(&server, "aaaa0001");
+    let own_origin = format!("http://127.0.0.1:{}", server.port);
+    let mut client = server.connect_with(Some(&own_origin)).await.unwrap();
+    let mut greeting = Vec::new();
+    for _ in 0..GREETING_MESSAGES {
+        greeting.push(client.receive().await);
+    }
+    let [
+        _,
+        _,
+        _,
+        ServerMessage::Mice { mice },
+        ServerMessage::RadialMenu { .. },
+        _,
+    ] = &greeting[..]
+    else {
+        panic!("unexpected greeting: {greeting:?}");
+    };
+    assert_eq!(mice.len(), 1);
+    assert_eq!(mice[0].serial, "aaaa0001");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_mouse_is_selected_configured_by_one_client_and_followed_by_another() {
+    let server = Running::start().await;
+    let mouse = connect_mouse(&server, "aaaa0001");
+    let mut author = server.connect().await;
+    let mut observer = server.connect().await;
+    let select = ClientMessage::SelectMouse {
+        serial: "aaaa0001".into(),
+    };
+    author.send(&select).await;
+    observer.send(&select).await;
+    let ServerMessage::MouseConfig { config, .. } = author.receive().await else {
+        panic!("no configuration for the author");
+    };
+    assert_eq!(config.revision, 0);
+    observer.receive().await;
+
+    let mut update = config.clone();
+    update.pointer.dpi = 2400;
+    author
+        .send(&ClientMessage::UpdateMouseConfig {
+            serial: "aaaa0001".into(),
+            config: update.clone(),
+        })
+        .await;
+    for client in [&mut author, &mut observer] {
+        let ServerMessage::MouseConfig { config, .. } = client.receive().await else {
+            panic!("the update was not given");
+        };
+        assert_eq!((config.revision, config.pointer.dpi), (1, 2400));
+    }
+
+    // An outdated revision, a configuration of another model and a serial
+    // that is not the one of the message are refused.
+    author
+        .send(&ClientMessage::UpdateMouseConfig {
+            serial: "aaaa0001".into(),
+            config: update,
+        })
+        .await;
+    let other_model = MouseConfig::default_for("aaaa0001", MouseModel::MxAnywhere3S);
+    author
+        .send(&ClientMessage::UpdateMouseConfig {
+            serial: "aaaa0001".into(),
+            config: other_model,
+        })
+        .await;
+    author
+        .send(&ClientMessage::UpdateMouseConfig {
+            serial: "aaaa0001".into(),
+            config: MouseConfig::default_for("bbbb0001", MouseModel::MxMaster4),
+        })
+        .await;
+    for expected in [
+        ErrorCode::StaleRevision,
+        ErrorCode::InvalidConfig,
+        ErrorCode::InvalidConfig,
+    ] {
+        let ServerMessage::Error { code, .. } = author.receive().await else {
+            panic!("expected {expected:?}");
+        };
+        assert_eq!(code, expected);
+    }
+
+    // The mouse leaves: the clients are told, and it cannot be selected.
+    drop(mouse);
+    let ServerMessage::Mice { mice } = author.receive().await else {
+        panic!("the list of mice was not sent");
+    };
+    assert_eq!(mice, []);
+    author.send(&select).await;
+    assert!(matches!(
+        author.receive().await,
+        ServerMessage::Error {
+            code: ErrorCode::UnknownDevice,
+            ..
+        }
+    ));
+    // A malformed mouse request is refused and keeps the connection.
+    author.send_text(r#"{"type":"selectMouse"}"#).await;
+    assert!(matches!(
+        author.receive().await,
+        ServerMessage::Error {
+            code: ErrorCode::InvalidMessage,
+            ..
+        }
+    ));
+    author.ping().await;
     server.stop().await;
 }
 

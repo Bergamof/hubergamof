@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{CatalogModule, DeviceConfig, DeviceInfo, LiveState, UpdateSettings, UpdateStatus};
+use crate::{
+    CatalogModule, DeviceConfig, DeviceInfo, LiveState, MouseConfig, MouseInfo, RadialMenuConfig,
+    UpdateSettings, UpdateStatus,
+};
 
 /// Message sent by the UI to the manager.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -58,6 +61,32 @@ pub enum ClientMessage {
         /// Dial index.
         index: u32,
     },
+    /// Subscribe to the configuration of a connected mouse: `mouseConfig`
+    /// right away, then on every change (the previous mouse is dropped).
+    SelectMouse {
+        /// Mouse serial.
+        serial: String,
+    },
+    /// Replace the whole configuration of a connected mouse. Once accepted,
+    /// the author gets a `mouseConfig` with the configuration sent, unchanged
+    /// except for its revision, incremented, and other subscribers get it too.
+    ///
+    /// Rejected with [`ErrorCode::StaleRevision`] when `config.revision` is not
+    /// the current one, [`ErrorCode::InvalidConfig`] when it does not fit the
+    /// model, [`ErrorCode::UnknownDevice`] when the mouse is not connected.
+    UpdateMouseConfig {
+        /// Mouse serial.
+        serial: String,
+        /// New configuration.
+        config: MouseConfig,
+    },
+    /// Replace the configuration of the radial menu, like
+    /// [`ClientMessage::UpdateMouseConfig`]; answered by `radialMenu` to
+    /// every client.
+    UpdateRadialMenu {
+        /// New configuration.
+        config: RadialMenuConfig,
+    },
     /// Check for a newer release now, instead of waiting for the next
     /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
     CheckForUpdates,
@@ -93,6 +122,25 @@ pub enum ServerMessage {
     Devices {
         /// Connected devices.
         devices: Vec<DeviceInfo>,
+    },
+    /// Mice currently connected: sent after `moduleCatalog`, then at every
+    /// attach or detach.
+    Mice {
+        /// Connected mice.
+        mice: Vec<MouseInfo>,
+    },
+    /// Current configuration of a mouse the client selected.
+    MouseConfig {
+        /// Mouse serial.
+        serial: String,
+        /// Current configuration.
+        config: MouseConfig,
+    },
+    /// Current configuration of the radial menu: sent after `mice`, then at
+    /// every change.
+    RadialMenu {
+        /// Current configuration.
+        config: RadialMenuConfig,
     },
     /// Module kinds available for configuration.
     ModuleCatalog {
