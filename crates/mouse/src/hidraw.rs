@@ -10,7 +10,7 @@ use hubergamof_protocol::MouseModel;
 
 use crate::channel::{Channel, ChannelError, Hidpp, HidppError};
 use crate::frame::{DIRECT_DEVICE_INDEX, RECEIVER_DEVICE_INDEXES};
-use crate::link::MouseLink;
+use crate::link::{MouseLink, UnitId};
 use crate::probe::{InterfaceInfo, InterfaceScan, ping, scan_interface_with_misses};
 
 /// USB vendor id of Logitech.
@@ -220,6 +220,9 @@ pub struct MouseKey {
 pub struct FoundMouse {
     /// Where.
     pub key: MouseKey,
+    /// Its unit id, `None` when it could not be read: what tells one physical
+    /// mouse from another when two paths lead to it.
+    pub unit: Option<UnitId>,
     /// The mouse.
     pub link: MouseLink<HidrawChannel>,
 }
@@ -229,14 +232,19 @@ pub struct FoundMouse {
 /// answers, and a request here could be mistaken for one of its own.
 ///
 /// A mouse that answers but cannot be set up is left out; the last such
-/// failure is returned with the mice.
+/// failure is returned with the mice. A mouse reached twice (two nodes) is
+/// returned once, the first found.
+///
+/// Requests carry one fixed software id: another program speaking HID++ to
+/// the same mouse at the same time (`mouse-test`, Solaar, logiops) can be
+/// mistaken for this one. Stop the others first.
 ///
 /// # Errors
 /// [`FindError::Hid`] when the HID layer cannot start.
 pub fn find_mice(owned: &[MouseKey]) -> Result<(Vec<FoundMouse>, Option<HidppError>), FindError> {
     let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
     let mut probed = HashSet::new();
-    let mut found = Vec::new();
+    let mut found: Vec<FoundMouse> = Vec::new();
     let mut setup_error = None;
     for info in api.device_list().filter(|info| {
         info.vendor_id() == LOGITECH_VENDOR_ID
@@ -268,7 +276,13 @@ pub fn find_mice(owned: &[MouseKey]) -> Result<(Vec<FoundMouse>, Option<HidppErr
                 continue;
             }
             match MouseLink::connect(hidpp, index) {
-                Ok(link) => found.push(FoundMouse { key, link }),
+                Ok(mut link) => {
+                    let unit = link.unit_id().ok();
+                    if unit.is_some() && found.iter().any(|other| other.unit == unit) {
+                        continue;
+                    }
+                    found.push(FoundMouse { key, unit, link });
+                }
                 // A device that is not a supported mouse: not worth reporting.
                 Err(HidppError::NotSupportedMouse(_)) => {}
                 Err(error) => setup_error = Some(error),

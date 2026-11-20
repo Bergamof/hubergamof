@@ -24,10 +24,18 @@ pub struct ApplyProblem {
 }
 
 /// A mouse and what is known about its buttons.
-pub struct MouseSession<C> {
+///
+/// Dropping the session gives the diverted buttons back, as well as a gone
+/// mouse allows (a channel that fails ends it at once): a thread that panics
+/// or returns early must not leave them dead. Call [`MouseSession::give_back`]
+/// first to see the outcome.
+pub struct MouseSession<C: Channel> {
     link: MouseLink<C>,
     tracker: ButtonTracker,
     dropped_frames: u64,
+    /// Buttons may be diverted: set by [`MouseSession::apply`], cleared once
+    /// they are given back.
+    buttons_diverted: bool,
 }
 
 impl<C: Channel> MouseSession<C> {
@@ -39,6 +47,7 @@ impl<C: Channel> MouseSession<C> {
             link,
             tracker: ButtonTracker::default(),
             dropped_frames,
+            buttons_diverted: false,
         }
     }
 
@@ -49,13 +58,22 @@ impl<C: Channel> MouseSession<C> {
 
     /// Puts the mouse in the state `config` describes: sensitivity, wheel,
     /// thumb wheel, haptic strength, and the buttons with a binding diverted
-    /// (the others given back). A setting the mouse lacks is skipped; one that
-    /// fails does not stop the others and is reported.
+    /// (the others given back). A setting the mouse lacks is skipped; one the
+    /// mouse refuses does not stop the others and is reported.
+    ///
+    /// The caller picks the configuration of *this* mouse (by its unit id): a
+    /// session only checks the model. A binding of a rotation (the thumb wheel)
+    /// has nothing to divert and is left alone.
     ///
     /// # Errors
-    /// [`HidppError::InvalidArgument`] when the configuration is for another
-    /// model, nothing being written then.
+    /// [`HidppError::InvalidArgument`] when the configuration is invalid or
+    /// for another model, nothing being written then; [`HidppError::Timeout`]
+    /// or [`HidppError::Channel`] as soon as the mouse stops answering (the
+    /// caller then gives back and reconnects).
     pub fn apply(&mut self, config: &MouseConfig) -> Result<Vec<ApplyProblem>, HidppError> {
+        config
+            .validate()
+            .map_err(|error| HidppError::InvalidArgument(error.to_string()))?;
         if config.model != self.link.model() {
             return Err(HidppError::InvalidArgument(format!(
                 "configuration of a {}, mouse is a {}",
@@ -65,38 +83,45 @@ impl<C: Channel> MouseSession<C> {
         }
         let mut problems = Vec::new();
         let mut attempt = |setting: &'static str, result: Result<(), HidppError>| match result {
-            Ok(()) | Err(HidppError::Unsupported(_)) => {}
-            Err(error) => problems.push(ApplyProblem { setting, error }),
+            Ok(()) | Err(HidppError::Unsupported(_)) => Ok(()),
+            Err(error @ (HidppError::Timeout(_) | HidppError::Channel(_))) => Err(error),
+            Err(error) => {
+                problems.push(ApplyProblem { setting, error });
+                Ok(())
+            }
         };
-        attempt("sensitivity", self.link.set_dpi(config.pointer.dpi));
+        attempt("sensitivity", self.link.set_dpi(config.pointer.dpi))?;
         attempt(
             "wheel",
             self.link
                 .set_wheel(config.wheel.mode, config.wheel.auto_threshold),
-        );
+        )?;
         attempt(
             "high resolution wheel",
             self.link
                 .set_hires_wheel(config.wheel.hi_res, config.wheel.natural),
-        );
+        )?;
         if self.link.has_thumb_wheel() {
             attempt(
                 "thumb wheel",
                 self.link.set_thumb_invert(config.thumb_wheel.invert),
-            );
+            )?;
         }
         if self.link.has_haptics() {
             attempt(
                 "haptic strength",
                 self.link.set_haptic(haptic_strength(config.haptics.level)),
-            );
+            )?;
         }
         for control in self.link.model().capabilities().controls {
             if cid(self.link.model(), control.id).is_none() || control.locked {
                 continue;
             }
             let wanted = config.bindings.contains_key(&control.id);
-            attempt("button", self.set_button(control.id, wanted));
+            // From the first write on, buttons may be diverted, even when a
+            // later step fails.
+            self.buttons_diverted |= wanted;
+            attempt("button", self.set_button(control.id, wanted))?;
         }
         Ok(problems)
     }
@@ -114,7 +139,8 @@ impl<C: Channel> MouseSession<C> {
     /// releases of what was held, so that nothing stays pressed.
     ///
     /// # Errors
-    /// [`HidppError`] when the channel fails.
+    /// [`HidppError`] when the channel fails; the caller then undoes what the
+    /// held buttons started with [`MouseSession::release_held`].
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<ButtonEvent>, HidppError> {
         let frame = self.link.hidpp_mut().next_frame(timeout)?;
         let mut events = Vec::new();
@@ -132,15 +158,31 @@ impl<C: Channel> MouseSession<C> {
         Ok(events)
     }
 
-    /// Gives every diverted button back. Returns the releases of the buttons
-    /// that were believed held, for the caller to undo what they started.
+    /// The releases of the buttons believed held, for the caller to undo what
+    /// they started (a pressed key, a held menu). No I/O: it works with the
+    /// mouse gone, which is when it is needed.
+    pub fn release_held(&mut self) -> Vec<ButtonEvent> {
+        self.tracker.release_all()
+    }
+
+    /// Gives every diverted button back, every one being tried.
     ///
     /// # Errors
-    /// The first [`HidppError`] met, every button having been tried.
-    pub fn release(&mut self) -> Result<Vec<ButtonEvent>, HidppError> {
-        let events = self.tracker.release_all();
+    /// The first [`HidppError`] met.
+    pub fn give_back(&mut self) -> Result<(), HidppError> {
         self.link.release_buttons()?;
-        Ok(events)
+        self.buttons_diverted = false;
+        Ok(())
+    }
+}
+
+impl<C: Channel> Drop for MouseSession<C> {
+    fn drop(&mut self) {
+        if self.buttons_diverted {
+            // Nothing to do with a failure: the mouse forgets them by itself
+            // when it reconnects.
+            let _ = self.link.release_buttons();
+        }
     }
 }
 
@@ -454,7 +496,7 @@ mod tests {
         let mut session = session_with(fake);
         session.apply(&config()).unwrap();
         session.poll(Duration::from_millis(1)).unwrap();
-        let events = session.release().unwrap();
+        let events = session.release_held();
         assert_eq!(
             events,
             [ButtonEvent {
@@ -462,6 +504,7 @@ mod tests {
                 pressed: false
             }]
         );
+        session.give_back().unwrap();
         assert!(state(&session).diverted.is_empty());
     }
 
@@ -491,6 +534,107 @@ mod tests {
         let events = session.poll(Duration::from_millis(1)).unwrap();
         assert_eq!(
             events,
+            [ButtonEvent {
+                control: MouseControlId::Back,
+                pressed: false
+            }]
+        );
+    }
+
+    /// A link tests keep a hand on after the session owns it.
+    #[derive(Clone)]
+    struct Shared(std::rc::Rc<std::cell::RefCell<FakeLink>>);
+
+    impl Channel for Shared {
+        fn write(&mut self, report: &[u8]) -> Result<(), crate::channel::ChannelError> {
+            self.0.borrow_mut().write(report)
+        }
+
+        fn read(
+            &mut self,
+            timeout: Duration,
+        ) -> Result<Option<Vec<u8>>, crate::channel::ChannelError> {
+            self.0.borrow_mut().read(timeout)
+        }
+    }
+
+    fn shared_session(device: FakeDevice) -> (MouseSession<Shared>, Shared) {
+        let shared = Shared(std::rc::Rc::new(std::cell::RefCell::new(FakeLink::direct(
+            device,
+        ))));
+        let hidpp = Hidpp::new(shared.clone()).with_timeout(Duration::from_millis(5));
+        let session = MouseSession::new(MouseLink::connect(hidpp, DEVICE).unwrap());
+        (session, shared)
+    }
+
+    fn diverted(shared: &Shared) -> usize {
+        shared
+            .0
+            .borrow()
+            .device_at(DEVICE)
+            .unwrap()
+            .state
+            .diverted
+            .len()
+    }
+
+    #[test]
+    fn dropping_the_session_gives_the_buttons_back() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        session.apply(&config()).unwrap();
+        assert_eq!(diverted(&shared), 1);
+        drop(session);
+        assert_eq!(diverted(&shared), 0);
+    }
+
+    #[test]
+    fn a_session_that_diverted_nothing_writes_nothing_when_dropped() {
+        let (session, shared) = shared_session(FakeDevice::mx_master_4());
+        let written = shared.0.borrow().written().len();
+        drop(session);
+        assert_eq!(shared.0.borrow().written().len(), written);
+    }
+
+    #[test]
+    fn an_invalid_configuration_writes_nothing() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let written = shared.0.borrow().written().len();
+        let mut invalid = config();
+        invalid.pointer.dpi = 225;
+        assert!(matches!(
+            session.apply(&invalid),
+            Err(HidppError::InvalidArgument(_))
+        ));
+        assert_eq!(shared.0.borrow().written().len(), written);
+    }
+
+    #[test]
+    fn a_mouse_that_stops_answering_ends_the_application_at_once() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        shared.0.borrow_mut().fall_silent();
+        let written = shared.0.borrow().written().len();
+        assert!(matches!(
+            session.apply(&config()),
+            Err(HidppError::Timeout(_))
+        ));
+        assert_eq!(shared.0.borrow().written().len(), written + 1);
+    }
+
+    #[test]
+    fn a_vanished_mouse_still_gives_back_what_its_buttons_started() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let (mut session, shared) = shared_session(device);
+        session.apply(&config()).unwrap();
+        shared
+            .0
+            .borrow_mut()
+            .push_incoming([frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
+        session.poll(Duration::from_millis(1)).unwrap();
+        shared.0.borrow_mut().refuse_writes();
+        assert!(session.give_back().is_err());
+        assert_eq!(
+            session.release_held(),
             [ButtonEvent {
                 control: MouseControlId::Back,
                 pressed: false
