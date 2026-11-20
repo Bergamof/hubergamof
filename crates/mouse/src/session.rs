@@ -5,12 +5,13 @@
 //! notifications. The caller (a thread per mouse in the manager) decides when
 //! to apply a configuration, to wait for buttons and to release them.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use hubergamof_protocol::{
-    DPI_RANGE, DPI_STEP, HapticLevel, MouseConfig, MouseControlId, MouseModel,
-    WHEEL_THRESHOLD_RANGE, WheelMode,
+    DPI_RANGE, DPI_STEP, HapticLevel, MouseConfig, MouseControlId, MouseModel, PointerSettings,
+    ThumbWheelSettings, WHEEL_THRESHOLD_RANGE, WheelMode, WheelSettings,
 };
 
 use crate::channel::{Channel, HidppError};
@@ -41,6 +42,30 @@ pub enum Notice {
 /// How long [`MouseSession::serve`] waits for the buttons before looking at
 /// the stop request again: the delay with which it reacts to it.
 const SERVE_STEP: Duration = Duration::from_millis(200);
+
+/// How many updates in a row may find the mouse asleep before it is given up.
+const MAX_WAKE_FAILURES: u32 = 3;
+
+/// What of a configuration the mouse itself is told: its sensitivity, wheels,
+/// haptic strength and which controls are diverted. The action of a button is
+/// ours.
+fn hardware_of(
+    config: &MouseConfig,
+) -> (
+    PointerSettings,
+    WheelSettings,
+    ThumbWheelSettings,
+    HapticLevel,
+    BTreeSet<MouseControlId>,
+) {
+    (
+        config.pointer,
+        config.wheel,
+        config.thumb_wheel,
+        config.haptics.level,
+        config.bindings.keys().copied().collect(),
+    )
+}
 
 /// Bit of the wheel flags byte for high resolution.
 const HIRES_BIT: u8 = 0x02;
@@ -159,6 +184,12 @@ pub struct MouseSession<C: Channel> {
     dropped_frames: u64,
     /// The settings of the mouse before this session changed them.
     baseline: Option<MouseSettings>,
+    /// The configuration last applied, to write only what an update changes.
+    applied: Option<MouseConfig>,
+    /// An update the mouse was too sleepy to take, to try again.
+    pending: Option<MouseConfig>,
+    /// Updates in a row the mouse did not wake up for.
+    wake_failures: u32,
     /// Buttons may be diverted: set by [`MouseSession::apply`], cleared once
     /// they are given back.
     buttons_diverted: bool,
@@ -174,6 +205,9 @@ impl<C: Channel> MouseSession<C> {
             tracker: ButtonTracker::default(),
             dropped_frames,
             baseline: None,
+            applied: None,
+            pending: None,
+            wake_failures: 0,
             buttons_diverted: false,
         }
     }
@@ -308,6 +342,7 @@ impl<C: Channel> MouseSession<C> {
             self.buttons_diverted |= wanted;
             attempt("button", self.set_button(control.id, wanted))?;
         }
+        self.applied = Some(config.clone());
         Ok(problems)
     }
 
@@ -416,8 +451,19 @@ impl<C: Channel> MouseSession<C> {
             notify(Notice::Problem(problem));
         }
         while !stop.load(Ordering::Relaxed) {
-            if let Some(update) = updates() {
+            let update = match updates() {
+                Some(update) => {
+                    // Newer than one that had to wait.
+                    self.pending = None;
+                    Some(update)
+                }
+                None => self.pending.take(),
+            };
+            if let Some(update) = update {
                 self.apply_update(&update, notify)?;
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
             }
             for event in self.poll(SERVE_STEP)? {
                 notify(Notice::Button(event));
@@ -433,9 +479,42 @@ impl<C: Channel> MouseSession<C> {
         config: &MouseConfig,
         notify: &mut impl FnMut(Notice),
     ) -> Result<(), HidppError> {
-        // Reported once the update is applied (or has failed), the held
-        // buttons being released whatever happens.
-        let released = self.release_held();
+        if self
+            .applied
+            .as_ref()
+            .is_some_and(|applied| hardware_of(applied) == hardware_of(config))
+        {
+            // Only what the mouse does not know changed (the action of a
+            // button): nothing to write, nothing to release.
+            self.applied = Some(config.clone());
+            return Ok(());
+        }
+        match self.link.wake() {
+            Ok(()) => self.wake_failures = 0,
+            Err(HidppError::Timeout(_)) if self.wake_failures < MAX_WAKE_FAILURES => {
+                // Asleep: tried again at the next turn, the service goes on.
+                self.wake_failures += 1;
+                self.pending = Some(config.clone());
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        }
+        // The controls that stop being diverted, or start: a button held
+        // while its control is given back will not say it is released.
+        let changed = self.applied.as_ref().map_or_else(Vec::new, |applied| {
+            applied
+                .bindings
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .symmetric_difference(&config.bindings.keys().copied().collect())
+                .copied()
+                .collect()
+        });
+        let released: Vec<ButtonEvent> = changed
+            .into_iter()
+            .filter_map(|control| self.tracker.release(control))
+            .collect();
         let applied = self.apply(config);
         for event in released {
             notify(Notice::Button(event));
@@ -1311,7 +1390,9 @@ mod tests {
     fn an_update_to_a_mouse_that_stopped_answering_ends_the_service() {
         let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
         let stop = AtomicBool::new(false);
-        let mut update = Some(config());
+        let mut changed = config();
+        changed.pointer.dpi = 2400;
+        let mut update = Some(changed);
         let served = session.serve_with_updates(
             &config(),
             &stop,
@@ -1325,26 +1406,33 @@ mod tests {
     }
 
     #[test]
-    fn the_buttons_held_when_an_update_comes_are_reported_released() {
+    fn the_buttons_held_when_an_update_comes_are_reported_released_by_the_update() {
         let device = FakeDevice::mx_master_4();
         let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
         let (mut session, shared) = shared_session(device);
-        shared
-            .0
-            .borrow_mut()
-            .push_incoming([frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
+        // The button goes down, and comes up (physically) later.
+        shared.0.borrow_mut().push_incoming([
+            frame(DEVICE, reprog, 0x00, &[0, 0x53]),
+            frame(DEVICE, reprog, 0x00, &[]),
+        ]);
         let stop = AtomicBool::new(false);
-        let mut turn = 0;
+        let turn = std::cell::Cell::new(0);
         let mut events = Vec::new();
         session
             .serve_with_updates(
                 &config(),
                 &stop,
                 || {
-                    turn += 1;
-                    match turn {
-                        2 => Some(config()),
-                        3 => {
+                    turn.set(turn.get() + 1);
+                    match turn.get() {
+                        2 => {
+                            let mut update = config();
+                            update
+                                .bindings
+                                .insert(MouseControlId::Back, ButtonAction::None);
+                            Some(update)
+                        }
+                        4 => {
                             stop.store(true, Ordering::Relaxed);
                             None
                         }
@@ -1353,15 +1441,186 @@ mod tests {
                 },
                 |notice| {
                     if let Notice::Button(event) = notice {
-                        events.push(event.pressed);
+                        events.push((event.pressed, turn.get()));
                     }
                 },
             )
             .unwrap();
+        // Released at the turn of the update (not at the end), and the
+        // physical release that follows is not reported a second time.
+        assert_eq!(events, [(true, 1), (false, 2)]);
+    }
+
+    #[test]
+    fn an_update_the_mouse_partly_refuses_is_applied_for_the_rest_and_reported() {
+        let device = FakeDevice::mx_master_4().with_broken_feature(crate::features::ADJUSTABLE_DPI);
+        let (mut session, shared) = shared_session(device);
+        let mut update = config();
+        update.pointer.dpi = 2400;
+        update.haptics.level = HapticLevel::High;
+        update
+            .bindings
+            .insert(MouseControlId::Back, ButtonAction::None);
+        let (seen, problems, served) = serve_updates(&mut session, &shared, vec![update]);
+        served.unwrap();
+        // The sensitivity is refused at the start and by the update.
+        assert_eq!(problems, ["sensitivity", "sensitivity"]);
+        assert_eq!(seen[1].1, 2, "the buttons of the update are diverted");
+        let state = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert!(state.diverted.is_empty(), "and given back at the end");
+    }
+
+    #[test]
+    fn an_update_pending_when_the_service_is_stopped_is_not_asked_for() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let stop = AtomicBool::new(true);
+        let served = session.serve_with_updates(
+            &config(),
+            &stop,
+            || panic!("asked for an update after the stop"),
+            |_| {},
+        );
+        served.unwrap();
+        let state = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert_eq!((state.dpi, state.diverted.len()), (1600, 0));
+    }
+
+    #[test]
+    fn an_update_that_only_changes_the_action_of_a_button_writes_nothing_and_releases_nothing() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let (mut session, shared) = shared_session(device);
+        shared
+            .0
+            .borrow_mut()
+            .push_incoming([frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
+        let mut bound = config();
+        bound.bindings.insert(
+            MouseControlId::Back,
+            ButtonAction::Shortcut {
+                keys: "Ctrl+M".to_owned(),
+            },
+        );
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut written = (0, 0);
+        let mut events = Vec::new();
+        session
+            .serve_with_updates(
+                &bound,
+                &stop,
+                || {
+                    turn.set(turn.get() + 1);
+                    match turn.get() {
+                        2 => {
+                            written.0 = shared.0.borrow().written().len();
+                            let mut update = bound.clone();
+                            update.bindings.insert(
+                                MouseControlId::Back,
+                                ButtonAction::Click {
+                                    button: hubergamof_protocol::MouseButton::Middle,
+                                },
+                            );
+                            Some(update)
+                        }
+                        3 => {
+                            written.1 = shared.0.borrow().written().len();
+                            stop.store(true, Ordering::Relaxed);
+                            None
+                        }
+                        _ => None,
+                    }
+                },
+                |notice| {
+                    if let Notice::Button(event) = notice {
+                        events.push((event.pressed, turn.get()));
+                    }
+                },
+            )
+            .unwrap();
+        // The turn of the update wrote nothing; the end gave the buttons back.
+        let link = shared.0.borrow();
+        let during = &link.written()[written.0..written.1];
+        assert!(
+            during
+                .iter()
+                .all(|report| report.get(2) != Some(&reprog) || report[3] >> 4 != 3),
+            "no button was written again"
+        );
+        assert_eq!(events[0], (true, 1));
         assert_eq!(
-            events,
-            [true, false],
-            "pressed, then released by the update"
+            events.get(1),
+            Some(&(false, 3)),
+            "released only when the service ended, not by the update"
+        );
+    }
+
+    #[test]
+    fn an_update_the_mouse_was_too_sleepy_for_is_applied_at_a_later_turn() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut seen = Vec::new();
+        let mut update = config();
+        update.pointer.dpi = 2400;
+        let served = session.serve_with_updates(
+            &config(),
+            &stop,
+            || {
+                turn.set(turn.get() + 1);
+                let dpi = shared.0.borrow().device_at(DEVICE).unwrap().state.dpi;
+                match turn.get() {
+                    2 => {
+                        // Asleep for the three pings of the wake up.
+                        shared.0.borrow_mut().sleep_for(3);
+                        Some(update.clone())
+                    }
+                    3 => {
+                        seen.push(dpi);
+                        None
+                    }
+                    4 => {
+                        seen.push(dpi);
+                        stop.store(true, Ordering::Relaxed);
+                        None
+                    }
+                    _ => None,
+                }
+            },
+            |_| {},
+        );
+        served.unwrap();
+        assert_eq!(
+            seen,
+            [1600, 2400],
+            "the service went on and the update came"
+        );
+    }
+
+    #[test]
+    fn a_mouse_that_never_wakes_for_an_update_ends_the_service() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut update = config();
+        update.pointer.dpi = 2400;
+        let served = session.serve_with_updates(
+            &config(),
+            &stop,
+            || {
+                turn.set(turn.get() + 1);
+                (turn.get() == 2).then(|| {
+                    shared.0.borrow_mut().sleep_for(10_000);
+                    update.clone()
+                })
+            },
+            |_| {},
+        );
+        assert!(matches!(served, Err(HidppError::Timeout(_))), "{served:?}");
+        assert!(
+            turn.get() < 10,
+            "given up after a few turns: {}",
+            turn.get()
         );
     }
 }
