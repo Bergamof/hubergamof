@@ -69,7 +69,9 @@ pub struct Controller {
 
 impl Controller {
     /// A closed menu of `config`, whose petals are cut from `ring`, on a
-    /// screen of `screen`.
+    /// screen of `screen`. `config` must have been validated
+    /// ([`RadialMenuConfig::validate`]): the names and the number of petals
+    /// are taken as they are.
     #[must_use]
     pub fn new(config: &RadialMenuConfig, ring: Ring, screen: Size) -> Self {
         let mut controller = Self {

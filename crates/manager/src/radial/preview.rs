@@ -30,6 +30,9 @@ pub enum PreviewError {
     /// The menu has no entry to show.
     #[error("the radial menu shows no entry")]
     NoEntry,
+    /// The window stopped on its own (its error is in the log).
+    #[error("the window of the menu stopped")]
+    WindowGone,
     /// The report cannot be written.
     #[error("cannot write the report: {0}")]
     Write(#[from] std::io::Error),
@@ -86,7 +89,7 @@ pub fn run(duration: Duration, out: &mut impl Write) -> Result<(), PreviewError>
         match window_events.recv_timeout(left) {
             Ok(event) => effects = controller.window(event),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(PreviewError::WindowGone),
         }
     }
 }

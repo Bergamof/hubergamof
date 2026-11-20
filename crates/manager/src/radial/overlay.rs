@@ -14,6 +14,7 @@ use image::RgbaImage;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, FrameCallbackData};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop::channel::{self, Channel, Event as ChannelEvent};
+use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
@@ -47,6 +48,18 @@ const KEY_ESCAPE: u32 = 1;
 
 /// Bytes of a pixel of the buffers (`Argb8888`).
 const BYTES_PER_PIXEL: usize = 4;
+
+/// How long the window may stay open: the menu is a moment's gesture, and the
+/// window holds the keyboard, so a window nobody closes (a stuck host) closes
+/// itself.
+const MAX_OPEN: Duration = Duration::from_secs(30);
+
+/// How often the window looks at how long it has been open.
+const WATCHDOG_PERIOD: Duration = Duration::from_secs(1);
+
+/// Largest side of the surface accepted from the compositor, in pixels:
+/// beyond it the buffer is not worth allocating.
+const MAX_SURFACE_SIDE: u32 = 16_384;
 
 /// Namespace of the surface, for the compositor's rules.
 const NAMESPACE: &str = "hubergamof-radial-menu";
@@ -213,6 +226,12 @@ fn run(
             ChannelEvent::Closed => state.stop(),
         })
         .map_err(|error| error.error)?;
+    handle
+        .insert_source(Timer::from_duration(WATCHDOG_PERIOD), |_, (), state| {
+            state.close_if_forgotten();
+            TimeoutAction::ToDuration(WATCHDOG_PERIOD)
+        })
+        .map_err(|error| error.error)?;
     state.signal = Some(event_loop.get_signal());
     event_loop.run(None, state, |_| {})?;
     Ok(())
@@ -221,6 +240,8 @@ fn run(
 /// The window being shown.
 struct Window {
     layer: LayerSurface,
+    /// When the window was shown, for [`MAX_OPEN`].
+    opened_at: Instant,
     content: Content,
     /// Size of the surface, known at the first configure.
     size: Option<Size>,
@@ -271,6 +292,27 @@ impl State {
         }
     }
 
+    /// Closes the window, whatever the host does, when it has been open too
+    /// long; the host is told as if the person gave up.
+    fn close_if_forgotten(&mut self) {
+        let forgotten = self
+            .window
+            .as_ref()
+            .is_some_and(|window| has_expired(window.opened_at, Instant::now()));
+        if forgotten {
+            tracing::warn!("the radial menu stayed open too long: closed");
+            self.give_up();
+        }
+    }
+
+    /// The window goes and the host hears Escape: Escape, a window the
+    /// compositor took away, a host that is no longer there.
+    fn give_up(&mut self) {
+        self.window = None;
+        // The host may be gone: nothing to tell then, the window is closed anyway.
+        let _ = self.events.send(WindowEvent::Escape);
+    }
+
     fn stop(&mut self) {
         self.window = None;
         if let Some(signal) = &self.signal {
@@ -297,6 +339,7 @@ impl State {
         layer.commit();
         self.window = Some(Window {
             layer,
+            opened_at: Instant::now(),
             content,
             size: None,
             view: None,
@@ -316,10 +359,12 @@ impl State {
             return;
         };
         let (width, height) = (pixels(size.width), pixels(size.height));
+        // Sizes are capped at the configure: the stride cannot overflow.
+        let stride = signed(width).saturating_mul(4);
         let Ok((buffer, canvas)) = self.pool.create_buffer(
             signed(width),
             signed(height),
-            signed(width) * 4,
+            stride,
             wl_shm::Format::Argb8888,
         ) else {
             tracing::warn!("cannot allocate a buffer for the radial menu");
@@ -362,10 +407,18 @@ impl State {
         }
     }
 
-    fn report(&self, event: WindowEvent) {
-        // The receiver is gone when the host stops: nothing left to tell.
-        let _ = self.events.send(event);
+    /// Tells the host; a host that is gone cannot close the window, so the
+    /// window closes itself.
+    fn report(&mut self, event: WindowEvent) {
+        if self.events.send(event).is_err() {
+            self.window = None;
+        }
     }
+}
+
+/// Whether a window shown at `opened_at` has been open longer than [`MAX_OPEN`].
+fn has_expired(opened_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(opened_at) > MAX_OPEN
 }
 
 /// How far the opening animation is, from 0 to 1.
@@ -488,8 +541,7 @@ impl LayerShellHandler for State {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
         // The compositor took the surface away (the output went): the menu is
         // given up, as with Escape.
-        self.window = None;
-        self.report(WindowEvent::Escape);
+        self.give_up();
     }
 
     fn configure(
@@ -502,8 +554,8 @@ impl LayerShellHandler for State {
     ) {
         let (width, height) = configure.new_size;
         if let Some(window) = &mut self.window
-            && width > 0
-            && height > 0
+            && (1..=MAX_SURFACE_SIDE).contains(&width)
+            && (1..=MAX_SURFACE_SIDE).contains(&height)
         {
             let size = Size {
                 width: f64::from(width),
@@ -579,17 +631,26 @@ impl PointerHandler for State {
             return;
         };
         let ours = window.layer.wl_surface().clone();
+        // A fast mouse sends many motions at once: only where it ended up
+        // matters, and a click comes after.
+        let mut last_position = None;
+        let mut clicked = false;
         for event in events.iter().filter(|event| event.surface == ours) {
-            let (x, y) = event.position;
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    self.report(WindowEvent::Pointer(Point::new(x, y)));
+                    last_position = Some(Point::new(event.position.0, event.position.1));
                 }
-                PointerEventKind::Press { .. } => self.report(WindowEvent::Click),
+                PointerEventKind::Press { .. } => clicked = true,
                 PointerEventKind::Leave { .. }
                 | PointerEventKind::Release { .. }
                 | PointerEventKind::Axis { .. } => {}
             }
+        }
+        if let Some(position) = last_position {
+            self.report(WindowEvent::Pointer(position));
+        }
+        if clicked {
+            self.report(WindowEvent::Click);
         }
     }
 }
@@ -612,7 +673,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         } = event
             && key == KEY_ESCAPE
         {
-            state.report(WindowEvent::Escape);
+            state.give_up();
         }
     }
 }
@@ -713,6 +774,16 @@ mod tests {
             (opening_progress(&content(false), Some(Instant::now())) - 1.0).abs() < f32::EPSILON
         );
         assert!((opening_progress(&content(true), None) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_window_open_too_long_has_expired_and_a_recent_one_has_not() {
+        let now = Instant::now();
+        assert!(!has_expired(now, now));
+        assert!(!has_expired(now, now + MAX_OPEN));
+        assert!(has_expired(now, now + MAX_OPEN + Duration::from_millis(1)));
+        // A clock that went backwards is not an expiry.
+        assert!(!has_expired(now + MAX_OPEN, now));
     }
 
     #[test]

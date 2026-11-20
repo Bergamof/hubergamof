@@ -156,7 +156,11 @@ enum Command {
     /// a petal, a click chooses it, Escape closes.
     RadialPreview {
         /// How long the menu stays, in seconds.
-        #[arg(long, default_value_t = 15)]
+        #[arg(
+            long,
+            default_value_t = 15,
+            value_parser = clap::value_parser!(u64).range(1..=PREVIEW_MAX_SECONDS)
+        )]
         seconds: u64,
     },
 
@@ -277,6 +281,9 @@ enum MouseTestAction {
 
 /// Threshold of the automatic wheel mode when none is given.
 const DEFAULT_WHEEL_THRESHOLD: u8 = 20;
+/// Longest `radial-preview`: its window holds the keyboard meanwhile.
+const PREVIEW_MAX_SECONDS: u64 = 120;
+
 /// Length of `mouse-test buttons` when none is given, and its longest.
 const DEFAULT_WATCH_SECONDS: u64 = 20;
 const MAX_WATCH_SECONDS: u64 = 300;
