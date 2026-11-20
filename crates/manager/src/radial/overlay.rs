@@ -23,7 +23,9 @@ use smithay_client_toolkit::reexports::client::protocol::{
 };
 use smithay_client_toolkit::reexports::client::{Connection, Dispatch, QueueHandle, WEnum};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
-use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
+use smithay_client_toolkit::seat::pointer::{
+    CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer,
+};
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{
@@ -264,7 +266,7 @@ struct State {
     renderer: TextRenderer,
     queue: QueueHandle<State>,
     events: Sender<WindowEvent>,
-    pointer: Option<wl_pointer::WlPointer>,
+    pointer: Option<ThemedPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     window: Option<Window>,
     signal: Option<LoopSignal>,
@@ -404,6 +406,15 @@ impl State {
         }
         if buffer.attach_to(surface).is_ok() {
             window.layer.commit();
+        }
+    }
+
+    /// Puts the plain arrow over the menu, whatever the pointer showed before.
+    fn show_default_cursor(&self, connection: &Connection) {
+        if let Some(pointer) = &self.pointer
+            && let Err(error) = pointer.set_cursor(connection, CursorIcon::Default)
+        {
+            tracing::debug!(%error, "cannot set the cursor over the radial menu");
         }
     }
 
@@ -585,7 +596,20 @@ impl SeatHandler for State {
     ) {
         match capability {
             Capability::Pointer if self.pointer.is_none() => {
-                self.pointer = self.seats.get_pointer(queue, &seat).ok();
+                // The cursor belongs to the client that has the pointer: without
+                // one set, the pointer keeps the shape it had over the window
+                // below (a text caret, or nothing at all).
+                let cursor_surface = self.compositor.create_surface(queue);
+                self.pointer = self
+                    .seats
+                    .get_pointer_with_theme::<State, ()>(
+                        queue,
+                        &seat,
+                        self.shm.wl_shm(),
+                        cursor_surface,
+                        ThemeSpec::System,
+                    )
+                    .ok();
             }
             Capability::Keyboard if self.keyboard.is_none() => {
                 self.keyboard = Some(seat.get_keyboard(queue, ()));
@@ -604,7 +628,7 @@ impl SeatHandler for State {
         match capability {
             Capability::Pointer => {
                 if let Some(pointer) = self.pointer.take() {
-                    pointer.release();
+                    pointer.pointer().release();
                 }
             }
             Capability::Keyboard => {
@@ -622,7 +646,7 @@ impl SeatHandler for State {
 impl PointerHandler for State {
     fn pointer_frame(
         &mut self,
-        _: &Connection,
+        connection: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_pointer::WlPointer,
         events: &[PointerEvent],
@@ -637,7 +661,12 @@ impl PointerHandler for State {
         let mut clicked = false;
         for event in events.iter().filter(|event| event.surface == ours) {
             match event.kind {
-                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                PointerEventKind::Enter { .. } => {
+                    // The shape is to be set at every enter.
+                    self.show_default_cursor(connection);
+                    last_position = Some(Point::new(event.position.0, event.position.1));
+                }
+                PointerEventKind::Motion { .. } => {
                     last_position = Some(Point::new(event.position.0, event.position.1));
                 }
                 PointerEventKind::Press { .. } => clicked = true,
