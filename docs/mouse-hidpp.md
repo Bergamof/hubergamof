@@ -76,6 +76,8 @@ hubergamof mouse-test --model master4 release
 - `buttons` détourne tous les boutons sauf les clics gauche et droit, affiche chaque appui et chaque relâchement pendant la durée donnée, puis les rend. Ctrl+C, SIGTERM ou la fermeture du terminal arrêtent la surveillance en rendant les boutons ; si le processus est tué net (`kill -9`) ou plante, `release` les rend, et la souris les oublie de toute façon à sa prochaine reconnexion. Arrêtez avant le service, Solaar et logiops, qui détournent les mêmes boutons. Les bornes (`dpi` 200 à 8000 par 50, `--threshold` 1 à 50, `--seconds` 1 à 300) sont refusées avant même de chercher la souris.
 
 ## Veille et réveil (à observer)
+Relevé du 2026-11-20 (journal d'Adrien, `--mice`) : les deux souris sont servies, puis à l'arrêt, après une dizaine de secondes sans toucher aux souris, chacune a manqué `no answer within 500ms` (deux requêtes sans réponse, la souris se réveillant) : un bouton lu pendant ce temps n'était pas rendu. Le gestionnaire réveille donc la souris (jusqu'à trois pings) avant de réappliquer ou de rendre les boutons (`MouseLink::wake`).
+
 Sur le récepteur, une souris qui s'endort laisse son nœud hidraw ouvert et muet : le moteur ne s'en aperçoit pas (le fil continue sans erreur) et ne réapplique rien au réveil ; les détournements sont probablement perdus à l'endormissement (hypothèse, non vérifiée). Le récepteur annonce les connexions par des notifications HID++ 1.0 (sous-id `0x41`) dont le format reste à relever sur le matériel avant de les traiter (réappliquer la configuration à la reconnexion, rendre les boutons tenus à la déconnexion). Ouvert tant que ce n'est pas fait ; `--mice` reste désactivé par défaut.
 
 ## Un seul interlocuteur par souris

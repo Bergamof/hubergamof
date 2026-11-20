@@ -348,6 +348,8 @@ pub struct FakeLink {
     /// A receiver answers an HID++ 1.0 error for an index nobody has.
     receiver: bool,
     mode: LinkMode,
+    /// Requests still to leave unanswered: the mouse is waking up.
+    sleeping_for: usize,
     noise: Option<Vec<u8>>,
     queue: VecDeque<Vec<u8>>,
     written: Vec<Vec<u8>>,
@@ -359,6 +361,7 @@ impl FakeLink {
             devices,
             receiver,
             mode: LinkMode::Working,
+            sleeping_for: 0,
             noise: None,
             queue: VecDeque::new(),
             written: Vec::new(),
@@ -416,6 +419,12 @@ impl FakeLink {
         self
     }
 
+    /// The next `requests` requests are not answered, then the mouse answers
+    /// again: it was asleep.
+    pub fn sleep_for(&mut self, requests: usize) {
+        self.sleeping_for = requests;
+    }
+
     /// From now on the interface never answers (the mouse went to sleep).
     pub fn fall_silent(&mut self) {
         self.mode = LinkMode::Silent;
@@ -445,6 +454,10 @@ impl Channel for FakeLink {
         }
         self.written.push(report.to_vec());
         if self.mode == LinkMode::Silent {
+            return Ok(());
+        }
+        if self.sleeping_for > 0 {
+            self.sleeping_for -= 1;
             return Ok(());
         }
         let [_, device, feature, function_byte, params @ ..] = report else {
