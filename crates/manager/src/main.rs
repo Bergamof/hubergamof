@@ -24,6 +24,7 @@ use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::MouseHub;
+use hubergamof_manager::radial;
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
@@ -148,6 +149,15 @@ enum Command {
         model: Option<MouseModelArg>,
         #[command(subcommand)]
         action: MouseTestAction,
+    },
+
+    /// Show the radial menu for a few seconds over the desktop (Wayland with
+    /// layer-shell: KDE, wlroots compositors) to try its window: hover lights
+    /// a petal, a click chooses it, Escape closes.
+    RadialPreview {
+        /// How long the menu stays, in seconds.
+        #[arg(long, default_value_t = 15)]
+        seconds: u64,
     },
 
     /// List what the Logitech mice on this machine tell about themselves
@@ -349,7 +359,8 @@ async fn main() -> Result<()> {
             Command::Open
             | Command::InstallExtension { .. }
             | Command::MouseProbe { .. }
-            | Command::MouseTest { .. },
+            | Command::MouseTest { .. }
+            | Command::RadialPreview { .. },
         )
         | None => LogOutput::Stdout,
     });
@@ -359,6 +370,7 @@ async fn main() -> Result<()> {
         Some(Command::InstallExtension { browser }) => install_extension(browser),
         Some(Command::MouseProbe { trace }) => run_mouse_probe(trace),
         Some(Command::MouseTest { model, action }) => run_mouse_test(model, action.into()).await,
+        Some(Command::RadialPreview { seconds }) => run_radial_preview(seconds).await,
         None => run_manager(cli).await,
     }
 }
@@ -407,6 +419,16 @@ async fn run_mouse_test(model: Option<MouseModelArg>, action: Action) -> Result<
     .await;
     waiter.abort();
     outcome.context("the mouse task failed")?
+}
+
+/// Shows the radial menu for a few seconds (`radial-preview`).
+async fn run_radial_preview(seconds: u64) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        radial::preview::run(Duration::from_secs(seconds), &mut std::io::stdout().lock())
+            .context("cannot show the radial menu")
+    })
+    .await
+    .context("the radial menu task failed")?
 }
 
 /// Returns when the person asks the program to stop.
