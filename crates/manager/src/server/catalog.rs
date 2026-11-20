@@ -29,6 +29,8 @@ pub fn module_catalog(registry: &ModuleRegistry, renderer: &Renderer) -> Arc<[Ca
                 icon,
                 setting_icons,
                 default_settings: factory.default_settings(),
+                radial_actions: factory.radial_actions(),
+                haptic_events: factory.haptic_events(),
             }
         })
         .collect()
@@ -162,7 +164,30 @@ mod tests {
             );
             let factory = registry.get(&module.descriptor.kind).unwrap();
             assert_eq!(module.default_settings, factory.default_settings());
+            assert_eq!(module.radial_actions, factory.radial_actions());
+            assert_eq!(module.haptic_events, factory.haptic_events());
         }
+    }
+
+    #[test]
+    fn the_catalog_carries_what_modules_offer_to_the_mice() {
+        let registry = crate::testing::builtin_registry();
+        let catalog = module_catalog(&registry, &Renderer::new().unwrap());
+        let pomodoro = catalog
+            .iter()
+            .find(|module| module.descriptor.kind.0 == "pomodoro")
+            .unwrap();
+        let first_action = pomodoro
+            .radial_actions
+            .first()
+            .map(|action| action.id.as_str());
+        assert_eq!(first_action, Some("toggle"));
+        assert!(
+            pomodoro
+                .haptic_events
+                .iter()
+                .any(|event| !event.id.is_empty())
+        );
     }
 
     #[test]

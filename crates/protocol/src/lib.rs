@@ -48,8 +48,9 @@ pub use update::{InstallSupport, UpdateSettings, UpdateStatus};
 // re-exported here because they are part of the wire contract.
 pub use hubergamof_module_api::{
     ChoiceOption, DialFunctionDescriptor, DialFunctionId, EntryNaming, FileChooser, FileEntry,
-    FileFilter, HapticWaveform, KeyState, MAX_IMAGE_NAME_LENGTH, ModuleCapabilities,
-    ModuleDescriptor, ModuleInstanceId, ModuleKind, SettingField, SettingKind, is_safe_image_name,
+    FileFilter, HapticEventDescriptor, HapticWaveform, KeyState, MAX_IMAGE_NAME_LENGTH,
+    ModuleCapabilities, ModuleDescriptor, ModuleInstanceId, ModuleKind, RadialActionDescriptor,
+    SettingField, SettingKind, is_safe_image_name,
 };
 
 #[cfg(test)]

@@ -73,7 +73,9 @@ impl HapticWaveform {
 /// [`ModuleFactory::haptic_events`](crate::ModuleFactory::haptic_events)) and
 /// raises it with [`Command::haptic`](crate::Command::haptic); the user chooses,
 /// per mouse, whether it is played and with which waveform.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[non_exhaustive]
 pub struct HapticEventDescriptor {
     /// Identifier, passed back in [`Command::Haptic`](crate::Command::Haptic):
