@@ -4,6 +4,9 @@ import type { DeviceConfig } from "./DeviceConfig";
 import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
 import type { LiveState } from "./LiveState";
+import type { MouseConfig } from "./MouseConfig";
+import type { MouseInfo } from "./MouseInfo";
+import type { RadialMenuConfig } from "./RadialMenuConfig";
 import type { UpdateSettings } from "./UpdateSettings";
 import type { UpdateStatus } from "./UpdateStatus";
 
@@ -18,7 +21,23 @@ version: string, } | { "type": "devices",
 /**
  * Connected devices.
  */
-devices: Array<DeviceInfo>, } | { "type": "moduleCatalog", 
+devices: Array<DeviceInfo>, } | { "type": "mice", 
+/**
+ * Connected mice.
+ */
+mice: Array<MouseInfo>, } | { "type": "mouseConfig", 
+/**
+ * Mouse serial.
+ */
+serial: string, 
+/**
+ * Current configuration.
+ */
+config: MouseConfig, } | { "type": "radialMenu", 
+/**
+ * Current configuration.
+ */
+config: RadialMenuConfig, } | { "type": "moduleCatalog", 
 /**
  * Available modules.
  */

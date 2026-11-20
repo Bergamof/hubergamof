@@ -16,6 +16,7 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
+use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
@@ -33,7 +34,7 @@ use hubergamof_module_api::{
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
     ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, ModuleInstance,
-    ServerMessage, UpdateSettings, UpdateStatus,
+    RadialMenuConfig, ServerMessage, UpdateSettings, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -47,6 +48,9 @@ use tower::ServiceExt as _;
 const PORT: u16 = 7878;
 const HOST: &str = "127.0.0.1:7878";
 const DEV_ORIGIN: &str = "http://localhost:5173";
+/// Messages a client receives on connection: `hello`, `devices`,
+/// `moduleCatalog`, `mice`, `radialMenu` and `updateSettings`.
+const GREETING_MESSAGES: usize = 6;
 const WAIT: Duration = Duration::from_secs(5);
 const COUNTER_KIND: &str = "counter";
 
@@ -165,10 +169,11 @@ impl Devices {
             engines: supervisor.engines(),
             catalog,
             simulated_input: SimulatedInput::Accepted,
-            store,
+            store: store.clone(),
             renderer,
             file_picker: Arc::new(NoFilePicker),
             updates: UpdateHandle::inactive(),
+            mice: MouseHub::new(store.clone()).unwrap(),
         };
         Self {
             _dir: dir,
@@ -237,11 +242,12 @@ impl Running {
         Ok(Client(stream))
     }
 
-    /// Client past the `hello`, `devices`, `moduleCatalog` and `updateSettings` greeting.
+    /// Client past the `hello`, `devices`, `moduleCatalog`, `mice`, `radialMenu` and
+    /// `updateSettings` greeting.
     async fn connect(&self) -> Client {
         let own_origin = format!("http://127.0.0.1:{}", self.port);
         let mut client = self.connect_with(Some(&own_origin)).await.unwrap();
-        for _ in 0..4 {
+        for _ in 0..GREETING_MESSAGES {
             client.receive().await;
         }
         client
@@ -617,6 +623,11 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         }
         other => panic!("expected the catalog, got {other:?}"),
     }
+    assert_eq!(client.receive().await, ServerMessage::Mice { mice: vec![] });
+    assert!(matches!(
+        client.receive().await,
+        ServerMessage::RadialMenu { config } if config.revision == 0
+    ));
     // Nothing can be installed through the inactive handle of the test server.
     assert_eq!(
         client.receive().await,
@@ -628,6 +639,52 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         }
     );
     client.ping().await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn the_radial_menu_is_followed_by_every_client_and_unknown_mice_are_refused() {
+    let server = Running::start().await;
+    let mut author = server.connect().await;
+    let mut observer = server.connect().await;
+
+    author
+        .send(&ClientMessage::SelectMouse {
+            serial: "nobody".into(),
+        })
+        .await;
+    assert!(matches!(
+        author.receive().await,
+        ServerMessage::Error {
+            code: ErrorCode::UnknownDevice,
+            ..
+        }
+    ));
+
+    let mut menu = RadialMenuConfig::default_menu();
+    menu.animate = !menu.animate;
+    author
+        .send(&ClientMessage::UpdateRadialMenu {
+            config: menu.clone(),
+        })
+        .await;
+    for client in [&mut author, &mut observer] {
+        assert!(matches!(
+            client.receive().await,
+            ServerMessage::RadialMenu { config } if config.revision == 1 && config.animate == menu.animate
+        ));
+    }
+    // The same revision again is now outdated.
+    author
+        .send(&ClientMessage::UpdateRadialMenu { config: menu })
+        .await;
+    assert!(matches!(
+        author.receive().await,
+        ServerMessage::Error {
+            code: ErrorCode::StaleRevision,
+            ..
+        }
+    ));
     server.stop().await;
 }
 
