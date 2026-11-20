@@ -152,6 +152,7 @@ mod tests {
 
     use super::*;
     use crate::channel::Hidpp;
+    use crate::controls::cid;
     use crate::features::REPROG_CONTROLS_V4;
     use crate::testing::{FakeDevice, FakeLink, FakeState, frame};
 
@@ -232,29 +233,155 @@ mod tests {
         assert_eq!(state(&session).diverted.len(), 1);
     }
 
+    /// Reports written to the button reporting function (3) of the mouse.
+    fn button_writes(session: &MouseSession<FakeLink>, from: usize) -> usize {
+        session.link.hidpp_channel().written()[from..]
+            .iter()
+            .filter(|report| report.get(2) == Some(&reprog_index()) && report[3] >> 4 == 3)
+            .count()
+    }
+
     #[test]
     fn applying_twice_writes_the_buttons_only_once() {
         let mut session = session(FakeDevice::mx_master_4());
         session.apply(&config()).unwrap();
+        assert_eq!(button_writes(&session, 0), 1, "the menu button is diverted");
         let written = session.link.hidpp_channel().written().len();
         session.apply(&config()).unwrap();
-        let again = session.link.hidpp_channel().written().len() - written;
-        let set_diverted = session
-            .link
-            .hidpp_channel()
-            .written()
-            .iter()
-            .skip(written)
-            .filter(|report| report.get(2) == Some(&reprog_index()) && report[3] >> 4 == 3)
-            .count();
-        assert!(again > 0);
-        assert_eq!(set_diverted, 0, "no button was written again");
+        assert!(session.link.hidpp_channel().written().len() > written);
+        assert_eq!(button_writes(&session, written), 0, "nothing to change");
     }
 
     fn reprog_index() -> u8 {
         FakeDevice::mx_master_4()
             .index_of(REPROG_CONTROLS_V4)
             .unwrap()
+    }
+
+    #[test]
+    fn every_wheel_mode_reaches_the_mouse_with_its_threshold() {
+        for (mode, expected) in [
+            (WheelMode::Ratchet, [2, 255]),
+            // A zero means "leave it": the mouse keeps its own threshold.
+            (WheelMode::Free, [1, 10]),
+            (WheelMode::Auto, [2, 7]),
+        ] {
+            let mut session = session(FakeDevice::mx_master_4());
+            let mut config = config();
+            config.wheel.mode = mode;
+            config.wheel.auto_threshold = 7;
+            session.apply(&config).unwrap();
+            assert_eq!(state(&session).wheel[..2], expected, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn the_wheel_flags_follow_the_configuration_and_keep_the_other_bits() {
+        let mut device = FakeDevice::mx_master_4();
+        device.state.hires = 0x09;
+        let mut session = session(device);
+        let mut config = config();
+        config.wheel.hi_res = false;
+        config.wheel.natural = false;
+        session.apply(&config).unwrap();
+        assert_eq!(state(&session).hires, 0x09);
+        config.wheel.hi_res = true;
+        session.apply(&config).unwrap();
+        assert_eq!(state(&session).hires, 0x0B);
+        config.wheel.natural = true;
+        session.apply(&config).unwrap();
+        assert_eq!(state(&session).hires, 0x0F);
+    }
+
+    #[test]
+    fn the_thumb_wheel_is_reversed_and_set_straight_again() {
+        let mut device = FakeDevice::mx_master_4();
+        device.state.thumb = [0x40, 0x00];
+        let mut session = session(device);
+        let mut config = config();
+        config.thumb_wheel.invert = true;
+        session.apply(&config).unwrap();
+        assert_eq!(state(&session).thumb, [0x40, 0x01]);
+        config.thumb_wheel.invert = false;
+        session.apply(&config).unwrap();
+        assert_eq!(state(&session).thumb, [0x40, 0x00]);
+    }
+
+    #[test]
+    fn the_menu_button_of_the_default_is_the_one_diverted() {
+        let mut session = session(FakeDevice::mx_master_4());
+        session.apply(&config()).unwrap();
+        let menu = cid(
+            MouseModel::MxMaster4,
+            MouseModel::MxMaster4.default_menu_control(),
+        );
+        assert_eq!(
+            state(&session)
+                .diverted
+                .iter()
+                .copied()
+                .map(Some)
+                .collect::<Vec<_>>(),
+            [menu]
+        );
+    }
+
+    #[test]
+    fn two_failing_settings_are_both_reported_in_order() {
+        let device = FakeDevice::mx_master_4()
+            .with_broken_feature(crate::features::ADJUSTABLE_DPI)
+            .with_broken_feature(crate::features::SMART_SHIFT_ENHANCED);
+        let mut session = session(device);
+        let problems = session.apply(&config()).unwrap();
+        let named: Vec<_> = problems.iter().map(|problem| problem.setting).collect();
+        assert_eq!(named, ["sensitivity", "wheel"]);
+        assert_eq!(
+            state(&session).diverted.len(),
+            1,
+            "the buttons were still set"
+        );
+    }
+
+    #[test]
+    fn a_mouse_without_haptics_or_thumb_wheel_is_not_asked_for_them() {
+        let session = session(FakeDevice::mx_anywhere_3s());
+        assert!(!session.link.has_haptics());
+        assert!(!session.link.has_thumb_wheel());
+    }
+
+    #[test]
+    fn several_buttons_held_at_once_are_reported_together() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let fake = FakeLink::direct(device).with_incoming(vec![
+            frame(DEVICE, reprog, 0x00, &[0, 0x53, 0, 0x56, 0xFF, 0xFF]),
+            frame(DEVICE, reprog, 0x00, &[0, 0x56]),
+        ]);
+        let mut session = session_with(fake);
+        let controls = |events: Vec<ButtonEvent>| -> Vec<(MouseControlId, bool)> {
+            events
+                .into_iter()
+                .map(|event| (event.control, event.pressed))
+                .collect()
+        };
+        let first = controls(session.poll(Duration::from_millis(1)).unwrap());
+        assert_eq!(
+            first,
+            [
+                (MouseControlId::Back, true),
+                (MouseControlId::Forward, true)
+            ],
+            "an id the model does not know is left out"
+        );
+        let second = controls(session.poll(Duration::from_millis(1)).unwrap());
+        assert_eq!(second, [(MouseControlId::Back, false)]);
+    }
+
+    #[test]
+    fn a_failing_channel_ends_the_poll_with_an_error() {
+        let fake = FakeLink::direct(FakeDevice::mx_master_4()).with_broken_reads();
+        let mut session = session_with(fake);
+        assert!(session.poll(Duration::from_millis(1)).is_err());
     }
 
     #[test]
