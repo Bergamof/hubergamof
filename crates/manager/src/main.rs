@@ -21,6 +21,7 @@ use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
+use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::Renderer;
@@ -527,8 +528,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
-    let mouse_hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
-    let mice = start_mice(&cli, &services.store, &mouse_hub);
+    let (mouse_hub, mice) = start_mouse_service(&cli, &services)?;
     let supervisor = Supervisor::start(&discovery, services);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -607,10 +607,23 @@ async fn run_manager(cli: Cli) -> Result<()> {
     outcome
 }
 
-/// Starts serving the mice, with `--mice` and on real hardware only.
-fn start_mice(cli: &Cli, store: &ConfigStore, hub: &MouseHub) -> Option<MouseSupervisor> {
-    serves_mice(cli)
-        .then(|| MouseSupervisor::start(HidrawSource, store.clone(), hub.clone(), SCAN_INTERVAL))
+/// The mouse hub, and the service of the mice with `--mice` and on real hardware only.
+fn start_mouse_service(
+    cli: &Cli,
+    services: &EngineServices,
+) -> Result<(MouseHub, Option<MouseSupervisor>)> {
+    let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
+    let supervisor = serves_mice(cli).then(|| {
+        let actions = ButtonActions::uinput(services.screen_lock.watch());
+        MouseSupervisor::start(
+            HidrawSource,
+            services.store.clone(),
+            hub.clone(),
+            actions,
+            SCAN_INTERVAL,
+        )
+    });
+    Ok((hub, supervisor))
 }
 
 /// `--demo` never touches the hardware, whatever else is asked.

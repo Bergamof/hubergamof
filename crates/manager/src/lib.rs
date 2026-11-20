@@ -16,6 +16,8 @@
 //! - [`tray`]: the system tray icon (`StatusNotifierItem`).
 //! - [`mouse_engine`]: one thread per Logitech mouse, applying its
 //!   configuration and following its buttons.
+//! - [`mouse_actions`]: what a mouse button does when pressed (clicks, shortcuts,
+//!   the wheel toggle).
 //! - [`mouse_hub`]: the mice connected and the mouse and radial menu
 //!   configurations, as the web interface follows them.
 //! - [`input`]: the keys and buttons pressed on behalf of a mouse button,
@@ -30,6 +32,7 @@ pub mod engine;
 pub mod file_chooser;
 pub mod input;
 pub mod launcher;
+pub mod mouse_actions;
 pub mod mouse_engine;
 pub mod mouse_hub;
 pub mod placement;

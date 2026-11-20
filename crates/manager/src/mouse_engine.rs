@@ -13,6 +13,7 @@
 //! notifications are to be observed on the hardware first
 //! (`docs/mouse-hidpp.md`).
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,12 +23,13 @@ use std::time::Duration;
 use hubergamof_mouse::channel::Channel;
 use hubergamof_mouse::hidraw::{FoundMouse, HidrawChannel, MouseKey, find_mice};
 use hubergamof_mouse::link::UnitId;
-use hubergamof_mouse::session::{MouseSession, Notice};
+use hubergamof_mouse::session::{MouseSession, Notice, Request};
 use hubergamof_protocol::{MouseConfig, MouseInfo, MouseModel};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::config_store::{ConfigStore, ConfigStoreError, LoadOutcome};
+use crate::mouse_actions::{ButtonActions, ButtonDispatcher};
 use crate::mouse_hub::MouseHub;
 
 /// Delay between two searches for mice not served yet.
@@ -138,6 +140,7 @@ impl MouseSupervisor {
         source: S,
         store: ConfigStore,
         hub: MouseHub,
+        actions: ButtonActions,
         scan_interval: Duration,
     ) -> Self {
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -146,6 +149,7 @@ impl MouseSupervisor {
             source,
             store,
             hub,
+            actions,
             scan_interval,
             stopped,
             Arc::clone(&stop_flag),
@@ -172,6 +176,7 @@ async fn supervise<S: MouseSource>(
     source: S,
     store: ConfigStore,
     hub: MouseHub,
+    actions: ButtonActions,
     scan_interval: Duration,
     mut stopped: oneshot::Receiver<()>,
     stop_flag: Arc<AtomicBool>,
@@ -196,7 +201,9 @@ async fn supervise<S: MouseSource>(
             Ok(found) => {
                 workers.forget_finished();
                 for mouse in found {
-                    workers.extend(spawn_mouse(mouse, &running, &store, &hub, &stop_flag));
+                    workers.extend(spawn_mouse(
+                        mouse, &running, &store, &hub, &actions, &stop_flag,
+                    ));
                 }
             }
             Err(error) => tracing::warn!(%error, "searching for mice failed"),
@@ -252,6 +259,7 @@ fn spawn_mouse<C: Channel + Send + 'static>(
     running: &Running,
     store: &ConfigStore,
     hub: &MouseHub,
+    actions: &ButtonActions,
     stop_flag: &Arc<AtomicBool>,
 ) -> Option<thread::JoinHandle<()>> {
     let Some(guard) = running.claim(mouse.key.clone(), mouse.unit) else {
@@ -261,10 +269,11 @@ fn spawn_mouse<C: Channel + Send + 'static>(
     let name = format!("mouse-{}-{}", mouse.key.path, mouse.key.index);
     let store = store.clone();
     let hub = hub.clone();
+    let actions = actions.clone();
     let stop_flag = Arc::clone(stop_flag);
     let spawned = thread::Builder::new().name(name).spawn(move || {
         let _guard = guard;
-        serve_mouse(mouse, &store, &hub, &stop_flag, log_notice);
+        serve_mouse(mouse, &store, &hub, &actions, &stop_flag, log_notice);
     });
     match spawned {
         Ok(handle) => Some(handle),
@@ -285,6 +294,7 @@ fn serve_mouse<C: Channel>(
     found: FoundMouse<C>,
     store: &ConfigStore,
     hub: &MouseHub,
+    actions: &ButtonActions,
     stop: &AtomicBool,
     mut notify: impl FnMut(&str, Notice),
 ) {
@@ -321,16 +331,32 @@ fn serve_mouse<C: Channel>(
         listed.refresh(latest.config);
     }
     let updates = listed.updates();
-    let next_update = || {
+    // The configuration in force, which says what each button does, and the
+    // actions of this mouse: shared by the two closures the session calls.
+    let current = RefCell::new(config.clone());
+    let dispatcher = RefCell::new(ButtonDispatcher::new(actions.clone()));
+    let next_request = || {
+        if let Some(request) = dispatcher.borrow_mut().next_request() {
+            return Some(request);
+        }
         // A configuration saved since the last turn, the latest one.
-        updates
+        let saved = updates
             .has_changed()
             .unwrap_or(false)
-            .then(|| updates.borrow_and_update().clone())
+            .then(|| updates.borrow_and_update().clone())?;
+        current.borrow_mut().clone_from(&saved);
+        Some(Request::Apply(saved))
     };
-    match session.serve_with_updates(&config, stop, next_update, |notice| {
+    let on_notice = |notice: Notice| {
+        if let Notice::Button(event) = &notice {
+            let configuration = current.borrow();
+            dispatcher
+                .borrow_mut()
+                .handle(*event, configuration.bindings.get(&event.control));
+        }
         notify(&serial, notice);
-    }) {
+    };
+    match session.serve_with_requests(&config, stop, next_request, on_notice) {
         Ok(()) => tracing::info!(%model, "mouse released"),
         Err(error) => tracing::warn!(%model, %error, "mouse lost"),
     }
@@ -377,7 +403,10 @@ fn log_notice(serial: &str, notice: Notice) {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::io;
     use std::rc::Rc;
+
+    use hubergamof_protocol::{ButtonAction, MouseControlId};
     use std::sync::mpsc;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -397,6 +426,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(dir.path(), Arc::new(builtin_registry()));
         (dir, store)
+    }
+
+    /// Actions that never find a device.
+    fn no_actions() -> ButtonActions {
+        let (_lock, locked) = tokio::sync::watch::channel(false);
+        ButtonActions::new(locked, || Err(io::Error::from(io::ErrorKind::NotFound)))
     }
 
     fn hub_of(store: &ConfigStore) -> MouseHub {
@@ -459,6 +494,7 @@ mod tests {
             found(shared.clone(), Some(UNIT), 2),
             &store,
             &hub_of(&store),
+            &no_actions(),
             &stop,
             |serial, notice| {
                 assert_eq!(serial, "deadbeef");
@@ -501,6 +537,7 @@ mod tests {
             found(shared.clone(), Some(UNIT), 2),
             &store,
             &hub_of(&store),
+            &no_actions(),
             &stop,
             |_, _| {},
         );
@@ -551,6 +588,7 @@ mod tests {
             found(shared.clone(), Some(UNIT), 2),
             &store,
             &hub,
+            &no_actions(),
             &stop,
             |_, notice| match notice {
                 Notice::Problem(problem) => problems.push(problem.setting),
@@ -616,6 +654,161 @@ mod tests {
         );
     }
 
+    /// A device that records what it is told, kept by the test.
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<(crate::input::Key, bool)>>>);
+
+    impl crate::input::Injector for Recorder {
+        fn send(&mut self, key: crate::input::Key, pressed: bool) -> io::Result<()> {
+            self.0.lock().unwrap().push((key, pressed));
+            Ok(())
+        }
+    }
+
+    /// Actions that send to `recorder`, held off while `locked` is true.
+    fn recording_actions(recorder: &Recorder, locked: bool) -> ButtonActions {
+        let (_lock, locked) = tokio::sync::watch::channel(locked);
+        let recorder = recorder.clone();
+        ButtonActions::new(locked, move || {
+            Ok(Box::new(recorder.clone()) as Box<dyn crate::input::Injector>)
+        })
+    }
+
+    /// The back button, pressed and released `times` times, bound to `action`.
+    /// `on_release` runs at each release, with the mouse.
+    fn serve_back_button(
+        action: ButtonAction,
+        times: usize,
+        actions: &ButtonActions,
+        on_release: impl FnMut(usize, &MouseHub, &Shared),
+    ) -> Shared {
+        let (_dir, store) = store();
+        let mut stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        stored.bindings.insert(MouseControlId::Back, action);
+        store.save_mouse(stored).unwrap();
+        let hub = hub_of(&store);
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let frames = (0..times)
+            .flat_map(|_| {
+                [
+                    frame(DEVICE, reprog, 0x00, &[0, 0x53]),
+                    frame(DEVICE, reprog, 0x00, &[]),
+                ]
+            })
+            .collect();
+        let shared = Shared(Rc::new(RefCell::new(
+            FakeLink::direct(device).with_incoming(frames),
+        )));
+        let stop = AtomicBool::new(false);
+        let mut releases = 0;
+        let mut on_release = on_release;
+        serve_mouse(
+            found(shared.clone(), Some(UNIT), 2),
+            &store,
+            &hub,
+            actions,
+            &stop,
+            |_, notice| {
+                if let Notice::Button(event) = notice
+                    && !event.pressed
+                    && event.control == MouseControlId::Back
+                {
+                    releases += 1;
+                    on_release(releases, &hub, &shared);
+                    if releases == times {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            },
+        );
+        shared
+    }
+
+    #[test]
+    fn a_button_bound_to_a_click_clicks_while_the_mouse_is_served() {
+        use crate::input::Key;
+        let recorder = Recorder::default();
+        let click = ButtonAction::Click {
+            button: hubergamof_protocol::MouseButton::Middle,
+        };
+        serve_back_button(click, 1, &recording_actions(&recorder, false), |_, _, _| {});
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            [(Key::ButtonMiddle, true), (Key::ButtonMiddle, false)]
+        );
+    }
+
+    #[test]
+    fn nothing_is_sent_for_a_button_while_the_computer_is_locked() {
+        let recorder = Recorder::default();
+        let click = ButtonAction::Click {
+            button: hubergamof_protocol::MouseButton::Middle,
+        };
+        serve_back_button(click, 2, &recording_actions(&recorder, true), |_, _, _| {});
+        assert_eq!(*recorder.0.lock().unwrap(), []);
+    }
+
+    #[test]
+    fn a_button_bound_to_the_wheel_toggle_switches_the_wheel_and_it_is_given_back() {
+        let recorder = Recorder::default();
+        let mut during = Vec::new();
+        let shared = serve_back_button(
+            ButtonAction::ToggleWheelMode,
+            2,
+            &recording_actions(&recorder, false),
+            |release, _, shared| {
+                // The toggle asked on a press is carried out at the next turn,
+                // before the release of that button is read.
+                during.push((release, state(shared).wheel[0]));
+            },
+        );
+        assert_eq!(*recorder.0.lock().unwrap(), [], "no key is involved");
+        assert_eq!(
+            during,
+            [(1, 1), (2, 2)],
+            "free after one toggle, ratchet after two"
+        );
+        assert_eq!(state(&shared).wheel[0], 2, "the mouse's own mode is back");
+    }
+
+    #[test]
+    fn the_new_binding_is_used_from_the_next_press_after_the_interface_saves_it() {
+        use crate::input::Key;
+        let recorder = Recorder::default();
+        let click = ButtonAction::Click {
+            button: hubergamof_protocol::MouseButton::Middle,
+        };
+        serve_back_button(
+            click,
+            2,
+            &recording_actions(&recorder, false),
+            |release, hub, _| {
+                if release == 1 {
+                    let mut config = hub.subscribe_config("deadbeef").unwrap().borrow().clone();
+                    config
+                        .bindings
+                        .insert(MouseControlId::Back, ButtonAction::DoubleClick);
+                    hub.update_mouse("deadbeef", config).unwrap();
+                }
+            },
+        );
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            [
+                (Key::ButtonMiddle, true),
+                (Key::ButtonMiddle, false),
+                (Key::ButtonLeft, true),
+                (Key::ButtonLeft, false),
+                (Key::ButtonLeft, true),
+                (Key::ButtonLeft, false),
+            ]
+        );
+    }
+
     #[test]
     fn a_stored_configuration_is_kept_as_it_is() {
         let (_dir, store) = store();
@@ -633,6 +826,7 @@ mod tests {
             found(shared.clone(), Some(UNIT), 2),
             &store,
             &hub_of(&store),
+            &no_actions(),
             &stop,
             |_, _| {},
         );
@@ -651,6 +845,7 @@ mod tests {
             found(pressing_back(), None, 2),
             &store,
             &hub_of(&store),
+            &no_actions(),
             &stop,
             |_, _| panic!("nothing to report"),
         );
@@ -666,9 +861,14 @@ mod tests {
         let mouse = found(shared.clone(), Some(UNIT), 2);
         let written = shared.0.borrow().written().len();
         let stop = AtomicBool::new(true);
-        serve_mouse(mouse, &store, &hub_of(&store), &stop, |_, _| {
-            panic!("nothing to report")
-        });
+        serve_mouse(
+            mouse,
+            &store,
+            &hub_of(&store),
+            &no_actions(),
+            &stop,
+            |_, _| panic!("nothing to report"),
+        );
         assert_eq!(
             shared.0.borrow().written().len(),
             written,
@@ -690,6 +890,7 @@ mod tests {
             found(shared.clone(), Some(UNIT), 2),
             &store,
             &hub_of(&store),
+            &no_actions(),
             &stop,
             |_, _| {},
         );
@@ -839,6 +1040,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_millis(10),
         );
         assert_eq!(next(&mut scans).await, [], "the first scan skips nothing");
@@ -863,6 +1065,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_millis(10),
         );
         let mut labels = vec![next(&mut served_rx).await, next(&mut served_rx).await];
@@ -892,6 +1095,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_millis(10),
         );
         assert_eq!(next(&mut served_rx).await, 1);
@@ -911,6 +1115,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_millis(10),
         );
         assert_eq!(next(&mut served_rx).await, 1);
@@ -928,6 +1133,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_millis(10),
         );
         assert_eq!(next(&mut served_rx).await, 1, "the next scan found it");
@@ -944,6 +1150,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_secs(3600),
         );
         // The scan has started, and is stuck.
@@ -962,6 +1169,7 @@ mod tests {
             source,
             store.clone(),
             hub_of(&store),
+            no_actions(),
             Duration::from_secs(3600),
         );
         tokio::time::timeout(WAIT, supervisor.shutdown())
