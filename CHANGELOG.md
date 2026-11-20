@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Souris Logitech MX : servir une souris (`--mice`) ne change plus ses réglages sans que la personne l'ait demandé. La première configuration d'une souris reprend ce qu'elle a (sensibilité, mode et seuil de la molette, haute résolution, défilement naturel, molette du pouce, force haptique) au lieu de valeurs fixes, et à l'arrêt (ou si le fil plante) le gestionnaire remet les réglages que la souris avait avant lui. `mouse-test info` affiche aussi les drapeaux de la molette.
 - Souris Logitech MX : une souris endormie ne rendait pas ses boutons à l'arrêt (ses premières requêtes restaient sans réponse) ; elle est réveillée (jusqu'à trois pings) avant d'appliquer une configuration et avant de rendre les boutons, y compris à la destruction de la session.
 - Molettes : « Affecter » une fonction qui retire un module placé nulle part ailleurs (sauf fonctions du gestionnaire) demande maintenant confirmation, comme le retrait d'une touche ; ses réglages seraient perdus (#69).
 - Interface : les textes d'aide sous les touches (défilement par la molette Navigation, déplacement d'une touche) reviennent à la ligne au lieu d'élargir le panneau qui représente le Stream Deck ; test de composant `KeyGrid` (#67).

@@ -8,12 +8,17 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use hubergamof_protocol::{MouseConfig, MouseControlId};
+use hubergamof_protocol::{
+    DPI_RANGE, DPI_STEP, HapticLevel, MouseConfig, MouseControlId, MouseModel,
+    WHEEL_THRESHOLD_RANGE, WheelMode,
+};
 
 use crate::channel::{Channel, HidppError};
 use crate::controls::cid;
 use crate::frame::Notification;
-use crate::link::{ButtonEvent, ButtonTracker, MouseLink, haptic_strength};
+use crate::link::{
+    ButtonEvent, ButtonTracker, HapticState, MouseLink, WheelState, haptic_strength,
+};
 
 /// A setting that could not be applied, the others having been.
 #[derive(Debug)]
@@ -37,6 +42,105 @@ pub enum Notice {
 /// the stop request again: the delay with which it reacts to it.
 const SERVE_STEP: Duration = Duration::from_millis(200);
 
+/// Bit of the wheel flags byte for high resolution.
+const HIRES_BIT: u8 = 0x02;
+/// Bit of the wheel flags byte for natural scrolling.
+const NATURAL_BIT: u8 = 0x04;
+/// Bit of the second thumb wheel byte for the reversed direction.
+const THUMB_INVERT_BIT: u8 = 0x01;
+/// The wheel mode byte of a ratchet; `1` is free spin.
+const WHEEL_RATCHET: u8 = 2;
+/// The auto-disengage value of a wheel that never frees itself.
+const NEVER_FREE: u8 = 255;
+
+/// What the mouse was set to, each part `None` when the mouse lacks it or
+/// would not say: what is given back at the end, and what a configuration
+/// created for the first time adopts so that serving a mouse changes nothing
+/// the person did not ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MouseSettings {
+    dpi: Option<u16>,
+    wheel: Option<WheelState>,
+    hires: Option<u8>,
+    thumb: Option<[u8; 2]>,
+    haptic: Option<HapticState>,
+}
+
+impl MouseSettings {
+    /// The configuration that keeps these settings, the buttons being the
+    /// defaults'.
+    #[must_use]
+    pub fn to_config(&self, serial: &str, model: MouseModel) -> MouseConfig {
+        let mut config = MouseConfig::default_for(serial, model);
+        if let Some(dpi) = self.dpi {
+            let clamped = dpi.clamp(*DPI_RANGE.start(), *DPI_RANGE.end());
+            let steps = (clamped - DPI_RANGE.start() + DPI_STEP / 2) / DPI_STEP;
+            config.pointer.dpi = (DPI_RANGE.start() + steps * DPI_STEP).min(*DPI_RANGE.end());
+        }
+        if let Some(wheel) = self.wheel {
+            let (mode, threshold) = wheel_mode_of(wheel);
+            config.wheel.mode = mode;
+            if let Some(threshold) = threshold {
+                config.wheel.auto_threshold = threshold;
+            }
+        }
+        if let Some(flags) = self.hires {
+            config.wheel.hi_res = flags & HIRES_BIT != 0;
+            config.wheel.natural = flags & NATURAL_BIT != 0;
+        }
+        if let Some([_, second]) = self.thumb {
+            config.thumb_wheel.invert = second & THUMB_INVERT_BIT != 0;
+        }
+        if let Some(haptic) = self.haptic {
+            config.haptics.level = haptic_level_of(haptic);
+        }
+        config
+    }
+}
+
+/// How the wheel is set, as the contract says it: free spin, ratchet, or
+/// ratchet that frees itself above a speed (with that speed).
+fn wheel_mode_of(wheel: WheelState) -> (WheelMode, Option<u8>) {
+    if wheel.mode != WHEEL_RATCHET {
+        return (WheelMode::Free, None);
+    }
+    if wheel.auto_disengage == NEVER_FREE {
+        return (WheelMode::Ratchet, None);
+    }
+    let threshold = wheel
+        .auto_disengage
+        .clamp(*WHEEL_THRESHOLD_RANGE.start(), *WHEEL_THRESHOLD_RANGE.end());
+    (WheelMode::Auto, Some(threshold))
+}
+
+/// The level whose strength is the nearest to the mouse's.
+fn haptic_level_of(haptic: HapticState) -> HapticLevel {
+    if !haptic.enabled {
+        return HapticLevel::Off;
+    }
+    [
+        HapticLevel::Subtle,
+        HapticLevel::Low,
+        HapticLevel::Medium,
+        HapticLevel::High,
+    ]
+    .into_iter()
+    .min_by_key(|level| {
+        haptic_strength(*level).map_or(u8::MAX, |strength| strength.abs_diff(haptic.level))
+    })
+    .unwrap_or(HapticLevel::Medium)
+}
+
+/// What a read gave, `None` when the mouse lacks the setting or refuses to say;
+/// an error only when it stops answering.
+fn readable<T>(read: Result<T, HidppError>) -> Result<Option<T>, HidppError> {
+    match read {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_fatal(&error) => Err(error),
+        Err(_) => Ok(None),
+    }
+}
+
 /// An error after which the mouse cannot be served: it stopped answering or
 /// its channel failed. Any other is a refusal, and the rest can go on.
 fn is_fatal(error: &HidppError) -> bool {
@@ -53,6 +157,8 @@ pub struct MouseSession<C: Channel> {
     link: MouseLink<C>,
     tracker: ButtonTracker,
     dropped_frames: u64,
+    /// The settings of the mouse before this session changed them.
+    baseline: Option<MouseSettings>,
     /// Buttons may be diverted: set by [`MouseSession::apply`], cleared once
     /// they are given back.
     buttons_diverted: bool,
@@ -67,8 +173,64 @@ impl<C: Channel> MouseSession<C> {
             link,
             tracker: ButtonTracker::default(),
             dropped_frames,
+            baseline: None,
             buttons_diverted: false,
         }
+    }
+
+    /// Reads what the mouse is set to now (waking it if need be). A part the
+    /// mouse refuses to give is left out.
+    ///
+    /// # Errors
+    /// [`HidppError::Timeout`] or [`HidppError::Channel`] when the mouse does
+    /// not answer.
+    pub fn capture(&mut self) -> Result<MouseSettings, HidppError> {
+        let _ = self.link.wake();
+        let link = &mut self.link;
+        Ok(MouseSettings {
+            dpi: readable(link.dpi())?,
+            wheel: readable(link.wheel())?,
+            hires: readable(link.hires_flags())?,
+            thumb: readable(link.thumb_flags())?,
+            haptic: if link.has_haptics() {
+                readable(link.haptic_state())?
+            } else {
+                None
+            },
+        })
+    }
+
+    /// Puts back what [`MouseSession::serve`] found: every setting it
+    /// captured, each one tried. Nothing to do before a capture.
+    ///
+    /// # Errors
+    /// The first [`HidppError`] met.
+    pub fn restore_settings(&mut self) -> Result<(), HidppError> {
+        let Some(baseline) = self.baseline.take() else {
+            return Ok(());
+        };
+        let _ = self.link.wake();
+        let link = &mut self.link;
+        let mut first_error = None;
+        // Each setting is tried, until the mouse stops answering.
+        let mut tried = |result: Option<Result<(), HidppError>>| match result {
+            Some(Err(error)) => {
+                let go_on = !is_fatal(&error);
+                first_error.get_or_insert(error);
+                go_on
+            }
+            _ => true,
+        };
+        let _ = tried(baseline.dpi.map(|dpi| link.write_dpi(dpi)))
+            && tried(baseline.wheel.map(|wheel| link.write_wheel(wheel)))
+            && tried(baseline.hires.map(|flags| link.write_hires_flags(flags)))
+            && tried(baseline.thumb.map(|flags| link.write_thumb_flags(flags)))
+            && tried(
+                baseline
+                    .haptic
+                    .map(|haptic| link.set_haptic(haptic.enabled.then_some(haptic.level))),
+            );
+        first_error.map_or(Ok(()), Err)
     }
 
     /// The link, for what a session does not cover.
@@ -207,7 +369,8 @@ impl<C: Channel> MouseSession<C> {
             notify(Notice::Button(event));
         }
         let given_back = self.give_back();
-        served.and(given_back)
+        let restored = self.restore_settings();
+        served.and(given_back).and(restored)
     }
 
     fn serve_buttons(
@@ -227,6 +390,7 @@ impl<C: Channel> MouseSession<C> {
                 error,
             }));
         }
+        self.baseline = Some(self.capture()?);
         for problem in self.apply(config)? {
             notify(Notice::Problem(problem));
         }
@@ -258,6 +422,7 @@ impl<C: Channel> MouseSession<C> {
 
 impl<C: Channel> Drop for MouseSession<C> {
     fn drop(&mut self) {
+        let _ = self.restore_settings();
         if self.buttons_diverted {
             // Nothing to do with a failure: a mouse that is gone cannot be asked,
             // and is expected to forget them when it reconnects (to be checked
@@ -728,16 +893,22 @@ mod tests {
     fn serving_applies_reports_and_gives_everything_back_when_stopped() {
         let device = FakeDevice::mx_master_4();
         let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
-        let fake =
-            FakeLink::direct(device).with_incoming(vec![frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
-        let mut session = session_with(fake);
+        let (mut session, shared) = shared_session(device);
+        shared
+            .0
+            .borrow_mut()
+            .push_incoming([frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
         let stop = AtomicBool::new(false);
         let mut seen = Vec::new();
         let mut config = config();
         config.pointer.dpi = 2400;
+        let mut during = None;
         let served = session.serve(&config, &stop, |notice| {
             if let Notice::Button(event) = notice {
                 seen.push((event.control, event.pressed));
+                if event.pressed {
+                    during = Some(shared.0.borrow().device_at(DEVICE).unwrap().state.clone());
+                }
                 // The mouse is put down after the press has been seen.
                 stop.store(true, Ordering::Relaxed);
             }
@@ -748,8 +919,123 @@ mod tests {
             [(MouseControlId::Back, true), (MouseControlId::Back, false)],
             "the button still held when stopping is released"
         );
-        assert_eq!(state(&session).dpi, 2400);
-        assert!(state(&session).diverted.is_empty());
+        let during = during.unwrap();
+        assert_eq!(
+            during.dpi, 2400,
+            "the configuration was applied while serving"
+        );
+        assert_eq!(during.diverted.len(), 1, "the menu button");
+        let state = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert_eq!(state.dpi, 1600, "the sensitivity it had is back");
+        assert!(state.diverted.is_empty());
+    }
+
+    #[test]
+    fn serving_puts_every_setting_back_as_it_found_it() {
+        let mut device = FakeDevice::mx_master_4();
+        // Settings that are nobody's defaults.
+        device.state.dpi = 1250;
+        device.state.wheel = [2, 17, 33];
+        device.state.hires = 0x09;
+        device.state.thumb = [0x40, 0x00];
+        device.state.haptic = [1, 61];
+        let (mut session, shared) = shared_session(device);
+        let before = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        let mut changed = config();
+        changed.pointer.dpi = 2400;
+        changed.wheel.mode = WheelMode::Free;
+        changed.wheel.hi_res = false;
+        changed.wheel.natural = true;
+        changed.thumb_wheel.invert = true;
+        changed.haptics.level = HapticLevel::High;
+        let stop = AtomicBool::new(true);
+        session.serve(&changed, &stop, |_| {}).unwrap();
+        let after = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert_eq!(after.dpi, before.dpi);
+        assert_eq!(after.wheel, before.wheel);
+        assert_eq!(after.hires, before.hires);
+        assert_eq!(after.thumb, before.thumb);
+        assert_eq!(after.haptic, before.haptic);
+    }
+
+    #[test]
+    fn dropping_a_serving_session_puts_the_settings_back_too() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let before = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        session.baseline = Some(session.capture().unwrap());
+        let mut changed = config();
+        changed.pointer.dpi = 2400;
+        session.apply(&changed).unwrap();
+        assert_eq!(shared.0.borrow().device_at(DEVICE).unwrap().state.dpi, 2400);
+        drop(session);
+        let after = shared.0.borrow().device_at(DEVICE).unwrap().state.clone();
+        assert_eq!((after.dpi, after.diverted.len()), (before.dpi, 0));
+    }
+
+    #[test]
+    fn a_gone_mouse_is_not_asked_for_every_setting_when_restoring() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        session.baseline = Some(session.capture().unwrap());
+        shared.0.borrow_mut().fall_silent();
+        let written = shared.0.borrow().written().len();
+        assert!(session.restore_settings().is_err());
+        // The attempts to wake it, then the first write, which ends it.
+        assert_eq!(shared.0.borrow().written().len() - written, 3 + 1);
+    }
+
+    #[test]
+    fn the_settings_of_a_mouse_become_the_configuration_that_keeps_them() {
+        let mut device = FakeDevice::mx_master_4();
+        device.state.dpi = 1230;
+        device.state.wheel = [2, 10, 75];
+        device.state.hires = 0x07;
+        device.state.thumb = [0, 1];
+        device.state.haptic = [1, 60];
+        let mut session = session(device);
+        let settings = session.capture().unwrap();
+        let config = settings.to_config("serial", MouseModel::MxMaster4);
+        assert_eq!(config.pointer.dpi, 1250, "the nearest step");
+        assert_eq!(
+            (config.wheel.mode, config.wheel.auto_threshold),
+            (WheelMode::Auto, 10)
+        );
+        assert!(config.wheel.hi_res && config.wheel.natural);
+        assert!(config.thumb_wheel.invert);
+        assert_eq!(config.haptics.level, HapticLevel::Low);
+        config.validate().unwrap();
+        // The buttons are the defaults'.
+        assert_eq!(config.bindings.len(), 1);
+    }
+
+    #[test]
+    fn the_wheel_modes_of_a_mouse_are_told_apart() {
+        let of = |mode, auto_disengage| {
+            let state = WheelState {
+                mode,
+                auto_disengage,
+                torque: 50,
+            };
+            wheel_mode_of(state)
+        };
+        assert_eq!(of(1, 10), (WheelMode::Free, None));
+        assert_eq!(of(2, 255), (WheelMode::Ratchet, None));
+        assert_eq!(of(2, 20), (WheelMode::Auto, Some(20)));
+        assert_eq!(
+            of(2, 0),
+            (WheelMode::Auto, Some(1)),
+            "kept within the range"
+        );
+        assert_eq!(of(2, 200), (WheelMode::Auto, Some(50)));
+    }
+
+    #[test]
+    fn the_haptic_strength_of_a_mouse_gives_the_nearest_level() {
+        let level = |enabled, level| haptic_level_of(HapticState { enabled, level });
+        assert_eq!(level(false, 75), HapticLevel::Off);
+        assert_eq!(level(true, 0), HapticLevel::Subtle);
+        assert_eq!(level(true, 40), HapticLevel::Low);
+        assert_eq!(level(true, 75), HapticLevel::Medium);
+        assert_eq!(level(true, 100), HapticLevel::High);
     }
 
     #[test]

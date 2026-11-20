@@ -23,11 +23,11 @@ use hubergamof_mouse::channel::Channel;
 use hubergamof_mouse::hidraw::{FoundMouse, HidrawChannel, MouseKey, find_mice};
 use hubergamof_mouse::link::UnitId;
 use hubergamof_mouse::session::{MouseSession, Notice};
-use hubergamof_protocol::MouseInfo;
+use hubergamof_protocol::{MouseConfig, MouseInfo, MouseModel};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::config_store::ConfigStore;
+use crate::config_store::{ConfigStore, ConfigStoreError, LoadOutcome};
 use crate::mouse_hub::MouseHub;
 
 /// Delay between two searches for mice not served yet.
@@ -277,8 +277,10 @@ fn spawn_mouse<C: Channel + Send + 'static>(
 }
 
 /// Serves one mouse until `stop` or until it is gone: loads its configuration
-/// (created from the defaults the first time), applies it, reports its
-/// buttons through `notify` with the mouse's serial.
+/// (the first time, created from what the mouse is set to, so that serving it
+/// changes nothing until the person does), applies it, reports its buttons
+/// through `notify` with the mouse's serial, and puts the settings back at
+/// the end.
 fn serve_mouse<C: Channel>(
     found: FoundMouse<C>,
     store: &ConfigStore,
@@ -292,8 +294,9 @@ fn serve_mouse<C: Channel>(
         return;
     };
     let serial = unit.to_string();
-    let config = match store.load_mouse(&serial, model) {
-        Ok(loaded) => loaded.config,
+    let mut session = MouseSession::new(found.link);
+    let config = match load_config(store, &serial, model, &mut session) {
+        Ok(config) => config,
         Err(error) => {
             tracing::warn!(%model, %error, "cannot load the mouse configuration");
             return;
@@ -313,11 +316,32 @@ fn serve_mouse<C: Channel>(
         },
         config.clone(),
     );
-    let mut session = MouseSession::new(found.link);
     match session.serve(&config, stop, |notice| notify(&serial, notice)) {
         Ok(()) => tracing::info!(%model, "mouse released"),
         Err(error) => tracing::warn!(%model, %error, "mouse lost"),
     }
+}
+
+/// The stored configuration of a mouse. A new one (or one that had to be set
+/// aside) adopts the settings the mouse has, and is stored so.
+fn load_config<C: Channel>(
+    store: &ConfigStore,
+    serial: &str,
+    model: MouseModel,
+    session: &mut MouseSession<C>,
+) -> Result<MouseConfig, ConfigStoreError> {
+    let loaded = store.load_mouse(serial, model)?;
+    if loaded.outcome == LoadOutcome::Loaded {
+        return Ok(loaded.config);
+    }
+    let Ok(settings) = session.capture() else {
+        // The mouse does not answer: the defaults, which are not stored, so
+        // that the next time adopts what the mouse really has.
+        return Ok(loaded.config);
+    };
+    let mut adopted = settings.to_config(serial, model);
+    adopted.revision = loaded.config.revision;
+    store.save_mouse(adopted)
 }
 
 fn log_notice(serial: &str, notice: Notice) {
@@ -416,6 +440,7 @@ mod tests {
         let shared = Shared(Rc::new(RefCell::new(pressing_back())));
         let stop = AtomicBool::new(false);
         let mut seen = Vec::new();
+        let mut applied_dpi = None;
         serve_mouse(
             found(shared.clone(), Some(UNIT), 2),
             &store,
@@ -425,6 +450,7 @@ mod tests {
                 assert_eq!(serial, "deadbeef");
                 if let Notice::Button(event) = notice {
                     seen.push((event.control.to_string(), event.pressed));
+                    applied_dpi.get_or_insert(state(&shared).dpi);
                     stop.store(true, Ordering::Relaxed);
                 }
             },
@@ -436,9 +462,73 @@ mod tests {
                 ("back button".to_owned(), false)
             ]
         );
+        assert_eq!(
+            applied_dpi,
+            Some(2400),
+            "the stored configuration was applied"
+        );
         let state = state(&shared);
-        assert_eq!(state.dpi, 2400, "the stored configuration, not the default");
+        assert_eq!(state.dpi, 1600, "and the sensitivity the mouse had is back");
         assert!(state.diverted.is_empty(), "everything is given back");
+    }
+
+    #[test]
+    fn a_new_mouse_is_served_with_what_it_has_and_nothing_changes() {
+        let (_dir, store) = store();
+        let mut device = FakeDevice::mx_master_4();
+        device.state.dpi = 1000;
+        device.state.wheel = [2, 10, 75];
+        device.state.hires = 0x00;
+        device.state.haptic = [1, 60];
+        let shared = Shared(Rc::new(RefCell::new(FakeLink::direct(device))));
+        let before = state(&shared);
+        let stop = AtomicBool::new(true);
+        serve_mouse(
+            found(shared.clone(), Some(UNIT), 2),
+            &store,
+            &hub_of(&store),
+            &stop,
+            |_, _| {},
+        );
+        let stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        assert_eq!(stored.pointer.dpi, 1000);
+        assert!(!stored.wheel.hi_res, "the wheel keeps its resolution");
+        assert_eq!(stored.revision, 1, "stored once, with what it adopted");
+        let after = state(&shared);
+        assert_eq!(
+            (after.dpi, after.wheel, after.hires, after.haptic),
+            (before.dpi, before.wheel, before.hires, before.haptic)
+        );
+    }
+
+    #[test]
+    fn a_stored_configuration_is_kept_as_it_is() {
+        let (_dir, store) = store();
+        let mut stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        stored.pointer.dpi = 2400;
+        store.save_mouse(stored).unwrap();
+        let shared = Shared(Rc::new(RefCell::new(FakeLink::direct(
+            FakeDevice::mx_master_4(),
+        ))));
+        let stop = AtomicBool::new(true);
+        serve_mouse(
+            found(shared.clone(), Some(UNIT), 2),
+            &store,
+            &hub_of(&store),
+            &stop,
+            |_, _| {},
+        );
+        let config = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        assert_eq!((config.pointer.dpi, config.revision), (2400, 1));
     }
 
     #[test]
@@ -480,9 +570,9 @@ mod tests {
         let path = dir.path().join("devices/deadbeef/mouse.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"{ not json").unwrap();
-        let shared = Shared(Rc::new(RefCell::new(FakeLink::direct(
-            FakeDevice::mx_master_4(),
-        ))));
+        let mut device = FakeDevice::mx_master_4();
+        device.state.dpi = 1000;
+        let shared = Shared(Rc::new(RefCell::new(FakeLink::direct(device))));
         let stop = AtomicBool::new(true);
         serve_mouse(
             found(shared.clone(), Some(UNIT), 2),
@@ -491,7 +581,12 @@ mod tests {
             &stop,
             |_, _| {},
         );
-        assert_eq!(state(&shared).dpi, hubergamof_protocol::DEFAULT_DPI);
+        assert_eq!(state(&shared).dpi, 1000, "the mouse keeps its sensitivity");
+        let adopted = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        assert_eq!(adopted.pointer.dpi, 1000, "the new configuration adopts it");
         assert!(
             std::fs::read_dir(path.parent().unwrap())
                 .unwrap()
