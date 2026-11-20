@@ -68,6 +68,39 @@ impl HapticWaveform {
     ];
 }
 
+/// An event of a module that a haptic mouse can signal: a step that ends, a
+/// call that rings. The module declares it (see
+/// [`ModuleFactory::haptic_events`](crate::ModuleFactory::haptic_events)) and
+/// raises it with [`Command::haptic`](crate::Command::haptic); the user chooses,
+/// per mouse, whether it is played and with which waveform.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HapticEventDescriptor {
+    /// Identifier, passed back in [`Command::Haptic`](crate::Command::Haptic):
+    /// letters, digits, `-` and `_`, unique within the module.
+    pub id: String,
+    /// Name shown in the configuration of the haptics.
+    pub name: String,
+    /// When it is played.
+    pub description: String,
+    /// The waveform played until the user picks another.
+    pub waveform: HapticWaveform,
+}
+
+impl HapticEventDescriptor {
+    /// An event `id` named `name`, described by `description`, played as
+    /// `waveform` by default.
+    #[must_use]
+    pub fn new(id: &str, name: &str, description: &str, waveform: HapticWaveform) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            description: description.to_owned(),
+            waveform,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -95,6 +128,18 @@ mod tests {
             HapticWaveform::Jingle => "jingle",
             HapticWaveform::Ringing => "ringing",
         }
+    }
+
+    #[test]
+    fn an_event_is_built_from_its_texts_and_waveform() {
+        let event = HapticEventDescriptor::new(
+            "step-end",
+            "Fin d'étape",
+            "Quand elle finit",
+            HapticWaveform::Completed,
+        );
+        assert_eq!(event.id, "step-end");
+        assert_eq!(event.waveform, HapticWaveform::Completed);
     }
 
     #[test]

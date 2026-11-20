@@ -330,7 +330,7 @@ fn serve_mouse<C: Channel>(
     if let Ok(latest) = store.load_mouse(&serial, model) {
         listed.refresh(latest.config);
     }
-    let updates = listed.updates();
+    let (updates, haptics) = listed.streams();
     // The configuration in force, which says what each button does, and the
     // actions of this mouse: shared by the two closures the session calls.
     let current = RefCell::new(config.clone());
@@ -340,12 +340,14 @@ fn serve_mouse<C: Channel>(
             return Some(request);
         }
         // A configuration saved since the last turn, the latest one.
-        let saved = updates
-            .has_changed()
-            .unwrap_or(false)
-            .then(|| updates.borrow_and_update().clone())?;
-        current.borrow_mut().clone_from(&saved);
-        Some(Request::Apply(saved))
+        if updates.has_changed().unwrap_or(false) {
+            let saved = updates.borrow_and_update().clone();
+            current.borrow_mut().clone_from(&saved);
+            return Some(Request::Apply(saved));
+        }
+        // What the events of the modules ask this mouse to play comes after the
+        // configuration (a new strength is in force by then).
+        haptics.try_recv().ok().map(Request::PlayHaptic)
     };
     let on_notice = |notice: Notice| {
         if let Notice::Button(event) = &notice {
@@ -790,6 +792,32 @@ mod tests {
         assert_eq!(
             *recorder.0.lock().unwrap(),
             [(Key::ButtonMiddle, true), (Key::ButtonMiddle, false)]
+        );
+    }
+
+    #[test]
+    fn a_haptic_event_of_a_module_is_played_on_the_mouse_while_it_is_served() {
+        use crate::haptics::{HapticOutput, HapticPlay};
+        use hubergamof_module_api::HapticWaveform;
+        let recorder = Recorder::default();
+        let shared = serve_back_button(
+            ButtonAction::None,
+            2,
+            &recording_actions(&recorder, false),
+            |release, hub, _| {
+                if release == 1 {
+                    hub.play(&HapticPlay {
+                        module: "pomodoro".into(),
+                        event: "step-end".to_owned(),
+                        waveform: HapticWaveform::Completed,
+                    });
+                }
+            },
+        );
+        // The turn after the event played it, before the service ended.
+        assert_eq!(
+            state(&shared).played,
+            [hubergamof_mouse::link::waveform_id(HapticWaveform::Completed).unwrap()]
         );
     }
 

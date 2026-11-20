@@ -8,9 +8,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    Command, DialFunctionId, DialHint, ImageData, ItemId, KeyContent, ModuleContext,
-    ModuleDescriptor, ModuleEvent, NotificationId, PageContent, PageId, RadialActionDescriptor,
-    StripPopup, StripWidget,
+    Command, DialFunctionId, DialHint, HapticEventDescriptor, ImageData, ItemId, KeyContent,
+    ModuleContext, ModuleDescriptor, ModuleEvent, NotificationId, PageContent, PageId,
+    RadialActionDescriptor, StripPopup, StripWidget,
 };
 
 /// Longest time the host lets a handler run (see [`Module`]) before
@@ -68,6 +68,12 @@ pub trait ModuleFactory: Send + Sync {
     /// action being the one a click on its petal does until the user picks
     /// another. Nothing by default: the module has no petal.
     fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
+        Vec::new()
+    }
+
+    /// The events of the module that haptic mice can signal. Nothing by
+    /// default.
+    fn haptic_events(&self) -> Vec<HapticEventDescriptor> {
         Vec::new()
     }
 

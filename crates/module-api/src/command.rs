@@ -44,9 +44,21 @@ pub enum Command {
     /// Shows an unread notification again, with no timeout (see
     /// [`crate::UnreadNotification::id`]); ignored if it was read since.
     ShowNotification(NotificationId),
+    /// Signals an event of the module on the haptic mice, as the user
+    /// configured it (see [`Command::haptic`]). An event the module did not
+    /// declare is dropped.
+    Haptic(String),
 }
 
 impl Command {
+    /// Signals the event `event` (an id of
+    /// [`ModuleFactory::haptic_events`](crate::ModuleFactory::haptic_events))
+    /// on the haptic mice.
+    #[must_use]
+    pub fn haptic(event: &str) -> Self {
+        Self::Haptic(event.to_owned())
+    }
+
     /// Marks the surface that triggered the handler as failed: what a
     /// handler returns when it cannot even start its action.
     #[must_use]
@@ -100,5 +112,9 @@ mod tests {
         assert_eq!(Feedback::of(true), Feedback::Ok);
         assert_eq!(Feedback::of(false), Feedback::Alert);
         assert_eq!(Command::alert(), [Command::Feedback(Feedback::Alert)]);
+        assert_eq!(
+            Command::haptic("step-end"),
+            Command::Haptic("step-end".to_owned())
+        );
     }
 }

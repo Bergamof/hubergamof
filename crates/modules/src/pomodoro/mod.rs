@@ -29,6 +29,7 @@ use hubergamof_module_api::{
     ModuleEvent, ModuleFactory, Notification as StripNotification, NotificationId, PomodoroState,
     PomodoroWidget, PopupEntry, PopupIcon, RadialActionDescriptor, Rgb, StripPopup, StripWidget,
 };
+use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
@@ -97,6 +98,9 @@ const RADIAL_TOGGLE: &str = "toggle";
 const RADIAL_SKIP: &str = "skip";
 const RADIAL_RESET: &str = "reset";
 
+/// Haptic event raised when a step ends.
+const HAPTIC_STEP_END: &str = "step-end";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: POMODORO_KIND.into(),
@@ -136,6 +140,15 @@ impl PomodoroSettings {
 impl ModuleFactory for PomodoroFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn haptic_events(&self) -> Vec<HapticEventDescriptor> {
+        vec![HapticEventDescriptor::new(
+            HAPTIC_STEP_END,
+            "Fin d'une étape",
+            "Le travail ou la pause se termine.",
+            HapticWaveform::Completed,
+        )]
     }
 
     fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
@@ -237,6 +250,7 @@ impl Pomodoro {
                 )));
             }
             self.notify(notification);
+            commands.push(Command::haptic(HAPTIC_STEP_END));
         }
         self.sync_ticker();
         commands
