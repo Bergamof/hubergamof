@@ -10,11 +10,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use hubergamof_protocol::{ErrorCode, MouseConfig, MouseInfo, RadialMenuConfig};
+use hubergamof_protocol::{
+    ButtonAction, ErrorCode, MouseConfig, MouseControlId, MouseInfo, RadialMenuConfig,
+};
 use thiserror::Error;
 use tokio::sync::watch;
 
 use crate::config_store::{ConfigStore, ConfigStoreError};
+use crate::input::{ShortcutError, parse_shortcut};
 
 /// Why a configuration update is refused.
 #[derive(Debug, Error)]
@@ -25,6 +28,15 @@ pub enum HubError {
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] ConfigStoreError),
+    /// A shortcut that cannot be pressed (a key outside the list, a reserved
+    /// combination): refused when it is saved, not when it is needed.
+    #[error("shortcut of the {control}: {error}")]
+    InvalidShortcut {
+        /// The control it is bound to.
+        control: MouseControlId,
+        /// Why it is refused.
+        error: ShortcutError,
+    },
 }
 
 impl HubError {
@@ -34,6 +46,7 @@ impl HubError {
         match self {
             Self::UnknownMouse(_) => ErrorCode::UnknownDevice,
             Self::Store(error) => error.error_code(),
+            Self::InvalidShortcut { .. } => ErrorCode::InvalidConfig,
         }
     }
 }
@@ -170,6 +183,14 @@ impl MouseHub {
                 found: config.model,
             }
             .into());
+        }
+        for (control, action) in &config.bindings {
+            if let ButtonAction::Shortcut { keys } = action {
+                parse_shortcut(keys).map_err(|error| HubError::InvalidShortcut {
+                    control: *control,
+                    error,
+                })?;
+            }
         }
         let saved = self.shared.store.save_mouse(config)?;
         sender.send_if_modified(|current| {
@@ -363,6 +384,38 @@ mod tests {
             !dir.path().join("devices/aaaa0001/mouse.json").exists(),
             "nothing was written"
         );
+    }
+
+    #[test]
+    fn a_shortcut_that_cannot_be_pressed_is_refused_when_it_is_saved() {
+        let (dir, hub) = hub();
+        let _registration = register(&hub, "aaaa0001");
+        let bound = |keys: &str| {
+            let mut config = config("aaaa0001");
+            config.bindings.insert(
+                MouseControlId::Back,
+                ButtonAction::Shortcut {
+                    keys: keys.to_owned(),
+                },
+            );
+            config
+        };
+        for keys in [
+            "Ctrl+Power",
+            "Alt+Left_Arrow",
+            "Ctrl+Alt+Delete",
+            "a+b+c+d+e+f+g",
+        ] {
+            let refused = hub.update_mouse("aaaa0001", bound(keys)).unwrap_err();
+            assert!(
+                matches!(refused, HubError::InvalidShortcut { .. }),
+                "{keys}"
+            );
+            assert_eq!(refused.error_code(), ErrorCode::InvalidConfig);
+        }
+        assert!(!dir.path().join("devices/aaaa0001/mouse.json").exists());
+        let saved = hub.update_mouse("aaaa0001", bound("Ctrl+Shift+M")).unwrap();
+        assert_eq!(saved.revision, 1);
     }
 
     #[test]

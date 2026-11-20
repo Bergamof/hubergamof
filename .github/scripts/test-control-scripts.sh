@@ -2,7 +2,7 @@
 # Tests des scripts de contrôle et de release (cas passants et refusés) :
 # check-node-version, check-branch-name, check_pactl, next-version, release-notes,
 # wait-for-ci (verdict), set-version, sign-checksums, lanceur de bureau (install-desktop.sh et
-# sa suppression par uninstall.sh).
+# sa suppression par uninstall.sh), invariants de la règle udev (packaging/check-udev-rule.sh).
 #
 # Usage : test-control-scripts.sh
 set -uo pipefail
@@ -433,6 +433,46 @@ expect_signing ko "$sign_dir/good.key" no "sans SHA256SUMS"
 echo "pas une clé" >"$sign_dir/garbage.key"
 expect_signing ko "$sign_dir/garbage.key" yes "un secret qui n'est pas une clé"
 rm -rf "$sign_dir"
+
+# check-udev-rule (packaging) : la règle réelle passe, et chaque écart de sécurité est refusé.
+udev_real="$here/../../packaging/udev/70-hubergamof.rules"
+udev_dir="$(mktemp -d)"
+expect_udev() { # expect_udev <ok|ko> <règle ajoutée ou "sed:<script>"> <libellé>
+	local expected="$1" change="$2" label="$3" status=0 file="$udev_dir/rule"
+	cp "$udev_real" "$file"
+	case "$change" in
+	sed:*) sed -i "${change#sed:}" "$file" ;;
+	none) ;;
+	*) printf '%s\n' "$change" >>"$file" ;;
+	esac
+	"$here/../../packaging/check-udev-rule.sh" "$file" >/dev/null 2>&1 || status=$?
+	if { [[ "$expected" == ok && $status -eq 0 ]] || [[ "$expected" == ko && $status -eq 1 ]]; }; then
+		return
+	fi
+	echo "ÉCHEC : check-udev-rule.sh, $label (attendu $expected, code $status)" >&2
+	failures=$((failures + 1))
+}
+expect_udev ok none "la règle du dépôt"
+expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", MODE="0666"' "un mode ouvert à tous"
+expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", GROUP="input"' "un groupe"
+expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", OWNER="me"' "un propriétaire"
+expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c52b", TAG+="uaccess"' "le récepteur Unifying"
+expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"' "uaccess Logitech sans produit"
+expect_udev ko 'KERNEL=="event*", TAG+="uaccess"' "un autre nœud désigné par son nom"
+expect_udev ko 'KERNEL=="*", TAG+="uaccess"' "tous les nœuds"
+expect_udev ko 'KERNEL=="uinput*", SUBSYSTEM=="misc", TAG+="uaccess"' "uinput avec un joker"
+expect_udev ko $'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", \\' "une règle sur plusieurs lignes"
+expect_udev ko 'sed:s/SUBSYSTEM=="misc", //' "uinput sans le sous-système"
+expect_udev ko 'sed:s/, OPTIONS+="static_node=uinput"//' "uinput sans static_node"
+expect_udev ko 'sed:s/KERNEL=="uinput", /KERNEL == "uinput", /' "uinput avec des espaces"
+expect_udev ko 'sed:/KERNEL=="uinput"/d' "sans règle uinput"
+expect_udev ko 'sed:s/, DEVPATH!="\*\/0003:\*\/0003:\*\/hidraw\/\*"//' "sans exclusion des nœuds enfants"
+echo "" >"$udev_dir/empty"
+"$here/../../packaging/check-udev-rule.sh" "$udev_dir/empty" >/dev/null 2>&1 && {
+	echo "ÉCHEC : check-udev-rule.sh accepte un fichier vide" >&2
+	failures=$((failures + 1))
+}
+rm -rf "$udev_dir"
 
 if [[ $failures -ne 0 ]]; then
 	echo "$failures test(s) en échec." >&2

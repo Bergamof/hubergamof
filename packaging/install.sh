@@ -92,6 +92,8 @@ uniquement (TAG+="uaccess"). Cela nécessite sudo.
 L'accès au récepteur Bolt permet à vos programmes de régler les souris, de détourner
 et de réaffecter des boutons et des touches (voir docs/security.md) : ne reliez pas
 de clavier à ce récepteur, ou utilisez --no-udev.
+Elle ouvre aussi /dev/uinput : vos programmes peuvent alors créer un clavier ou une
+souris virtuels, donc envoyer des frappes et des clics (docs/security.md).
 
 EOF
 	if ! confirm "Installer la règle udev avec sudo ?"; then

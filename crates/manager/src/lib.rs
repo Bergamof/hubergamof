@@ -18,6 +18,8 @@
 //!   configuration and following its buttons.
 //! - [`mouse_hub`]: the mice connected and the mouse and radial menu
 //!   configurations, as the web interface follows them.
+//! - [`input`]: the keys and buttons pressed on behalf of a mouse button,
+//!   through a virtual input device.
 //! - [`launcher`]: `hubergamof open`, starting the service and opening the UI
 //!   from the desktop launcher.
 
@@ -26,6 +28,7 @@ pub mod config_store;
 pub mod device;
 pub mod engine;
 pub mod file_chooser;
+pub mod input;
 pub mod launcher;
 pub mod mouse_engine;
 pub mod mouse_hub;
