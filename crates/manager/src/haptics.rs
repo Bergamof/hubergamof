@@ -123,4 +123,23 @@ mod tests {
         assert_eq!(first.0.lock().unwrap().len(), 1);
         assert!(second.0.lock().unwrap().is_empty());
     }
+
+    #[test]
+    fn the_events_the_builtin_modules_declare_have_plain_unique_ids() {
+        use hubergamof_modules::{BuiltinServices, builtin_registry_with};
+        let registry = builtin_registry_with(BuiltinServices::simulated());
+        for factory in registry.factories() {
+            let mut seen = std::collections::HashSet::new();
+            for event in factory.haptic_events() {
+                let key = format!("{}.{}", factory.descriptor().kind, event.id);
+                // The key the user's setting is stored under must be valid.
+                assert!(
+                    hubergamof_protocol::is_identifier(&event.id),
+                    "`{key}`: the id is not a plain identifier"
+                );
+                assert!(seen.insert(event.id.clone()), "{key} twice");
+                assert!(!event.name.is_empty() && !event.description.is_empty());
+            }
+        }
+    }
 }

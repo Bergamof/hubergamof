@@ -7,9 +7,11 @@
 //! long as they serve it. The radial menu exists whether or not a mouse is
 //! connected.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use hubergamof_protocol::{
     ButtonAction, ErrorCode, HapticLevel, HapticWaveform, MouseCapabilities, MouseConfig,
@@ -58,6 +60,11 @@ impl HubError {
 /// other, and a pile means it is stuck or asleep.
 const HAPTIC_QUEUE: usize = 8;
 
+/// Shortest time between two plays of the same event (`module.event`): an
+/// event that comes in bursts (a counter that wobbles, a module that loops)
+/// is felt once.
+const HAPTIC_MIN_GAP: Duration = Duration::from_secs(2);
+
 struct Entry {
     id: u64,
     info: MouseInfo,
@@ -71,6 +78,8 @@ struct Shared {
     mice: watch::Sender<Vec<MouseInfo>>,
     radial: watch::Sender<RadialMenuConfig>,
     next_id: AtomicU64,
+    /// When each haptic event was last played, by `module.event`.
+    last_played: Mutex<HashMap<String, Instant>>,
 }
 
 /// The mice and the radial menu, for the server and the mouse threads. Cheap
@@ -95,6 +104,7 @@ impl MouseHub {
                 mice: watch::channel(Vec::new()).0,
                 radial: watch::channel(radial).0,
                 next_id: AtomicU64::new(0),
+                last_played: Mutex::default(),
             }),
         })
     }
@@ -258,10 +268,34 @@ fn waveform_to_play(
     }
 }
 
-impl HapticOutput for MouseHub {
-    fn play(&self, play: &HapticPlay) {
+impl MouseHub {
+    /// Whether `play` may be played at `now`: not within [`HAPTIC_MIN_GAP`] of
+    /// the last time the same event was. The time is noted when it may.
+    fn gap_allows(&self, play: &HapticPlay, now: Instant) -> bool {
+        let mut last = self
+            .shared
+            .last_played
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let key = play.key();
+        if last
+            .get(&key)
+            .is_some_and(|before| now.saturating_duration_since(*before) < HAPTIC_MIN_GAP)
+        {
+            return false;
+        }
+        last.insert(key, now);
+        true
+    }
+
+    /// Signals `play` on the mice, as of `now`.
+    fn play_at(&self, play: &HapticPlay, now: Instant) {
+        if !self.gap_allows(play, now) {
+            tracing::debug!(event = %play.key(), "haptic event repeated too soon: dropped");
+            return;
+        }
         for entry in self.entries().iter() {
-            let config = entry.config.borrow().clone();
+            let config = entry.config.borrow();
             let Some(waveform) = waveform_to_play(&config, &entry.info.capabilities, play) else {
                 continue;
             };
@@ -271,6 +305,12 @@ impl HapticOutput for MouseHub {
                 tracing::debug!(event = %play.key(), "haptic queue of a mouse is full: dropped");
             }
         }
+    }
+}
+
+impl HapticOutput for MouseHub {
+    fn play(&self, play: &HapticPlay) {
+        self.play_at(play, Instant::now());
     }
 }
 
@@ -629,10 +669,59 @@ mod tests {
     fn a_stuck_mouse_keeps_the_oldest_events_and_drops_the_rest() {
         let (_dir, hub) = hub();
         let mouse = register(&hub, "a");
-        for _ in 0..HAPTIC_QUEUE + 4 {
-            hub.play(&step_end());
+        let start = Instant::now();
+        for turn in 0..HAPTIC_QUEUE + 4 {
+            // Spaced apart enough for each to be played.
+            let turn = u32::try_from(turn).unwrap();
+            hub.play_at(&step_end(), start + HAPTIC_MIN_GAP * turn);
         }
         assert_eq!(played(&mouse).len(), HAPTIC_QUEUE);
+    }
+
+    #[test]
+    fn the_same_event_is_not_played_again_within_the_minimum_gap() {
+        let (_dir, hub) = hub();
+        let mouse = register(&hub, "a");
+        let start = Instant::now();
+        hub.play_at(&step_end(), start);
+        hub.play_at(&step_end(), start + Duration::from_millis(500));
+        hub.play_at(
+            &step_end(),
+            start + HAPTIC_MIN_GAP - Duration::from_millis(1),
+        );
+        assert_eq!(played(&mouse), [HapticWaveform::Completed]);
+        hub.play_at(&step_end(), start + HAPTIC_MIN_GAP);
+        assert_eq!(played(&mouse), [HapticWaveform::Completed]);
+    }
+
+    #[test]
+    fn two_different_events_do_not_hold_each_other_back() {
+        let (_dir, hub) = hub();
+        let mouse = register(&hub, "a");
+        let now = Instant::now();
+        let other = HapticPlay {
+            module: "teams".into(),
+            event: "incoming-call".to_owned(),
+            waveform: HapticWaveform::Ringing,
+        };
+        hub.play_at(&step_end(), now);
+        hub.play_at(&other, now);
+        assert_eq!(
+            played(&mouse),
+            [HapticWaveform::Completed, HapticWaveform::Ringing]
+        );
+    }
+
+    #[test]
+    fn an_event_that_was_dropped_for_a_mouse_without_haptics_still_counts_as_played() {
+        // The gap belongs to the event, not to a mouse: a mouse registered a
+        // moment later does not get what the others were just given.
+        let (_dir, hub) = hub();
+        let now = Instant::now();
+        hub.play_at(&step_end(), now);
+        let late = register(&hub, "late");
+        hub.play_at(&step_end(), now + Duration::from_millis(10));
+        assert_eq!(played(&late), []);
     }
 
     #[test]

@@ -103,3 +103,8 @@ Tant que ce tableau est vide, les écritures sont « non validées sur le matér
 
 ## Haptique : ce qui est connu
 Quatre niveaux d'intensité côté Logitech (subtil, faible, moyen, fort), actifs par défaut ; la maquette et le contrat en gardent quatre plus « désactivé ».
+
+## À valider sur le matériel : l'haptique des événements des modules
+- Les ondes jouées par `Request::PlayHaptic` (`MouseLink::play_haptic`, fonction 4 de `0x19B0`) : d'après le protocole une lecture d'onde n'écrit rien de persistant (la force, elle, est écrite par la configuration) ; à confirmer en jouant beaucoup d'ondes puis en relisant `mouse-test info` après un cycle d'alimentation.
+- La force de chaque niveau sur la MX Master 4 (`Subtle`, `Low`, `Medium`, `High`) et l'effet d'une onde jouée juste après une écriture de la force.
+

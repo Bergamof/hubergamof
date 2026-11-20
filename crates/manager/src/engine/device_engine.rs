@@ -768,7 +768,7 @@ impl DeviceEngine {
         if let Some(play) = self.instances.haptic_play(source, event) {
             self.services.haptics.play(&play);
         } else {
-            tracing::warn!(module = %source, event, "undeclared haptic event dropped");
+            tracing::warn!(module = %source, event = ?event, "undeclared haptic event dropped");
         }
     }
 
