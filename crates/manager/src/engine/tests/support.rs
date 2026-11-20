@@ -74,6 +74,8 @@ pub(super) struct Probe {
     /// The list module declares that its pages may declare what stays usable
     /// while the computer is locked.
     pub(super) list_lock_safe_pages: Arc<AtomicBool>,
+    /// The list module declares that it is usable while the computer is locked.
+    pub(super) list_usable_when_locked: Arc<AtomicBool>,
     /// The same for the fragile module, which sends notifications in tests.
     pub(super) fragile_lock_safe_pages: Arc<AtomicBool>,
     /// Added to the index in the ids of page items.
@@ -101,6 +103,8 @@ pub(super) struct Probe {
     pub(super) focus: Arc<Mutex<Option<usize>>>,
     /// Indexes of the items of the list pages that are ticked.
     pub(super) checked: Arc<Mutex<Vec<usize>>>,
+    /// Radial actions that reached list instances, in order.
+    pub(super) radial_actions: Arc<Mutex<Vec<String>>>,
 }
 
 /// Wall clock a test sets.
@@ -213,6 +217,15 @@ impl Module for List {
         vec![Command::OpenPage(LIST_PAGE.into())]
     }
 
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        self.probe
+            .radial_actions
+            .lock()
+            .unwrap()
+            .push(action.to_owned());
+        Vec::new()
+    }
+
     fn page(&self, page: &PageId) -> Option<PageContent> {
         let shift = self.probe.item_shift.load(Ordering::SeqCst);
         let gone = self.probe.gone_page.lock().unwrap().as_deref() == Some(page.0.as_str());
@@ -294,6 +307,7 @@ impl ModuleFactory for ListFactory {
             capabilities: ModuleCapabilities {
                 key: true,
                 lock_safe_pages: self.0.list_lock_safe_pages.load(Ordering::SeqCst),
+                usable_when_locked: self.0.list_usable_when_locked.load(Ordering::SeqCst),
                 ..Default::default()
             },
             dial_functions: Vec::new(),

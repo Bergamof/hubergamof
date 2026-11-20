@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use hubergamof_protocol::{DeviceConfig, DeviceInfo};
+use hubergamof_protocol::{DeviceConfig, DeviceInfo, ModuleKind};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use super::{EngineError, LiveSnapshot};
@@ -18,6 +18,13 @@ pub(crate) enum Request {
         Box<DeviceConfig>,
         oneshot::Sender<Result<DeviceConfig, EngineError>>,
     ),
+    /// Runs the radial action `action` on the first instance of `module`;
+    /// answers whether the device has such an instance.
+    RadialAction {
+        module: ModuleKind,
+        action: String,
+        reply: oneshot::Sender<bool>,
+    },
     Stop(oneshot::Sender<()>),
 }
 
@@ -118,6 +125,22 @@ impl EngineHandle {
         self.send(Request::ApplyConfig(Box::new(config), reply))
             .await?;
         response.await.map_err(|_| EngineError::Stopped)?
+    }
+
+    /// Runs the radial action `action` of `module` on the first instance of
+    /// that module the device has (the ones of the configuration, in order).
+    /// `false` when the device has none, or has stopped.
+    pub async fn radial_action(&self, module: &ModuleKind, action: &str) -> bool {
+        let (reply, response) = oneshot::channel();
+        let request = Request::RadialAction {
+            module: module.clone(),
+            action: action.to_owned(),
+            reply,
+        };
+        if self.send(request).await.is_err() {
+            return false;
+        }
+        response.await.unwrap_or(false)
     }
 
     /// Stops the engine: modules are destroyed and the screens blanked.

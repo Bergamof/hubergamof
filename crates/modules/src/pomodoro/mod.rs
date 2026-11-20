@@ -27,7 +27,7 @@ use hubergamof_module_api::{
     Command, ContextDial, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, ImageData,
     KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, Notification as StripNotification, NotificationId, PomodoroState,
-    PomodoroWidget, PopupEntry, PopupIcon, Rgb, StripPopup, StripWidget,
+    PomodoroWidget, PopupEntry, PopupIcon, RadialActionDescriptor, Rgb, StripPopup, StripWidget,
 };
 use serde_json::Value;
 use tokio::sync::oneshot;
@@ -92,6 +92,11 @@ impl std::fmt::Debug for PomodoroFactory {
 }
 
 /// Kind, capabilities and settings of the pomodoro.
+/// Radial actions of the module (`on_radial_action`).
+const RADIAL_TOGGLE: &str = "toggle";
+const RADIAL_SKIP: &str = "skip";
+const RADIAL_RESET: &str = "reset";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: POMODORO_KIND.into(),
@@ -131,6 +136,26 @@ impl PomodoroSettings {
 impl ModuleFactory for PomodoroFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
+        vec![
+            RadialActionDescriptor::new(
+                RADIAL_TOGGLE,
+                "Démarrer ou mettre en pause",
+                "Lance l'étape en cours, ou la met en pause.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_SKIP,
+                "Passer",
+                "Passe à l'étape suivante (pause ou pomodoro).",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_RESET,
+                "Remettre à zéro",
+                "Revient au premier pomodoro, arrêté.",
+            ),
+        ]
     }
 
     fn icon(&self) -> Option<ImageData> {
@@ -333,6 +358,16 @@ impl Module for Pomodoro {
     async fn on_notification_press(&mut self, _id: NotificationId) -> Vec<Command> {
         if self.timer.is_awaiting_start() {
             self.toggle();
+        }
+        Vec::new()
+    }
+
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        match action {
+            RADIAL_TOGGLE => self.run_menu_entry(MenuEntry::Toggle),
+            RADIAL_SKIP => self.run_menu_entry(MenuEntry::Skip),
+            RADIAL_RESET => self.run_menu_entry(MenuEntry::Reset),
+            _ => {}
         }
         Vec::new()
     }

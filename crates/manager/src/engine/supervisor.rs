@@ -85,7 +85,17 @@ impl Supervisor {
     /// `discovery`.
     #[must_use]
     pub fn start(discovery: &DeviceDiscovery, services: EngineServices) -> Self {
-        let engines = EngineRegistry::default();
+        Self::start_in(discovery, services, EngineRegistry::default())
+    }
+
+    /// Like [`Supervisor::start`], the engines being registered in `engines`,
+    /// which a consumer may have been given before the supervisor exists.
+    #[must_use]
+    pub fn start_in(
+        discovery: &DeviceDiscovery,
+        services: EngineServices,
+        engines: EngineRegistry,
+    ) -> Self {
         let (stop, stopped) = oneshot::channel();
         let task = tokio::spawn(supervise(
             discovery.clone(),

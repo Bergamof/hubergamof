@@ -8,7 +8,7 @@ use hubergamof_module_api::{
     Command, DialFunctionId, Feedback, ModuleInstanceId, ModuleSurface, PageContent, PageId,
     PageItem, RedrawHandle, ScreenLockState, UnreadNotification,
 };
-use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance};
+use hubergamof_protocol::{DeviceConfig, DialAssignment, ModuleInstance, ModuleKind};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio::task::spawn_blocking;
@@ -325,6 +325,15 @@ impl DeviceEngine {
                     self.handle_simulated_input(event).await;
                     let _ = reply.send(self.refresh().await);
                 }
+                Wake::Request(Request::RadialAction {
+                    module,
+                    action,
+                    reply,
+                }) => {
+                    let found = self.run_radial_action(&module, action).await;
+                    self.refresh_or_log().await;
+                    let _ = reply.send(found);
+                }
                 Wake::Request(Request::ApplyConfig(config, reply)) => {
                     let result = self.apply_config(*config).await;
                     self.refresh_or_log().await;
@@ -517,6 +526,32 @@ impl DeviceEngine {
             usable_when_locked,
         )
         .await;
+    }
+
+    /// Runs a radial action on the first instance of `kind` of the
+    /// configuration; whether there is one. The call goes through
+    /// [`Self::dispatch`] like any input, and refused whenever the computer
+    /// is locked.
+    async fn run_radial_action(&mut self, kind: &ModuleKind, action: String) -> bool {
+        let Some(module) = self
+            .config
+            .modules
+            .iter()
+            .find(|instance| instance.kind == *kind)
+            .map(|instance| instance.id.clone())
+        else {
+            return false;
+        };
+        // Stricter than a key: the menu shows nothing on the device, so even a
+        // module that is usable while locked is not run from the mouse then.
+        if self.lock.is_locked() {
+            tracing::debug!(%module, "radial action refused: the computer is locked");
+            return true;
+        }
+        let surfaces = self.event_surfaces(&module);
+        self.dispatch(&module, Call::RadialAction(action), surfaces, false)
+            .await;
+        true
     }
 
     async fn dial_input(&mut self, dial: u8, input: DialInput) {

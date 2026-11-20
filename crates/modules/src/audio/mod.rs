@@ -23,8 +23,8 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, DialFunctionDescriptor, DialFunctionId, DialHint, ImageData, ItemId, KeyContent,
     KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId, PageItem, SettingField,
-    SettingKind, StripWidget, VolumeWidget,
+    ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId, PageItem,
+    RadialActionDescriptor, SettingField, SettingKind, StripWidget, VolumeWidget,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -109,6 +109,10 @@ impl std::fmt::Debug for AudioFactory {
 }
 
 /// Kind, capabilities and settings of the audio module.
+/// Radial actions of the module (`on_radial_action`).
+const RADIAL_MUTE_MICROPHONE: &str = "mute-microphone";
+const RADIAL_MUTE_SPEAKERS: &str = "mute-speakers";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: AUDIO_KIND.into(),
@@ -148,6 +152,21 @@ fn descriptor() -> ModuleDescriptor {
 impl ModuleFactory for AudioFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
+        vec![
+            RadialActionDescriptor::new(
+                RADIAL_MUTE_MICROPHONE,
+                "Micro de l'ordinateur : couper ou rétablir",
+                "Bascule le micro par défaut entre actif et coupé.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_MUTE_SPEAKERS,
+                "Son de l'ordinateur : couper ou rétablir",
+                "Bascule la sortie par défaut entre active et coupée.",
+            ),
+        ]
     }
 
     fn icon(&self) -> Option<ImageData> {
@@ -451,6 +470,15 @@ impl Module for Audio {
             INPUTS_ITEM => vec![Command::OpenPage(INPUTS_PAGE.into())],
             _ => Vec::new(),
         }
+    }
+
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        let direction = match action {
+            RADIAL_MUTE_MICROPHONE => Direction::Input,
+            RADIAL_MUTE_SPEAKERS => Direction::Output,
+            _ => return Vec::new(),
+        };
+        self.toggle_mute(direction, ModuleSurface::HomeKey)
     }
 
     async fn on_dial_rotate(&mut self, function: &DialFunctionId, ticks: i32) -> Vec<Command> {

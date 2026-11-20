@@ -3,6 +3,7 @@ mod lock;
 mod modules;
 mod notifications;
 mod pages;
+mod radial;
 mod strip;
 mod supervisor;
 mod support;

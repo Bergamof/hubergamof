@@ -1087,3 +1087,39 @@ async fn a_negative_gap_key_shows_the_conversation_panel_all_the_same() {
     harness.settle_desktop().await;
     assert_eq!(harness.desktop.activations(), []);
 }
+
+#[tokio::test]
+async fn the_radial_actions_ask_teams_for_the_matching_call_action() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.in_call().await;
+    for (radial, action) in [
+        ("mute", CallAction::ToggleMute),
+        ("camera", CallAction::ToggleCamera),
+        ("hang-up", CallAction::HangUp),
+    ] {
+        assert_eq!(
+            harness.module.on_radial_action(radial).await,
+            [],
+            "{radial}"
+        );
+        assert_eq!(harness.bridge.requests().last(), Some(&action));
+    }
+    assert_eq!(harness.module.on_radial_action("unknown").await, []);
+    assert_eq!(
+        harness.bridge.requests().len(),
+        3,
+        "an unknown one asks nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_radial_action_without_an_extension_alerts() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.in_call().await;
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    assert_eq!(
+        harness.module.on_radial_action("mute").await,
+        Command::alert()
+    );
+}

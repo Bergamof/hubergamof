@@ -21,7 +21,8 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
     ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
-    Notification, NotificationId, PageContent, PageId, PageItem, Rgb, ScreenLockState,
+    Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor, Rgb,
+    ScreenLockState,
 };
 use serde_json::Value;
 use tokio::sync::watch;
@@ -170,6 +171,11 @@ fn launch() -> Launch {
     }
 }
 
+/// Radial actions of the module (`on_radial_action`).
+const RADIAL_MUTE: &str = "mute";
+const RADIAL_CAMERA: &str = "camera";
+const RADIAL_HANG_UP: &str = "hang-up";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: TEAMS_KIND.into(),
@@ -191,6 +197,26 @@ fn descriptor() -> ModuleDescriptor {
 impl ModuleFactory for TeamsFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
+        vec![
+            RadialActionDescriptor::new(
+                RADIAL_MUTE,
+                "Micro de l'appel Teams : couper ou rétablir",
+                "Bascule le micro de l'appel Teams en cours.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_CAMERA,
+                "Caméra de l'appel Teams : couper ou rétablir",
+                "Bascule la caméra de l'appel Teams en cours.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_HANG_UP,
+                "Raccrocher",
+                "Met fin à l'appel Teams en cours.",
+            ),
+        ]
     }
 
     fn icon(&self) -> Option<ImageData> {
@@ -616,6 +642,15 @@ impl Module for Teams {
             Some(CallItem::ReturnToCall) => self.return_to_call(surface),
             Some(item) => self.ask(item.action()),
             None => Vec::new(),
+        }
+    }
+
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        match action {
+            RADIAL_MUTE => self.ask(CallAction::ToggleMute),
+            RADIAL_CAMERA => self.ask(CallAction::ToggleCamera),
+            RADIAL_HANG_UP => self.ask(CallAction::HangUp),
+            _ => Vec::new(),
         }
     }
 

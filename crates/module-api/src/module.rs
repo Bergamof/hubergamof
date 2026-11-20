@@ -9,7 +9,8 @@ use thiserror::Error;
 
 use crate::{
     Command, DialFunctionId, DialHint, ImageData, ItemId, KeyContent, ModuleContext,
-    ModuleDescriptor, ModuleEvent, NotificationId, PageContent, PageId, StripPopup, StripWidget,
+    ModuleDescriptor, ModuleEvent, NotificationId, PageContent, PageId, RadialActionDescriptor,
+    StripPopup, StripWidget,
 };
 
 /// Longest time the host lets a handler run (see [`Module`]) before
@@ -61,6 +62,13 @@ pub trait ModuleFactory: Send + Sync {
     /// drawn like [`ModuleFactory::icon`]. `None` (the default): the module icon.
     fn setting_item_icon(&self, _key: &str) -> Option<ImageData> {
         None
+    }
+
+    /// What the radial menu of the mice can run on this module, the first
+    /// action being the one a click on its petal does until the user picks
+    /// another. Nothing by default: the module has no petal.
+    fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
+        Vec::new()
     }
 
     /// Settings of a new instance. Defaults to the default value of every
@@ -208,6 +216,14 @@ pub trait Module: Send {
     /// notification, unless the handler failed.
     async fn on_notification_press(&mut self, id: NotificationId) -> Vec<Command> {
         let _ = id;
+        Vec::new()
+    }
+
+    /// Runs the action `action` of [`ModuleFactory::radial_actions`], chosen in
+    /// the radial menu of a mouse. Nothing happens by default (and for an action
+    /// the module does not know).
+    async fn on_radial_action(&mut self, action: &str) -> Vec<Command> {
+        let _ = action;
         Vec::new()
     }
 
