@@ -530,8 +530,8 @@ impl DeviceEngine {
 
     /// Runs a radial action on the first instance of `kind` of the
     /// configuration; whether there is one. The call goes through
-    /// [`Self::dispatch`] like any input: refused while the computer is
-    /// locked unless the module is usable then.
+    /// [`Self::dispatch`] like any input, and refused whenever the computer
+    /// is locked.
     async fn run_radial_action(&mut self, kind: &ModuleKind, action: String) -> bool {
         let Some(module) = self
             .config
@@ -542,6 +542,12 @@ impl DeviceEngine {
         else {
             return false;
         };
+        // Stricter than a key: the menu shows nothing on the device, so even a
+        // module that is usable while locked is not run from the mouse then.
+        if self.lock.is_locked() {
+            tracing::debug!(%module, "radial action refused: the computer is locked");
+            return true;
+        }
         let surfaces = self.event_surfaces(&module);
         self.dispatch(&module, Call::RadialAction(action), surfaces, false)
             .await;

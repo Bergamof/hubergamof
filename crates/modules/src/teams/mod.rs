@@ -203,12 +203,12 @@ impl ModuleFactory for TeamsFactory {
         vec![
             RadialActionDescriptor::new(
                 RADIAL_MUTE,
-                "Couper ou rétablir le micro",
+                "Micro de l'appel Teams : couper ou rétablir",
                 "Bascule le micro de l'appel Teams en cours.",
             ),
             RadialActionDescriptor::new(
                 RADIAL_CAMERA,
-                "Couper ou rétablir la caméra",
+                "Caméra de l'appel Teams : couper ou rétablir",
                 "Bascule la caméra de l'appel Teams en cours.",
             ),
             RadialActionDescriptor::new(

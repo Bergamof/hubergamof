@@ -158,12 +158,12 @@ impl ModuleFactory for AudioFactory {
         vec![
             RadialActionDescriptor::new(
                 RADIAL_MUTE_MICROPHONE,
-                "Couper ou rétablir le micro",
+                "Micro de l'ordinateur : couper ou rétablir",
                 "Bascule le micro par défaut entre actif et coupé.",
             ),
             RadialActionDescriptor::new(
                 RADIAL_MUTE_SPEAKERS,
-                "Couper ou rétablir le son",
+                "Son de l'ordinateur : couper ou rétablir",
                 "Bascule la sortie par défaut entre active et coupée.",
             ),
         ]

@@ -83,6 +83,32 @@ async fn an_action_is_refused_while_the_computer_is_locked() {
 }
 
 #[tokio::test]
+async fn a_module_usable_while_locked_is_still_refused_from_the_menu() {
+    let fixture = start(no_dial_info()).await;
+    fixture
+        .probe
+        .list_usable_when_locked
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.configure(vec![list(0)], &["list"], &[]).await;
+    // Unlocked, the action runs.
+    assert!(
+        fixture
+            .engine
+            .radial_action(&ModuleKind::from("list"), "before")
+            .await
+    );
+    fixture.probe.screen_lock.set(true);
+    tokio::time::sleep(SETTLE).await;
+    assert!(
+        fixture
+            .engine
+            .radial_action(&ModuleKind::from("list"), "after")
+            .await
+    );
+    assert_eq!(*fixture.probe.radial_actions.lock().unwrap(), ["before"]);
+}
+
+#[tokio::test]
 async fn a_stopped_engine_answers_false() {
     let fixture = start(no_dial_info()).await;
     fixture.configure(vec![list(0)], &["list"], &[]).await;

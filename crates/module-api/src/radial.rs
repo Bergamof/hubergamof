@@ -9,9 +9,15 @@ use serde::{Deserialize, Serialize};
 /// one), through [`Module::on_radial_action`](crate::Module::on_radial_action);
 /// like every other call it is refused while the computer is locked unless
 /// the module declares itself usable then.
+///
+/// The order matters: [`ModuleFactory::radial_actions`](crate::ModuleFactory::radial_actions)
+/// lists them, and the **first** is what a click on the petal of the module
+/// does until the user picks another. A module that reorders its list for
+/// display therefore changes that default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[non_exhaustive]
 pub struct RadialActionDescriptor {
     /// Identifier, passed back to the module when the action runs: letters,
     /// digits, `-` and `_`, unique within the module.

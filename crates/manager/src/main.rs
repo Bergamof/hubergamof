@@ -663,9 +663,15 @@ fn start_mouse_service(
                 move || actions.nudge_pointer()
             },
             {
-                let module_actions =
-                    ModuleActions::new(engines.clone(), tokio::runtime::Handle::current());
-                move |entry| module_actions.run(entry)
+                let module_actions = ModuleActions::new(
+                    engines.clone(),
+                    &tokio::runtime::Handle::current(),
+                    Arc::clone(&services.registry),
+                );
+                move |entry| {
+                    // The action runs on its own: the menu does not wait for it.
+                    let _ = module_actions.run(entry);
+                }
             },
         );
         let actions = actions.with_radial(menu.handle());

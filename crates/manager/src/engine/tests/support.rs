@@ -74,6 +74,8 @@ pub(super) struct Probe {
     /// The list module declares that its pages may declare what stays usable
     /// while the computer is locked.
     pub(super) list_lock_safe_pages: Arc<AtomicBool>,
+    /// The list module declares that it is usable while the computer is locked.
+    pub(super) list_usable_when_locked: Arc<AtomicBool>,
     /// The same for the fragile module, which sends notifications in tests.
     pub(super) fragile_lock_safe_pages: Arc<AtomicBool>,
     /// Added to the index in the ids of page items.
@@ -305,6 +307,7 @@ impl ModuleFactory for ListFactory {
             capabilities: ModuleCapabilities {
                 key: true,
                 lock_safe_pages: self.0.list_lock_safe_pages.load(Ordering::SeqCst),
+                usable_when_locked: self.0.list_usable_when_locked.load(Ordering::SeqCst),
                 ..Default::default()
             },
             dial_functions: Vec::new(),
