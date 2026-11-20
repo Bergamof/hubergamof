@@ -678,7 +678,10 @@ struct MiceService {
 async fn stop_mice(mice: Option<MiceService>) {
     if let Some(MiceService { supervisor, menu }) = mice {
         supervisor.shutdown().await;
-        drop(menu);
+        // Stopping the menu waits for its threads: not on the async workers.
+        if let Err(error) = tokio::task::spawn_blocking(move || drop(menu)).await {
+            tracing::warn!(%error, "the radial menu did not stop cleanly");
+        }
     }
 }
 

@@ -7,6 +7,7 @@
 //! surface covers the output: the pointer's first position over it is where
 //! the menu opens (`WindowEvent::Pointer`).
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use image::RgbaImage;
@@ -88,7 +89,7 @@ pub struct Content {
 }
 
 /// Tells the host what happens in the window; `false` when the host is gone.
-pub type Report = Box<dyn Fn(WindowEvent) -> bool + Send>;
+pub type Report = Arc<dyn Fn(WindowEvent) -> bool + Send + Sync>;
 
 /// What the window is asked to do.
 #[derive(Debug)]
@@ -134,7 +135,7 @@ impl Overlay {
     /// [`OverlayError`] when there is no compositor, it has no layer-shell, or
     /// the thread cannot start.
     pub fn start(
-        events: impl Fn(WindowEvent) -> bool + Send + 'static,
+        events: impl Fn(WindowEvent) -> bool + Send + Sync + 'static,
     ) -> Result<Self, OverlayError> {
         let connection = Connection::connect_to_env()
             .map_err(|error| OverlayError::Connect(error.to_string()))?;
@@ -160,15 +161,20 @@ impl Overlay {
             pool,
             renderer: TextRenderer::new()?,
             queue: handle,
-            events: Box::new(events),
+            events: Arc::new(events),
             pointer: None,
             keyboard: None,
             window: None,
             signal: None,
         };
+        let report = Arc::clone(&state.events);
         let thread = std::thread::Builder::new()
             .name("radial-overlay".to_owned())
             .spawn(move || {
+                // Told when the thread ends, whatever the way (an error, a
+                // panic unwinding): the host must not go on with a menu that
+                // has no window.
+                let _gone = Gone(report);
                 if let Err(error) = run(connection, queue, receiver, &mut state) {
                     tracing::error!(%error, "the radial menu window stopped");
                 }
@@ -213,6 +219,16 @@ impl Drop for Overlay {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// Tells the host, when dropped, that the window is gone.
+struct Gone(Report);
+
+impl Drop for Gone {
+    fn drop(&mut self) {
+        // The host may be gone too.
+        let _ = (self.0)(WindowEvent::Gone);
     }
 }
 

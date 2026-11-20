@@ -135,42 +135,47 @@ pub struct RadialService {
 impl RadialService {
     /// Starts the menu on its window. The configuration and the lock are
     /// followed from `config` and `locked`, for as long as the service runs.
-    /// Without a window (no Wayland, no layer-shell) the service runs and the
-    /// menu simply never opens, which is said once.
+    /// The window is made on the thread of the menu, so that a compositor that
+    /// is slow to answer does not hold the manager back. Without a window (no
+    /// Wayland, no layer-shell) the service runs and the menu simply never
+    /// opens, which is said once.
     #[must_use]
     pub fn start(
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
     ) -> Self {
-        let (events, received) = mpsc::unbounded_channel();
-        let window_events = events.clone();
-        let surface =
-            match Overlay::start(move |event| window_events.send(Event::Window(event)).is_ok()) {
+        Self::start_on(
+            |events| match Overlay::start(move |event| events.send(Event::Window(event)).is_ok()) {
                 Ok(overlay) => Some(overlay),
                 Err(error) => {
                     tracing::warn!(%error, "the radial menu has no window: it will not open");
                     None
                 }
-            };
-        Self::start_on(surface, config, locked, runtime, events, received)
+            },
+            config,
+            locked,
+            runtime,
+        )
     }
 
+    /// `make_surface` runs on the menu's thread, and is given where the window
+    /// reports to.
     fn start_on<S: Surface + Send + 'static>(
-        surface: Option<S>,
+        make_surface: impl FnOnce(mpsc::UnboundedSender<Event>) -> Option<S> + Send + 'static,
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
-        events: mpsc::UnboundedSender<Event>,
-        received: mpsc::UnboundedReceiver<Event>,
     ) -> Self {
+        let (events, received) = mpsc::unbounded_channel();
         let first = config.borrow().clone();
-        let first_lock = *locked.borrow();
-        runtime.spawn(follow(config, locked, events.clone()));
+        runtime.spawn(follow(config, locked.clone(), events.clone()));
+        let window_events = events.clone();
         let thread = std::thread::Builder::new()
             .name("radial-menu".to_owned())
             .spawn(move || {
-                let mut menu = Menu::new(&first, first_lock, surface, Box::new(log_choice));
+                let surface = make_surface(window_events);
+                let mut menu = Menu::new(&first, locked, surface, Box::new(log_choice));
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -242,14 +247,22 @@ struct Menu<S: Surface> {
     surface: Option<S>,
     chooser: Chooser,
     animate: bool,
-    locked: bool,
+    /// Read when a press comes and when an entry is chosen, not only when the
+    /// change is told: a press or a click queued before the news of a lock
+    /// must not get through.
+    locked: watch::Receiver<bool>,
     started: Instant,
     /// A press that found no window is said once.
     warned: bool,
 }
 
 impl<S: Surface> Menu<S> {
-    fn new(config: &RadialMenuConfig, locked: bool, surface: Option<S>, chooser: Chooser) -> Self {
+    fn new(
+        config: &RadialMenuConfig,
+        locked: watch::Receiver<bool>,
+        surface: Option<S>,
+        chooser: Chooser,
+    ) -> Self {
         Self {
             controller: Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN),
             surface,
@@ -271,6 +284,16 @@ impl<S: Surface> Menu<S> {
             Event::Cancel | Event::Window(WindowEvent::Escape) => {
                 self.controller.window(WindowEvent::Escape)
             }
+            Event::Window(WindowEvent::Gone) => {
+                tracing::warn!("the window of the radial menu is gone: the menu will not open");
+                let effects = self.controller.window(WindowEvent::Gone);
+                self.apply(effects);
+                // Nothing to show the menu on any more, and nothing is chosen
+                // from a menu nobody sees.
+                self.surface = None;
+                self.warned = true;
+                return;
+            }
             Event::Window(event) => self.controller.window(event),
             Event::Config(config) => {
                 self.animate = config.animate;
@@ -278,7 +301,6 @@ impl<S: Surface> Menu<S> {
                 Vec::new()
             }
             Event::Locked(locked) => {
-                self.locked = locked;
                 // A lock closes an open menu: it holds the keyboard.
                 if locked {
                     self.controller.window(WindowEvent::Escape)
@@ -291,7 +313,7 @@ impl<S: Surface> Menu<S> {
     }
 
     fn press(&mut self, at: Instant) -> Vec<Effect> {
-        if self.locked {
+        if *self.locked.borrow() {
             return Vec::new();
         }
         if self.surface.is_none() {
@@ -316,7 +338,15 @@ impl<S: Surface> Menu<S> {
                 }
                 Effect::Place(view) => self.with_surface(|surface| surface.place(view)),
                 Effect::Redraw(view) => self.with_surface(|surface| surface.redraw(view)),
-                Effect::Choose(entry) => (self.chooser)(&entry),
+                Effect::Choose(entry) => {
+                    if *self.locked.borrow() {
+                        tracing::debug!(
+                            "a radial entry was chosen as the computer locked: dropped"
+                        );
+                    } else {
+                        (self.chooser)(&entry);
+                    }
+                }
                 Effect::Close => self.with_surface(Surface::close),
             }
         }
@@ -380,14 +410,17 @@ mod tests {
         }
     }
 
-    fn menu(notes: &Notes, locked: bool, chosen: &Notes) -> Menu<Notes> {
+    /// A menu on `notes`, and what sets whether the computer is locked.
+    fn menu(notes: &Notes, locked: bool, chosen: &Notes) -> (Menu<Notes>, watch::Sender<bool>) {
         let chosen = chosen.clone();
-        Menu::new(
+        let (lock, locked) = watch::channel(locked);
+        let menu = Menu::new(
             &RadialMenuConfig::default_menu(),
             locked,
             Some(notes.clone()),
             Box::new(move |entry| chosen.push(&entry.module.to_string())),
-        )
+        );
+        (menu, lock)
     }
 
     fn at(menu: &Menu<Notes>, milliseconds: u64) -> Instant {
@@ -406,7 +439,7 @@ mod tests {
     #[test]
     fn a_press_opens_the_window_and_the_first_pointer_places_the_menu() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, false, &chosen);
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
         open(&mut menu);
         assert_eq!(notes.all(), ["open 4", "place"]);
     }
@@ -414,7 +447,7 @@ mod tests {
     #[test]
     fn held_long_enough_releasing_on_a_petal_chooses_and_closes() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, false, &chosen);
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
         open(&mut menu);
         menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
             990.0, 500.0,
@@ -427,7 +460,7 @@ mod tests {
     #[test]
     fn released_early_the_menu_stays_and_a_click_chooses() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, false, &chosen);
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
         open(&mut menu);
         menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
             900.0, 590.0,
@@ -442,7 +475,7 @@ mod tests {
     #[test]
     fn the_mouse_going_away_closes_the_menu_without_choosing() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, false, &chosen);
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
         open(&mut menu);
         menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
             990.0, 500.0,
@@ -455,7 +488,7 @@ mod tests {
     #[test]
     fn nothing_opens_while_the_computer_is_locked() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, true, &chosen);
+        let (mut menu, _lock) = menu(&notes, true, &chosen);
         menu.handle(Event::Press(at(&menu, 0)));
         assert_eq!(notes.all(), [] as [String; 0]);
     }
@@ -463,11 +496,13 @@ mod tests {
     #[test]
     fn a_lock_that_comes_while_the_menu_is_open_closes_it() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, false, &chosen);
+        let (mut menu, lock) = menu(&notes, false, &chosen);
         open(&mut menu);
+        lock.send_replace(true);
         menu.handle(Event::Locked(true));
         assert_eq!(notes.all().last().map(String::as_str), Some("close"));
         // Unlocked again, a press opens the menu again.
+        lock.send_replace(false);
         menu.handle(Event::Locked(false));
         menu.handle(Event::Press(at(&menu, 5000)));
         assert_eq!(notes.all().last().map(String::as_str), Some("open 4"));
@@ -477,9 +512,10 @@ mod tests {
     fn a_menu_without_a_window_stays_closed_and_says_so_once() {
         let chosen = Notes::default();
         let chosen_for_menu = chosen.clone();
+        let (_lock, locked) = watch::channel(false);
         let mut menu: Menu<Notes> = Menu::new(
             &RadialMenuConfig::default_menu(),
-            false,
+            locked,
             None,
             Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
         );
@@ -493,7 +529,7 @@ mod tests {
     #[test]
     fn the_configuration_that_comes_is_used_from_the_next_opening() {
         let (notes, chosen) = (Notes::default(), Notes::default());
-        let mut menu = menu(&notes, false, &chosen);
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
         let mut config = RadialMenuConfig::default_menu();
         config.entries[0].enabled = false;
         config.animate = false;
@@ -503,33 +539,82 @@ mod tests {
         assert_eq!(notes.all(), ["open 3"]);
     }
 
+    #[test]
+    fn a_click_queued_before_the_news_of_a_lock_chooses_nothing() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, lock) = menu(&notes, false, &chosen);
+        open(&mut menu);
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            990.0, 500.0,
+        ))));
+        menu.handle(Event::Release(at(&menu, 50)));
+        // The lock came, but its news is behind the click in the queue.
+        lock.send_replace(true);
+        menu.handle(Event::Window(WindowEvent::Click));
+        assert_eq!(chosen.all(), [] as [String; 0]);
+        assert_eq!(notes.all().last().map(String::as_str), Some("close"));
+    }
+
+    #[test]
+    fn a_press_queued_before_the_news_of_a_lock_opens_nothing() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, lock) = menu(&notes, false, &chosen);
+        lock.send_replace(true);
+        menu.handle(Event::Press(at(&menu, 0)));
+        assert_eq!(notes.all(), [] as [String; 0]);
+    }
+
+    #[test]
+    fn a_window_that_is_gone_ends_the_menu_and_nothing_is_chosen_blind() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
+        open(&mut menu);
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            990.0, 500.0,
+        ))));
+        menu.handle(Event::Release(at(&menu, 50)));
+        menu.handle(Event::Window(WindowEvent::Gone));
+        // What would have chosen petal 1 now finds no menu and no window.
+        menu.handle(Event::Press(at(&menu, 100)));
+        menu.handle(Event::Release(at(&menu, 900)));
+        menu.handle(Event::Window(WindowEvent::Click));
+        assert_eq!(chosen.all(), [] as [String; 0]);
+        assert!(!menu.controller.is_open());
+        assert!(menu.surface.is_none());
+    }
+
     #[tokio::test]
     async fn the_service_follows_the_button_the_lock_and_stops_with_its_window() {
         let notes = Notes::default();
         let (config_sender, config) = watch::channel(RadialMenuConfig::default_menu());
         let (lock_sender, locked) = watch::channel(false);
-        let (events, received) = mpsc::unbounded_channel();
+        let for_menu = notes.clone();
         let service = RadialService::start_on(
-            Some(notes.clone()),
+            move |_| Some(for_menu),
             config,
             locked,
             &tokio::runtime::Handle::current(),
-            events,
-            received,
         );
         let handle = service.handle();
-        handle.press();
-        lock_sender.send_replace(true);
-        config_sender.send_replace(RadialMenuConfig::default_menu());
-        // The lock closes the menu the press opened: wait for that.
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while notes.all().last().map(String::as_str) != Some("close") {
-                tokio::task::yield_now().await;
-                tokio::time::sleep(Duration::from_millis(1)).await;
+        let wait_for = |note: &'static str| {
+            let notes = notes.clone();
+            async move {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while notes.all().last().map(String::as_str) != Some(note) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                })
+                .await
+                .unwrap();
             }
-        })
-        .await
-        .unwrap();
+        };
+        handle.press();
+        wait_for("open 4").await;
+        // The lock closes the menu the press opened; the configuration that
+        // comes meanwhile is taken without harm.
+        config_sender.send_replace(RadialMenuConfig::default_menu());
+        lock_sender.send_replace(true);
+        wait_for("close").await;
         assert_eq!(notes.all().first().map(String::as_str), Some("open 4"));
         drop(service);
         handle.press();
