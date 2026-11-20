@@ -435,6 +435,78 @@ impl<C: Channel> MouseLink<C> {
         .map(|_| ())
     }
 
+    /// The flags byte of the high resolution wheel, as the device has it:
+    /// bit 1 high resolution, bit 2 natural scrolling, the others not ours.
+    ///
+    /// # Errors
+    /// [`HidppError`] when the device lacks the feature or does not answer.
+    pub fn hires_flags(&mut self) -> Result<u8, HidppError> {
+        let params = self.call(self.features.hires, "high resolution wheel", 1, &[])?;
+        params
+            .first()
+            .copied()
+            .ok_or_else(|| HidppError::Malformed("empty wheel flags".to_owned()))
+    }
+
+    /// Writes the flags byte of the high resolution wheel as it was read.
+    ///
+    /// # Errors
+    /// [`HidppError`] when the device lacks the feature or does not answer.
+    pub fn write_hires_flags(&mut self, flags: u8) -> Result<(), HidppError> {
+        self.call(self.features.hires, "high resolution wheel", 2, &[flags])
+            .map(|_| ())
+    }
+
+    /// The two flag bytes of the thumb wheel, as the device has them.
+    ///
+    /// # Errors
+    /// [`HidppError`] when the device lacks the feature or does not answer.
+    pub fn thumb_flags(&mut self) -> Result<[u8; 2], HidppError> {
+        let params = self.call(self.features.thumb, "thumb wheel", 1, &[])?;
+        let [first, second, ..] = params[..] else {
+            return Err(HidppError::Malformed("short thumb wheel flags".to_owned()));
+        };
+        Ok([first, second])
+    }
+
+    /// Writes the flag bytes of the thumb wheel as they were read.
+    ///
+    /// # Errors
+    /// [`HidppError`] when the device lacks the feature or does not answer.
+    pub fn write_thumb_flags(&mut self, flags: [u8; 2]) -> Result<(), HidppError> {
+        self.call(self.features.thumb, "thumb wheel", 2, &flags)
+            .map(|_| ())
+    }
+
+    /// Writes the wheel mode exactly as it was read, whatever the mouse had.
+    ///
+    /// # Errors
+    /// [`HidppError`] when the device lacks the feature or does not answer.
+    pub fn write_wheel(&mut self, state: WheelState) -> Result<(), HidppError> {
+        self.call(
+            self.features.wheel,
+            "wheel mode",
+            2,
+            &[state.mode, state.auto_disengage, state.torque],
+        )
+        .map(|_| ())
+    }
+
+    /// Writes a sensitivity the mouse reported itself, which may not be on the
+    /// contract's steps.
+    ///
+    /// # Errors
+    /// [`HidppError::InvalidArgument`] outside the contract's range, other
+    /// [`HidppError`] when the device lacks the feature or does not answer.
+    pub fn write_dpi(&mut self, dpi: u16) -> Result<(), HidppError> {
+        if !DPI_RANGE.contains(&dpi) {
+            return Err(HidppError::InvalidArgument(format!("{dpi} dpi")));
+        }
+        let [hi, lo] = dpi.to_be_bytes();
+        self.call(self.features.dpi, "adjustable sensitivity", 3, &[0, hi, lo])
+            .map(|_| ())
+    }
+
     /// Sets high resolution and natural scrolling (`invert`), leaving every
     /// other bit of the byte as the device has it.
     ///

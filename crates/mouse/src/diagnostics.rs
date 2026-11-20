@@ -136,6 +136,19 @@ fn info<C: Channel>(link: &mut MouseLink<C>, out: &mut impl Write) -> Result<(),
         "  wheel: mode {} (1 free, 2 ratchet), auto-disengage {} (255 never), torque {}",
         wheel.mode, wheel.auto_disengage, wheel.torque
     )?;
+    match link.hires_flags() {
+        Ok(flags) => writeln!(
+            out,
+            "  wheel flags: 0x{flags:02X} (bit 1 high resolution, bit 2 natural scrolling)"
+        )?,
+        Err(HidppError::Unsupported(_)) => {}
+        Err(error) => return Err(error.into()),
+    }
+    match link.thumb_flags() {
+        Ok([first, second]) => writeln!(out, "  thumb wheel flags: 0x{first:02X} 0x{second:02X}")?,
+        Err(HidppError::Unsupported(_)) => {}
+        Err(error) => return Err(error.into()),
+    }
     if link.has_haptics() {
         let haptic = link.haptic_state()?;
         writeln!(
@@ -340,6 +353,8 @@ mod tests {
             "battery: Some(82)",
             "sensitivity: 1600 dpi",
             "wheel: mode 2",
+            "wheel flags: 0x03",
+            "thumb wheel flags: 0x00 0x00",
             "haptics: on, level 75",
             "waveforms: SharpStateChange",
             "WhisperCollision",
