@@ -188,7 +188,17 @@ pub fn scan_interface<C: Channel>(hidpp: &mut Hidpp<C>) -> Vec<DeviceReport> {
 
 /// Pings the device at `device`, retrying while it stays silent.
 pub(crate) fn ping<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Result<(u8, u8), Miss> {
-    for _ in 0..PING_ATTEMPTS {
+    ping_attempts(hidpp, device, PING_ATTEMPTS)
+}
+
+/// Pings the device at `device`, retrying at most `attempts` times while it
+/// stays silent.
+pub(crate) fn ping_attempts<C: Channel>(
+    hidpp: &mut Hidpp<C>,
+    device: u8,
+    attempts: u32,
+) -> Result<(u8, u8), Miss> {
+    for _ in 0..attempts {
         match hidpp.request(device, 0, 1, &[0, 0, PING_ECHO]) {
             Ok(params) => {
                 return match params[..] {
@@ -201,9 +211,7 @@ pub(crate) fn ping<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Result<(u8, 
             Err(other) => return Err(Miss::Interface(other.to_string())),
         }
     }
-    Err(Miss::Silent {
-        attempts: PING_ATTEMPTS,
-    })
+    Err(Miss::Silent { attempts })
 }
 
 /// Inventories the device at `device`, or says why nothing was found there.

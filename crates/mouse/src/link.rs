@@ -16,14 +16,14 @@ use hubergamof_protocol::{
     WHEEL_THRESHOLD_RANGE, WheelMode,
 };
 
-use crate::channel::{Channel, Hidpp, HidppError};
+use crate::channel::{Channel, ChannelError, Hidpp, HidppError};
 use crate::controls::{cid, control_of, identify, is_locked_cid};
 use crate::features::{
     ADJUSTABLE_DPI, DEVICE_FIRMWARE, DEVICE_NAME, HAPTIC, HIRES_WHEEL, REPROG_CONTROLS_V4,
     SMART_SHIFT_ENHANCED, THUMB_WHEEL, UNIFIED_BATTERY,
 };
 use crate::frame::Notification;
-use crate::probe::read_name;
+use crate::probe::{Miss, ping_attempts, read_name};
 
 /// How many control ids a diverted-button notification carries.
 const DIVERTED_SLOTS: usize = 4;
@@ -42,6 +42,10 @@ const HAPTIC_MAX_LEVEL: u8 = 100;
 const HIRES_OWNED: u8 = 0x06;
 /// Bit of the second thumb wheel byte that is ours: invert.
 const THUMB_INVERT_BIT: u8 = 0x01;
+
+/// How many times [`MouseLink::wake`] asks: long enough for a sleeping mouse,
+/// short enough not to hold up the stop for one that is gone.
+const WAKE_ATTEMPTS: u32 = 3;
 
 /// Unit id of a device: four bytes that tell two mice of one model apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -461,6 +465,21 @@ impl<C: Channel> MouseLink<C> {
         let second = (second & !THUMB_INVERT_BIT) | if invert { THUMB_INVERT_BIT } else { 0 };
         self.call(self.features.thumb, "thumb wheel", 2, &[first, second])
             .map(|_| ())
+    }
+
+    /// Wakes the mouse if it sleeps: a mouse that has been idle takes a moment
+    /// to answer its first request, which a plain request would give up on.
+    /// Asks up to [`WAKE_ATTEMPTS`] times; the mouse may still not answer.
+    ///
+    /// # Errors
+    /// [`HidppError::Timeout`] when it stays silent, [`HidppError::Channel`]
+    /// when the interface fails.
+    pub fn wake(&mut self) -> Result<(), HidppError> {
+        match ping_attempts(&mut self.hidpp, self.device, WAKE_ATTEMPTS) {
+            Ok(_) => Ok(()),
+            Err(Miss::Silent { .. }) => Err(HidppError::Timeout(crate::channel::ANSWER_TIMEOUT)),
+            Err(other) => Err(HidppError::Channel(ChannelError(format!("{other:?}")))),
+        }
     }
 
     /// The mouse's own id of a control, `None` for one that is not a button of

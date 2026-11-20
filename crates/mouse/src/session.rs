@@ -101,6 +101,9 @@ impl<C: Channel> MouseSession<C> {
                 self.link.model()
             )));
         }
+        // A mouse idle for a while answers late: wake it, or the first
+        // request would end the service.
+        let _ = self.link.wake();
         let mut problems = Vec::new();
         let mut attempt = |setting: &'static str, result: Result<(), HidppError>| match result {
             Ok(()) | Err(HidppError::Unsupported(_)) => Ok(()),
@@ -240,6 +243,9 @@ impl<C: Channel> MouseSession<C> {
     /// # Errors
     /// The first [`HidppError`] met.
     pub fn give_back(&mut self) -> Result<(), HidppError> {
+        // Asleep, a mouse does not answer the first requests and its buttons
+        // would stay as they are: wake it first.
+        let _ = self.link.wake();
         let result = self.link.release_buttons();
         // A mouse that does not answer will not at the drop either; one that
         // refused something might.
@@ -256,7 +262,7 @@ impl<C: Channel> Drop for MouseSession<C> {
             // Nothing to do with a failure: a mouse that is gone cannot be asked,
             // and is expected to forget them when it reconnects (to be checked
             // on the hardware, docs/mouse-hidpp.md).
-            let _ = self.link.release_buttons();
+            let _ = self.give_back();
         }
     }
 }
@@ -692,7 +698,8 @@ mod tests {
             session.apply(&config()),
             Err(HidppError::Timeout(_))
         ));
-        assert_eq!(shared.0.borrow().written().len(), written + 1);
+        // The attempts to wake it, then the first request, which ends it.
+        assert_eq!(shared.0.borrow().written().len(), written + 3 + 1);
     }
 
     #[test]
@@ -831,5 +838,48 @@ mod tests {
         let written = shared.0.borrow().written().len();
         drop(session);
         assert_eq!(shared.0.borrow().written().len(), written);
+    }
+
+    #[test]
+    fn a_sleeping_mouse_is_woken_before_its_buttons_are_given_back() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        session.apply(&config()).unwrap();
+        assert_eq!(diverted(&shared), 1);
+        // Two requests go unanswered while the mouse wakes up.
+        shared.0.borrow_mut().sleep_for(2);
+        session.give_back().unwrap();
+        assert_eq!(diverted(&shared), 0);
+    }
+
+    #[test]
+    fn a_sleeping_mouse_is_woken_before_a_configuration_is_applied() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        shared.0.borrow_mut().sleep_for(2);
+        let problems = session.apply(&config()).unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(diverted(&shared), 1);
+    }
+
+    #[test]
+    fn dropping_the_session_of_a_sleeping_mouse_still_gives_the_buttons_back() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        session.apply(&config()).unwrap();
+        shared.0.borrow_mut().sleep_for(2);
+        drop(session);
+        assert_eq!(diverted(&shared), 0);
+    }
+
+    #[test]
+    fn a_mouse_that_never_answers_is_given_up_after_a_few_attempts() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        session.apply(&config()).unwrap();
+        shared.0.borrow_mut().fall_silent();
+        let written = shared.0.borrow().written().len();
+        assert!(matches!(session.give_back(), Err(HidppError::Timeout(_))));
+        let attempts = shared.0.borrow().written().len() - written;
+        assert!(
+            attempts < 3 + 20,
+            "a gone mouse is not asked for every button for long: {attempts}"
+        );
     }
 }
