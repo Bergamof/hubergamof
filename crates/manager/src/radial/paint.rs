@@ -46,6 +46,13 @@ pub struct Palette {
     pub text: Rgba<u8>,
 }
 
+/// The colours of the design: tea green petals, bergamot for the one lit.
+pub const DEFAULT_PALETTE: Palette = Palette {
+    petal: Rgba([0x1f, 0x33, 0x2c, 0xe6]),
+    lit: Rgba([0xd9, 0xa4, 0x2b, 0xf2]),
+    text: Rgba([0xff, 0xff, 0xff, 0xff]),
+};
+
 /// Side of the image that holds a menu of `layout`, in pixels.
 #[must_use]
 pub fn image_side(layout: &Layout) -> u32 {

@@ -53,9 +53,9 @@ futures-util.workspace = true
 # elgato-streamdeck enables it and hidapi accepts exactly one Linux backend.
 hidapi.workspace = true
 image.workspace = true
+input-linux.workspace = true
 # Local time in the system time zone (`/etc/localtime`, system tzdb), for the
 # clock of the touch strip.
-input-linux.workspace = true
 jiff = "0.2.38"
 libc.workspace = true
 lru = "0.19.0"
@@ -70,6 +70,7 @@ rust-embed = { version = "8.13.0", features = ["include-exclude"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.1"
+smithay-client-toolkit.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }

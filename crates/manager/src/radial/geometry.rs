@@ -43,6 +43,14 @@ pub struct Ring {
     pub gap: f64,
 }
 
+/// The ring of the menu as it is drawn: 150 px from the middle to the edge, a
+/// hole of 44 px, 8 px between two petals.
+pub const DEFAULT_RING: Ring = Ring {
+    inner: 44.0,
+    outer: 150.0,
+    gap: 8.0,
+};
+
 /// The petals of a menu with `count` entries, the first one centred on the top
 /// and the others following clockwise.
 #[derive(Debug, Clone, Copy, PartialEq)]
