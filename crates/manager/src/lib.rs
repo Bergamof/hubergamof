@@ -30,6 +30,7 @@ pub mod config_store;
 pub mod device;
 pub mod engine;
 pub mod file_chooser;
+pub mod haptics;
 pub mod input;
 pub mod launcher;
 pub mod mouse_actions;

@@ -156,6 +156,7 @@ impl Devices {
             wall_clock: Arc::new(FixedClock::default()),
             system: Arc::new(SimulatedProbe::default()),
             screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
+            haptics: Arc::new(hubergamof_manager::haptics::NoHaptics),
         };
         let catalog = module_catalog(&registry, &services.renderer);
         let store = services.store.clone();

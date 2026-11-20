@@ -24,6 +24,7 @@ use hubergamof_module_api::{
     Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor, Rgb,
     ScreenLockState,
 };
+use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
 use tokio::sync::watch;
 
@@ -176,6 +177,11 @@ const RADIAL_MUTE: &str = "mute";
 const RADIAL_CAMERA: &str = "camera";
 const RADIAL_HANG_UP: &str = "hang-up";
 
+/// Haptic events of the module.
+const HAPTIC_INCOMING_CALL: &str = "incoming-call";
+const HAPTIC_MEETING_SOON: &str = "meeting-soon";
+const HAPTIC_NEW_MESSAGE: &str = "new-message";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: TEAMS_KIND.into(),
@@ -197,6 +203,29 @@ fn descriptor() -> ModuleDescriptor {
 impl ModuleFactory for TeamsFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn haptic_events(&self) -> Vec<HapticEventDescriptor> {
+        vec![
+            HapticEventDescriptor::new(
+                HAPTIC_INCOMING_CALL,
+                "Appel entrant",
+                "Un appel Teams sonne.",
+                HapticWaveform::Ringing,
+            ),
+            HapticEventDescriptor::new(
+                HAPTIC_MEETING_SOON,
+                "Réunion qui approche",
+                "Le rappel d'une réunion arrive.",
+                HapticWaveform::Jingle,
+            ),
+            HapticEventDescriptor::new(
+                HAPTIC_NEW_MESSAGE,
+                "Nouveau message",
+                "Le nombre de non lus augmente.",
+                HapticWaveform::Knock,
+            ),
+        ]
     }
 
     fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
@@ -251,6 +280,7 @@ impl ModuleFactory for TeamsFactory {
             lead,
             call_announced: false,
             ringing_announced: false,
+            unread_seen: 0,
         }))
     }
 }
@@ -270,6 +300,9 @@ pub(crate) struct Teams {
     call_announced: bool,
     /// The ringing call was announced on the strip.
     ringing_announced: bool,
+    /// The number of unread conversations at the last change, to tell when
+    /// it grows.
+    unread_seen: u32,
 }
 
 /// A key of the call page.
@@ -662,20 +695,32 @@ impl Module for Teams {
         if let Some(meeting) = event.downcast_ref::<MeetingSoon>() {
             let notification = Notification::new(meeting.message.clone(), MEETING_BACKGROUND)
                 .with_timeout(MEETING_NOTICE);
-            return vec![Command::Notify(notification)];
+            return vec![
+                Command::Notify(notification),
+                Command::haptic(HAPTIC_MEETING_SOON),
+            ];
         }
         if !event.is::<TeamsChanged>() {
             return Vec::new();
         }
-        let (phase, caller) = {
+        let (phase, caller, unread) = {
             let state = self.changes.borrow();
-            (state.call.phase, state.call.caller.clone())
+            (
+                state.call.phase,
+                state.call.caller.clone(),
+                state.total_unread(),
+            )
         };
         let mut commands = Vec::new();
         let ringing = phase == CallPhase::Ringing;
         if ringing && !self.ringing_announced {
             commands.push(Command::Notify(call_notification(caller.as_deref())));
+            commands.push(Command::haptic(HAPTIC_INCOMING_CALL));
         }
+        if unread > self.unread_seen {
+            commands.push(Command::haptic(HAPTIC_NEW_MESSAGE));
+        }
+        self.unread_seen = unread;
         self.ringing_announced = ringing;
         let active = phase.is_active();
         let call_starts = active && !self.call_announced;

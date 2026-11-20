@@ -72,6 +72,8 @@ pub struct EngineServices {
     pub system: Arc<dyn SystemProbe>,
     /// Whether the computer is locked.
     pub screen_lock: Arc<dyn ScreenLock>,
+    /// Where the haptic events of the modules go.
+    pub haptics: Arc<dyn crate::haptics::HapticOutput>,
 }
 
 /// Failure of an engine operation.

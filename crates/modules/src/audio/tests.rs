@@ -674,12 +674,18 @@ async fn a_missing_or_old_pactl_shows_no_widget_and_recovers() {
 #[tokio::test(start_paused = true)]
 async fn the_radial_actions_mute_the_default_microphone_and_the_default_output() {
     let mut harness = Harness::start(&json!({})).await;
-    assert_eq!(harness.module.on_radial_action("mute-microphone").await, []);
+    assert_eq!(
+        harness.module.on_radial_action("mute-microphone").await,
+        [Command::haptic("mute-changed")]
+    );
     harness.settle().await;
     assert!(harness.audio.state().sources[0].muted);
     assert!(!harness.speakers().muted, "the output is left alone");
 
-    assert_eq!(harness.module.on_radial_action("mute-speakers").await, []);
+    assert_eq!(
+        harness.module.on_radial_action("mute-speakers").await,
+        [Command::haptic("mute-changed")]
+    );
     harness.settle().await;
     assert!(harness.speakers().muted);
 
@@ -698,4 +704,20 @@ async fn an_unknown_radial_action_mutes_nothing() {
     harness.settle().await;
     assert!(!harness.audio.state().sources[0].muted);
     assert!(!harness.speakers().muted);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_mouse_is_not_signalled_when_there_is_nothing_to_mute() {
+    let mut harness = Harness::on(SimulatedAudio::new(AudioSnapshot::default()), &json!({})).await;
+    assert_eq!(
+        harness.module.on_radial_action("mute-microphone").await,
+        Command::alert()
+    );
+}
+
+#[test]
+fn the_module_declares_the_event_it_raises() {
+    let events = AudioFactory::new(Arc::new(SimulatedAudio::demo()) as _).haptic_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].id, "mute-changed");
 }

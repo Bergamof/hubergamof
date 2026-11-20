@@ -105,6 +105,24 @@ pub(super) struct Probe {
     pub(super) checked: Arc<Mutex<Vec<usize>>>,
     /// Radial actions that reached list instances, in order.
     pub(super) radial_actions: Arc<Mutex<Vec<String>>>,
+    /// Haptic events the engines raised, in order.
+    pub(super) haptics: RecordedHaptics,
+}
+
+/// A haptic output that notes what it is given.
+#[derive(Clone, Default)]
+pub(super) struct RecordedHaptics(Arc<Mutex<Vec<crate::haptics::HapticPlay>>>);
+
+impl RecordedHaptics {
+    pub(super) fn played(&self) -> Vec<crate::haptics::HapticPlay> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl crate::haptics::HapticOutput for RecordedHaptics {
+    fn play(&self, play: &crate::haptics::HapticPlay) {
+        self.0.lock().unwrap().push(play.clone());
+    }
 }
 
 /// Wall clock a test sets.
@@ -223,7 +241,11 @@ impl Module for List {
             .lock()
             .unwrap()
             .push(action.to_owned());
-        Vec::new()
+        match action {
+            "haptic" => vec![Command::haptic("ping")],
+            "haptic-undeclared" => vec![Command::haptic("nope")],
+            _ => Vec::new(),
+        }
     }
 
     fn page(&self, page: &PageId) -> Option<PageContent> {
@@ -299,6 +321,15 @@ impl Module for List {
 struct ListFactory(Probe);
 
 impl ModuleFactory for ListFactory {
+    fn haptic_events(&self) -> Vec<hubergamof_module_api::HapticEventDescriptor> {
+        vec![hubergamof_module_api::HapticEventDescriptor::new(
+            "ping",
+            "Ping",
+            "Raised by the tests.",
+            hubergamof_module_api::HapticWaveform::Knock,
+        )]
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor {
             kind: LIST_KIND.into(),
@@ -715,6 +746,7 @@ pub(super) fn services(dir: &TempDir, probe: &Probe) -> EngineServices {
             inner: SimulatedProbe::demo(),
         }),
         screen_lock: Arc::new(probe.screen_lock.clone()),
+        haptics: Arc::new(probe.haptics.clone()),
     }
 }
 

@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use hubergamof_protocol::{
-    DPI_RANGE, DPI_STEP, HapticLevel, MouseConfig, MouseControlId, MouseModel, PointerSettings,
-    ThumbWheelSettings, WHEEL_THRESHOLD_RANGE, WheelMode, WheelSettings,
+    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseConfig, MouseControlId, MouseModel,
+    PointerSettings, ThumbWheelSettings, WHEEL_THRESHOLD_RANGE, WheelMode, WheelSettings,
 };
 
 use crate::channel::{Channel, HidppError};
@@ -46,6 +46,8 @@ pub enum Request {
     Apply(MouseConfig),
     /// Switch the wheel between ratchet and free spin.
     ToggleWheelMode,
+    /// Play a waveform on the haptic panel, at the strength configured.
+    PlayHaptic(HapticWaveform),
 }
 
 /// How long [`MouseSession::serve`] waits for the buttons before looking at
@@ -488,6 +490,10 @@ impl<C: Channel> MouseSession<C> {
                     self.toggle_wheel_mode(notify)?;
                     None
                 }
+                Some(Request::PlayHaptic(waveform)) => {
+                    self.play_haptic(waveform, notify)?;
+                    None
+                }
                 None => self.pending.take(),
             };
             if let Some(update) = update {
@@ -501,6 +507,27 @@ impl<C: Channel> MouseSession<C> {
             }
         }
         Ok(())
+    }
+
+    /// Plays `waveform`. What the mouse refuses (a waveform it does not have,
+    /// a panel it does not answer for) is reported; only a mouse that stops
+    /// answering ends the service.
+    fn play_haptic(
+        &mut self,
+        waveform: HapticWaveform,
+        notify: &mut impl FnMut(Notice),
+    ) -> Result<(), HidppError> {
+        match self.link.play_haptic(waveform) {
+            Ok(()) => Ok(()),
+            Err(error) if is_fatal(&error) => Err(error),
+            Err(error) => {
+                notify(Notice::Problem(ApplyProblem {
+                    setting: "haptic",
+                    error,
+                }));
+                Ok(())
+            }
+        }
     }
 
     /// Switches the wheel between ratchet and free spin, as it is now (a
@@ -1743,6 +1770,64 @@ mod tests {
             .unwrap();
         // The configuration put its threshold (20); the torque is the mouse's.
         assert_eq!(during, Some([1, 20, 33]));
+    }
+
+    /// Serves `device` for two turns, the first returning `request`; the
+    /// problems reported, and the ids of the waveforms the mouse played.
+    fn serve_one_request(device: FakeDevice, request: &Request) -> (Vec<&'static str>, Vec<u8>) {
+        let (mut session, shared) = shared_session(device);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut problems = Vec::new();
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                || {
+                    turn.set(turn.get() + 1);
+                    if turn.get() == 1 {
+                        Some(request.clone())
+                    } else {
+                        stop.store(true, Ordering::Relaxed);
+                        None
+                    }
+                },
+                |notice| {
+                    if let Notice::Problem(problem) = notice {
+                        problems.push(problem.setting);
+                    }
+                },
+            )
+            .unwrap();
+        let played = shared
+            .0
+            .borrow()
+            .device_at(DEVICE)
+            .unwrap()
+            .state
+            .played
+            .clone();
+        (problems, played)
+    }
+
+    #[test]
+    fn a_waveform_asked_for_is_played_on_the_mouse() {
+        let (problems, played) = serve_one_request(
+            FakeDevice::mx_master_4(),
+            &Request::PlayHaptic(HapticWaveform::Knock),
+        );
+        assert_eq!(problems, [] as [&str; 0]);
+        assert_eq!(played, [0x0C]);
+    }
+
+    #[test]
+    fn a_waveform_the_mouse_does_not_have_is_reported_and_the_service_goes_on() {
+        let mut device = FakeDevice::mx_master_4();
+        device.state.haptic_mask = 0x0000_0001;
+        let (problems, played) =
+            serve_one_request(device, &Request::PlayHaptic(HapticWaveform::Knock));
+        assert_eq!(problems, ["haptic"]);
+        assert_eq!(played, [] as [u8; 0]);
     }
 
     #[test]

@@ -650,9 +650,21 @@ fn strip_notifications(pomodoro: &Harness) -> Vec<StripNotification> {
     pomodoro
         .commands
         .iter()
+        .filter(|command| !matches!(command, Command::Haptic(_)))
         .map(|command| match command {
             Command::Notify(notification) => notification.clone(),
             other => panic!("unexpected command {other:?}"),
+        })
+        .collect()
+}
+
+fn haptic_events(pomodoro: &Harness) -> Vec<&str> {
+    pomodoro
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Haptic(event) => Some(event.as_str()),
+            _ => None,
         })
         .collect()
 }
@@ -686,7 +698,7 @@ async fn the_strip_notification_can_be_disabled_but_not_the_desktop_one() {
     let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "notificationEnabled": false }));
     pomodoro.module.on_key_press().await;
     pomodoro.run_for(MINUTE).await;
-    assert_eq!(pomodoro.commands, []);
+    assert_eq!(strip_notifications(&pomodoro), []);
     assert_eq!(pomodoro.notifier.sent().len(), 1);
 }
 
@@ -819,4 +831,28 @@ async fn a_radial_action_closes_the_menu_it_replaces() {
     assert!(pomodoro.popup().is_some());
     pomodoro.module.on_radial_action("toggle").await;
     assert!(pomodoro.popup().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_end_of_a_step_raises_the_haptic_event_even_without_a_strip_notification() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 1, "notificationEnabled": false }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(haptic_events(&pomodoro), ["step-end"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_signalled_while_the_step_runs() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 2 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(haptic_events(&pomodoro), [] as [&str; 0]);
+}
+
+#[test]
+fn the_module_declares_the_event_it_raises() {
+    let events = simple_factory().haptic_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].id, "step-end");
+    assert_eq!(events[0].waveform, HapticWaveform::Completed);
 }

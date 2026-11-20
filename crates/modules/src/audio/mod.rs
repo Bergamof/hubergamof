@@ -26,6 +26,7 @@ use hubergamof_module_api::{
     ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId, PageItem,
     RadialActionDescriptor, SettingField, SettingKind, StripWidget, VolumeWidget,
 };
+use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -113,6 +114,9 @@ impl std::fmt::Debug for AudioFactory {
 const RADIAL_MUTE_MICROPHONE: &str = "mute-microphone";
 const RADIAL_MUTE_SPEAKERS: &str = "mute-speakers";
 
+/// Haptic event raised when a mute is switched from the radial menu.
+const HAPTIC_MUTE_CHANGED: &str = "mute-changed";
+
 fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: AUDIO_KIND.into(),
@@ -152,6 +156,15 @@ fn descriptor() -> ModuleDescriptor {
 impl ModuleFactory for AudioFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    fn haptic_events(&self) -> Vec<HapticEventDescriptor> {
+        vec![HapticEventDescriptor::new(
+            HAPTIC_MUTE_CHANGED,
+            "Son ou micro coupé",
+            "Le micro ou le son est coupé ou rétabli depuis le menu circulaire.",
+            HapticWaveform::SharpStateChange,
+        )]
     }
 
     fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
@@ -478,7 +491,12 @@ impl Module for Audio {
             RADIAL_MUTE_SPEAKERS => Direction::Output,
             _ => return Vec::new(),
         };
-        self.toggle_mute(direction, ModuleSurface::HomeKey)
+        let mut commands = self.toggle_mute(direction, ModuleSurface::HomeKey);
+        // The mouse confirms what the hand did, unless it did not happen.
+        if commands != Command::alert() {
+            commands.push(Command::haptic(HAPTIC_MUTE_CHANGED));
+        }
+        commands
     }
 
     async fn on_dial_rotate(&mut self, function: &DialFunctionId, ticks: i32) -> Vec<Command> {

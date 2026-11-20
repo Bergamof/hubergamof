@@ -202,6 +202,27 @@ impl Instances {
             .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
     }
 
+    /// What the haptic event `event` of instance `id` is, when its module
+    /// declares such an event.
+    pub(crate) fn haptic_play(
+        &self,
+        id: &ModuleInstanceId,
+        event: &str,
+    ) -> Option<crate::haptics::HapticPlay> {
+        let instance = self.live.get(id)?;
+        let declared = self
+            .registry
+            .get(&instance.kind)?
+            .haptic_events()
+            .into_iter()
+            .find(|declared| declared.id == event)?;
+        Some(crate::haptics::HapticPlay {
+            module: instance.kind.clone(),
+            event: declared.id,
+            waveform: declared.waveform,
+        })
+    }
+
     /// Whether the pages of instance `id` may declare what stays usable
     /// while the computer is locked: its module declares it. An unknown
     /// instance does not.

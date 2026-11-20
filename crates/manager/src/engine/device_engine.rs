@@ -753,11 +753,22 @@ impl DeviceEngine {
                 Command::ShowNotification(id) => {
                     self.notifications.show_again(id, Instant::now());
                 }
+                Command::Haptic(event) => self.play_haptic(source, &event),
                 // Commands added to the API after this version of the host.
                 unknown => {
                     tracing::warn!(module = %source, command = ?unknown, "unsupported command");
                 }
             }
+        }
+    }
+
+    /// Signals a haptic event of `source` on the mice, if its module declares
+    /// it: an event it does not is dropped (and said).
+    fn play_haptic(&self, source: &ModuleInstanceId, event: &str) {
+        if let Some(play) = self.instances.haptic_play(source, event) {
+            self.services.haptics.play(&play);
+        } else {
+            tracing::warn!(module = %source, event, "undeclared haptic event dropped");
         }
     }
 

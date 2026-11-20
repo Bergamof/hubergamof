@@ -788,6 +788,7 @@ async fn a_meeting_is_announced_on_the_strip_when_it_comes_within_the_lead_time(
     let notification = notification(&commands).expect("a reminder");
     assert_eq!(notification.message, "Réunion dans 5 min : Point d'équipe");
     assert!(notification.timeout.is_some());
+    assert!(commands.contains(&Command::haptic("meeting-soon")));
 }
 
 #[tokio::test(start_paused = true)]
@@ -1122,4 +1123,50 @@ async fn a_radial_action_without_an_extension_alerts() {
         harness.module.on_radial_action("mute").await,
         Command::alert()
     );
+}
+
+#[test]
+fn the_module_declares_the_events_it_raises() {
+    let ids: Vec<String> = TeamsFactory::new(Arc::new(SimulatedBridge::new()), hub())
+        .haptic_events()
+        .into_iter()
+        .map(|event| event.id)
+        .collect();
+    assert_eq!(ids, ["incoming-call", "meeting-soon", "new-message"]);
+}
+
+#[tokio::test]
+async fn a_call_that_starts_ringing_raises_the_haptic_event_once() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    let ringing = BrowserReport::Call {
+        phase: CallPhase::Ringing,
+        muted: None,
+        camera_on: None,
+        caller: Some("Camille".into()),
+    };
+    let commands = harness.report(ringing).await;
+    assert!(commands.contains(&Command::haptic("incoming-call")));
+    // The same call, still ringing, reported with a change: not rung again.
+    let again = harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: Some("Camille D.".into()),
+        })
+        .await;
+    assert!(!again.contains(&Command::haptic("incoming-call")));
+}
+
+#[tokio::test]
+async fn the_unread_count_growing_raises_the_haptic_event_and_shrinking_does_not() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    let first = harness.report(BrowserReport::Unread { count: 2 }).await;
+    assert!(first.contains(&Command::haptic("new-message")));
+    let grown = harness.report(BrowserReport::Unread { count: 3 }).await;
+    assert!(grown.contains(&Command::haptic("new-message")));
+    let read = harness.report(BrowserReport::Unread { count: 1 }).await;
+    assert!(!read.contains(&Command::haptic("new-message")));
+    let none = harness.report(BrowserReport::Unread { count: 0 }).await;
+    assert!(!none.contains(&Command::haptic("new-message")));
 }

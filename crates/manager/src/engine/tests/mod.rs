@@ -1,4 +1,5 @@
 mod context;
+mod haptics;
 mod lock;
 mod modules;
 mod notifications;

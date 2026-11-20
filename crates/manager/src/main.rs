@@ -20,6 +20,7 @@ use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virt
 use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
+use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
@@ -552,20 +553,16 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let mut hangup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
     let (shutdown, stopping) = watch::channel(false);
 
-    let services = services(
-        &cli.config_dir,
-        builtin_services(cli.demo),
-        system_probe(cli.demo),
-        screen_lock(cli.demo),
-    )?;
+    // The mice, started after the devices, play their haptic events.
+    let haptics = Arc::new(HapticRelay::new());
+    let services = real_services(&cli, Arc::clone(&haptics) as Arc<dyn HapticOutput>)?;
     let catalog = catalog_of(&services).await?;
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
     let discovery = DeviceDiscovery::new();
-    // The mice run the actions of the modules of the devices: the engines are
-    // known to the menu before the supervisor starts them.
+    // The menu runs actions on the engines, known before they start.
     let engines = EngineRegistry::default();
-    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines)?;
+    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines, &haptics)?;
     let supervisor = Supervisor::start_in(&discovery, services, engines);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -649,9 +646,12 @@ fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
     engines: &EngineRegistry,
+    haptics: &HapticRelay,
 ) -> Result<(MouseHub, Option<MiceService>)> {
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
     let service = serves_mice(cli).then(|| {
+        // The events of the modules are played on the mice from now on.
+        haptics.connect(Arc::new(hub.clone()));
         let locked = services.screen_lock.watch();
         let actions = ButtonActions::uinput(locked.clone());
         let menu = RadialService::start(
@@ -886,11 +886,23 @@ async fn catalog_of(services: &EngineServices) -> Result<Arc<[CatalogModule]>> {
         .context("cannot build the module catalog")
 }
 
+/// The services of the engines for this run (simulated ones with `--demo`).
+fn real_services(cli: &Cli, haptics: Arc<dyn HapticOutput>) -> Result<EngineServices> {
+    services(
+        &cli.config_dir,
+        builtin_services(cli.demo),
+        system_probe(cli.demo),
+        screen_lock(cli.demo),
+        haptics,
+    )
+}
+
 fn services(
     config_dir: &std::path::Path,
     builtins: BuiltinServices,
     system: Arc<dyn SystemProbe>,
     screen_lock: Arc<dyn ScreenLock>,
+    haptics: Arc<dyn HapticOutput>,
 ) -> Result<EngineServices> {
     let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
@@ -900,6 +912,7 @@ fn services(
         wall_clock: Arc::new(SystemClock),
         system,
         screen_lock,
+        haptics,
     })
 }
 
@@ -1206,6 +1219,7 @@ mod tests {
                 builtin_services(true),
                 system_probe(true),
                 screen_lock(true),
+                Arc::new(hubergamof_manager::haptics::NoHaptics),
             )
             .unwrap(),
         );
