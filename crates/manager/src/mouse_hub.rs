@@ -41,7 +41,7 @@ impl HubError {
 struct Entry {
     id: u64,
     info: MouseInfo,
-    config: watch::Sender<MouseConfig>,
+    config: Arc<watch::Sender<MouseConfig>>,
 }
 
 struct Shared {
@@ -103,7 +103,7 @@ impl MouseHub {
         entries.push(Entry {
             id,
             info,
-            config: sender,
+            config: Arc::new(sender),
         });
         self.publish_mice(&entries);
         drop(entries);
@@ -150,13 +150,33 @@ impl MouseHub {
             }
             .into());
         }
-        let entries = self.entries();
-        let entry = entries
-            .iter()
-            .find(|entry| entry.info.serial == serial)
-            .ok_or_else(|| HubError::UnknownMouse(serial.to_owned()))?;
+        // The lock is for the lookup only: the store has its own for the write,
+        // and the revisions order what is given to the followers.
+        let (sender, model) = {
+            let entries = self.entries();
+            let entry = entries
+                .iter()
+                .find(|entry| entry.info.serial == serial)
+                .ok_or_else(|| HubError::UnknownMouse(serial.to_owned()))?;
+            (Arc::clone(&entry.config), entry.info.model)
+        };
+        // The model of the mouse is what it is, whatever the client says: a
+        // configuration of another model would end its service.
+        if config.model != model {
+            return Err(ConfigStoreError::ModelMismatch {
+                expected: model,
+                found: config.model,
+            }
+            .into());
+        }
         let saved = self.shared.store.save_mouse(config)?;
-        entry.config.send_replace(saved.clone());
+        sender.send_if_modified(|current| {
+            let newer = saved.revision > current.revision;
+            if newer {
+                current.clone_from(&saved);
+            }
+            newer
+        });
         Ok(saved)
     }
 
@@ -175,9 +195,14 @@ impl MouseHub {
         &self,
         config: RadialMenuConfig,
     ) -> Result<RadialMenuConfig, ConfigStoreError> {
-        let _entries = self.entries();
         let saved = self.shared.store.save_radial_menu(config)?;
-        self.shared.radial.send_replace(saved.clone());
+        self.shared.radial.send_if_modified(|current| {
+            let newer = saved.revision > current.revision;
+            if newer {
+                current.clone_from(&saved);
+            }
+            newer
+        });
         Ok(saved)
     }
 }
@@ -301,6 +326,40 @@ mod tests {
         invalid.pointer.dpi = 225;
         let invalid = hub.update_mouse("aaaa0001", invalid).unwrap_err();
         assert_eq!(invalid.error_code(), ErrorCode::InvalidConfig);
+    }
+
+    #[test]
+    fn a_configuration_of_another_model_is_refused_and_changes_nothing() {
+        let (dir, hub) = hub();
+        let _registration = register(&hub, "aaaa0001");
+        let mut follower = hub.subscribe_config("aaaa0001").unwrap();
+        follower.borrow_and_update();
+        let other = MouseConfig::default_for("aaaa0001", MouseModel::MxAnywhere3S);
+        let refused = hub.update_mouse("aaaa0001", other).unwrap_err();
+        assert!(matches!(
+            refused,
+            HubError::Store(ConfigStoreError::ModelMismatch { .. })
+        ));
+        assert_eq!(refused.error_code(), ErrorCode::InvalidConfig);
+        assert!(!follower.has_changed().unwrap(), "nobody was told");
+        assert!(
+            !dir.path().join("devices/aaaa0001/mouse.json").exists(),
+            "nothing was written"
+        );
+    }
+
+    #[test]
+    fn successive_updates_leave_the_followers_on_the_highest_revision() {
+        let (_dir, hub) = hub();
+        let _registration = register(&hub, "aaaa0001");
+        let mut follower = hub.subscribe_config("aaaa0001").unwrap();
+        let mut current = config("aaaa0001");
+        for dpi in [1000, 1200, 1400] {
+            current.pointer.dpi = dpi;
+            current = hub.update_mouse("aaaa0001", current).unwrap();
+        }
+        let seen = follower.borrow_and_update().clone();
+        assert_eq!((seen.revision, seen.pointer.dpi), (3, 1400));
     }
 
     #[test]

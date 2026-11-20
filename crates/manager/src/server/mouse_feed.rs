@@ -71,7 +71,7 @@ impl MouseFeed {
         tokio::select! {
             Ok(()) = self.mice.changed() => Some(self.mice_message()),
             Ok(()) = self.radial.changed() => Some(self.radial_message()),
-            change = selected_change(&mut self.selected) => change,
+            change = selected_change(&self.hub, &mut self.selected) => change,
         }
     }
 
@@ -82,7 +82,7 @@ impl MouseFeed {
         let Some(mut config) = self.hub.subscribe_config(serial) else {
             return Err(Failure::of(
                 ErrorCode::UnknownDevice,
-                format!("no connected mouse {serial}"),
+                "no connected mouse with this serial",
             ));
         };
         let message = ServerMessage::MouseConfig {
@@ -110,24 +110,23 @@ impl MouseFeed {
                 .map_err(|error| (error.error_code(), error.to_string()))
         })
         .await?;
-        let mut answers = vec![ServerMessage::MouseConfig {
-            serial: saved.serial.clone(),
-            config: saved.clone(),
-        }];
-        if let Some(selected) = self
+        let serial = saved.serial.clone();
+        // Without a selection of this mouse, nothing overtook the update for
+        // this client.
+        let latest = self
             .selected
             .as_mut()
-            .filter(|selected| selected.serial == saved.serial)
-        {
-            let latest = selected.config.borrow_and_update().clone();
-            if latest != saved {
-                answers.push(ServerMessage::MouseConfig {
-                    serial: saved.serial,
-                    config: latest,
-                });
+            .filter(|selected| selected.serial == serial)
+            .map_or_else(
+                || saved.clone(),
+                |selected| selected.config.borrow_and_update().clone(),
+            );
+        Ok(answers(saved, latest, |config| {
+            ServerMessage::MouseConfig {
+                serial: serial.clone(),
+                config,
             }
-        }
-        Ok(answers)
+        }))
     }
 
     /// Saves the radial menu, like [`MouseFeed::update_mouse`].
@@ -141,31 +140,47 @@ impl MouseFeed {
                 .map_err(|error| (error.error_code(), error.to_string()))
         })
         .await?;
-        let mut answers = vec![ServerMessage::RadialMenu {
-            config: saved.clone(),
-        }];
         let latest = self.radial.borrow_and_update().clone();
-        if latest != saved {
-            answers.push(ServerMessage::RadialMenu { config: latest });
-        }
-        Ok(answers)
+        Ok(answers(saved, latest, |config| ServerMessage::RadialMenu {
+            config,
+        }))
     }
 }
 
 /// The next configuration of the selected mouse; the selection ends with the
 /// mouse. Never ready without a selection.
-async fn selected_change(selected: &mut Option<Selected>) -> Option<ServerMessage> {
+///
+/// A mouse registered again under its serial (it came back before the old
+/// entry was released) is followed again, and its configuration sent.
+async fn selected_change(hub: &MouseHub, selected: &mut Option<Selected>) -> Option<ServerMessage> {
     let Some(current) = selected else {
         return std::future::pending().await;
     };
     if current.config.changed().await.is_err() {
-        *selected = None;
-        return None;
+        let Some(config) = hub.subscribe_config(&current.serial) else {
+            *selected = None;
+            return None;
+        };
+        current.config = config;
     }
     Some(ServerMessage::MouseConfig {
         serial: current.serial.clone(),
         config: current.config.borrow_and_update().clone(),
     })
+}
+
+/// What the author of an update is told: the configuration saved, and the
+/// latest one when another update overtook it before the answer was sent.
+fn answers<T: PartialEq>(
+    saved: T,
+    latest: T,
+    message: impl Fn(T) -> ServerMessage,
+) -> Vec<ServerMessage> {
+    if latest == saved {
+        vec![message(saved)]
+    } else {
+        vec![message(saved), message(latest)]
+    }
 }
 
 /// Runs a store operation off the async threads.
@@ -217,7 +232,7 @@ mod tests {
             .is_err()
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_new_client_gets_the_mice_and_the_menu_then_every_change() {
         let (_dir, hub) = hub();
         let mut feed = MouseFeed::new(&hub);
@@ -237,7 +252,7 @@ mod tests {
         assert_eq!(mice, []);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn selecting_a_mouse_sends_its_configuration_and_then_every_change() {
         let (_dir, hub) = hub();
         let _registration = connect(&hub, SERIAL);
@@ -257,7 +272,7 @@ mod tests {
         assert_eq!((config.revision, config.pointer.dpi), (1, 2400));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn selecting_a_mouse_that_is_not_connected_fails_and_drops_the_previous_one() {
         let (_dir, hub) = hub();
         let _registration = connect(&hub, SERIAL);
@@ -273,7 +288,7 @@ mod tests {
         assert!(quiet(&mut feed).await, "the previous mouse is not followed");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn the_selection_ends_with_the_mouse() {
         let (_dir, hub) = hub();
         let registration = connect(&hub, SERIAL);
@@ -293,7 +308,7 @@ mod tests {
         assert!(feed.selected.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn the_author_of_an_update_gets_it_once_and_the_others_through_their_feed() {
         let (_dir, hub) = hub();
         let _registration = connect(&hub, SERIAL);
@@ -320,7 +335,7 @@ mod tests {
         assert_eq!(config.pointer.dpi, 3200);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_refused_mouse_update_reports_why() {
         let (_dir, hub) = hub();
         let _registration = connect(&hub, SERIAL);
@@ -362,7 +377,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn every_client_follows_the_radial_menu() {
         let (_dir, hub) = hub();
         let mut author = MouseFeed::new(&hub);
@@ -387,6 +402,73 @@ mod tests {
             refused,
             Err(Failure {
                 code: ErrorCode::InvalidConfig,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_mouse_registered_again_is_followed_again() {
+        let (_dir, hub) = hub();
+        let first = connect(&hub, SERIAL);
+        let mut feed = MouseFeed::new(&hub);
+        feed.initial();
+        feed.select(SERIAL).unwrap();
+        // The mouse comes back before the old entry is released.
+        let _second = connect(&hub, SERIAL);
+        drop(first);
+        let mut sent = Vec::new();
+        while !sent
+            .iter()
+            .any(|message| matches!(message, Some(ServerMessage::MouseConfig { .. })))
+        {
+            assert!(sent.len() < 3, "the configuration never came: {sent:?}");
+            sent.push(feed.next_change().await);
+        }
+        let mut config = hub.subscribe_config(SERIAL).unwrap().borrow().clone();
+        config.pointer.dpi = 2400;
+        hub.update_mouse(SERIAL, config).unwrap();
+        // The list of mice may still be waiting to be sent, before it.
+        let followed = loop {
+            match feed.next_change().await {
+                Some(ServerMessage::MouseConfig { config, .. }) => break config,
+                Some(ServerMessage::Mice { .. }) => {}
+                other => panic!("the new mouse is not followed: {other:?}"),
+            }
+        };
+        assert_eq!(followed.pointer.dpi, 2400);
+    }
+
+    #[test]
+    fn an_update_overtaken_before_the_answer_is_followed_by_the_latest() {
+        let message = |value: u32| ServerMessage::Mice {
+            mice: vec![MouseInfo {
+                serial: value.to_string(),
+                model: MouseModel::MxMaster4,
+                display_name: String::new(),
+                capabilities: MouseModel::MxMaster4.capabilities(),
+            }],
+        };
+        assert_eq!(answers(1, 1, message), [message(1)]);
+        assert_eq!(answers(1, 2, message), [message(1), message(2)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn updating_a_mouse_that_just_left_is_refused() {
+        let (_dir, hub) = hub();
+        let registration = connect(&hub, SERIAL);
+        let mut feed = MouseFeed::new(&hub);
+        drop(registration);
+        let refused = feed
+            .update_mouse(
+                SERIAL.to_owned(),
+                MouseConfig::default_for(SERIAL, MouseModel::MxMaster4),
+            )
+            .await;
+        assert!(matches!(
+            refused,
+            Err(Failure {
+                code: ErrorCode::UnknownDevice,
                 ..
             })
         ));
