@@ -7,7 +7,7 @@
 //! session is not the active one (the rule of the devices, `docs/security.md`),
 //! and the device is closed then, which releases whatever it held.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -17,6 +17,7 @@ use hubergamof_protocol::{ButtonAction, MouseControlId};
 use tokio::sync::watch;
 
 use crate::input::{Injector, Key, UinputInjector, key_of_button, parse_shortcut};
+use crate::radial::service::RadialHandle;
 
 /// Opens the device keys and clicks are sent through.
 type Opener = dyn Fn() -> io::Result<Box<dyn Injector>> + Send + Sync;
@@ -33,6 +34,8 @@ struct Shared {
 #[derive(Clone)]
 pub struct ButtonActions {
     shared: Arc<Shared>,
+    /// Where the button of the radial menu is told about, when there is a menu.
+    radial: Option<RadialHandle>,
 }
 
 impl ButtonActions {
@@ -48,7 +51,15 @@ impl ButtonActions {
                 injector: Mutex::new(None),
                 locked,
             }),
+            radial: None,
         }
+    }
+
+    /// The same actions, with the radial menu their button opens.
+    #[must_use]
+    pub fn with_radial(mut self, radial: RadialHandle) -> Self {
+        self.radial = Some(radial);
+        self
     }
 
     /// Actions through `/dev/uinput`.
@@ -126,6 +137,8 @@ impl ButtonActions {
 pub struct ButtonDispatcher {
     actions: ButtonActions,
     held: BTreeMap<MouseControlId, Key>,
+    /// The buttons that opened the radial menu and are still down.
+    menu_held: BTreeSet<MouseControlId>,
     requests: VecDeque<Request>,
 }
 
@@ -136,6 +149,7 @@ impl ButtonDispatcher {
         Self {
             actions,
             held: BTreeMap::new(),
+            menu_held: BTreeSet::new(),
             requests: VecDeque::new(),
         }
     }
@@ -162,6 +176,11 @@ impl ButtonDispatcher {
     /// Lets go of the key `control` holds, unless another button of this
     /// mouse still holds the same one.
     fn release_control(&mut self, control: MouseControlId) {
+        if self.menu_held.remove(&control)
+            && let Some(radial) = &self.actions.radial
+        {
+            radial.release();
+        }
         let Some(key) = self.held.remove(&control) else {
             return;
         };
@@ -206,8 +225,16 @@ impl ButtonDispatcher {
                     self.requests.push_back(Request::ToggleWheelMode);
                 }
             }
-            ButtonAction::RadialMenu | ButtonAction::Module { .. } => {
-                tracing::debug!(%control, "the radial menu and the module actions are not available yet");
+            ButtonAction::RadialMenu => {
+                if let Some(radial) = &self.actions.radial {
+                    radial.press();
+                    self.menu_held.insert(control);
+                } else {
+                    tracing::debug!(%control, "no radial menu to open");
+                }
+            }
+            ButtonAction::Module { .. } => {
+                tracing::debug!(%control, "the module actions are not available yet");
             }
         }
     }
@@ -229,6 +256,13 @@ impl Drop for ButtonDispatcher {
     /// A thread that ends in a panic with a button held must not leave its
     /// key down on the device the other mice keep open.
     fn drop(&mut self) {
+        // A mouse that goes with the button down does not choose for the person.
+        if !self.menu_held.is_empty()
+            && let Some(radial) = &self.actions.radial
+        {
+            radial.cancel();
+        }
+        self.menu_held.clear();
         let controls: Vec<_> = self.held.keys().copied().collect();
         for control in controls {
             self.release_control(control);
@@ -452,12 +486,57 @@ mod tests {
     }
 
     #[test]
-    fn the_radial_menu_and_module_actions_do_nothing_yet() {
+    fn the_radial_menu_and_module_actions_send_no_key_and_ask_nothing_of_the_session() {
         let mut rig = rig();
         rig.dispatcher
             .handle(press(BACK), Some(&ButtonAction::RadialMenu));
         assert_eq!(rig.dispatcher.next_request(), None);
         assert_eq!(rig.recorder.events(), []);
+    }
+
+    #[test]
+    fn the_button_of_the_radial_menu_tells_the_menu_when_it_goes_down_and_up() {
+        let (radial, mut probe) = RadialHandle::probe();
+        let mut rig = rig();
+        rig.dispatcher.actions = rig.dispatcher.actions.clone().with_radial(radial);
+        rig.dispatcher
+            .handle(press(BACK), Some(&ButtonAction::RadialMenu));
+        // The binding changes while the button is down: the release still goes.
+        rig.dispatcher.handle(release(BACK), None);
+        assert_eq!(probe.sent(), ["press", "release"]);
+        assert_eq!(rig.recorder.events(), []);
+    }
+
+    #[test]
+    fn a_press_of_the_menu_button_without_the_release_before_it_lets_the_menu_go_first() {
+        let (radial, mut probe) = RadialHandle::probe();
+        let mut rig = rig();
+        rig.dispatcher.actions = rig.dispatcher.actions.clone().with_radial(radial);
+        let menu = ButtonAction::RadialMenu;
+        rig.dispatcher.handle(press(BACK), Some(&menu));
+        rig.dispatcher.handle(press(BACK), Some(&menu));
+        assert_eq!(probe.sent(), ["press", "release", "press"]);
+    }
+
+    #[test]
+    fn a_mouse_that_goes_with_the_menu_button_down_cancels_the_menu() {
+        let (radial, mut probe) = RadialHandle::probe();
+        let mut rig = rig();
+        rig.dispatcher.actions = rig.dispatcher.actions.clone().with_radial(radial);
+        rig.dispatcher
+            .handle(press(BACK), Some(&ButtonAction::RadialMenu));
+        drop(rig.dispatcher);
+        assert_eq!(probe.sent(), ["press", "cancel"]);
+    }
+
+    #[test]
+    fn a_button_that_did_not_open_the_menu_does_not_release_it() {
+        let (radial, mut probe) = RadialHandle::probe();
+        let mut rig = rig();
+        rig.dispatcher.actions = rig.dispatcher.actions.clone().with_radial(radial);
+        rig.dispatcher.handle(release(BACK), None);
+        drop(rig.dispatcher);
+        assert_eq!(probe.sent(), [] as [&str; 0]);
     }
 
     #[test]

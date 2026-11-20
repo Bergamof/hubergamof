@@ -46,7 +46,7 @@ pub enum PreviewError {
 /// [`PreviewError`] when the window cannot start or the report cannot be written.
 pub fn run(duration: Duration, out: &mut impl Write) -> Result<(), PreviewError> {
     let (events, window_events) = mpsc::channel();
-    let overlay = Overlay::start(events)?;
+    let overlay = Overlay::start(move |event| events.send(event).is_ok())?;
     let mut controller = Controller::new(
         &RadialMenuConfig::default_menu(),
         DEFAULT_RING,

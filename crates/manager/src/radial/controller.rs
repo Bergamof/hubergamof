@@ -52,6 +52,9 @@ pub enum WindowEvent {
     Click,
     /// Escape is pressed.
     Escape,
+    /// The window is gone (its thread ended): the menu is given up, as with
+    /// Escape.
+    Gone,
 }
 
 /// The radial menu of one run: its configuration and its state.
@@ -174,7 +177,7 @@ impl Controller {
             }
             WindowEvent::Pointer(position) => self.pointer(position),
             WindowEvent::Click => self.feed(Input::Click),
-            WindowEvent::Escape => self.feed(Input::Escape),
+            WindowEvent::Escape | WindowEvent::Gone => self.feed(Input::Escape),
         }
     }
 
@@ -414,6 +417,20 @@ mod tests {
         over(&mut controller, 0);
         assert_eq!(controller.window(WindowEvent::Escape), [Effect::Close]);
         assert!(!controller.is_open());
+    }
+
+    #[test]
+    fn a_window_that_is_gone_closes_the_menu_without_choosing() {
+        let mut controller = opened();
+        over(&mut controller, 1);
+        controller.release(at(50));
+        // Released early, over a petal: a press would now choose it. The window
+        // going away must close the menu instead, so that nothing is chosen
+        // later without a menu in sight.
+        assert_eq!(controller.window(WindowEvent::Gone), [Effect::Close]);
+        assert!(!controller.is_open());
+        assert_eq!(controller.press(at(100)), [Effect::Open]);
+        assert_eq!(controller.release(at(110)), []);
     }
 
     #[test]

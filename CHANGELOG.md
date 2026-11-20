@@ -20,6 +20,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Souris Logitech MX, étape 5d (branchement) : avec `--mice`, le bouton lié au menu circulaire l'ouvre : appui court, le menu reste ouvert et un clic choisit ; appui maintenu, relâcher sur un pétale choisit. Il se ferme au verrouillage de l'ordinateur et si la souris disparaît bouton enfoncé. Choisir une entrée n'a pas encore d'effet (les actions des modules viennent ensuite).
 - Souris Logitech MX, étape 5c (fenêtre) : le menu circulaire a sa fenêtre, une surcouche Wayland (layer-shell : KDE, compositeurs wlroots) qui s'ouvre sous le pointeur, allume le pétale survolé, choisit au clic et se ferme avec Échap ; `hubergamof radial-preview` l'affiche quelques secondes pour l'essayer. Pas encore reliée aux boutons de la souris.
 - Souris Logitech MX, étape 5b (dessin) : le menu circulaire se dessine en image (pétales à côtés parallèles, pétale sous le pointeur éclairé, icône et nom, animation d'ouverture) avec le moteur de texte des touches ; la fenêtre qui l'affiche vient ensuite.
 - Souris Logitech MX, étape 5a : noyau du menu circulaire, sans fenêtre encore : placement des pétales (côtés parallèles, le vide ne sélectionne rien, menu ramené dans l'écran) et réactions au bouton d'ouverture (clic court : le menu reste ouvert ; maintien : relâcher sur un pétale choisit).

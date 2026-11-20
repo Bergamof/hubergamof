@@ -24,7 +24,7 @@ use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::MouseHub;
-use hubergamof_manager::radial;
+use hubergamof_manager::radial::{self, service::RadialService};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
@@ -640,19 +640,26 @@ async fn run_manager(cli: Cli) -> Result<()> {
 fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
-) -> Result<(MouseHub, Option<MouseSupervisor>)> {
+) -> Result<(MouseHub, Option<MiceService>)> {
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
-    let supervisor = serves_mice(cli).then(|| {
-        let actions = ButtonActions::uinput(services.screen_lock.watch());
-        MouseSupervisor::start(
+    let service = serves_mice(cli).then(|| {
+        let locked = services.screen_lock.watch();
+        let menu = RadialService::start(
+            hub.subscribe_radial_menu(),
+            locked.clone(),
+            &tokio::runtime::Handle::current(),
+        );
+        let actions = ButtonActions::uinput(locked).with_radial(menu.handle());
+        let supervisor = MouseSupervisor::start(
             HidrawSource,
             services.store.clone(),
             hub.clone(),
             actions,
             SCAN_INTERVAL,
-        )
+        );
+        MiceService { supervisor, menu }
     });
-    Ok((hub, supervisor))
+    Ok((hub, service))
 }
 
 /// `--demo` never touches the hardware, whatever else is asked.
@@ -660,10 +667,21 @@ fn serves_mice(cli: &Cli) -> bool {
     cli.mice && !cli.demo
 }
 
-/// Gives the buttons of the mice back and stops serving them.
-async fn stop_mice(mice: Option<MouseSupervisor>) {
-    if let Some(mice) = mice {
-        mice.shutdown().await;
+/// The mice being served and the radial menu their button opens.
+struct MiceService {
+    supervisor: MouseSupervisor,
+    menu: RadialService,
+}
+
+/// Gives the buttons of the mice back and stops serving them, then closes the
+/// menu (a button held at that moment cancels it).
+async fn stop_mice(mice: Option<MiceService>) {
+    if let Some(MiceService { supervisor, menu }) = mice {
+        supervisor.shutdown().await;
+        // Stopping the menu waits for its threads: not on the async workers.
+        if let Err(error) = tokio::task::spawn_blocking(move || drop(menu)).await {
+            tracing::warn!(%error, "the radial menu did not stop cleanly");
+        }
     }
 }
 
