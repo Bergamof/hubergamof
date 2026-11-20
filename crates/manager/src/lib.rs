@@ -14,6 +14,8 @@
 //!   [`engine::EngineHandle`].
 //! - [`server`]: the local web server (UI files and `/ws` WebSocket).
 //! - [`tray`]: the system tray icon (`StatusNotifierItem`).
+//! - [`mouse_engine`]: one thread per Logitech mouse, applying its
+//!   configuration and following its buttons.
 //! - [`launcher`]: `hubergamof open`, starting the service and opening the UI
 //!   from the desktop launcher.
 
@@ -23,6 +25,7 @@ pub mod device;
 pub mod engine;
 pub mod file_chooser;
 pub mod launcher;
+pub mod mouse_engine;
 pub mod placement;
 pub mod render;
 pub mod screen_lock;

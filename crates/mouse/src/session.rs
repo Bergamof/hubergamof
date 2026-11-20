@@ -5,6 +5,7 @@
 //! notifications. The caller (a thread per mouse in the manager) decides when
 //! to apply a configuration, to wait for buttons and to release them.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use hubergamof_protocol::{MouseConfig, MouseControlId};
@@ -22,6 +23,19 @@ pub struct ApplyProblem {
     /// Why.
     pub error: HidppError,
 }
+
+/// What [`MouseSession::serve`] has to report.
+#[derive(Debug)]
+pub enum Notice {
+    /// A setting the mouse refused when the configuration was applied.
+    Problem(ApplyProblem),
+    /// A press or a release of a diverted button.
+    Button(ButtonEvent),
+}
+
+/// How long [`MouseSession::serve`] waits for the buttons before looking at
+/// the stop request again: the delay with which it reacts to it.
+const SERVE_STEP: Duration = Duration::from_millis(200);
 
 /// A mouse and what is known about its buttons.
 ///
@@ -163,6 +177,46 @@ impl<C: Channel> MouseSession<C> {
     /// mouse gone, which is when it is needed.
     pub fn release_held(&mut self) -> Vec<ButtonEvent> {
         self.tracker.release_all()
+    }
+
+    /// Serves the mouse until `stop` is raised or the mouse is gone: gives
+    /// back what a previous run left diverted, applies `config`, then reports
+    /// the buttons. Everything is given back at the end, and the releases of
+    /// the buttons still held are reported before.
+    ///
+    /// # Errors
+    /// The [`HidppError`] that ended the service (the mouse stopped answering
+    /// or left), `Ok` when `stop` did.
+    pub fn serve(
+        &mut self,
+        config: &MouseConfig,
+        stop: &AtomicBool,
+        mut notify: impl FnMut(Notice),
+    ) -> Result<(), HidppError> {
+        let served = self.serve_buttons(config, stop, &mut notify);
+        for event in self.release_held() {
+            notify(Notice::Button(event));
+        }
+        let given_back = self.give_back();
+        served.and(given_back)
+    }
+
+    fn serve_buttons(
+        &mut self,
+        config: &MouseConfig,
+        stop: &AtomicBool,
+        notify: &mut impl FnMut(Notice),
+    ) -> Result<(), HidppError> {
+        self.give_back()?;
+        for problem in self.apply(config)? {
+            notify(Notice::Problem(problem));
+        }
+        while !stop.load(Ordering::Relaxed) {
+            for event in self.poll(SERVE_STEP)? {
+                notify(Notice::Button(event));
+            }
+        }
+        Ok(())
     }
 
     /// Gives every diverted button back, every one being tried.
@@ -640,5 +694,58 @@ mod tests {
                 pressed: false
             }]
         );
+    }
+
+    #[test]
+    fn serving_applies_reports_and_gives_everything_back_when_stopped() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let fake =
+            FakeLink::direct(device).with_incoming(vec![frame(DEVICE, reprog, 0x00, &[0, 0x53])]);
+        let mut session = session_with(fake);
+        let stop = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let mut config = config();
+        config.pointer.dpi = 2400;
+        let served = session.serve(&config, &stop, |notice| {
+            if let Notice::Button(event) = notice {
+                seen.push((event.control, event.pressed));
+                // The mouse is put down after the press has been seen.
+                stop.store(true, Ordering::Relaxed);
+            }
+        });
+        assert!(served.is_ok(), "{served:?}");
+        assert_eq!(
+            seen,
+            [(MouseControlId::Back, true), (MouseControlId::Back, false)],
+            "the button still held when stopping is released"
+        );
+        assert_eq!(state(&session).dpi, 2400);
+        assert!(state(&session).diverted.is_empty());
+    }
+
+    #[test]
+    fn serving_reports_what_the_mouse_refused() {
+        let device = FakeDevice::mx_master_4().with_broken_feature(crate::features::ADJUSTABLE_DPI);
+        let mut session = session(device);
+        let stop = AtomicBool::new(true);
+        let mut problems = Vec::new();
+        session
+            .serve(&config(), &stop, |notice| {
+                if let Notice::Problem(problem) = notice {
+                    problems.push(problem.setting);
+                }
+            })
+            .unwrap();
+        assert_eq!(problems, ["sensitivity"]);
+    }
+
+    #[test]
+    fn serving_ends_with_an_error_when_the_mouse_is_gone() {
+        let fake = FakeLink::direct(FakeDevice::mx_master_4()).with_broken_reads();
+        let mut session = session_with(fake);
+        let stop = AtomicBool::new(false);
+        assert!(session.serve(&config(), &stop, |_| {}).is_err());
+        assert!(state(&session).diverted.is_empty());
     }
 }

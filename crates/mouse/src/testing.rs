@@ -5,6 +5,16 @@
 //! real mouse agrees. That is what the checks on the hardware are for
 //! (`docs/mouse-hidpp.md`).
 
+// A test double, public for the tests of the crates that use a mouse: its
+// builders and fields are self-explanatory and nothing here is a public API.
+#![allow(
+    missing_docs,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::new_without_default,
+    clippy::assigning_clones
+)]
+
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
