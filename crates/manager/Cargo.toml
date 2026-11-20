@@ -77,6 +77,8 @@ tracing-subscriber.workspace = true
 # zbus's own runtime nor the ObjectManager.
 zbus = { workspace = true, features = ["proxy", "service"] }
 zip.workspace = true
+input-linux = "0.7.1"
+libc = "0.2.191"
 
 [dev-dependencies]
 hubergamof-mouse = { workspace = true, features = ["test-support"] }

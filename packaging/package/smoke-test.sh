@@ -78,6 +78,10 @@ check_files() {
 	if grep -q 'c52b' <<<"$active"; then fail "règle udev ouverte au récepteur Unifying"; fi
 	grep -qF -- 'DEVPATH!="*/0003:*/0003:*/hidraw/*"' <<<"$active" || fail "règle udev sans exclusion des nœuds enfants"
 	if grep 'idVendor}=="046d"' <<<"$active" | grep -v 'idProduct}=="c548"' | grep -q 'uaccess'; then fail "uaccess Logitech sans filtre de produit"; fi
+	# /dev/uinput : un nœud précis, ouvert par uaccess (jamais par un mode), sans autre nœud nommé.
+	grep -qF -- 'KERNEL=="uinput"' <<<"$active" || fail "règle udev sans /dev/uinput"
+	if grep -F 'KERNEL==' <<<"$active" | grep -vF 'KERNEL=="uinput"' | grep -q .; then fail "règle udev par nom de nœud autre que uinput"; fi
+	if grep -F 'KERNEL=="uinput"' <<<"$active" | grep -qv 'TAG+="uaccess"'; then fail "uinput sans uaccess"; fi
 }
 
 check_binary() {
