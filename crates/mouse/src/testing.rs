@@ -191,7 +191,8 @@ impl FakeDevice {
         }
     }
 
-    fn index_of(&self, id: u16) -> Option<u8> {
+    /// The feature index of a feature this device has.
+    pub fn index_of(&self, id: u16) -> Option<u8> {
         (1..=u8::try_from(self.features.len() + 1).unwrap_or(u8::MAX))
             .find(|index| self.feature_at(*index) == Some(id))
     }
@@ -315,14 +316,25 @@ impl FakeDevice {
     }
 }
 
+/// How an interface misbehaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkMode {
+    Working,
+    /// Never answers.
+    Silent,
+    /// Refuses every write.
+    RefusingWrites,
+    /// Reading with nothing queued is an error, not a silence.
+    BrokenReads,
+}
+
 /// An interface with devices behind it, scripted.
 #[derive(Debug)]
 pub struct FakeLink {
     devices: Vec<(u8, FakeDevice)>,
     /// A receiver answers an HID++ 1.0 error for an index nobody has.
     receiver: bool,
-    silent: bool,
-    failing: bool,
+    mode: LinkMode,
     noise: Option<Vec<u8>>,
     queue: VecDeque<Vec<u8>>,
     written: Vec<Vec<u8>>,
@@ -333,8 +345,7 @@ impl FakeLink {
         Self {
             devices,
             receiver,
-            silent: false,
-            failing: false,
+            mode: LinkMode::Working,
             noise: None,
             queue: VecDeque::new(),
             written: Vec::new(),
@@ -354,7 +365,7 @@ impl FakeLink {
     /// An interface that never answers.
     pub fn silent() -> Self {
         Self {
-            silent: true,
+            mode: LinkMode::Silent,
             ..Self::base(Vec::new(), false)
         }
     }
@@ -362,7 +373,7 @@ impl FakeLink {
     /// An interface that refuses every write.
     pub fn failing() -> Self {
         Self {
-            failing: true,
+            mode: LinkMode::RefusingWrites,
             ..Self::base(Vec::new(), false)
         }
     }
@@ -380,6 +391,18 @@ impl FakeLink {
         &self.written
     }
 
+    /// Frames the device sends before anything is asked: notifications.
+    pub fn with_incoming(mut self, frames: Vec<Vec<u8>>) -> Self {
+        self.queue.extend(frames);
+        self
+    }
+
+    /// An interface whose reads fail once what was queued is consumed.
+    pub fn with_broken_reads(mut self) -> Self {
+        self.mode = LinkMode::BrokenReads;
+        self
+    }
+
     /// A frame sent before every answer (a notification).
     pub fn with_noise(mut self, frame: Vec<u8>) -> Self {
         self.noise = Some(frame);
@@ -389,11 +412,11 @@ impl FakeLink {
 
 impl Channel for FakeLink {
     fn write(&mut self, report: &[u8]) -> Result<(), ChannelError> {
-        if self.failing {
+        if self.mode == LinkMode::RefusingWrites {
             return Err(ChannelError("write refused".to_owned()));
         }
         self.written.push(report.to_vec());
-        if self.silent {
+        if self.mode == LinkMode::Silent {
             return Ok(());
         }
         let [_, device, feature, function_byte, params @ ..] = report else {
@@ -422,7 +445,12 @@ impl Channel for FakeLink {
     }
 
     fn read(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
-        Ok(self.queue.pop_front())
+        match self.queue.pop_front() {
+            None if self.mode == LinkMode::BrokenReads => {
+                Err(ChannelError("read failed".to_owned()))
+            }
+            frame => Ok(frame),
+        }
     }
 }
 

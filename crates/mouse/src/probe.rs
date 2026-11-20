@@ -187,7 +187,7 @@ pub fn scan_interface<C: Channel>(hidpp: &mut Hidpp<C>) -> Vec<DeviceReport> {
 }
 
 /// Pings the device at `device`, retrying while it stays silent.
-fn ping<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Result<(u8, u8), Miss> {
+pub(crate) fn ping<C: Channel>(hidpp: &mut Hidpp<C>, device: u8) -> Result<(u8, u8), Miss> {
     for _ in 0..PING_ATTEMPTS {
         match hidpp.request(device, 0, 1, &[0, 0, PING_ECHO]) {
             Ok(params) => {

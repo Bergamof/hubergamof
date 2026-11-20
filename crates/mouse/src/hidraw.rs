@@ -6,8 +6,12 @@ use std::time::Duration;
 use hidapi::{DeviceInfo, HidApi, HidDevice};
 use thiserror::Error;
 
-use crate::channel::{Channel, ChannelError, Hidpp};
-use crate::probe::{InterfaceInfo, InterfaceScan, scan_interface_with_misses};
+use hubergamof_protocol::MouseModel;
+
+use crate::channel::{Channel, ChannelError, Hidpp, HidppError};
+use crate::frame::{DIRECT_DEVICE_INDEX, RECEIVER_DEVICE_INDEXES};
+use crate::link::MouseLink;
+use crate::probe::{InterfaceInfo, InterfaceScan, ping, scan_interface_with_misses};
 
 /// USB vendor id of Logitech.
 pub const LOGITECH_VENDOR_ID: u16 = 0x046D;
@@ -183,6 +187,88 @@ pub fn scan_hardware(trace: bool) -> Result<Vec<InterfaceScan>, HidError> {
     Ok(scans)
 }
 
+/// Why no mouse could be chosen.
+#[derive(Debug, Error)]
+pub enum FindError {
+    /// The HID layer could not be started.
+    #[error(transparent)]
+    Hid(#[from] HidError),
+    /// No supported mouse answered.
+    #[error(
+        "no supported mouse answered: move it to wake it, check that it is paired with the Logi Bolt receiver and that its hidraw node is open to you (docs/mouse-probe.md)"
+    )]
+    NoMouse,
+    /// More than one answered.
+    #[error("several mice answered ({0}): say which with --model")]
+    Several(String),
+    /// The mouse refused something while being set up.
+    #[error(transparent)]
+    Mouse(#[from] HidppError),
+}
+
+/// Finds a supported mouse among the Logitech HID++ interfaces: the one of the
+/// wanted model, or the only one when none is wanted.
+///
+/// # Errors
+/// [`FindError`] when none, or more than one, answers.
+pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>, FindError> {
+    let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
+    let mut probed = HashSet::new();
+    let mut found = Vec::new();
+    let mut setup_error = None;
+    for info in api.device_list().filter(|info| {
+        info.vendor_id() == LOGITECH_VENDOR_ID
+            && skip_reason(
+                info.vendor_id(),
+                info.product_id(),
+                info.usage_page(),
+                info.usage(),
+            )
+            .is_none()
+    }) {
+        if !probed.insert(info.path().to_owned()) {
+            continue;
+        }
+        for index in std::iter::once(DIRECT_DEVICE_INDEX).chain(RECEIVER_DEVICE_INDEXES) {
+            let Ok(device) = api.open_path(info.path()) else {
+                break;
+            };
+            let mut hidpp = Hidpp::new(HidrawChannel::new(device));
+            if ping(&mut hidpp, index).is_err() {
+                continue;
+            }
+            match MouseLink::connect(hidpp, index) {
+                Ok(link) => found.push((link.model(), link.device(), link)),
+                // A device that is not a supported mouse: not worth reporting.
+                Err(HidppError::NotSupportedMouse(_)) => {}
+                Err(error) => setup_error = Some(error),
+            }
+        }
+    }
+    pick(found, wanted, setup_error)
+}
+
+/// The mouse to use among those that answered: the only one of the wanted
+/// model (or the only one at all when none is wanted).
+fn pick<T>(
+    mut found: Vec<(MouseModel, u8, T)>,
+    wanted: Option<MouseModel>,
+    setup_error: Option<HidppError>,
+) -> Result<T, FindError> {
+    found.retain(|(model, _, _)| wanted.is_none_or(|wanted| wanted == *model));
+    match found.len() {
+        0 => Err(setup_error.map_or(FindError::NoMouse, FindError::Mouse)),
+        1 => Ok(found.remove(0).2),
+        _ => Err(FindError::Several(
+            found
+                .iter()
+                .map(|(model, index, _)| format!("{model} at index {index}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +369,73 @@ mod tests {
             channel.write(&[0x11]).unwrap_err(),
             ChannelError("EIO".to_owned())
         );
+    }
+
+    #[test]
+    fn nothing_answering_is_reported_as_no_mouse() {
+        let error = pick::<()>(Vec::new(), None, None).unwrap_err();
+        assert!(matches!(error, FindError::NoMouse), "{error}");
+    }
+
+    #[test]
+    fn a_setup_failure_is_reported_when_nothing_else_answered() {
+        let error =
+            pick::<()>(Vec::new(), None, Some(HidppError::Timeout(Duration::ZERO))).unwrap_err();
+        assert!(
+            matches!(error, FindError::Mouse(HidppError::Timeout(Duration::ZERO))),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_only_mouse_is_chosen_with_or_without_a_wanted_model() {
+        let found = || vec![(MouseModel::MxMaster4, 2, "master")];
+        assert_eq!(pick(found(), None, None).unwrap(), "master");
+        assert_eq!(
+            pick(found(), Some(MouseModel::MxMaster4), None).unwrap(),
+            "master"
+        );
+    }
+
+    #[test]
+    fn the_wanted_model_picks_among_several_and_a_missing_one_finds_nothing() {
+        let found = || {
+            vec![
+                (MouseModel::MxAnywhere3S, 1, "anywhere"),
+                (MouseModel::MxMaster4, 2, "master"),
+            ]
+        };
+        assert_eq!(
+            pick(found(), Some(MouseModel::MxAnywhere3S), None).unwrap(),
+            "anywhere"
+        );
+        let error = pick(
+            vec![(MouseModel::MxMaster4, 2, ())],
+            Some(MouseModel::MxAnywhere3S),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(error, FindError::NoMouse), "{error}");
+    }
+
+    #[test]
+    fn several_mice_without_a_wanted_model_are_named() {
+        let error = pick(
+            vec![
+                (MouseModel::MxAnywhere3S, 1, ()),
+                (MouseModel::MxMaster4, 2, ()),
+            ],
+            None,
+            None,
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(matches!(error, FindError::Several(_)));
+        assert!(
+            message.contains("at index 1") && message.contains("at index 2"),
+            "{message}"
+        );
+        assert!(message.contains("--model"), "{message}");
     }
 
     #[test]
