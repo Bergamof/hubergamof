@@ -116,6 +116,12 @@ impl<C: Channel> Hidpp<C> {
         &self.channel
     }
 
+    /// The underlying channel, for tests to feed it.
+    #[cfg(test)]
+    pub(crate) fn channel_mut(&mut self) -> &mut C {
+        &mut self.channel
+    }
+
     /// The recorded frames, one line each, oldest first (empty without trace).
     pub fn take_trace(&mut self) -> Vec<String> {
         self.trace.as_mut().map(std::mem::take).unwrap_or_default()

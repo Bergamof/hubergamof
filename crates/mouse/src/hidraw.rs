@@ -206,12 +206,34 @@ pub enum FindError {
     Mouse(#[from] HidppError),
 }
 
-/// Finds a supported mouse among the Logitech HID++ interfaces: the one of the
-/// wanted model, or the only one when none is wanted.
+/// Where a mouse was found: its hidraw node and its index on that node (the
+/// receiver gives one index to each paired mouse).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MouseKey {
+    /// The hidraw node.
+    pub path: String,
+    /// The device index on it.
+    pub index: u8,
+}
+
+/// A connected mouse and where it was found.
+pub struct FoundMouse {
+    /// Where.
+    pub key: MouseKey,
+    /// The mouse.
+    pub link: MouseLink<HidrawChannel>,
+}
+
+/// Every supported mouse on the Logitech HID++ interfaces, except the places
+/// in `owned`, which are not even spoken to: another thread reads their
+/// answers, and a request here could be mistaken for one of its own.
+///
+/// A mouse that answers but cannot be set up is left out; the last such
+/// failure is returned with the mice.
 ///
 /// # Errors
-/// [`FindError`] when none, or more than one, answers.
-pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>, FindError> {
+/// [`FindError::Hid`] when the HID layer cannot start.
+pub fn find_mice(owned: &[MouseKey]) -> Result<(Vec<FoundMouse>, Option<HidppError>), FindError> {
     let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
     let mut probed = HashSet::new();
     let mut found = Vec::new();
@@ -229,7 +251,15 @@ pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>
         if !probed.insert(info.path().to_owned()) {
             continue;
         }
+        let path = info.path().to_string_lossy().into_owned();
         for index in std::iter::once(DIRECT_DEVICE_INDEX).chain(RECEIVER_DEVICE_INDEXES) {
+            let key = MouseKey {
+                path: path.clone(),
+                index,
+            };
+            if owned.contains(&key) {
+                continue;
+            }
             let Ok(device) = api.open_path(info.path()) else {
                 break;
             };
@@ -238,14 +268,28 @@ pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>
                 continue;
             }
             match MouseLink::connect(hidpp, index) {
-                Ok(link) => found.push((link.model(), link.device(), link)),
+                Ok(link) => found.push(FoundMouse { key, link }),
                 // A device that is not a supported mouse: not worth reporting.
                 Err(HidppError::NotSupportedMouse(_)) => {}
                 Err(error) => setup_error = Some(error),
             }
         }
     }
-    pick(found, wanted, setup_error)
+    Ok((found, setup_error))
+}
+
+/// Finds a supported mouse among the Logitech HID++ interfaces: the one of the
+/// wanted model, or the only one when none is wanted.
+///
+/// # Errors
+/// [`FindError`] when none, or more than one, answers.
+pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>, FindError> {
+    let (found, setup_error) = find_mice(&[])?;
+    let candidates = found
+        .into_iter()
+        .map(|mouse| (mouse.link.model(), mouse.link.device(), mouse.link))
+        .collect();
+    pick(candidates, wanted, setup_error)
 }
 
 /// The mouse to use among those that answered: the only one of the wanted

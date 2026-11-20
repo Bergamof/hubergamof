@@ -403,6 +403,11 @@ impl FakeLink {
         self
     }
 
+    /// More frames the device sends, once the link is in use.
+    pub fn push_incoming(&mut self, frames: impl IntoIterator<Item = Vec<u8>>) {
+        self.queue.extend(frames);
+    }
+
     /// A frame sent before every answer (a notification).
     pub fn with_noise(mut self, frame: Vec<u8>) -> Self {
         self.noise = Some(frame);
