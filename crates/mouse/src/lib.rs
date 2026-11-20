@@ -6,6 +6,7 @@
 //! - [`features`]: names of the HID++ features this project knows.
 //! - [`probe`]: the **read-only** inventory of a device (features, buttons).
 //! - [`controls`]: the mouse's own ids for the controls of each model.
+//! - [`diagnostics`]: the actions of `hubergamof mouse-test`, run on a link.
 //! - [`link`]: the operations on a mouse (battery, sensitivity, wheel, buttons,
 //!   haptics), the part of this crate that writes.
 //! - [`hidraw`]: discovery and `hidapi` channel on real hardware.
@@ -15,6 +16,7 @@
 
 pub mod channel;
 pub mod controls;
+pub mod diagnostics;
 pub mod features;
 pub mod frame;
 pub mod hidraw;

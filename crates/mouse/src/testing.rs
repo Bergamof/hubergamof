@@ -191,7 +191,8 @@ impl FakeDevice {
         }
     }
 
-    fn index_of(&self, id: u16) -> Option<u8> {
+    /// The feature index of a feature this device has.
+    pub fn index_of(&self, id: u16) -> Option<u8> {
         (1..=u8::try_from(self.features.len() + 1).unwrap_or(u8::MAX))
             .find(|index| self.feature_at(*index) == Some(id))
     }
@@ -378,6 +379,12 @@ impl FakeLink {
     /// Every report written so far.
     pub fn written(&self) -> &[Vec<u8>] {
         &self.written
+    }
+
+    /// Frames the device sends before anything is asked: notifications.
+    pub fn with_incoming(mut self, frames: Vec<Vec<u8>>) -> Self {
+        self.queue.extend(frames);
+        self
     }
 
     /// A frame sent before every answer (a notification).

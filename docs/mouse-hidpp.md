@@ -58,6 +58,23 @@ Garde-fous (revue sécurité du 2026-11-19) :
 - Les appuis détournés sont attribués à la souris qui les a envoyés (un récepteur en porte plusieurs, aux mêmes index de fonction) ; les trames de notification mises de côté pendant une requête sont bornées (256) et comptées quand on en jette : alors recommencer le suivi des boutons.
 - Limites connues : version des fonctions non vérifiée, identifiant logiciel fixe (`0x0B`) : ne pas lancer Solaar, logiops ou Options+ en même temps (ils se disputeraient aussi les détournements).
 
+## Essayer une souris : `hubergamof mouse-test`
+Chaque commande cherche la souris sur le récepteur Logi Bolt (bougez-la pour la réveiller ; `--model master4|anywhere3s` quand les deux répondent), ne fait que ce qu'on lui demande et le dit. Même accès que la sonde (`docs/mouse-probe.md`). Dans l'ordre le plus prudent :
+
+```bash
+hubergamof mouse-test --model master4 info
+hubergamof mouse-test --model master4 haptic knock --level medium
+hubergamof mouse-test --model master4 dpi 1600
+hubergamof mouse-test --model anywhere3s wheel auto --threshold 20
+hubergamof mouse-test --model master4 buttons --seconds 20
+hubergamof mouse-test --model master4 release
+```
+
+- `info` ne change rien : batterie, sensibilité, molette, haptique, ondes disponibles, boutons détournés.
+- `haptic <onde>` joue une onde (`knock`, `ringing`, `sharp-state-change`… ; noms insensibles à la casse) après avoir réglé la force si `--level` (`off`, `subtle`, `low`, `medium`, `high`).
+- `dpi N` (200 à 8000, pas de 50) et `wheel ratchet|free|auto [--threshold 1..50]` règlent puis relisent.
+- `buttons` détourne tous les boutons sauf les clics gauche et droit, affiche chaque appui et chaque relâchement pendant la durée donnée, puis les rend. Si la commande est interrompue (Ctrl+C) ou plante, `release` les rend ; la souris les oublie de toute façon à sa prochaine reconnexion.
+
 ## Validation sur le matériel (à faire par Adrien, jamais faite)
 Tant que ce tableau est vide, les écritures sont « non validées sur le matériel ». Les tests passent sur un faux appareil qui reprend les mêmes hypothèses que le code (mêmes numéros de fonction, mêmes octets, issus de Solaar) : ils prouvent la cohérence, pas que les souris sont d'accord. Pour chaque point : date, souris, version du micrologiciel, trame observée (`--trace`), résultat.
 1. Relever l'état avant toute écriture (sensibilité, molette, drapeaux, haptique) avec les seules lectures.

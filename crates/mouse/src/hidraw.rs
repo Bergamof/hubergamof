@@ -6,8 +6,12 @@ use std::time::Duration;
 use hidapi::{DeviceInfo, HidApi, HidDevice};
 use thiserror::Error;
 
-use crate::channel::{Channel, ChannelError, Hidpp};
-use crate::probe::{InterfaceInfo, InterfaceScan, scan_interface_with_misses};
+use hubergamof_protocol::MouseModel;
+
+use crate::channel::{Channel, ChannelError, Hidpp, HidppError};
+use crate::frame::{DIRECT_DEVICE_INDEX, RECEIVER_DEVICE_INDEXES};
+use crate::link::MouseLink;
+use crate::probe::{InterfaceInfo, InterfaceScan, ping, scan_interface_with_misses};
 
 /// USB vendor id of Logitech.
 pub const LOGITECH_VENDOR_ID: u16 = 0x046D;
@@ -183,6 +187,72 @@ pub fn scan_hardware(trace: bool) -> Result<Vec<InterfaceScan>, HidError> {
     Ok(scans)
 }
 
+/// Why no mouse could be chosen.
+#[derive(Debug, Error)]
+pub enum FindError {
+    /// The HID layer could not be started.
+    #[error(transparent)]
+    Hid(#[from] HidError),
+    /// No supported mouse answered.
+    #[error(
+        "no supported mouse answered: move it to wake it, check that it is paired with the Logi Bolt receiver and that its hidraw node is open to you (docs/mouse-probe.md)"
+    )]
+    NoMouse,
+    /// More than one answered.
+    #[error("several mice answered ({0}): say which with --model")]
+    Several(String),
+    /// The mouse refused something while being set up.
+    #[error(transparent)]
+    Mouse(#[from] HidppError),
+}
+
+/// Finds a supported mouse among the Logitech HID++ interfaces: the one of the
+/// wanted model, or the only one when none is wanted.
+///
+/// # Errors
+/// [`FindError`] when none, or more than one, answers.
+pub fn find_mouse(wanted: Option<MouseModel>) -> Result<MouseLink<HidrawChannel>, FindError> {
+    let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
+    let mut probed = HashSet::new();
+    let mut found = Vec::new();
+    for info in api.device_list().filter(|info| {
+        info.vendor_id() == LOGITECH_VENDOR_ID
+            && skip_reason(
+                info.vendor_id(),
+                info.product_id(),
+                info.usage_page(),
+                info.usage(),
+            )
+            .is_none()
+    }) {
+        if !probed.insert(info.path().to_owned()) {
+            continue;
+        }
+        for index in std::iter::once(DIRECT_DEVICE_INDEX).chain(RECEIVER_DEVICE_INDEXES) {
+            let Ok(device) = api.open_path(info.path()) else {
+                break;
+            };
+            let mut hidpp = Hidpp::new(HidrawChannel::new(device));
+            if ping(&mut hidpp, index).is_err() {
+                continue;
+            }
+            match MouseLink::connect(hidpp, index) {
+                Ok(link) if wanted.is_none_or(|model| model == link.model()) => found.push(link),
+                _ => {}
+            }
+        }
+    }
+    let names: Vec<String> = found
+        .iter()
+        .map(|link| format!("{} at index {}", link.model(), link.device()))
+        .collect();
+    match found.len() {
+        0 => Err(FindError::NoMouse),
+        1 => Ok(found.remove(0)),
+        _ => Err(FindError::Several(names.join(", "))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +353,15 @@ mod tests {
             channel.write(&[0x11]).unwrap_err(),
             ChannelError("EIO".to_owned())
         );
+    }
+
+    #[test]
+    fn finding_a_mouse_without_hardware_ends_cleanly() {
+        // No Logitech receiver (or no udev) here: an error that says what to do,
+        // never a panic; with a receiver and mice around, a mouse is found.
+        if let Err(error) = find_mouse(None) {
+            assert_ne!(error.to_string(), "");
+        }
     }
 
     #[test]

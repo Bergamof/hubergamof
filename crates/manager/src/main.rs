@@ -35,7 +35,9 @@ use hubergamof_manager::update::{
 };
 use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
+use hubergamof_mouse::diagnostics::{self, Action, parse_waveform};
 use hubergamof_protocol::CatalogModule;
+use hubergamof_protocol::{HapticLevel, HapticWaveform, MouseModel, WheelMode};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -121,6 +123,17 @@ enum Command {
         browser: Browser,
     },
 
+    /// Try a Logitech mouse: read its state or make one change you ask for
+    /// (sensitivity, wheel mode, a haptic waveform, button diversion). The
+    /// mouse is looked for on the Logi Bolt receiver; move it to wake it.
+    MouseTest {
+        /// Which mouse, when more than one answers.
+        #[arg(long, value_enum)]
+        model: Option<MouseModelArg>,
+        #[command(subcommand)]
+        action: MouseTestAction,
+    },
+
     /// List what the Logitech mice on this machine tell about themselves
     /// (HID++ features, remappable buttons). Read-only: nothing is written to
     /// a device. Paste the output when asking for a model to be supported.
@@ -129,6 +142,139 @@ enum Command {
         #[arg(long)]
         trace: bool,
     },
+}
+
+/// Mouse models `mouse-test` knows.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum MouseModelArg {
+    /// Logitech MX Master 4.
+    Master4,
+    /// Logitech MX Anywhere 3S.
+    Anywhere3s,
+}
+
+impl From<MouseModelArg> for MouseModel {
+    fn from(model: MouseModelArg) -> Self {
+        match model {
+            MouseModelArg::Master4 => Self::MxMaster4,
+            MouseModelArg::Anywhere3s => Self::MxAnywhere3S,
+        }
+    }
+}
+
+/// Haptic strengths `mouse-test` knows.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum HapticLevelArg {
+    /// No feedback.
+    Off,
+    /// Barely felt.
+    Subtle,
+    /// Light.
+    Low,
+    /// Medium.
+    Medium,
+    /// Strong.
+    High,
+}
+
+impl From<HapticLevelArg> for HapticLevel {
+    fn from(level: HapticLevelArg) -> Self {
+        match level {
+            HapticLevelArg::Off => Self::Off,
+            HapticLevelArg::Subtle => Self::Subtle,
+            HapticLevelArg::Low => Self::Low,
+            HapticLevelArg::Medium => Self::Medium,
+            HapticLevelArg::High => Self::High,
+        }
+    }
+}
+
+/// Wheel modes `mouse-test` knows.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum WheelModeArg {
+    /// One notch at a time.
+    Ratchet,
+    /// Free spin.
+    Free,
+    /// Free spin once thrown fast enough.
+    Auto,
+}
+
+impl From<WheelModeArg> for WheelMode {
+    fn from(mode: WheelModeArg) -> Self {
+        match mode {
+            WheelModeArg::Ratchet => Self::Ratchet,
+            WheelModeArg::Free => Self::Free,
+            WheelModeArg::Auto => Self::Auto,
+        }
+    }
+}
+
+/// What `mouse-test` does.
+#[derive(Debug, Subcommand)]
+enum MouseTestAction {
+    /// Read and print the state of the mouse (nothing is changed).
+    Info,
+    /// Play a haptic waveform (`knock`, `ringing`, `sharp-state-change`…).
+    Haptic {
+        /// Waveform name.
+        #[arg(value_parser = parse_waveform_arg)]
+        waveform: HapticWaveform,
+        /// Set this strength first.
+        #[arg(long, value_enum)]
+        level: Option<HapticLevelArg>,
+    },
+    /// Set the sensitivity, 200 to 8000 dpi in steps of 50.
+    Dpi {
+        /// Dots per inch.
+        value: u16,
+    },
+    /// Set how the wheel turns.
+    Wheel {
+        /// Mode.
+        #[arg(value_enum)]
+        mode: WheelModeArg,
+        /// Speed from which the automatic mode frees the wheel, 1 to 50.
+        #[arg(long, default_value_t = 20)]
+        threshold: u8,
+    },
+    /// Divert the buttons and print their presses, then give them back.
+    Buttons {
+        /// How long to watch, in seconds.
+        #[arg(long, default_value_t = 20)]
+        seconds: u64,
+    },
+    /// Give back every diverted button (after a crash).
+    Release,
+}
+
+fn parse_waveform_arg(text: &str) -> Result<HapticWaveform, String> {
+    parse_waveform(text).ok_or_else(|| {
+        let names: Vec<String> = HapticWaveform::ALL
+            .iter()
+            .map(|w| format!("{w:?}"))
+            .collect();
+        format!("unknown waveform; one of {}", names.join(", "))
+    })
+}
+
+impl From<MouseTestAction> for Action {
+    fn from(action: MouseTestAction) -> Self {
+        match action {
+            MouseTestAction::Info => Self::Info,
+            MouseTestAction::Haptic { waveform, level } => Self::Haptic {
+                waveform,
+                level: level.map(Into::into),
+            },
+            MouseTestAction::Dpi { value } => Self::Dpi(value),
+            MouseTestAction::Wheel { mode, threshold } => Self::Wheel {
+                mode: mode.into(),
+                threshold,
+            },
+            MouseTestAction::Buttons { seconds } => Self::Buttons(Duration::from_secs(seconds)),
+            MouseTestAction::Release => Self::Release,
+        }
+    }
 }
 
 /// Where devices come from.
@@ -145,7 +291,12 @@ async fn main() -> Result<()> {
     init_tracing(match cli.command {
         // The native host owns stdout: its frames, nothing else.
         Some(Command::NativeHost { .. }) => LogOutput::Stderr,
-        Some(Command::Open | Command::InstallExtension { .. } | Command::MouseProbe { .. })
+        Some(
+            Command::Open
+            | Command::InstallExtension { .. }
+            | Command::MouseProbe { .. }
+            | Command::MouseTest { .. },
+        )
         | None => LogOutput::Stdout,
     });
     match cli.command {
@@ -153,6 +304,7 @@ async fn main() -> Result<()> {
         Some(Command::NativeHost { origin }) => exit_with(run_native_host(&origin).await),
         Some(Command::InstallExtension { browser }) => install_extension(browser),
         Some(Command::MouseProbe { trace }) => run_mouse_probe(trace),
+        Some(Command::MouseTest { model, action }) => run_mouse_test(model, &action.into()),
         None => run_manager(cli).await,
     }
 }
@@ -172,6 +324,14 @@ fn exit_with(outcome: Result<()>) -> ! {
         }
     };
     std::process::exit(code)
+}
+
+/// Does one action on a Logitech mouse and says what happened (`mouse-test`).
+fn run_mouse_test(model: Option<MouseModelArg>, action: &Action) -> Result<()> {
+    eprintln!("Looking for the mouse (move it to wake it)...");
+    let mut link = hubergamof_mouse::hidraw::find_mouse(model.map(Into::into))?;
+    diagnostics::run(&mut link, action, &mut std::io::stdout().lock())?;
+    Ok(())
 }
 
 /// Prints the read-only inventory of the Logitech devices (`mouse-probe`).
@@ -679,6 +839,80 @@ mod tests {
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
         let cli = Cli::try_parse_from(["hubergamof", "native-host"]).unwrap();
         assert!(matches!(cli.command, Some(Command::NativeHost { .. })));
+    }
+
+    #[test]
+    fn mouse_test_actions_are_parsed() {
+        let parse = |args: &[&str]| {
+            let mut all = vec!["hubergamof", "mouse-test"];
+            all.extend_from_slice(args);
+            Cli::try_parse_from(all)
+        };
+        let action = |args: &[&str]| match parse(args).unwrap().command {
+            Some(Command::MouseTest { action, .. }) => Action::from(action),
+            other => panic!("not a mouse-test: {other:?}"),
+        };
+        assert_eq!(action(&["info"]), Action::Info);
+        assert_eq!(action(&["dpi", "2400"]), Action::Dpi(2400));
+        assert_eq!(action(&["release"]), Action::Release);
+        assert_eq!(
+            action(&["haptic", "sharp-state-change", "--level", "low"]),
+            Action::Haptic {
+                waveform: HapticWaveform::SharpStateChange,
+                level: Some(HapticLevel::Low)
+            }
+        );
+        assert_eq!(
+            action(&["wheel", "auto", "--threshold", "30"]),
+            Action::Wheel {
+                mode: WheelMode::Auto,
+                threshold: 30
+            }
+        );
+        assert_eq!(
+            action(&["wheel", "free"]),
+            Action::Wheel {
+                mode: WheelMode::Free,
+                threshold: 20
+            }
+        );
+        assert_eq!(
+            action(&["buttons"]),
+            Action::Buttons(Duration::from_secs(20))
+        );
+        assert_eq!(
+            action(&["buttons", "--seconds", "5"]),
+            Action::Buttons(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn mouse_test_refuses_what_it_does_not_know() {
+        for args in [
+            &["mouse-test"][..],
+            &["mouse-test", "haptic", "fire"],
+            &["mouse-test", "dpi"],
+            &["mouse-test", "dpi", "fast"],
+            &["mouse-test", "wheel", "turbo"],
+            &["mouse-test", "--model", "mx-keys", "info"],
+        ] {
+            let mut all = vec!["hubergamof"];
+            all.extend_from_slice(args);
+            assert!(Cli::try_parse_from(all).is_err(), "{args:?}");
+        }
+        let cli = Cli::try_parse_from(["hubergamof", "mouse-test", "--model", "master4", "info"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::MouseTest {
+                model: Some(MouseModelArg::Master4),
+                ..
+            })
+        ));
+        assert_eq!(
+            MouseModel::from(MouseModelArg::Anywhere3s),
+            MouseModel::MxAnywhere3S
+        );
     }
 
     #[test]
