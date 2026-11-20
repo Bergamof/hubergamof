@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use hubergamof_module_api::HapticWaveform;
 use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 use tokio::sync::{mpsc, watch};
 
@@ -15,6 +16,7 @@ use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
 use super::paint::DEFAULT_PALETTE;
 use super::window::Surface;
+use crate::haptics::HapticOutput;
 
 /// What the screen is taken to be until the window reports its size.
 const UNKNOWN_SCREEN: Size = Size {
@@ -28,6 +30,12 @@ pub(super) const NUDGE_PERIOD: std::time::Duration = std::time::Duration::from_m
 
 /// Nudges tried at most for one opening.
 pub(super) const NUDGE_TRIES: u32 = 6;
+
+/// The waveforms of the feel of the menu: it opens, the pointer comes onto a
+/// petal, an entry is chosen.
+const OPEN_WAVEFORM: HapticWaveform = HapticWaveform::SubtleCollision;
+const HOVER_WAVEFORM: HapticWaveform = HapticWaveform::WhisperCollision;
+const CHOICE_WAVEFORM: HapticWaveform = HapticWaveform::SharpStateChange;
 
 /// What the menu is asked to do and told about.
 #[derive(Debug)]
@@ -127,6 +135,7 @@ impl RadialService {
         runtime: &tokio::runtime::Handle,
         nudge: impl Fn() + Send + Sync + 'static,
         chooser: impl Fn(&RadialEntryConfig) + Send + 'static,
+        feel: Arc<dyn HapticOutput>,
     ) -> Self {
         Self::start_on(
             |events| {
@@ -141,6 +150,7 @@ impl RadialService {
             },
             Arc::new(nudge),
             Box::new(chooser),
+            feel,
             config,
             locked,
             runtime,
@@ -153,6 +163,7 @@ impl RadialService {
         make_surface: impl FnOnce(mpsc::UnboundedSender<Event>) -> Option<S> + Send + 'static,
         nudge: Arc<dyn Fn() + Send + Sync>,
         chooser: Chooser,
+        feel: Arc<dyn HapticOutput>,
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
@@ -174,7 +185,7 @@ impl RadialService {
             .name("radial-menu".to_owned())
             .spawn(move || {
                 let surface = make_surface(window_events);
-                let mut menu = Menu::new(&first, locked, surface, chooser, wake);
+                let mut menu = Menu::new(&first, locked, surface, chooser, wake, feel);
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -258,6 +269,9 @@ struct Menu<S: Surface> {
     surface: Option<S>,
     chooser: Chooser,
     wake: PointerWake,
+    /// Where the feel of the menu is played, when the configuration wants it.
+    feel: Arc<dyn HapticOutput>,
+    haptics: bool,
     animate: bool,
     /// Read when a press comes and when an entry is chosen, not only when the
     /// change is told: a press or a click queued before the news of a lock
@@ -275,12 +289,15 @@ impl<S: Surface> Menu<S> {
         surface: Option<S>,
         chooser: Chooser,
         wake: PointerWake,
+        feel: Arc<dyn HapticOutput>,
     ) -> Self {
         Self {
             controller: Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN),
             surface,
             chooser,
             wake,
+            feel,
+            haptics: config.haptics,
             animate: config.animate,
             locked,
             started: Instant::now(),
@@ -318,6 +335,7 @@ impl<S: Surface> Menu<S> {
             Event::Window(event) => self.controller.window(event),
             Event::Config(config) => {
                 self.animate = config.animate;
+                self.haptics = config.haptics;
                 self.controller.configure(&config);
                 Vec::new()
             }
@@ -356,10 +374,18 @@ impl<S: Surface> Menu<S> {
                     if let (Some(surface), Some(content)) = (&self.surface, content) {
                         surface.open(content);
                         (self.wake.schedule)();
+                        self.feel(OPEN_WAVEFORM);
                     }
                 }
                 Effect::Place(view) => self.with_surface(|surface| surface.place(view)),
-                Effect::Redraw(view) => self.with_surface(|surface| surface.redraw(view)),
+                Effect::Redraw(view) => {
+                    self.with_surface(|surface| surface.redraw(view));
+                    // A petal is felt when the pointer comes onto it, not when
+                    // it leaves it for the void.
+                    if view.lit.is_some() {
+                        self.feel(HOVER_WAVEFORM);
+                    }
+                }
                 Effect::Choose(entry) => {
                     if *self.locked.borrow() {
                         tracing::debug!(
@@ -367,10 +393,19 @@ impl<S: Surface> Menu<S> {
                         );
                     } else {
                         (self.chooser)(&entry);
+                        self.feel(CHOICE_WAVEFORM);
                     }
                 }
                 Effect::Close => self.with_surface(Surface::close),
             }
+        }
+    }
+
+    /// Plays `waveform` on the haptic mice, when the configuration of the menu
+    /// asks for haptics.
+    fn feel(&self, waveform: HapticWaveform) {
+        if self.haptics {
+            self.feel.play_waveform(waveform);
         }
     }
 
@@ -425,6 +460,14 @@ mod tests {
         }
     }
 
+    impl HapticOutput for Notes {
+        fn play(&self, _: &crate::haptics::HapticPlay) {}
+
+        fn play_waveform(&self, waveform: HapticWaveform) {
+            self.push_wake(&format!("feel {waveform:?}"));
+        }
+    }
+
     impl Surface for Notes {
         fn open(&self, content: Content) {
             self.push(&format!("open {}", content.petals.len()));
@@ -462,6 +505,7 @@ mod tests {
             Some(notes.clone()),
             Box::new(move |entry| chosen.push(&entry.module.to_string())),
             quiet_wake(notes),
+            Arc::new(notes.clone()),
         );
         (menu, lock)
     }
@@ -562,6 +606,7 @@ mod tests {
             None,
             Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
             quiet_wake(&Notes::default()),
+            Arc::new(Notes::default()),
         );
         menu.handle(Event::Press(menu.started));
         menu.handle(Event::Press(menu.started));
@@ -589,12 +634,12 @@ mod tests {
         let (mut menu, _lock) = menu(&notes, false, &chosen);
         menu.handle(Event::Nudge);
         assert_eq!(
-            notes.wakes(),
+            wake_calls(&notes),
             [] as [String; 0],
             "closed: nothing to nudge for"
         );
         menu.handle(Event::Press(at(&menu, 0)));
-        assert_eq!(notes.wakes(), ["schedule"]);
+        assert_eq!(wake_calls(&notes), ["schedule"]);
         menu.handle(Event::Nudge);
         menu.handle(Event::Nudge);
         // The pointer says where it is: the menu is placed, no more nudges.
@@ -602,8 +647,89 @@ mod tests {
             900.0, 500.0,
         ))));
         menu.handle(Event::Nudge);
-        assert_eq!(notes.wakes(), ["schedule", "nudge", "nudge"]);
+        assert_eq!(wake_calls(&notes), ["schedule", "nudge", "nudge"]);
         assert_eq!(notes.all(), ["open 4", "place"]);
+    }
+
+    /// What the pointer wake was asked, leaving the feel of the menu aside.
+    fn wake_calls(notes: &Notes) -> Vec<String> {
+        notes
+            .wakes()
+            .into_iter()
+            .filter(|note| !note.starts_with("feel"))
+            .collect()
+    }
+
+    fn feels(notes: &Notes) -> Vec<String> {
+        notes
+            .wakes()
+            .into_iter()
+            .filter(|note| note.starts_with("feel"))
+            .collect()
+    }
+
+    #[test]
+    fn the_menu_is_felt_opening_hovered_and_chosen() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
+        open(&mut menu);
+        assert_eq!(feels(&notes), ["feel SubtleCollision"]);
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            990.0, 500.0,
+        ))));
+        assert_eq!(
+            feels(&notes),
+            ["feel SubtleCollision", "feel WhisperCollision"]
+        );
+        // Leaving for the void is not felt.
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            900.0, 500.0,
+        ))));
+        assert_eq!(feels(&notes).len(), 2);
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            990.0, 500.0,
+        ))));
+        menu.handle(Event::Release(at(&menu, 600)));
+        let all = feels(&notes);
+        assert_eq!(
+            all.last().map(String::as_str),
+            Some("feel SharpStateChange")
+        );
+        assert_eq!(chosen.all(), ["teams"]);
+    }
+
+    #[test]
+    fn nothing_is_felt_when_the_configuration_has_no_haptics() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, _lock) = menu(&notes, false, &chosen);
+        let mut config = RadialMenuConfig::default_menu();
+        config.haptics = false;
+        menu.handle(Event::Config(Box::new(config)));
+        open(&mut menu);
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            990.0, 500.0,
+        ))));
+        menu.handle(Event::Release(at(&menu, 600)));
+        assert_eq!(feels(&notes), [] as [String; 0]);
+        assert_eq!(chosen.all(), ["teams"], "the choice is made all the same");
+    }
+
+    #[test]
+    fn a_choice_dropped_for_a_lock_is_not_felt() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let (mut menu, lock) = menu(&notes, false, &chosen);
+        open(&mut menu);
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            990.0, 500.0,
+        ))));
+        lock.send_replace(true);
+        menu.handle(Event::Release(at(&menu, 600)));
+        assert!(
+            !feels(&notes)
+                .iter()
+                .any(|note| note.contains("SharpStateChange"))
+        );
+        assert_eq!(chosen.all(), [] as [String; 0]);
     }
 
     #[test]
@@ -660,6 +786,7 @@ mod tests {
             move |_| Some(for_menu),
             Arc::new(|| {}),
             Box::new(|_| {}),
+            Arc::new(crate::haptics::NoHaptics),
             config,
             locked,
             &tokio::runtime::Handle::current(),

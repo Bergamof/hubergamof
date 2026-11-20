@@ -32,6 +32,13 @@ impl HapticPlay {
 pub trait HapticOutput: Send + Sync {
     /// Signals `play`, never waiting.
     fn play(&self, play: &HapticPlay);
+
+    /// Plays `waveform` on every mouse that can, whatever event it belongs to
+    /// (the feel of the radial menu), unless its haptics are off. Nothing by
+    /// default.
+    fn play_waveform(&self, waveform: HapticWaveform) {
+        let _ = waveform;
+    }
 }
 
 /// No mouse to signal on (`--demo`, the tests, the mice not served).
@@ -66,6 +73,12 @@ impl HapticOutput for HapticRelay {
     fn play(&self, play: &HapticPlay) {
         if let Some(target) = self.target.get() {
             target.play(play);
+        }
+    }
+
+    fn play_waveform(&self, waveform: HapticWaveform) {
+        if let Some(target) = self.target.get() {
+            target.play_waveform(waveform);
         }
     }
 }

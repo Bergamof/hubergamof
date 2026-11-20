@@ -51,8 +51,10 @@ pub enum Request {
 }
 
 /// How long [`MouseSession::serve`] waits for the buttons before looking at
-/// the stop request again: the delay with which it reacts to it.
-const SERVE_STEP: Duration = Duration::from_millis(200);
+/// the stop request and at what is asked of the mouse again: the delay with
+/// which it reacts to them (a vibration answers the pointer crossing a petal
+/// of the radial menu, so it must not lag).
+const SERVE_STEP: Duration = Duration::from_millis(40);
 
 /// How many updates in a row may find the mouse asleep before it is given up.
 const MAX_WAKE_FAILURES: u32 = 3;
