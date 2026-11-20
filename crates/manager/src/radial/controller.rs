@@ -13,8 +13,8 @@ use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 
 use super::geometry::{Layout, Point, Ring, Size, fit_on_screen};
 use super::interaction::{Input, Menu, Output};
-use super::overlay::{Content, Petal};
 use super::paint::Palette;
+use super::window::{Content, Petal};
 
 /// What the window must show of the menu.
 #[derive(Debug, Clone, Copy, PartialEq)]

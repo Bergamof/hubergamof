@@ -4,16 +4,17 @@
 //! hover lights a petal, a click chooses it, Escape closes.
 
 use std::io::Write;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use hubergamof_protocol::RadialMenuConfig;
 use thiserror::Error;
 
+use super::backend::{self, NoWindow};
 use super::controller::{Controller, Effect};
 use super::geometry::{DEFAULT_RING, Size};
-use super::overlay::{Overlay, OverlayError};
 use super::paint::DEFAULT_PALETTE;
+use super::window::Surface;
 
 /// What the screen is taken to be until the window reports its size.
 const UNKNOWN_SCREEN: Size = Size {
@@ -26,7 +27,7 @@ const UNKNOWN_SCREEN: Size = Size {
 pub enum PreviewError {
     /// The window cannot be started.
     #[error(transparent)]
-    Overlay(#[from] OverlayError),
+    NoWindow(#[from] NoWindow),
     /// The menu has no entry to show.
     #[error("the radial menu shows no entry")]
     NoEntry,
@@ -46,7 +47,7 @@ pub enum PreviewError {
 /// [`PreviewError`] when the window cannot start or the report cannot be written.
 pub fn run(duration: Duration, out: &mut impl Write) -> Result<(), PreviewError> {
     let (events, window_events) = mpsc::channel();
-    let overlay = Overlay::start(move |event| events.send(event).is_ok())?;
+    let overlay = backend::start(Arc::new(move |event| events.send(event).is_ok()))?;
     let mut controller = Controller::new(
         &RadialMenuConfig::default_menu(),
         DEFAULT_RING,

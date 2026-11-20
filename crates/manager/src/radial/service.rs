@@ -5,15 +5,17 @@
 //! What a chosen entry does (the actions of the modules) comes later: for now
 //! the choice is only logged.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 use tokio::sync::{mpsc, watch};
 
-use super::controller::{Controller, Effect, View, WindowEvent};
+use super::backend;
+use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
-use super::overlay::{Content, Overlay};
 use super::paint::DEFAULT_PALETTE;
+use super::window::Surface;
 
 /// What the screen is taken to be until the window reports its size.
 const UNKNOWN_SCREEN: Size = Size {
@@ -95,36 +97,6 @@ impl Probe {
     }
 }
 
-/// What the menu is shown on: the window.
-pub trait Surface {
-    /// Shows the window; the menu is drawn once it is placed.
-    fn open(&self, content: Content);
-    /// Draws the menu at its place.
-    fn place(&self, view: View);
-    /// Draws the menu again.
-    fn redraw(&self, view: View);
-    /// Hides the window.
-    fn close(&self);
-}
-
-impl Surface for Overlay {
-    fn open(&self, content: Content) {
-        Self::open(self, content);
-    }
-
-    fn place(&self, view: View) {
-        Self::place(self, view);
-    }
-
-    fn redraw(&self, view: View) {
-        Self::redraw(self, view);
-    }
-
-    fn close(&self) {
-        Self::close(self);
-    }
-}
-
 /// The running menu: its thread, stopped when this is dropped.
 #[derive(Debug)]
 pub struct RadialService {
@@ -146,11 +118,14 @@ impl RadialService {
         runtime: &tokio::runtime::Handle,
     ) -> Self {
         Self::start_on(
-            |events| match Overlay::start(move |event| events.send(Event::Window(event)).is_ok()) {
-                Ok(overlay) => Some(overlay),
-                Err(error) => {
-                    tracing::warn!(%error, "the radial menu has no window: it will not open");
-                    None
+            |events| {
+                let report = Arc::new(move |event| events.send(Event::Window(event)).is_ok());
+                match backend::start(report) {
+                    Ok(window) => Some(window),
+                    Err(error) => {
+                        tracing::warn!(%error, "the radial menu has no window: it will not open");
+                        None
+                    }
                 }
             },
             config,
@@ -376,7 +351,9 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::radial::controller::View;
     use crate::radial::geometry::Point;
+    use crate::radial::window::Content;
 
     /// A window that notes what it is asked.
     #[derive(Clone, Default)]

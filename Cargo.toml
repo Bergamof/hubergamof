@@ -29,6 +29,8 @@ input-linux = "0.7.1"
 libc = "0.2.191"
 # Wayland client toolkit for the radial menu window; `xkbcommon` (system library) is left out: Escape is read from the raw key code.
 smithay-client-toolkit = { version = "0.21.1", default-features = false, features = ["calloop"] }
+# X11 client (pure Rust connection, no libxcb) for the radial menu window on desktops without layer-shell (GNOME).
+x11rb = "0.14.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 # HTTPS client of the update check: rustls with the system trust store, no
