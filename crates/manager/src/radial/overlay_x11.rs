@@ -53,6 +53,10 @@ const RED_MASK: u32 = 0x00ff_0000;
 const GREEN_MASK: u32 = 0x0000_ff00;
 const BLUE_MASK: u32 = 0x0000_00ff;
 
+/// How long the menu is drawn again and again after it is placed: a desktop
+/// can show the window a moment after the first drawings, which are then lost.
+const SETTLE: Duration = Duration::from_secs(1);
+
 /// Time between two frames while the menu opens.
 const FRAME_PERIOD: Duration = Duration::from_millis(16);
 
@@ -345,13 +349,15 @@ fn set_properties(connection: &RustConnection, window: Window) -> Result<(), X11
     let state = atom(b"_NET_WM_STATE")?;
     let fullscreen = atom(b"_NET_WM_STATE_FULLSCREEN")?;
     let above = atom(b"_NET_WM_STATE_ABOVE")?;
+    let skip_taskbar = atom(b"_NET_WM_STATE_SKIP_TASKBAR")?;
+    let skip_pager = atom(b"_NET_WM_STATE_SKIP_PAGER")?;
     connection
         .change_property32(
             PropMode::REPLACE,
             window,
             state,
             AtomEnum::ATOM,
-            &[fullscreen, above],
+            &[fullscreen, above, skip_taskbar, skip_pager],
         )
         .map_err(X11Error::request)?;
     connection
@@ -608,6 +614,7 @@ impl State {
         self.mapped = true;
         if self.shown.is_some() {
             self.take_the_keyboard();
+            self.draw();
         } else {
             let _ = self.connection.unmap_window(self.window);
             let _ = self.connection.flush();
@@ -730,7 +737,8 @@ impl State {
             self.give_up();
             return;
         }
-        if opening_progress(&shown.content, shown.placed_at) < 1.0 {
+        let settling = shown.placed_at.is_some_and(|at| at.elapsed() < SETTLE);
+        if settling || opening_progress(&shown.content, shown.placed_at) < 1.0 {
             self.draw();
         }
     }
