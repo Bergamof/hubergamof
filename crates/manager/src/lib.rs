@@ -36,6 +36,7 @@ pub mod mouse_actions;
 pub mod mouse_engine;
 pub mod mouse_hub;
 pub mod placement;
+pub mod radial;
 pub mod render;
 pub mod screen_lock;
 pub mod server;
