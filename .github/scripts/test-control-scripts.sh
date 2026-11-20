@@ -461,7 +461,7 @@ expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"' "u
 expect_udev ko 'KERNEL=="event*", TAG+="uaccess"' "un autre nœud désigné par son nom"
 expect_udev ko 'KERNEL=="*", TAG+="uaccess"' "tous les nœuds"
 expect_udev ko 'KERNEL=="uinput*", SUBSYSTEM=="misc", TAG+="uaccess"' "uinput avec un joker"
-expect_udev ko 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", \' "une règle sur plusieurs lignes"
+expect_udev ko $'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", \\' "une règle sur plusieurs lignes"
 expect_udev ko 'sed:s/SUBSYSTEM=="misc", //' "uinput sans le sous-système"
 expect_udev ko 'sed:s/, OPTIONS+="static_node=uinput"//' "uinput sans static_node"
 expect_udev ko 'sed:s/KERNEL=="uinput", /KERNEL == "uinput", /' "uinput avec des espaces"
