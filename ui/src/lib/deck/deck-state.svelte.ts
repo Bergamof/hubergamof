@@ -8,8 +8,14 @@ import type {
 	UpdateStatus
 } from '#lib/generated/index.js';
 import type { ConfigEdit } from './config-edits.js';
+import {
+	CONNECTION_LOST,
+	EditQueue,
+	type EditOptions,
+	type EditOutcome
+} from './edit-queue.svelte.js';
 import { browserDevicePreference, type DevicePreference } from './device-preference.js';
-import { sameJson } from './json.js';
+import { MouseState } from './mouse-state.svelte.js';
 import { problemOf, type Problem } from './problems.js';
 
 /** The part of `ManagerConnection` the deck state relies on (eases test doubles). */
@@ -23,72 +29,18 @@ export interface Notice extends Problem {
 	id: number;
 }
 
-/** How an edit ended: saved by the manager, or dropped (and why). */
-export type EditOutcome = { saved: true } | { saved: false; problem: Problem };
+export type { EditOptions, EditOutcome };
+export { UPDATE_TIMEOUT_MS } from './edit-queue.svelte.js';
 
-export interface EditOptions {
-	/**
-	 * Whether a failure is shown as a notice (default). Off for callers showing it
-	 * themselves, next to what failed.
-	 */
-	notify?: boolean;
-}
-
-/** Longest wait for the manager to answer an update before giving it up. */
-export const UPDATE_TIMEOUT_MS = 10_000;
-
-const NOT_CONNECTED: Problem = {
-	text: 'Modification non enregistrée : pas de connexion au gestionnaire.',
-	detail: null
-};
-const CONNECTION_LOST: Problem = {
-	text: 'Modification non enregistrée : la connexion au gestionnaire a été perdue.',
-	detail: null
-};
-const NO_ANSWER: Problem = {
-	text: 'Modification abandonnée : le gestionnaire n’a pas répondu.',
-	detail: null
-};
 const DEVICE_GONE: Problem = {
 	text: 'Modification non enregistrée : l’appareil n’est plus connecté.',
 	detail: null
 };
 
-interface Waiter {
-	settle: (outcome: EditOutcome) => void;
-	notify: boolean;
-}
-
-interface QueuedEdit extends Waiter {
-	change: ConfigEdit;
-}
-
-interface Update {
-	/** Configuration sent, with the revision it replaces. */
-	config: DeviceConfig;
-	waiters: Waiter[];
-	timer: ReturnType<typeof setTimeout>;
-}
-
-/** Whether `received` is the manager saving `sent`: same content, next revision. */
-function isSaved(received: DeviceConfig, sent: DeviceConfig): boolean {
-	return (
-		received.revision === sent.revision + 1 &&
-		sameJson({ ...received, revision: 0 }, { ...sent, revision: 0 })
-	);
-}
-
 /**
  * What the UI knows about the manager: devices, module catalog and the configuration of
- * the selected device, edited through {@link DeckState.edit}.
- *
- * Updates are serialised: one is in flight at a time and the next edits wait for its
- * answer, then go together on top of the configuration the manager saved, so that quick
- * successive changes (brightness slider) never carry an outdated revision. Errors are not
- * tied to requests: any error arriving while an update is in flight answers it, and the
- * waiting edits are dropped with it. A configuration saved by another client meanwhile
- * does not answer it (the manager then refuses it as stale). {@link config} shows the
- * pending edits right away.
+ * the selected device, edited through {@link DeckState.edit} (see {@link EditQueue} for
+ * how updates are sent).
  */
 export class DeckState {
 	devices: DeviceInfo[] = $state([]);
@@ -101,12 +53,15 @@ export class DeckState {
 	updateSettings: UpdateSettings | undefined = $state();
 	/** Outcome of the manager's check for a newer release. */
 	updateStatus: UpdateStatus = $state({ type: 'unknown' });
+	/** The connected mice, their configuration and the radial menu. */
+	readonly mice: MouseState;
 
-	/** Last configuration of the selected device sent by the manager. */
-	#saved: DeviceConfig | undefined = $state();
-	#inFlight: Update | undefined = $state();
-	#queued: QueuedEdit[] = $state([]);
-
+	readonly #edits = new EditQueue<DeviceConfig>({
+		send: (config) =>
+			this.#connection.send({ type: 'updateConfig', serial: config.serial, config }),
+		report: (problem) => this.report(problem),
+		gone: DEVICE_GONE
+	});
 	readonly #connection: DeckConnection;
 	readonly #preference: DevicePreference;
 	#nextNoticeId = 1;
@@ -117,14 +72,14 @@ export class DeckState {
 	);
 
 	/** Configuration as displayed: the saved one with the pending edits applied. */
-	readonly config: DeviceConfig | undefined = $derived.by(() => {
-		const base = this.#inFlight?.config ?? this.#saved;
-		return base && this.#queued.reduce((config, queued) => queued.change(config), base);
-	});
+	get config(): DeviceConfig | undefined {
+		return this.#edits.config;
+	}
 
 	constructor(connection: DeckConnection, preference: DevicePreference = browserDevicePreference) {
 		this.#connection = connection;
 		this.#preference = preference;
+		this.mice = new MouseState(connection, (problem) => this.report(problem));
 	}
 
 	/** Starts following the manager messages; returns the function that stops it. */
@@ -145,17 +100,8 @@ export class DeckState {
 	}
 
 	/** Changes the configuration of the selected device; resolves once saved or dropped. */
-	edit(change: ConfigEdit, { notify = true }: EditOptions = {}): Promise<EditOutcome> {
-		return new Promise((settle) => {
-			const waiter = { settle, notify };
-			if (!this.#saved) {
-				this.#fail([waiter], DEVICE_GONE);
-			} else if (this.#inFlight) {
-				this.#queued = [...this.#queued, { ...waiter, change }];
-			} else {
-				this.#send(change(this.#saved), [waiter]);
-			}
-		});
+	edit(change: ConfigEdit, options: EditOptions = {}): Promise<EditOutcome> {
+		return this.#edits.edit(change, options);
 	}
 
 	/** Asks the manager to look for a newer release now; the answer arrives as `updateStatus`. */
@@ -181,7 +127,8 @@ export class DeckState {
 		switch (message.type) {
 			case 'hello':
 				// New connection: whatever was pending died with the previous one.
-				this.#dropPending(CONNECTION_LOST);
+				this.#edits.dropPending(CONNECTION_LOST);
+				this.mice.dropPending(CONNECTION_LOST);
 				this.managerVersion = message.version;
 				break;
 			case 'devices':
@@ -192,7 +139,7 @@ export class DeckState {
 				this.catalog = message.modules;
 				break;
 			case 'config':
-				if (message.serial === this.selectedSerial) this.#receiveConfig(message.config);
+				if (message.serial === this.selectedSerial) this.#edits.receive(message.config);
 				break;
 			case 'error':
 				this.#receiveError(problemOf(message.code, message.message));
@@ -203,10 +150,11 @@ export class DeckState {
 			case 'updateStatus':
 				this.updateStatus = message.status;
 				break;
-			// The mouse pages read these messages; nothing of the deck depends on them.
 			case 'mice':
 			case 'mouseConfig':
 			case 'radialMenu':
+				this.mice.handle(message);
+				break;
 			case 'liveState':
 			case 'pong':
 				break;
@@ -238,56 +186,19 @@ export class DeckState {
 
 	#forgetDevice(): void {
 		this.selectedSerial = undefined;
-		this.#saved = undefined;
-		this.#dropPending(DEVICE_GONE);
+		this.#edits.forget();
 	}
 
-	#receiveConfig(config: DeviceConfig): void {
-		this.#saved = config;
-		const update = this.#inFlight;
-		if (!update || !isSaved(config, update.config)) return;
-		clearTimeout(update.timer);
-		this.#inFlight = undefined;
-		for (const waiter of update.waiters) waiter.settle({ saved: true });
-		this.#sendQueued(config);
-	}
-
+	/**
+	 * Errors are not tied to requests: one arriving while an update is in flight answers it
+	 * (the deck's and the mice's alike), else it is only shown.
+	 */
 	#receiveError(problem: Problem): void {
-		if (this.#inFlight) this.#dropPending(problem);
-		else this.report(problem);
-	}
-
-	#sendQueued(base: DeviceConfig): void {
-		const queued = this.#queued;
-		if (queued.length === 0) return;
-		this.#queued = [];
-		this.#send(
-			queued.reduce((config, edit) => edit.change(config), base),
-			queued
-		);
-	}
-
-	#send(config: DeviceConfig, waiters: Waiter[]): void {
-		if (!this.#connection.send({ type: 'updateConfig', serial: config.serial, config })) {
-			this.#fail(waiters, NOT_CONNECTED);
-			return;
-		}
-		const timer = setTimeout(() => this.#dropPending(NO_ANSWER), UPDATE_TIMEOUT_MS);
-		this.#inFlight = { config, waiters, timer };
-	}
-
-	#dropPending(problem: Problem): void {
-		const waiters: Waiter[] = [...(this.#inFlight?.waiters ?? []), ...this.#queued];
-		clearTimeout(this.#inFlight?.timer);
-		this.#inFlight = undefined;
-		this.#queued = [];
-		this.#fail(waiters, problem);
-	}
-
-	/** Settles the waiters as failed, with one notice if any of them wants it. */
-	#fail(waiters: readonly Waiter[], problem: Problem): void {
-		for (const waiter of waiters) waiter.settle({ saved: false, problem });
-		if (waiters.some((waiter) => waiter.notify)) this.report(problem);
+		const deckPending = this.#edits.pending;
+		const micePending = this.mice.pending;
+		if (!deckPending && !micePending) this.report(problem);
+		if (deckPending) this.#edits.dropPending(problem);
+		if (micePending) this.mice.dropPending(problem);
 	}
 
 	/** Shows `problem` until dismissed: a failure, or a warning of the editor. */

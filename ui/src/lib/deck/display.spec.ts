@@ -16,7 +16,9 @@ const audio: CatalogModule = {
 	settings: [],
 	icon: null,
 	settingIcons: {},
-	defaultSettings: {}
+	defaultSettings: {},
+	radialActions: [],
+	hapticEvents: []
 };
 
 function instance(label: string | null, kind = 'audio'): ModuleInstance {

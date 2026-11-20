@@ -175,7 +175,9 @@ describe('device selection', () => {
 			settings: [],
 			icon: null,
 			settingIcons: {},
-			defaultSettings: {}
+			defaultSettings: {},
+			radialActions: [],
+			hapticEvents: []
 		};
 		connection.receive({ type: 'moduleCatalog', modules: [audio] });
 		expect(state.moduleOf('audio')).toEqual(audio);
@@ -252,7 +254,9 @@ describe('configuration updates', () => {
 			settings: [],
 			icon: null,
 			settingIcons: {},
-			defaultSettings: {}
+			defaultSettings: {},
+			radialActions: [],
+			hapticEvents: []
 		};
 		state.edit(addKey(clock));
 		state.edit(addKey(clock));

@@ -19,6 +19,8 @@ const AUDIO: CatalogModule = {
 	icon: null,
 	settingIcons: {},
 	defaultSettings: {},
+	radialActions: [],
+	hapticEvents: [],
 	settings: []
 };
 

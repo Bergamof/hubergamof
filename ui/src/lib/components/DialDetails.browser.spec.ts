@@ -25,6 +25,8 @@ function module(kind: string, name: string, functionName: string): CatalogModule
 		icon: null,
 		settingIcons: {},
 		defaultSettings: {},
+		radialActions: [],
+		hapticEvents: [],
 		settings: []
 	};
 }

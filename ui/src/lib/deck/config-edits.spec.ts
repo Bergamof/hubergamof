@@ -66,6 +66,8 @@ const pomodoro: CatalogModule = {
 	icon: null,
 	settingIcons: {},
 	defaultSettings: { workMinutes: 25, autoStart: false, computed: 'by the module' },
+	radialActions: [],
+	hapticEvents: [],
 	settings: [
 		{
 			key: 'workMinutes',
