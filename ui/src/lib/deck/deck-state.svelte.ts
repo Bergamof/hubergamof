@@ -203,6 +203,10 @@ export class DeckState {
 			case 'updateStatus':
 				this.updateStatus = message.status;
 				break;
+			// The mouse pages read these messages; nothing of the deck depends on them.
+			case 'mice':
+			case 'mouseConfig':
+			case 'radialMenu':
 			case 'liveState':
 			case 'pong':
 				break;

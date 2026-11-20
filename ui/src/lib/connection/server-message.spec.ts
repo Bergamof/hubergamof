@@ -9,6 +9,10 @@ describe('parseServerMessage', () => {
 		});
 	});
 
+	it.each(['mice', 'mouseConfig', 'radialMenu'])('accepts the mouse message %s', (type) => {
+		expect(parseServerMessage(JSON.stringify({ type }))?.type).toBe(type);
+	});
+
 	it.each([
 		['non-string data', new ArrayBuffer(2)],
 		['invalid JSON', 'not json'],

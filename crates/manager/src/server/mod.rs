@@ -13,6 +13,7 @@ mod api;
 mod assets;
 mod catalog;
 mod errors;
+mod mouse_feed;
 mod security;
 mod session;
 
@@ -44,6 +45,7 @@ use crate::config_store::ConfigStore;
 use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
 use crate::file_chooser::FilePicker;
+use crate::mouse_hub::MouseHub;
 use crate::render::Renderer;
 use crate::update::UpdateHandle;
 
@@ -89,6 +91,8 @@ pub struct ServerContext {
     pub file_picker: Arc<dyn FilePicker>,
     /// Check for a newer release.
     pub updates: UpdateHandle,
+    /// The mice connected and the mouse and radial menu configurations.
+    pub mice: MouseHub,
 }
 
 /// Shared by every request handler.
