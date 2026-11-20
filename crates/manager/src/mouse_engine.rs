@@ -279,8 +279,8 @@ fn spawn_mouse<C: Channel + Send + 'static>(
 /// Serves one mouse until `stop` or until it is gone: loads its configuration
 /// (the first time, created from what the mouse is set to, so that serving it
 /// changes nothing until the person does), applies it, reports its buttons
-/// through `notify` with the mouse's serial, and puts the settings back at
-/// the end.
+/// through `notify` with the mouse's serial, applies the configurations the
+/// interface saves while it is served, and puts the settings back at the end.
 fn serve_mouse<C: Channel>(
     found: FoundMouse<C>,
     store: &ConfigStore,
@@ -307,7 +307,7 @@ fn serve_mouse<C: Channel>(
     tracing::info!(%model, "mouse attached");
     tracing::debug!(%serial, "mouse unit");
     // Listed for the interface for as long as the mouse is served.
-    let _listed = hub.register(
+    let mut listed = hub.register(
         MouseInfo {
             serial: serial.clone(),
             model,
@@ -316,7 +316,21 @@ fn serve_mouse<C: Channel>(
         },
         config.clone(),
     );
-    match session.serve(&config, stop, |notice| notify(&serial, notice)) {
+    // Saved by the interface between the load and the listing.
+    if let Ok(latest) = store.load_mouse(&serial, model) {
+        listed.refresh(latest.config);
+    }
+    let updates = listed.updates();
+    let next_update = || {
+        // A configuration saved since the last turn, the latest one.
+        updates
+            .has_changed()
+            .unwrap_or(false)
+            .then(|| updates.borrow_and_update().clone())
+    };
+    match session.serve_with_updates(&config, stop, next_update, |notice| {
+        notify(&serial, notice);
+    }) {
         Ok(()) => tracing::info!(%model, "mouse released"),
         Err(error) => tracing::warn!(%model, %error, "mouse lost"),
     }
@@ -501,6 +515,104 @@ mod tests {
         assert_eq!(
             (after.dpi, after.wheel, after.hires, after.haptic),
             (before.dpi, before.wheel, before.hires, before.haptic)
+        );
+    }
+
+    /// What serving a mouse while the interface saves configurations gave: the
+    /// mouse, the store, the problems reported, and what the mouse had at each
+    /// button event (pressed, sensitivity, buttons diverted).
+    type Saved = (
+        Shared,
+        ConfigStore,
+        Vec<&'static str>,
+        Vec<(bool, u16, usize)>,
+    );
+
+    /// Serves a mouse that is pressed then released, the interface saving
+    /// `dpis` (one configuration each) when the press is seen. Returns the
+    /// mouse, the store, the problems reported and what the mouse had at each
+    /// button event.
+    fn serve_saving(dpis: &[u16]) -> Saved {
+        let (dir, store) = store();
+        // The folder lives as long as the store is used by the test.
+        std::mem::forget(dir);
+        let hub = hub_of(&store);
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let fake = FakeLink::direct(device).with_incoming(vec![
+            frame(DEVICE, reprog, 0x00, &[0, 0x53]),
+            frame(DEVICE, reprog, 0x00, &[]),
+        ]);
+        let shared = Shared(Rc::new(RefCell::new(fake)));
+        let stop = AtomicBool::new(false);
+        let mut problems = Vec::new();
+        let mut events = Vec::new();
+        serve_mouse(
+            found(shared.clone(), Some(UNIT), 2),
+            &store,
+            &hub,
+            &stop,
+            |_, notice| match notice {
+                Notice::Problem(problem) => problems.push(problem.setting),
+                Notice::Button(event) => {
+                    let state = state(&shared);
+                    events.push((event.pressed, state.dpi, state.diverted.len()));
+                    if event.pressed {
+                        // The interface saves new configurations.
+                        for dpi in dpis {
+                            let mut config =
+                                hub.subscribe_config("deadbeef").unwrap().borrow().clone();
+                            config.pointer.dpi = *dpi;
+                            hub.update_mouse("deadbeef", config).unwrap();
+                        }
+                    } else {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            },
+        );
+        (shared, store, problems, events)
+    }
+
+    #[test]
+    fn a_configuration_saved_while_the_mouse_is_served_reaches_the_mouse_and_is_kept() {
+        let (shared, store, problems, events) = serve_saving(&[2400]);
+        assert_eq!(problems, [] as [&str; 0]);
+        assert_eq!(
+            events,
+            [(true, 1600, 1), (false, 2400, 1)],
+            "the new sensitivity is applied before the release is reported"
+        );
+        let after = state(&shared);
+        assert_eq!(after.dpi, 1600, "the mouse's own sensitivity is back");
+        assert!(after.diverted.is_empty(), "and its buttons");
+        let stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        assert_eq!((stored.pointer.dpi, stored.revision), (2400, 2));
+    }
+
+    #[test]
+    fn several_configurations_saved_between_two_turns_apply_only_the_last() {
+        let (shared, store, _, events) = serve_saving(&[1200, 2400]);
+        assert_eq!(events[1], (false, 2400, 1));
+        let stored = store
+            .load_mouse("deadbeef", MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        assert_eq!((stored.pointer.dpi, stored.revision), (2400, 3));
+        let dpi_writes: Vec<u16> = shared
+            .0
+            .borrow()
+            .written()
+            .iter()
+            .filter(|report| report.get(3).is_some_and(|byte| byte >> 4 == 3))
+            .filter_map(|report| Some(u16::from_be_bytes([*report.get(5)?, *report.get(6)?])))
+            .collect();
+        assert!(
+            !dpi_writes.contains(&1200),
+            "the sensitivity that was overtaken was never written: {dpi_writes:?}"
         );
     }
 

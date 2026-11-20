@@ -98,18 +98,20 @@ impl MouseHub {
     pub fn register(&self, info: MouseInfo, config: MouseConfig) -> MouseRegistration {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, updates) = watch::channel(config);
+        let sender = Arc::new(sender);
         let mut entries = self.entries();
         entries.retain(|entry| entry.info.serial != info.serial);
         entries.push(Entry {
             id,
             info,
-            config: Arc::new(sender),
+            config: Arc::clone(&sender),
         });
         self.publish_mice(&entries);
         drop(entries);
         MouseRegistration {
             hub: self.clone(),
             id,
+            sender,
             updates,
         }
     }
@@ -211,10 +213,25 @@ impl MouseHub {
 pub struct MouseRegistration {
     hub: MouseHub,
     id: u64,
+    sender: Arc<watch::Sender<MouseConfig>>,
     updates: watch::Receiver<MouseConfig>,
 }
 
 impl MouseRegistration {
+    /// Offers a configuration read from the store after the registration: one
+    /// saved by the interface between the moment the mouse's configuration was
+    /// loaded and the moment it was listed would otherwise be missed. Only a
+    /// newer revision is taken.
+    pub fn refresh(&self, config: MouseConfig) {
+        self.sender.send_if_modified(|current| {
+            let newer = config.revision > current.revision;
+            if newer {
+                *current = config;
+            }
+            newer
+        });
+    }
+
     /// The configuration of the mouse, as the interface changes it.
     pub fn updates(&mut self) -> &mut watch::Receiver<MouseConfig> {
         &mut self.updates
@@ -360,6 +377,21 @@ mod tests {
         }
         let seen = follower.borrow_and_update().clone();
         assert_eq!((seen.revision, seen.pointer.dpi), (3, 1400));
+    }
+
+    #[test]
+    fn a_configuration_saved_before_the_registration_is_offered_to_the_mouse() {
+        let (_dir, hub) = hub();
+        let mut registration = register(&hub, "aaaa0001");
+        let mut newer = config("aaaa0001");
+        newer.revision = 3;
+        newer.pointer.dpi = 2400;
+        registration.refresh(newer.clone());
+        assert_eq!(*registration.updates().borrow_and_update(), newer);
+        // An older one is not taken back.
+        registration.refresh(config("aaaa0001"));
+        assert!(!registration.updates().has_changed().unwrap());
+        assert_eq!(registration.updates().borrow().revision, 3);
     }
 
     #[test]

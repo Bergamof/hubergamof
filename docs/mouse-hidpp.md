@@ -80,6 +80,9 @@ Relevé du 2026-11-20 (journal d'Adrien, `--mice`) : les deux souris sont servie
 
 Sur le récepteur, une souris qui s'endort laisse son nœud hidraw ouvert et muet : le moteur ne s'en aperçoit pas (le fil continue sans erreur) et ne réapplique rien au réveil ; les détournements sont probablement perdus à l'endormissement (hypothèse, non vérifiée). Le récepteur annonce les connexions par des notifications HID++ 1.0 (sous-id `0x41`) dont le format reste à relever sur le matériel avant de les traiter (réappliquer la configuration à la reconnexion, rendre les boutons tenus à la déconnexion). Ouvert tant que ce n'est pas fait ; `--mice` reste désactivé par défaut.
 
+## À vérifier : l'écriture de la force haptique
+On ne sait pas si `set_haptic` (0x19B0, fonction 2) est volatil ou gardé en mémoire permanente de la souris. Le gestionnaire remet la force d'origine à l'arrêt et n'écrit plus que lorsqu'elle change, mais une écriture permanente à chaque modification userait la mémoire : à relever sur le matériel (éteindre puis rallumer la souris après un `mouse-test haptic --level`, voir si la force est revenue).
+
 ## Un seul interlocuteur par souris
 Toutes nos requêtes portent le même identifiant logiciel (`0x0B`) : un autre programme qui parle HID++ à la même souris en même temps (`mouse-test` pendant que le service tourne, Solaar, logiops, Options+) peut voir ses réponses confondues avec les nôtres, et `mouse-test buttons|release` défait les détournements du service. Le gestionnaire ne sonde jamais un (nœud, index) qu'il tient déjà (`find_mice`) ; les autres programmes sont à arrêter à la main. Une souris atteinte par deux nœuds n'est prise en charge qu'une fois (identifiant d'unité).
 

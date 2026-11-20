@@ -199,6 +199,14 @@ impl ButtonTracker {
         events
     }
 
+    /// Releases one control if it is held, for a control no longer diverted.
+    pub fn release(&mut self, control: MouseControlId) -> Option<ButtonEvent> {
+        self.down.remove(&control).then_some(ButtonEvent {
+            control,
+            pressed: false,
+        })
+    }
+
     /// Releases everything held, for a mouse that went away.
     pub fn release_all(&mut self) -> Vec<ButtonEvent> {
         self.update(&[])
