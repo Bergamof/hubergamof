@@ -687,7 +687,10 @@ mod tests {
         hub.play_at(&step_end(), start + Duration::from_millis(500));
         hub.play_at(
             &step_end(),
-            start + HAPTIC_MIN_GAP - Duration::from_millis(1),
+            start
+                + HAPTIC_MIN_GAP
+                    .checked_sub(Duration::from_millis(1))
+                    .unwrap(),
         );
         assert_eq!(played(&mouse), [HapticWaveform::Completed]);
         hub.play_at(&step_end(), start + HAPTIC_MIN_GAP);
