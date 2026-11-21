@@ -202,6 +202,17 @@ fn client_simulated_inputs() {
 }
 
 #[test]
+fn client_play_haptic() {
+    assert_wire_format(
+        &ClientMessage::PlayHaptic {
+            serial: "aaaa0001".into(),
+            waveform: HapticWaveform::SharpStateChange,
+        },
+        &json!({ "type": "playHaptic", "serial": "aaaa0001", "waveform": "sharpStateChange" }),
+    );
+}
+
+#[test]
 fn client_ping() {
     assert_wire_format(&ClientMessage::Ping, &json!({ "type": "ping" }));
 }

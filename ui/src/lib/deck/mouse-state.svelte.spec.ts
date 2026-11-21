@@ -234,6 +234,16 @@ describe('MouseState', () => {
 		mice.select('b');
 		expect(mice.problems).toEqual([]);
 	});
+
+	it('has the selected mouse play a waveform, once a mouse is selected', () => {
+		const { connection, mice } = setup();
+		expect(mice.playHaptic('knock')).toBe(false);
+		connection.receive({ type: 'mice', mice: [mouse('a')] });
+		expect(mice.playHaptic('knock')).toBe(true);
+		expect(connection.sent.at(-1)).toEqual({ type: 'playHaptic', serial: 'a', waveform: 'knock' });
+		connection.open = false;
+		expect(mice.playHaptic('knock')).toBe(false);
+	});
 });
 
 function device(serial: string): DeviceInfo {

@@ -1,4 +1,5 @@
 import type {
+	HapticWaveform,
 	MouseConfig,
 	MouseInfo,
 	MouseProblem,
@@ -80,6 +81,14 @@ export class MouseState {
 	/** Changes the radial menu; resolves once saved or dropped. */
 	editRadialMenu(change: Edit<RadialMenuConfig>, options: EditOptions = {}): Promise<EditOutcome> {
 		return this.#radialEdits.edit(change, options);
+	}
+
+	/** Has the selected mouse play `waveform`, for the person to try it; false when no mouse is selected or the connection is closed. */
+	playHaptic(waveform: HapticWaveform): boolean {
+		return (
+			this.selectedSerial !== undefined &&
+			this.#connection.send({ type: 'playHaptic', serial: this.selectedSerial, waveform })
+		);
 	}
 
 	/** Drops what waits for an answer, failed with `problem`. */

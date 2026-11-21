@@ -30,6 +30,9 @@ pub enum HubError {
     /// No mouse with this serial is connected.
     #[error("no connected mouse with serial `{0}`")]
     UnknownMouse(String),
+    /// The mouse has no haptics to try a waveform on.
+    #[error("the mouse `{0}` has no haptics")]
+    NoHaptics(String),
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] ConfigStoreError),
@@ -50,6 +53,7 @@ impl HubError {
     pub fn error_code(&self) -> ErrorCode {
         match self {
             Self::UnknownMouse(_) => ErrorCode::UnknownDevice,
+            Self::NoHaptics(_) => ErrorCode::InvalidInput,
             Self::Store(error) => error.error_code(),
             Self::InvalidShortcut { .. } => ErrorCode::InvalidConfig,
         }
@@ -64,6 +68,10 @@ const HAPTIC_QUEUE: usize = 8;
 /// event that comes in bursts (a counter that wobbles, a module that loops)
 /// is felt once.
 const HAPTIC_MIN_GAP: Duration = Duration::from_secs(2);
+
+/// Shortest time between two waveforms the interface asks a mouse to play (a
+/// button pressed again and again is not a flood on the mouse).
+const TRY_MIN_GAP: Duration = Duration::from_millis(250);
 
 struct Entry {
     id: u64,
@@ -82,6 +90,8 @@ struct Shared {
     next_id: AtomicU64,
     /// When each haptic event was last played, by `module.event`.
     last_played: Mutex<HashMap<String, Instant>>,
+    /// When the interface last had a waveform played on each mouse, by serial.
+    last_tried: Mutex<HashMap<String, Instant>>,
 }
 
 /// The mice and the radial menu, for the server and the mouse threads. Cheap
@@ -107,6 +117,7 @@ impl MouseHub {
                 radial: watch::channel(radial).0,
                 next_id: AtomicU64::new(0),
                 last_played: Mutex::default(),
+                last_tried: Mutex::default(),
             }),
         })
     }
@@ -174,6 +185,51 @@ impl MouseHub {
         let entries = self.entries();
         let entry = entries.iter().find(|entry| entry.info.serial == serial)?;
         Some(entry.config.subscribe())
+    }
+
+    /// Plays `waveform` on the mouse, for the person to try it: at the strength
+    /// set for that mouse (nothing when it is off), and not twice within
+    /// [`TRY_MIN_GAP`].
+    ///
+    /// # Errors
+    /// [`HubError::UnknownMouse`] when it is not connected,
+    /// [`HubError::NoHaptics`] when it cannot vibrate.
+    pub fn try_waveform(&self, serial: &str, waveform: HapticWaveform) -> Result<(), HubError> {
+        self.try_waveform_at(serial, waveform, Instant::now())
+    }
+
+    fn try_waveform_at(
+        &self,
+        serial: &str,
+        waveform: HapticWaveform,
+        now: Instant,
+    ) -> Result<(), HubError> {
+        let entries = self.entries();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.info.serial == serial)
+            .ok_or_else(|| HubError::UnknownMouse(serial.to_owned()))?;
+        if !entry.info.capabilities.haptics {
+            return Err(HubError::NoHaptics(serial.to_owned()));
+        }
+        if entry.config.borrow().haptics.level == HapticLevel::Off {
+            return Ok(());
+        }
+        let mut tried = self
+            .shared
+            .last_tried
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if tried
+            .get(serial)
+            .is_some_and(|before| now.saturating_duration_since(*before) < TRY_MIN_GAP)
+        {
+            return Ok(());
+        }
+        tried.insert(serial.to_owned(), now);
+        // A full queue (a stuck mouse) drops it.
+        let _ = entry.haptics.try_send(waveform);
+        Ok(())
     }
 
     /// What a connected mouse refused of its configuration, as it changes;
@@ -750,6 +806,56 @@ mod tests {
         reporter.report(Vec::new());
         assert!(status.has_changed().unwrap());
         assert!(hub.subscribe_status("missing").is_none());
+    }
+
+    #[test]
+    fn a_waveform_tried_from_the_interface_is_played_on_that_mouse_only() {
+        let (_dir, hub) = hub();
+        let tried = register(&hub, "a");
+        let other = register(&hub, "b");
+        hub.try_waveform("a", HapticWaveform::Knock).unwrap();
+        assert_eq!(played(&tried), [HapticWaveform::Knock]);
+        assert_eq!(played(&other), []);
+    }
+
+    #[test]
+    fn a_waveform_is_not_tried_twice_in_a_moment_but_is_again_after_it() {
+        let (_dir, hub) = hub();
+        let mouse = register(&hub, "a");
+        let start = Instant::now();
+        hub.try_waveform_at("a", HapticWaveform::Knock, start)
+            .unwrap();
+        hub.try_waveform_at("a", HapticWaveform::Wave, start + TRY_MIN_GAP / 2)
+            .unwrap();
+        hub.try_waveform_at("a", HapticWaveform::Wave, start + TRY_MIN_GAP)
+            .unwrap();
+        assert_eq!(
+            played(&mouse),
+            [HapticWaveform::Knock, HapticWaveform::Wave]
+        );
+    }
+
+    #[test]
+    fn nothing_is_tried_when_the_strength_is_off() {
+        let (_dir, hub) = hub();
+        let mut quiet = config("a");
+        quiet.haptics.level = HapticLevel::Off;
+        let mouse = registered_with(&hub, quiet);
+        hub.try_waveform("a", HapticWaveform::Knock).unwrap();
+        assert_eq!(played(&mouse), []);
+    }
+
+    #[test]
+    fn a_waveform_is_refused_for_a_mouse_that_is_gone_or_cannot_vibrate() {
+        let (_dir, hub) = hub();
+        let unknown = hub
+            .try_waveform("missing", HapticWaveform::Knock)
+            .unwrap_err();
+        assert_eq!(unknown.error_code(), ErrorCode::UnknownDevice);
+        let plain = MouseConfig::default_for("c", MouseModel::MxAnywhere3S);
+        let _anywhere = hub.register(info("c", MouseModel::MxAnywhere3S), plain);
+        let silent = hub.try_waveform("c", HapticWaveform::Knock).unwrap_err();
+        assert_eq!(silent.error_code(), ErrorCode::InvalidInput);
     }
 
     #[test]

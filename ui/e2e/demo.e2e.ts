@@ -648,7 +648,7 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 
 	await page.getByRole('tab', { name: 'Haptique' }).click();
 	await page.getByRole('radio', { name: 'Forte' }).click();
-	await page.getByRole('switch', { name: "Fin d'une étape" }).uncheck();
+	await page.getByRole('switch', { name: "Activer : Fin d'une étape" }).uncheck();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
 	await page.reload();
@@ -658,7 +658,7 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await expect(page.getByLabel('Raccourci', { exact: true })).toHaveValue('ctrl+shift+m');
 	await page.getByRole('tab', { name: 'Haptique' }).click();
 	await expect(page.getByRole('radio', { name: 'Forte' })).toBeChecked();
-	await expect(page.getByRole('switch', { name: "Fin d'une étape" })).not.toBeChecked();
+	await expect(page.getByRole('switch', { name: "Activer : Fin d'une étape" })).not.toBeChecked();
 });
 
 test('montre les schémas de chaque modèle, avec un repère par bouton', async ({ page }) => {
@@ -693,6 +693,29 @@ test('choisit un bouton sur le schéma, au pointeur et au clavier', async ({ pag
 	await expect(page.getByRole('heading', { name: 'Précédent', level: 3 })).toBeVisible();
 	await chooseControl(page, /Clic gauche/);
 	await expect(page.getByText(/Ce bouton est verrouillé/)).toBeVisible();
+});
+
+test('essaie une vibration depuis l’onglet Haptique et coupe un module entier', async ({
+	page
+}) => {
+	await openMouse(page);
+	await page.getByRole('tab', { name: 'Haptique' }).click();
+	await expect(page.getByText('Choisissez une onde pour la sentir.')).toBeVisible();
+	await page.getByRole('button', { name: "Jouer : Fin d'une étape" }).click();
+	await expect(page.getByText(/Joué sur la souris/)).toBeVisible();
+
+	await page.getByLabel("Vibration de : Pomodoro, Fin d'une étape").selectOption('knock');
+	await expect(page.getByText('Joué sur la souris : Deux petits coups')).toBeVisible();
+
+	const all = page.getByRole('switch', {
+		name: 'Activer ou désactiver tous les retours de Pomodoro'
+	});
+	await all.uncheck();
+	await expect(page.getByRole('button', { name: "Jouer : Fin d'une étape" })).toBeDisabled();
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
+
+	await page.getByRole('radio', { name: 'Aucune vibration' }).click();
+	await expect(page.getByText(/Retour haptique désactivé/)).toBeVisible();
 });
 
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {

@@ -252,6 +252,10 @@ impl Session {
                 let saved = self.mouse.update_mouse(serial, config).await;
                 return self.answer_mouse(saved).await;
             }
+            ClientMessage::PlayHaptic { serial, waveform } => {
+                let played = self.mouse.play_haptic(&serial, waveform);
+                return self.answer_mouse(played).await;
+            }
             ClientMessage::UpdateRadialMenu { config } => {
                 let saved = self.mouse.update_radial_menu(config).await;
                 return self.answer_mouse(saved).await;
