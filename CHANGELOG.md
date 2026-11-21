@@ -18,6 +18,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Souris Logitech MX : une souris endormie ne rendait pas ses boutons à l'arrêt (ses premières requêtes restaient sans réponse) ; elle est réveillée (jusqu'à trois pings) avant d'appliquer une configuration et avant de rendre les boutons, y compris à la destruction de la session.
 
+### Retiré
+
+- Commande `hubergamof mouse-probe` (inventaire en lecture seule des appareils Logitech) : inutile maintenant que les deux modèles sont pris en charge ; `mouse-test info` lit l'état d'une souris. Ses relevés restent dans `docs/mouse-hidpp.md`.
+
 ### Modifié
 
 - Souris Logitech MX : le gestionnaire les sert par défaut (sensibilité, molettes, boutons, menu circulaire), sans option. `--no-mice` coupe tout (pour garder Solaar ou logiops, qui détournent les mêmes boutons) ; `--mice` reste accepté. Une première configuration détourne le bouton du menu circulaire de la souris, comme le décide `MouseConfig::default_for`.

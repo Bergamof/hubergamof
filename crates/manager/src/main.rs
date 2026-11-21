@@ -172,15 +172,6 @@ enum Command {
         )]
         seconds: u64,
     },
-
-    /// List what the Logitech mice on this machine tell about themselves
-    /// (HID++ features, remappable buttons). Read-only: nothing is written to
-    /// a device. Paste the output when asking for a model to be supported.
-    MouseProbe {
-        /// Also print every frame exchanged with the devices.
-        #[arg(long)]
-        trace: bool,
-    },
 }
 
 /// Mouse models `mouse-test` knows.
@@ -383,7 +374,6 @@ async fn main() -> Result<()> {
         Some(
             Command::Open
             | Command::InstallExtension { .. }
-            | Command::MouseProbe { .. }
             | Command::MouseTest { .. }
             | Command::RadialPreview { .. },
         )
@@ -393,7 +383,6 @@ async fn main() -> Result<()> {
         Some(Command::Open) => run_open(cli.port).await,
         Some(Command::NativeHost { origin }) => exit_with(run_native_host(&origin).await),
         Some(Command::InstallExtension { browser }) => install_extension(browser),
-        Some(Command::MouseProbe { trace }) => run_mouse_probe(trace),
         Some(Command::MouseTest { model, action }) => run_mouse_test(model, action.into()).await,
         Some(Command::RadialPreview { seconds }) => run_radial_preview(seconds).await,
         None => run_manager(cli).await,
@@ -481,16 +470,6 @@ async fn termination_requested() {
         _ = terminate.recv() => {}
         _ = hangup.recv() => {}
     }
-}
-
-/// Prints the read-only inventory of the Logitech devices (`mouse-probe`).
-fn run_mouse_probe(trace: bool) -> Result<()> {
-    eprintln!(
-        "Wake the mice now (move them): an index that stays silent is retried for a few seconds."
-    );
-    let scans = hubergamof_mouse::hidraw::scan_hardware(trace)?;
-    hubergamof_mouse::probe::render(&mut std::io::stdout().lock(), &scans)
-        .context("cannot write the report")
 }
 
 /// Installs the Teams extension and its native messaging host.
@@ -1237,20 +1216,6 @@ mod tests {
             MouseModel::from(MouseModelArg::Anywhere3s),
             MouseModel::MxAnywhere3S
         );
-    }
-
-    #[test]
-    fn mouse_probe_traces_on_request() {
-        let cli = Cli::try_parse_from(["hubergamof", "mouse-probe"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::MouseProbe { trace: false })
-        ));
-        let cli = Cli::try_parse_from(["hubergamof", "mouse-probe", "--trace"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::MouseProbe { trace: true })
-        ));
     }
 
     #[test]
