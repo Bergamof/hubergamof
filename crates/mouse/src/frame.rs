@@ -129,6 +129,37 @@ impl Notification {
     }
 }
 
+/// What a receiver says about the link to one of its devices (sub id `0x41`):
+/// the device was switched off or went out of range, or is back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkChange {
+    /// Device index.
+    pub device: u8,
+    /// The link is up (a device that was switched on), not lost.
+    pub established: bool,
+}
+
+/// Sub id of the HID++ 1.0 notification a receiver sends when a link changes.
+const DEVICE_CONNECTION: u8 = 0x41;
+/// Bit of the flags byte of that notification that says the link is **not** up.
+const LINK_NOT_ESTABLISHED: u8 = 0x40;
+
+impl LinkChange {
+    /// Reads a link change from a frame, `None` for any other frame. The
+    /// flags are the first byte after the address, as recorded on a MX Master 4
+    /// behind a Logi Bolt: `0x42` when it was switched off, `0x02` when back.
+    #[must_use]
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        let [report_id, device, DEVICE_CONNECTION, _address, flags, ..] = bytes else {
+            return None;
+        };
+        matches!(*report_id, 0x10..=0x12).then_some(Self {
+            device: *device,
+            established: flags & LINK_NOT_ESTABLISHED == 0,
+        })
+    }
+}
+
 /// What a device answered to a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
@@ -186,6 +217,32 @@ fn name_10(code: u8) -> &'static str {
 mod tests {
     use super::*;
     use crate::testing::frame as answer_frame;
+
+    #[test]
+    fn a_link_change_says_whether_the_device_is_back() {
+        // Recorded: switched off, then on.
+        let lost = LinkChange::parse(&[0x10, 0x02, 0x41, 0x10, 0x42, 0x42, 0xB0]).unwrap();
+        assert_eq!(
+            lost,
+            LinkChange {
+                device: 2,
+                established: false
+            }
+        );
+        let back = LinkChange::parse(&[0x10, 0x02, 0x41, 0x10, 0x02, 0x42, 0xB0]).unwrap();
+        assert!(back.established);
+    }
+
+    #[test]
+    fn other_frames_are_no_link_change() {
+        assert_eq!(
+            LinkChange::parse(&[0x10, 0x03, 0x8F, 0x00, 0x1B, 0x09, 0x00]),
+            None
+        );
+        assert_eq!(LinkChange::parse(&[0x11, 0x02, 0x04, 0x00, 0x01]), None);
+        assert_eq!(LinkChange::parse(&[0x10, 0x02, 0x41]), None);
+        assert_eq!(LinkChange::parse(&[0x20, 0x02, 0x41, 0x10, 0x02]), None);
+    }
 
     #[test]
     fn encodes_a_long_report() {
