@@ -77,6 +77,35 @@ describe('MouseEditor', () => {
 			.toHaveAttribute('aria-selected', 'true');
 	});
 
+	it('shows the battery once the manager has read it, and when it is low or charging', async () => {
+		const { connection } = await renderEditor();
+		expect(document.body.textContent).not.toContain('Batterie');
+		connection.receive({
+			type: 'mouseStatus',
+			serial: 'mx-1',
+			problems: [],
+			battery: { percent: 76, charging: false }
+		});
+		await expect.element(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
+		expect(page.getByText('Batterie 76 %').element().className).not.toContain('text-warning');
+		connection.receive({
+			type: 'mouseStatus',
+			serial: 'mx-1',
+			problems: [],
+			battery: { percent: 12, charging: false }
+		});
+		await expect.element(page.getByText('Batterie 12 %')).toBeVisible();
+		expect(page.getByText('Batterie 12 %').element().className).toContain('text-warning');
+		connection.receive({
+			type: 'mouseStatus',
+			serial: 'mx-1',
+			problems: [],
+			battery: { percent: 12, charging: true }
+		});
+		await expect.element(page.getByText('Batterie 12 % · en charge')).toBeVisible();
+		expect(page.getByText(/^Batterie 12 %/).element().className).not.toContain('text-warning');
+	});
+
 	it('shows the pointer settings in their tab', async () => {
 		await renderEditor();
 		expect(document.body.textContent).not.toContain('Sensibilité du pointeur');

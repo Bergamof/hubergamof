@@ -3,8 +3,7 @@
 //! the one mouse it selected.
 
 use hubergamof_protocol::{
-    ErrorCode, HapticWaveform, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig,
-    ServerMessage,
+    ErrorCode, HapticWaveform, MouseConfig, MouseInfo, MouseStatus, RadialMenuConfig, ServerMessage,
 };
 use tokio::sync::watch;
 
@@ -31,7 +30,7 @@ impl Failure {
 struct Selected {
     serial: String,
     config: watch::Receiver<MouseConfig>,
-    status: watch::Receiver<Vec<MouseProblem>>,
+    status: watch::Receiver<MouseStatus>,
 }
 
 /// One client's view of the mice.
@@ -176,9 +175,11 @@ impl MouseFeed {
 }
 
 fn status_message(selected: &mut Selected) -> ServerMessage {
+    let MouseStatus { problems, battery } = selected.status.borrow_and_update().clone();
     ServerMessage::MouseStatus {
         serial: selected.serial.clone(),
-        problems: selected.status.borrow_and_update().clone(),
+        problems,
+        battery,
     }
 }
 

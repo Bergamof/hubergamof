@@ -36,6 +36,7 @@ export type * from "./ModuleCapabilities";
 export type * from "./ModuleInstance";
 export type * from "./ModuleInstanceId";
 export type * from "./ModuleKind";
+export type * from "./MouseBattery";
 export type * from "./MouseButton";
 export type * from "./MouseCapabilities";
 export type * from "./MouseConfig";

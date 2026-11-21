@@ -749,7 +749,10 @@ async fn a_mouse_is_selected_configured_by_one_client_and_followed_by_another() 
     };
     assert_eq!(config.revision, 0);
     // What the mouse refused of its configuration comes with it: nothing yet.
-    let ServerMessage::MouseStatus { serial, problems } = author.receive().await else {
+    let ServerMessage::MouseStatus {
+        serial, problems, ..
+    } = author.receive().await
+    else {
         panic!("no status for the author");
     };
     assert_eq!((serial.as_str(), problems.len()), ("aaaa0001", 0));

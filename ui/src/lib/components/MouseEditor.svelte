@@ -34,6 +34,13 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 
 	const saves = new SaveTracker();
 
+	/** Below this charge (in percent) the battery chip warns, unless the mouse is charging. */
+	const LOW_BATTERY_PERCENT = 20;
+	const battery = $derived(deck.mice.battery);
+	const batteryLow = $derived(
+		battery !== undefined && !battery.charging && battery.percent <= LOW_BATTERY_PERCENT
+	);
+
 	type TabId = 'touches' | 'settings' | 'haptic';
 	let wanted: TabId = $state('touches');
 	const tabs = $derived([
@@ -79,6 +86,16 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 			<span class="rounded-full bg-sunken px-2 py-1 font-mono text-[11px] text-muted">
 				Connectée · Logi Bolt
 			</span>
+			{#if battery}
+				<span
+					class={[
+						'rounded-full px-2 py-1 font-mono text-[11px]',
+						batteryLow ? 'bg-warning-soft text-warning' : 'bg-sunken text-muted'
+					]}
+				>
+					Batterie {battery.percent} %{battery.charging ? ' · en charge' : ''}
+				</span>
+			{/if}
 			{#if mouse.capabilities.haptics}
 				<span class="rounded-full bg-accent px-2 py-1 font-mono text-[11px] text-on-accent">
 					Retour haptique

@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hubergamof_protocol::{
     DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseConfig, MouseControlId, MouseModel,
@@ -18,7 +18,7 @@ use crate::channel::{Channel, HidppError};
 use crate::controls::cid;
 use crate::frame::{LinkChange, Notification};
 use crate::link::{
-    ButtonEvent, ButtonTracker, HapticState, MouseLink, WheelState, haptic_strength,
+    Battery, ButtonEvent, ButtonTracker, HapticState, MouseLink, WheelState, haptic_strength,
 };
 
 /// A setting that could not be applied, the others having been.
@@ -40,6 +40,15 @@ pub enum Notice {
     /// A configuration was applied: the problems reported since the previous
     /// `Applied` are all there were, none meaning that the mouse took it all.
     Applied,
+    /// The battery as the mouse says it, `None` when it did not answer (it may
+    /// be busy; the next read tries again).
+    Battery(Option<Battery>),
+    /// The mouse was switched off (`false`) or is back (`true`), as the receiver
+    /// says it: a mouse that is off is not there to configure.
+    Connection {
+        /// The link to the mouse is up.
+        connected: bool,
+    },
 }
 
 /// What the person asks of a mouse while it is served.
@@ -51,6 +60,8 @@ pub enum Request {
     ToggleWheelMode,
     /// Play a waveform on the haptic panel, at the strength configured.
     PlayHaptic(HapticWaveform),
+    /// Read the battery and report it.
+    ReadBattery,
 }
 
 /// How long [`MouseSession::serve`] waits for the buttons before looking at
@@ -58,6 +69,15 @@ pub enum Request {
 /// which it reacts to them (a vibration answers the pointer crossing a petal
 /// of the radial menu, so it must not lag).
 const SERVE_STEP: Duration = Duration::from_millis(40);
+
+/// Time between two pings that check the mouse is still there. A mouse
+/// switched off with its switch says nothing (the receiver does not announce
+/// it), so the only way to know is to ask.
+const LIVENESS_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Pings in a row a mouse may miss before it is taken for switched off: one
+/// miss can be a mouse busy playing a vibration.
+const MISSED_PINGS_BEFORE_AWAY: u32 = 2;
 
 /// How many updates in a row may find the mouse asleep before it is given up.
 const MAX_WAKE_FAILURES: u32 = 3;
@@ -208,12 +228,30 @@ pub struct MouseSession<C: Channel> {
     pending: Option<MouseConfig>,
     /// Updates in a row the mouse did not wake up for.
     wake_failures: u32,
+    /// Changes of the link seen and not yet reported, oldest first.
+    link_changes: Vec<bool>,
+    /// The mouse is taken for switched off: it did not answer the pings, or
+    /// the receiver said so.
+    away: bool,
+    /// Pings in a row the mouse missed.
+    missed_pings: u32,
+    next_ping: Instant,
+    ping_every: Duration,
     /// Buttons may be diverted: set by [`MouseSession::apply`], cleared once
     /// they are given back.
     buttons_diverted: bool,
 }
 
 impl<C: Channel> MouseSession<C> {
+    /// Checks that the mouse is there every `interval` instead of every few
+    /// seconds.
+    #[must_use]
+    pub fn with_liveness_interval(mut self, interval: Duration) -> Self {
+        self.ping_every = interval;
+        self.next_ping = Instant::now() + interval;
+        self
+    }
+
     /// A session on a connected mouse.
     #[must_use]
     pub fn new(mut link: MouseLink<C>) -> Self {
@@ -226,6 +264,11 @@ impl<C: Channel> MouseSession<C> {
             applied: None,
             pending: None,
             wake_failures: 0,
+            link_changes: Vec::new(),
+            away: false,
+            missed_pings: 0,
+            next_ping: Instant::now() + LIVENESS_INTERVAL,
+            ping_every: LIVENESS_INTERVAL,
             buttons_diverted: false,
         }
     }
@@ -390,7 +433,7 @@ impl<C: Channel> MouseSession<C> {
         if let Some(change) = frame.as_deref().and_then(LinkChange::parse)
             && change.device == self.link.device()
         {
-            events.extend(self.link_changed(change));
+            events.extend(self.set_link(change.established));
         }
         let held = frame
             .and_then(|bytes| Notification::parse(&bytes))
@@ -404,13 +447,46 @@ impl<C: Channel> MouseSession<C> {
     /// The mouse was switched off or is back. Nothing it was told survives a
     /// power cycle (the buttons are no longer diverted): what was held is
     /// released, and once back the configuration is applied again, in full.
-    fn link_changed(&mut self, change: LinkChange) -> Vec<ButtonEvent> {
+    /// A change is reported (see [`Notice::Connection`]) once, whether the
+    /// receiver announced it or the pings found it out.
+    fn set_link(&mut self, up: bool) -> Vec<ButtonEvent> {
         let released = self.tracker.release_all();
-        if change.established {
+        if up {
             self.wake_failures = 0;
+            self.missed_pings = 0;
             self.pending = self.applied.take().or_else(|| self.pending.take());
         }
+        if self.away == up {
+            self.away = !up;
+            self.link_changes.push(up);
+        }
         released
+    }
+
+    /// Pings the mouse when it is time: a mouse that misses
+    /// [`MISSED_PINGS_BEFORE_AWAY`] in a row is taken for switched off, and
+    /// for back at its first answer.
+    fn check_alive(&mut self) -> Result<Vec<ButtonEvent>, HidppError> {
+        if Instant::now() < self.next_ping {
+            return Ok(Vec::new());
+        }
+        self.next_ping = Instant::now() + self.ping_every;
+        if self.link.answers()? {
+            self.missed_pings = 0;
+            return Ok(if self.away {
+                self.set_link(true)
+            } else {
+                Vec::new()
+            });
+        }
+        self.missed_pings += 1;
+        Ok(
+            if self.missed_pings >= MISSED_PINGS_BEFORE_AWAY && !self.away {
+                self.set_link(false)
+            } else {
+                Vec::new()
+            },
+        )
     }
 
     /// The releases of the buttons believed held, for the caller to undo what
@@ -517,6 +593,10 @@ impl<C: Channel> MouseSession<C> {
                     self.play_haptic(waveform, notify)?;
                     None
                 }
+                Some(Request::ReadBattery) => {
+                    self.read_battery(notify)?;
+                    None
+                }
                 None => self.pending.take(),
             };
             if let Some(update) = update {
@@ -527,6 +607,12 @@ impl<C: Channel> MouseSession<C> {
             }
             for event in self.poll(SERVE_STEP)? {
                 notify(Notice::Button(event));
+            }
+            for event in self.check_alive()? {
+                notify(Notice::Button(event));
+            }
+            for connected in self.link_changes.drain(..) {
+                notify(Notice::Connection { connected });
             }
         }
         Ok(())
@@ -555,6 +641,20 @@ impl<C: Channel> MouseSession<C> {
                 Ok(())
             }
         }
+    }
+
+    /// Reads the battery. A mouse that does not answer, or that has no
+    /// battery feature, is reported as without a reading; only a gone one ends
+    /// the service, as for a vibration.
+    fn read_battery(&mut self, notify: &mut impl FnMut(Notice)) -> Result<(), HidppError> {
+        match self.link.battery() {
+            Ok(battery) => notify(Notice::Battery(Some(battery))),
+            Err(error) if is_fatal(&error) && !matches!(error, HidppError::Timeout(_)) => {
+                return Err(error);
+            }
+            Err(_) => notify(Notice::Battery(None)),
+        }
+        Ok(())
     }
 
     /// Switches the wheel between ratchet and free spin, as it is now (a
@@ -1028,6 +1128,76 @@ mod tests {
     }
 
     #[test]
+    fn a_link_that_goes_down_and_up_is_reported_in_order_while_serving() {
+        let fake = FakeLink::direct(FakeDevice::mx_master_4())
+            .with_incoming(vec![LOST.to_vec(), BACK.to_vec()]);
+        let mut session = session_with(fake);
+        session.apply(&config()).unwrap();
+        session.poll(Duration::from_millis(1)).unwrap();
+        session.poll(Duration::from_millis(1)).unwrap();
+        assert_eq!(session.link_changes, [false, true]);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut told = Vec::new();
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                &mut || {
+                    turn.set(turn.get() + 1);
+                    if turn.get() > 1 {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                    None
+                },
+                &mut |notice| {
+                    if let Notice::Connection { connected } = notice {
+                        told.push(connected);
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(told, [false, true]);
+        assert_eq!(session.link_changes, [] as [bool; 0]);
+    }
+
+    #[test]
+    fn a_mouse_that_stops_answering_is_taken_for_switched_off_and_for_back_when_it_answers() {
+        let (session, shared) = shared_session(FakeDevice::mx_master_4());
+        let mut session = session.with_liveness_interval(Duration::from_millis(1));
+        let stop = AtomicBool::new(false);
+        let told = std::cell::RefCell::new(Vec::new());
+        let turn = std::cell::Cell::new(0);
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                &mut || {
+                    turn.set(turn.get() + 1);
+                    let mut link = shared.0.borrow_mut();
+                    let device = link.device_at_mut(DEVICE).unwrap();
+                    match told.borrow().len() {
+                        0 if turn.get() == 2 => device.mute_function(0, 1),
+                        1 => device.unmute(),
+                        2 => stop.store(true, Ordering::Relaxed),
+                        _ => {}
+                    }
+                    None
+                },
+                &mut |notice| {
+                    if let Notice::Connection { connected } = notice {
+                        told.borrow_mut().push(connected);
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(*told.borrow(), [false, true]);
+        // Back: the configuration was applied again, in full, by the turn after.
+        assert_eq!(session.applied.as_ref(), Some(&config()));
+        assert!(session.pending.is_none());
+    }
+
+    #[test]
     fn the_link_of_another_mouse_of_the_receiver_changes_nothing_here() {
         let mut other = LOST;
         other[1] = DEVICE.wrapping_add(1);
@@ -1337,7 +1507,7 @@ mod tests {
             .serve(&config(), &stop, |notice| match notice {
                 Notice::Problem(problem) => told.push(problem.setting),
                 Notice::Applied => told.push("applied"),
-                Notice::Button(_) => {}
+                Notice::Button(_) | Notice::Battery(_) | Notice::Connection { .. } => {}
             })
             .unwrap();
         // The end of the application comes after its problems.
@@ -1885,6 +2055,65 @@ mod tests {
             .played
             .clone();
         (problems, played)
+    }
+
+    /// What the mouse said of its battery when asked once.
+    fn battery_read(device: FakeDevice) -> Vec<Option<Battery>> {
+        let (mut session, _shared) = shared_session(device);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut told = Vec::new();
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                || {
+                    turn.set(turn.get() + 1);
+                    if turn.get() == 1 {
+                        Some(Request::ReadBattery)
+                    } else {
+                        stop.store(true, Ordering::Relaxed);
+                        None
+                    }
+                },
+                |notice| {
+                    if let Notice::Battery(battery) = notice {
+                        told.push(battery);
+                    }
+                },
+            )
+            .unwrap();
+        told
+    }
+
+    #[test]
+    fn the_battery_of_the_mouse_is_read_when_asked() {
+        let told = battery_read(FakeDevice::mx_master_4());
+        let battery = told.first().copied().flatten().expect("a reading");
+        assert_eq!(battery.percent, Some(82));
+        assert!(!battery.charging());
+    }
+
+    #[test]
+    fn a_mouse_that_does_not_answer_for_its_battery_is_still_served() {
+        let device =
+            FakeDevice::mx_master_4().with_mute_function(crate::features::UNIFIED_BATTERY, 1);
+        assert_eq!(battery_read(device), [None]);
+    }
+
+    #[test]
+    fn the_charging_codes_of_the_device_say_when_the_mouse_is_plugged_in() {
+        let battery = |status| Battery {
+            percent: Some(50),
+            level: crate::link::BatteryLevel::Good,
+            status,
+        };
+        assert!([1, 2, 4].into_iter().all(|code| battery(code).charging()));
+        assert!(
+            [0, 3, 5, 7]
+                .into_iter()
+                .all(|code| !battery(code).charging())
+        );
     }
 
     #[test]

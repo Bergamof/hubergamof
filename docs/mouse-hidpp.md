@@ -40,7 +40,7 @@ D'après le code de Solaar (`lib/logitech_receiver`, lu le 2026-11-19) ; **non e
 | Fonction | Lecture | Écriture |
 |---|---|---|
 | `DeviceFirmwareInformation` 0x0003 | f0 : octets 1 à 4 = identifiant de l'unité | |
-| `UnifiedBattery` 0x1004 | f1 : % (0 = inconnu), niveau (8 plein, 4 bon, 2 bas, 1 critique), état | |
+| `UnifiedBattery` 0x1004 | f1 : % (0 = inconnu), niveau (8 plein, 4 bon, 2 bas, 1 critique), état (1, 2, 4 : en charge) | lue au démarrage puis toutes les 5 min par le gestionnaire (lecture seule) |
 | `ReprogControlsV4` 0x1B04 | f2 (cid) : octet 2, bit 0 = détourné | f3 : cid (2 octets), drapeaux, remappage (2 octets) ; drapeaux : bit 0 détourner, bit 1 « bit 0 voulu » ; appuis reçus en notification, événement 0, quatre cid de 2 octets (0 = vide) |
 | `AdjustableDpi` 0x2201 | f2 : capteur 0, DPI courant (2 octets) puis défaut | f3 : capteur 0, DPI (2 octets) |
 | `SmartShiftEnhanced` 0x2111 | f1 : mode (1 libre, 2 cran), seuil (1 à 50, 255 jamais libre), couple | f2 : mode, seuil, couple (0 = inchangé pour les deux premiers) |
@@ -116,3 +116,5 @@ Relevé du 2026-11-21 (`mouse-test events`, MX Master 4 éteinte puis rallumée 
 
 Traitement (`MouseSession::link_changed`) : un lien perdu rend les boutons tenus (la souris éteinte ne dira plus rien) ; un lien rétabli remet la configuration en attente d'application complète (les détournements ne survivent pas à une extinction, hypothèse à confirmer en essayant un bouton détourné après avoir rallumé la souris). Vérifié sur le matériel (2026-11-21) : une souris rallumée retrouve ses boutons détournés.
 
+
+Relevé du 2026-11-21 (`mouse-test events`, interrupteur des deux souris derrière le Bolt) : **aucune trame à l'extinction** ; à l'allumage, deux notifications longues de la souris (`11 0N 04 00 01 01 01 …` puis `11 0N 09 00 19 02 …` sur la MX Master 4, `… 1E 02 …` sur la 3S ; non exploitées). L'extinction se découvre donc par un ping resté sans réponse (la session en envoie un toutes les 3 s).

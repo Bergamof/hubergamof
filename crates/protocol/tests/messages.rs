@@ -6,8 +6,9 @@ use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
     DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode,
     HapticEventDescriptor, HapticWaveform, ImageSize, InstallSupport, KeyState, KeyView, LiveState,
-    ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView, RadialActionDescriptor,
-    ServerMessage, SettingField, SettingKind, StripConfig, UpdateSettings, UpdateStatus,
+    ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem, PageView,
+    RadialActionDescriptor, ServerMessage, SettingField, SettingKind, StripConfig, UpdateSettings,
+    UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -209,6 +210,37 @@ fn client_play_haptic() {
             waveform: HapticWaveform::SharpStateChange,
         },
         &json!({ "type": "playHaptic", "serial": "aaaa0001", "waveform": "sharpStateChange" }),
+    );
+}
+
+#[test]
+fn server_mouse_status_with_and_without_a_battery() {
+    assert_wire_format(
+        &ServerMessage::MouseStatus {
+            serial: "aaaa0001".into(),
+            problems: vec![MouseProblem {
+                setting: "sensitivity".into(),
+                message: "no answer".into(),
+            }],
+            battery: Some(MouseBattery {
+                percent: 80,
+                charging: true,
+            }),
+        },
+        &json!({
+            "type": "mouseStatus",
+            "serial": "aaaa0001",
+            "problems": [{ "setting": "sensitivity", "message": "no answer" }],
+            "battery": { "percent": 80, "charging": true }
+        }),
+    );
+    assert_wire_format(
+        &ServerMessage::MouseStatus {
+            serial: "aaaa0001".into(),
+            problems: vec![],
+            battery: None,
+        },
+        &json!({ "type": "mouseStatus", "serial": "aaaa0001", "problems": [] }),
     );
 }
 

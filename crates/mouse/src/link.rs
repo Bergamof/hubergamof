@@ -83,6 +83,18 @@ pub struct Battery {
     pub status: u8,
 }
 
+impl Battery {
+    /// Charging status codes of the unified battery feature: recharging,
+    /// charge in its final stage, recharging below the optimal speed.
+    const CHARGING_STATUSES: [u8; 3] = [1, 2, 4];
+
+    /// Plugged in and taking charge.
+    #[must_use]
+    pub fn charging(&self) -> bool {
+        Self::CHARGING_STATUSES.contains(&self.status)
+    }
+}
+
 /// Haptic feedback state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HapticState {
@@ -559,6 +571,20 @@ impl<C: Channel> MouseLink<C> {
             Ok(_) => Ok(()),
             Err(Miss::Silent { .. }) => Err(HidppError::Timeout(crate::channel::ANSWER_TIMEOUT)),
             Err(other) => Err(HidppError::Channel(ChannelError(format!("{other:?}")))),
+        }
+    }
+
+    /// Whether the mouse answers one ping now, without waiting for a sleeper
+    /// as [`MouseLink::wake`] does. A receiver that says there is no such
+    /// device any more (a mouse switched off) counts as no answer.
+    ///
+    /// # Errors
+    /// [`HidppError::Channel`] when the interface fails.
+    pub fn answers(&mut self) -> Result<bool, HidppError> {
+        match ping_attempts(&mut self.hidpp, self.device, 1) {
+            Ok(_) | Err(Miss::WrongEcho) => Ok(true),
+            Err(Miss::Silent { .. } | Miss::Refused(_)) => Ok(false),
+            Err(Miss::Interface(message)) => Err(HidppError::Channel(ChannelError(message))),
         }
     }
 

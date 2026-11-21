@@ -1,9 +1,18 @@
 <!--
 @component
-The radial menu as it will look: the entries shown, in order, around the pointer. Choosing a petal tells what a
-click on it does. Positions come from {@link petalPosition}, clockwise from the top like the real menu.
+The radial menu as it will look: the entries shown, in order, as the manager draws them (a ring cut into petals,
+the first on the top, then clockwise, each with its icon and name). Choosing a petal lights it and tells what a
+click on it does. The menu has the same colours in both themes, like the real one.
 -->
 <script lang="ts">
+	import {
+		ICON_SIZE,
+		LABEL_GAP,
+		LABEL_SIZE,
+		MARGIN,
+		RING,
+		petalShapes
+	} from '#lib/deck/radial-geometry.js';
 	import type { CatalogModule, RadialMenuConfig } from '#lib/generated/index.js';
 
 	interface Props {
@@ -13,25 +22,22 @@ click on it does. Positions come from {@link petalPosition}, clockwise from the 
 
 	let { menu, catalog }: Props = $props();
 
-	/** Share of the preview's side that a petal's center is away from the middle. */
-	const RADIUS = 0.34;
-	const FULL_TURN = 2 * Math.PI;
+	/** Half the side of the drawing. */
+	const HALF = RING.outer + MARGIN;
+	/** Distance from the top of the icon (or the baseline of the name) to the middle of a petal. */
+	const CONTENT_HEIGHT = ICON_SIZE + LABEL_GAP + LABEL_SIZE;
 
 	const shown = $derived(menu.entries.filter((entry) => entry.enabled));
+	const shapes = $derived(petalShapes(shown.length));
 	let chosen: string | undefined = $state();
 	const details = $derived(shown.find((entry) => entry.module === chosen));
 
-	/** Center of petal `index` of `count`, as percentages of the preview's width and height. */
-	function petalPosition(index: number, count: number): { left: number; top: number } {
-		const angle = (index / count) * FULL_TURN - Math.PI / 2;
-		return {
-			left: 50 + 100 * RADIUS * Math.cos(angle),
-			top: 50 + 100 * RADIUS * Math.sin(angle)
-		};
-	}
-
 	function moduleOf(kind: string): CatalogModule | undefined {
 		return catalog.find((module) => module.kind === kind);
+	}
+
+	function nameOf(kind: string): string {
+		return moduleOf(kind)?.name ?? kind;
 	}
 
 	function clickText(entry: RadialMenuConfig['entries'][number]): string {
@@ -40,45 +46,95 @@ click on it does. Positions come from {@link petalPosition}, clockwise from the 
 		const action = moduleOf(entry.module)?.radialActions.find((candidate) => candidate.id === id);
 		return `Un clic : ${action?.name ?? id}.`;
 	}
+
+	function toggle(kind: string) {
+		chosen = chosen === kind ? undefined : kind;
+	}
 </script>
 
 <div class="flex flex-col items-center gap-3">
-	<ul
+	<svg
+		role="group"
 		aria-label="Aperçu du menu"
-		class="relative aspect-square w-full max-w-72 rounded-full border border-line bg-sunken"
+		viewBox="{-HALF} {-HALF} {2 * HALF} {2 * HALF}"
+		class="w-full max-w-80"
 	>
 		{#each shown as entry, index (entry.module)}
 			{@const module = moduleOf(entry.module)}
-			{@const position = petalPosition(index, shown.length)}
-			<li
-				class="absolute -translate-x-1/2 -translate-y-1/2"
-				style:left="{position.left}%"
-				style:top="{position.top}%"
+			{@const { path, centre } = shapes[index]}
+			{@const lit = chosen === entry.module}
+			<g
+				role="button"
+				tabindex="0"
+				aria-pressed={lit}
+				aria-label={nameOf(entry.module)}
+				class="petal"
+				onclick={() => toggle(entry.module)}
+				onkeydown={(event) => {
+					if (event.key === 'Enter' || event.key === ' ') {
+						event.preventDefault();
+						toggle(entry.module);
+					}
+				}}
 			>
-				<button
-					type="button"
-					class={[
-						'flex size-14 items-center justify-center rounded-full border focus-ring',
-						chosen === entry.module ? 'bg-accent-soft border-accent' : 'border-line bg-surface'
-					]}
-					aria-pressed={chosen === entry.module}
-					aria-label={module?.name ?? entry.module}
-					onclick={() => (chosen = chosen === entry.module ? undefined : entry.module)}
-				>
-					{#if module?.icon}
-						<img src={module.icon} alt="" class="size-8" />
-					{:else}
-						<span aria-hidden="true">{(module?.name ?? entry.module).slice(0, 1)}</span>
-					{/if}
-				</button>
-			</li>
+				<path
+					d={path}
+					fill-rule="evenodd"
+					fill={lit ? '#d9a42b' : '#1f332c'}
+					fill-opacity={lit ? 0.95 : 0.9}
+				/>
+				{#if module?.icon}
+					<image
+						href={module.icon}
+						x={centre.x - ICON_SIZE / 2}
+						y={centre.y - CONTENT_HEIGHT / 2}
+						width={ICON_SIZE}
+						height={ICON_SIZE}
+					/>
+					<text
+						x={centre.x}
+						y={centre.y + CONTENT_HEIGHT / 2}
+						text-anchor="middle"
+						font-size={LABEL_SIZE}
+						font-weight="600"
+						fill="#fff"
+					>
+						{nameOf(entry.module)}
+					</text>
+				{:else}
+					<text
+						x={centre.x}
+						y={centre.y + LABEL_SIZE / 3}
+						text-anchor="middle"
+						font-size={LABEL_SIZE}
+						font-weight="600"
+						fill="#fff"
+					>
+						{nameOf(entry.module)}
+					</text>
+				{/if}
+			</g>
 		{/each}
-	</ul>
+	</svg>
 	<p class="min-h-6 text-sm text-muted" aria-live="polite">
 		{#if details}
-			<strong>{moduleOf(details.module)?.name ?? details.module}</strong> — {clickText(details)}
+			<strong>{nameOf(details.module)}</strong> — {clickText(details)}
 		{:else}
 			Choisissez un pétale pour voir ce que fait un clic dessus.
 		{/if}
 	</p>
 </div>
+
+<style>
+	.petal {
+		cursor: pointer;
+		outline: none;
+	}
+	.petal:focus-visible path {
+		stroke: var(--color-ring);
+		stroke-width: 3;
+	}
+	.petal text {
+		pointer-events: none;
+	}
+</style>

@@ -671,11 +671,13 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(9);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toBeVisible();
+	await expect(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
 
 	await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
 	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S' })).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(6);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
+	await expect(page.getByText('Batterie 18 % · en charge')).toBeVisible();
 	await expect(
 		page
 			.getByRole('list')
@@ -723,7 +725,7 @@ test('essaie une vibration depuis l’onglet Haptique et coupe un module entier'
 async function openMenu(page: Page) {
 	await open(page);
 	await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
-	await expect(page.getByRole('list', { name: 'Aperçu du menu' })).toBeVisible();
+	await expect(page.getByRole('group', { name: 'Aperçu du menu' })).toBeVisible();
 }
 
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {

@@ -47,7 +47,11 @@ holds. Every change is sent at once; the line under the title says whether the m
 			Le même pour toutes les souris. Il s’ouvre depuis le bouton auquel vous avez donné l’action «
 			Menu circulaire ».
 		</p>
-		{#if mouse}
+		{#if !mouse}
+			<p class="text-sm">
+				Aucune souris connectée : le menu s’ouvrira depuis un bouton de souris MX.
+			</p>
+		{:else}
 			<p class="text-sm" data-testid="menu-trigger">
 				{#if trigger}
 					Sur {mouse.displayName}, il s’ouvre avec : <strong>{CONTROL_LABELS[trigger]}</strong>.

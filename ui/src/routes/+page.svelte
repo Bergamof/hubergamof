@@ -8,6 +8,12 @@
 	import MouseEditor from '#lib/components/MouseEditor.svelte';
 	import RadialMenuPage from '#lib/components/RadialMenuPage.svelte';
 	import SegmentedControl from '#lib/components/SegmentedControl.svelte';
+	import {
+		SECTION_LABELS,
+		availableSections,
+		sectionShown,
+		type Section
+	} from '#lib/deck/sections.js';
 	import UpdatePanel from '#lib/components/UpdatePanel.svelte';
 	import Notices from '#lib/components/Notices.svelte';
 	import BrandWordmark from '#lib/components/BrandWordmark.svelte';
@@ -20,19 +26,12 @@
 	let connection = $state<ManagerConnection>();
 	let deck = $state<DeckState>();
 
-	type Section = 'deck' | 'mouse' | 'menu';
 	/** What the person asked to see; what is shown also depends on what is connected. */
 	let wanted = $state<Section>('deck');
 	const hasDecks = $derived((deck?.devices.length ?? 0) > 0);
 	const hasMice = $derived((deck?.mice.mice.length ?? 0) > 0);
-	const section: Section = $derived(
-		hasMice && wanted !== 'deck' ? wanted : hasMice && !hasDecks ? 'mouse' : 'deck'
-	);
-	const SECTIONS: readonly { value: Section; label: string }[] = [
-		{ value: 'deck', label: 'Stream Deck' },
-		{ value: 'mouse', label: 'Souris' },
-		{ value: 'menu', label: 'Menu circulaire' }
-	];
+	const sections = $derived(availableSections(hasDecks, hasMice));
+	const section = $derived(sectionShown(wanted, sections));
 
 	const isOnline = $derived(connection?.status === 'open');
 	/** The editor shown: the mouse one, or the deck one, once its configuration is known. */
@@ -128,21 +127,21 @@
 				</p>
 			{/if}
 			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline}>
-				{#if hasDecks && hasMice}
+				{#if sections.length > 1}
 					<div role="group" aria-label="Appareils à configurer" class="flex gap-2">
-						{#each SECTIONS as choice (choice.value)}
+						{#each sections as choice (choice)}
 							<button
 								type="button"
 								class={[
 									'rounded-full border px-4 py-1.5 font-medium focus-ring',
-									section === choice.value
+									section === choice
 										? 'border-accent bg-accent text-on-accent'
 										: 'border-line bg-surface text-muted'
 								]}
-								aria-pressed={section === choice.value}
-								onclick={() => (wanted = choice.value)}
+								aria-pressed={section === choice}
+								onclick={() => (wanted = choice)}
 							>
-								{choice.label}
+								{SECTION_LABELS[choice]}
 							</button>
 						{/each}
 					</div>

@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState, MouseConfig, MouseInfo,
-    MouseProblem, RadialMenuConfig, UpdateSettings, UpdateStatus,
+    CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState, MouseBattery, MouseConfig,
+    MouseInfo, MouseProblem, RadialMenuConfig, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -147,14 +147,17 @@ pub enum ServerMessage {
         /// Current configuration.
         config: MouseConfig,
     },
-    /// What a mouse the client selected refused of its configuration: sent
-    /// after its `mouseConfig`, then each time the configuration is applied
+    /// What a mouse the client selected refused of its configuration, and its
+    /// battery: sent after its `mouseConfig`, then each time either changes
     /// (no problem means the mouse took everything).
     MouseStatus {
         /// Mouse serial.
         serial: String,
         /// The settings the mouse refused.
         problems: Vec<MouseProblem>,
+        /// Its battery, once read; absent while unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        battery: Option<MouseBattery>,
     },
     /// Current configuration of the radial menu: sent after `mice`, then at
     /// every change.
