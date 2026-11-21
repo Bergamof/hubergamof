@@ -40,7 +40,7 @@ D'après le code de Solaar (`lib/logitech_receiver`, lu le 2026-11-19) ; **non e
 | Fonction | Lecture | Écriture |
 |---|---|---|
 | `DeviceFirmwareInformation` 0x0003 | f0 : octets 1 à 4 = identifiant de l'unité | |
-| `UnifiedBattery` 0x1004 | f1 : % (0 = inconnu), niveau (8 plein, 4 bon, 2 bas, 1 critique), état | |
+| `UnifiedBattery` 0x1004 | f1 : % (0 = inconnu), niveau (8 plein, 4 bon, 2 bas, 1 critique), état (1, 2, 4 : en charge) | lue au démarrage puis toutes les 5 min par le gestionnaire (lecture seule) |
 | `ReprogControlsV4` 0x1B04 | f2 (cid) : octet 2, bit 0 = détourné | f3 : cid (2 octets), drapeaux, remappage (2 octets) ; drapeaux : bit 0 détourner, bit 1 « bit 0 voulu » ; appuis reçus en notification, événement 0, quatre cid de 2 octets (0 = vide) |
 | `AdjustableDpi` 0x2201 | f2 : capteur 0, DPI courant (2 octets) puis défaut | f3 : capteur 0, DPI (2 octets) |
 | `SmartShiftEnhanced` 0x2111 | f1 : mode (1 libre, 2 cran), seuil (1 à 50, 255 jamais libre), couple | f2 : mode, seuil, couple (0 = inchangé pour les deux premiers) |
