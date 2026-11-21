@@ -25,7 +25,9 @@ use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
-use hubergamof_manager::radial::{self, actions::ModuleActions, service::RadialService};
+use hubergamof_manager::radial::{
+    self, actions::ModuleActions, looks::Looks, service::RadialService,
+};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
@@ -448,10 +450,17 @@ async fn run_mouse_test(model: Option<MouseModelArg>, action: Action) -> Result<
 async fn run_radial_preview(seconds: u64) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let actions = ButtonActions::uinput(watch::channel(false).1);
+        // Only the names and the icons are read: nothing of the system is touched.
+        let registry = builtin_registry_with(BuiltinServices::simulated());
+        let looks = Looks::of_modules(
+            &registry,
+            &Renderer::new().context("cannot initialise the renderer")?,
+        );
         radial::preview::run(
             Duration::from_secs(seconds),
             &mut std::io::stdout().lock(),
             || actions.nudge_pointer(),
+            looks,
         )
         .context("cannot show the radial menu")
     })
@@ -707,6 +716,7 @@ fn start_served_mice(
             }
         },
         Arc::new(hub.clone()),
+        Looks::of_modules(&services.registry, &services.renderer),
     );
     let actions = actions.with_radial(menu.handle());
     let supervisor = MouseSupervisor::start(

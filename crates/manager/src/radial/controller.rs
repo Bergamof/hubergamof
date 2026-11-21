@@ -13,8 +13,9 @@ use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 
 use super::geometry::{Layout, Point, Ring, Size, fit_on_screen};
 use super::interaction::{Input, Menu, Output};
+use super::looks::Looks;
 use super::paint::Palette;
-use super::window::{Content, Petal};
+use super::window::Content;
 
 /// What the window must show of the menu.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,6 +69,7 @@ pub struct Controller {
     entries: Vec<RadialEntryConfig>,
     layout: Option<Layout>,
     centre: Option<Point>,
+    looks: Looks,
 }
 
 impl Controller {
@@ -85,6 +87,7 @@ impl Controller {
             entries: Vec::new(),
             layout: None,
             centre: None,
+            looks: Looks::default(),
         };
         controller.apply_wanted();
         controller
@@ -118,18 +121,20 @@ impl Controller {
         self.layout.as_ref()
     }
 
-    /// What the window draws: a petal per shown entry, named after its
-    /// module for now (the modules will give names and icons).
+    /// What the modules look like: their names and icons, as the petals show them.
+    pub fn set_looks(&mut self, looks: Looks) {
+        self.looks = looks;
+    }
+
+    /// What the window draws: a petal per shown entry, with the name and the
+    /// icon of its module.
     #[must_use]
     pub fn content(&self, palette: Palette, animate: bool) -> Option<Content> {
         let layout = self.layout?;
         let petals = self
             .entries
             .iter()
-            .map(|entry| Petal {
-                label: title_case(&entry.module.0),
-                icon: None,
-            })
+            .map(|entry| self.looks.petal(&entry.module))
             .collect();
         Some(Content {
             petals,
@@ -236,15 +241,6 @@ impl Controller {
         self.centre = None;
         self.apply_wanted();
     }
-}
-
-/// `teams` as `Teams`.
-fn title_case(name: &str) -> String {
-    let mut characters = name.chars();
-    characters
-        .next()
-        .map(|first| first.to_uppercase().chain(characters).collect())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

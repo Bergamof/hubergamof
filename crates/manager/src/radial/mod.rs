@@ -7,6 +7,7 @@ pub mod backend;
 pub mod controller;
 pub mod geometry;
 pub mod interaction;
+pub mod looks;
 pub mod overlay;
 pub mod overlay_x11;
 pub mod paint;
