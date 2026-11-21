@@ -649,6 +649,8 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await page.getByRole('tab', { name: 'Haptique' }).click();
 	await page.getByRole('radio', { name: 'Forte' }).click();
 	await page.getByRole('switch', { name: "Activer : Fin d'une étape" }).uncheck();
+	// « Enregistrées » reste affiché depuis la sauvegarde précédente : attendre la fin de celle-ci.
+	await expect(page.getByText('Enregistrement…')).toHaveCount(0);
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
 	await page.reload();
