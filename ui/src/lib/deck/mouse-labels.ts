@@ -143,3 +143,35 @@ export function describeAction(
 			return `Raccourci ${shortcutLabel(action.keys)}`;
 	}
 }
+
+/**
+ * The shape of each waveform, as twelve strengths from 0 to 9 (one per 60 ms): what the monitor of the haptic
+ * tab draws and plays. Indicative: the real patterns are the mouse's own.
+ */
+export const HAPTIC_PATTERNS: Readonly<Record<HapticWaveform, string>> = {
+	sharpStateChange: '900000000000',
+	dampStateChange: '642100000000',
+	sharpCollision: '962100000000',
+	dampCollision: '531000000000',
+	subtleCollision: '310000000000',
+	whisperCollision: '210000000000',
+	happyAlert: '707090000000',
+	angryAlert: '909090909000',
+	completed: '406080900000',
+	square: '999999000000',
+	wave: '135797531000',
+	firework: '900500300100',
+	mad: '919191919100',
+	knock: '909000909000',
+	jingle: '505050505000',
+	ringing: '959595959500'
+};
+
+/** How much the mouse shakes in the monitor for each strength (the same relative feel as the real one). */
+export const HAPTIC_GAINS: Readonly<Record<HapticLevel, number>> = {
+	off: 0,
+	subtle: 0.15,
+	low: 0.35,
+	medium: 0.65,
+	high: 1
+};

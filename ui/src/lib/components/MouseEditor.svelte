@@ -61,8 +61,10 @@ radial menu. Every change is sent at once; the line under the title says whether
 		spoken = STATUS_TEXT[status];
 	}
 
-	function edit(change: MouseEdit) {
-		void track(deck.mice.edit(change));
+	function edit(change: MouseEdit): Promise<EditOutcome> {
+		const outcome = deck.mice.edit(change);
+		void track(outcome);
+		return outcome;
 	}
 
 	function editRadial(change: RadialEdit) {
@@ -152,8 +154,9 @@ radial menu. Every change is sent at once; the line under the title says whether
 				<HapticsPanel
 					haptics={config.haptics}
 					catalog={deck.catalog}
-					onlevel={(level) => edit(setHapticLevel(level))}
-					onevent={(key, setting) => edit(setHapticEvent(key, setting))}
+					onlevel={async (level) => (await edit(setHapticLevel(level))).saved}
+					onevent={(key, setting) => void edit(setHapticEvent(key, setting))}
+					onplay={(waveform) => void deck.mice.playHaptic(waveform)}
 				/>
 			{/if}
 		</div>

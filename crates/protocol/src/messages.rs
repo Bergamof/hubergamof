@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    CatalogModule, DeviceConfig, DeviceInfo, LiveState, MouseConfig, MouseInfo, MouseProblem,
-    RadialMenuConfig, UpdateSettings, UpdateStatus,
+    CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState, MouseConfig, MouseInfo,
+    MouseProblem, RadialMenuConfig, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -79,6 +79,17 @@ pub enum ClientMessage {
         serial: String,
         /// New configuration.
         config: MouseConfig,
+    },
+    /// Play a waveform on a connected haptic mouse, at the strength set for it, to
+    /// let the person try it. Nothing is played when the strength is off, or when
+    /// the same mouse was asked a moment ago; answered by nothing, or by
+    /// [`ErrorCode::UnknownDevice`] when the mouse is not connected and
+    /// [`ErrorCode::InvalidInput`] when it has no haptics.
+    PlayHaptic {
+        /// Mouse serial.
+        serial: String,
+        /// The pattern to play.
+        waveform: HapticWaveform,
     },
     /// Replace the configuration of the radial menu, like
     /// [`ClientMessage::UpdateMouseConfig`]; answered by `radialMenu` to

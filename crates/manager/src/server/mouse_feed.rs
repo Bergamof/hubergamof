@@ -3,7 +3,8 @@
 //! the one mouse it selected.
 
 use hubergamof_protocol::{
-    ErrorCode, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, ServerMessage,
+    ErrorCode, HapticWaveform, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig,
+    ServerMessage,
 };
 use tokio::sync::watch;
 
@@ -141,6 +142,19 @@ impl MouseFeed {
                 config,
             }
         }))
+    }
+
+    /// Has a waveform played on a mouse, for the person to try it: nothing to
+    /// answer unless it cannot be.
+    pub(super) fn play_haptic(
+        &self,
+        serial: &str,
+        waveform: HapticWaveform,
+    ) -> Result<Vec<ServerMessage>, Failure> {
+        self.hub
+            .try_waveform(serial, waveform)
+            .map(|()| Vec::new())
+            .map_err(|error| Failure::of(error.error_code(), error.to_string()))
     }
 
     /// Saves the radial menu, like [`MouseFeed::update_mouse`].
@@ -304,6 +318,18 @@ mod tests {
             panic!("the change was not sent");
         };
         assert_eq!((config.revision, config.pointer.dpi), (1, 2400));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn trying_a_waveform_answers_nothing_unless_the_mouse_is_gone() {
+        let (_dir, hub) = hub();
+        let _registration = connect(&hub, SERIAL);
+        let feed = MouseFeed::new(&hub);
+        assert_eq!(feed.play_haptic(SERIAL, HapticWaveform::Knock).unwrap(), []);
+        let failure = feed
+            .play_haptic("bbbb0001", HapticWaveform::Knock)
+            .unwrap_err();
+        assert_eq!(failure.code, ErrorCode::UnknownDevice);
     }
 
     #[tokio::test(start_paused = true)]
