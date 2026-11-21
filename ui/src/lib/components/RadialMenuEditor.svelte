@@ -23,6 +23,7 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 	import { tick } from 'svelte';
 	import type { CatalogModule, RadialMenuConfig } from '#lib/generated/index.js';
 	import IntegerField from './IntegerField.svelte';
+	import Switch from './Switch.svelte';
 
 	interface Props {
 		menu: RadialMenuConfig;
@@ -105,20 +106,21 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 			{@const module = moduleOf(entry.module)}
 			{@const name = module?.name ?? entry.module}
 			<li class="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
-				<label class="flex w-56 items-center gap-2 font-medium">
-					<input
-						type="checkbox"
-						class="size-5 accent-ring focus-ring"
+				<span class="w-56 font-medium">
+					<Switch
 						checked={entry.enabled}
 						disabled={entry.enabled ? minimal : full}
-						aria-describedby="{uid}-count"
-						onchange={(event) => onedit(setEntryEnabled(entry.module, event.currentTarget.checked))}
-					/>
-					{#if module?.icon}
-						<img src={module.icon} alt="" class="size-6" />
-					{/if}
-					{name}
-				</label>
+						describedby="{uid}-count"
+						onchange={(enabled) => onedit(setEntryEnabled(entry.module, enabled))}
+					>
+						<span class="flex items-center gap-2">
+							{#if module?.icon}
+								<img src={module.icon} alt="" class="size-6" />
+							{/if}
+							{name}
+						</span>
+					</Switch>
+				</span>
 				<label class="sr-only" for="{uid}-primary-{entry.module}">Action du clic sur : {name}</label
 				>
 				<select
@@ -208,22 +210,10 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 		error="Entrez un nombre entier de {HOLD_MIN_MS} à {HOLD_MAX_MS}."
 		onchange={(holdMs) => onedit(setHoldMs(holdMs))}
 	/>
-	<label class="flex items-center gap-2">
-		<input
-			type="checkbox"
-			class="size-5 accent-ring focus-ring"
-			checked={menu.animate}
-			onchange={(event) => onedit(setRadialOptions({ animate: event.currentTarget.checked }))}
-		/>
+	<Switch checked={menu.animate} onchange={(animate) => onedit(setRadialOptions({ animate }))}>
 		Animer l’ouverture du menu
-	</label>
-	<label class="flex items-center gap-2">
-		<input
-			type="checkbox"
-			class="size-5 accent-ring focus-ring"
-			checked={menu.haptics}
-			onchange={(event) => onedit(setRadialOptions({ haptics: event.currentTarget.checked }))}
-		/>
+	</Switch>
+	<Switch checked={menu.haptics} onchange={(haptics) => onedit(setRadialOptions({ haptics }))}>
 		Vibrations du menu (ouverture, survol, choix) sur les souris haptiques
-	</label>
+	</Switch>
 </div>

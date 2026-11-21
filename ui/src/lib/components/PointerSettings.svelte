@@ -15,13 +15,10 @@ has one. Every change is applied at once.
 	} from '#lib/deck/mouse-edits.js';
 	import { throttle } from '#lib/deck/throttle.js';
 	import { WHEEL_MODES } from '#lib/deck/mouse-labels.js';
-	import type {
-		PointerSettings,
-		ThumbWheelSettings,
-		WheelMode,
-		WheelSettings
-	} from '#lib/generated/index.js';
+	import type { PointerSettings, ThumbWheelSettings, WheelSettings } from '#lib/generated/index.js';
 	import IntegerField from './IntegerField.svelte';
+	import SegmentedControl from './SegmentedControl.svelte';
+	import Switch from './Switch.svelte';
 
 	interface Props {
 		pointer: PointerSettings;
@@ -72,17 +69,13 @@ has one. Every change is applied at once.
 	</div>
 
 	<div class="flex flex-col gap-1">
-		<label class="font-medium" for="{uid}-mode">Molette</label>
-		<select
-			id="{uid}-mode"
-			class="field w-auto self-start"
+		<span class="font-medium" id="{uid}-mode">Molette</span>
+		<SegmentedControl
+			label="Molette"
+			options={WHEEL_MODES}
 			value={wheel.mode}
-			onchange={(event) => onwheel({ mode: event.currentTarget.value as WheelMode })}
-		>
-			{#each WHEEL_MODES as mode (mode.value)}
-				<option value={mode.value}>{mode.label}</option>
-			{/each}
-		</select>
+			onchange={(mode) => onwheel({ mode })}
+		/>
 	</div>
 
 	{#if wheel.mode === 'auto'}
@@ -98,24 +91,12 @@ has one. Every change is applied at once.
 		/>
 	{/if}
 
-	<label class="flex items-center gap-2">
-		<input
-			type="checkbox"
-			class="size-5 accent-ring focus-ring"
-			checked={wheel.natural}
-			onchange={(event) => onwheel({ natural: event.currentTarget.checked })}
-		/>
+	<Switch checked={wheel.natural} onchange={(natural) => onwheel({ natural })}>
 		Défilement naturel (le contenu suit le doigt)
-	</label>
-	<label class="flex items-center gap-2">
-		<input
-			type="checkbox"
-			class="size-5 accent-ring focus-ring"
-			checked={wheel.hiRes}
-			onchange={(event) => onwheel({ hiRes: event.currentTarget.checked })}
-		/>
+	</Switch>
+	<Switch checked={wheel.hiRes} onchange={(hiRes) => onwheel({ hiRes })}>
 		Défilement haute résolution (plus fin)
-	</label>
+	</Switch>
 
 	{#if hasThumbWheel}
 		<IntegerField
@@ -128,14 +109,8 @@ has one. Every change is applied at once.
 			error="Entrez un nombre entier de {THUMB_SPEED_MIN} à {THUMB_SPEED_MAX}."
 			onchange={(speed) => onthumbwheel({ speed })}
 		/>
-		<label class="flex items-center gap-2">
-			<input
-				type="checkbox"
-				class="size-5 accent-ring focus-ring"
-				checked={thumbWheel.invert}
-				onchange={(event) => onthumbwheel({ invert: event.currentTarget.checked })}
-			/>
+		<Switch checked={thumbWheel.invert} onchange={(invert) => onthumbwheel({ invert })}>
 			Inverser le sens de la molette du pouce
-		</label>
+		</Switch>
 	{/if}
 </div>

@@ -52,7 +52,7 @@ describe('RadialMenuEditor', () => {
 
 	it('shows or hides an entry', async () => {
 		const { last } = await renderMenu();
-		await page.getByRole('checkbox', { name: 'Pomodoro' }).click();
+		await page.getByRole('switch', { name: 'Pomodoro' }).click();
 		expect(last().entries[0].enabled).toBe(false);
 	});
 
@@ -90,7 +90,7 @@ describe('RadialMenuEditor', () => {
 
 	it('does not let the menu fall under the fewest entries', async () => {
 		await renderMenu(radialMenu({ entries: radialMenu().entries.slice(0, 3) }));
-		await expect.element(page.getByRole('checkbox', { name: 'Pomodoro' })).toBeDisabled();
+		await expect.element(page.getByRole('switch', { name: 'Pomodoro' })).toBeDisabled();
 		await expect
 			.element(page.getByRole('button', { name: 'Retirer : Pomodoro' }))
 			.toHaveAttribute('aria-disabled', 'true');
@@ -111,7 +111,7 @@ describe('RadialMenuEditor', () => {
 				]
 			})
 		);
-		await expect.element(page.getByRole('checkbox', { name: 'extra' })).toBeDisabled();
+		await expect.element(page.getByRole('switch', { name: 'extra' })).toBeDisabled();
 		await expect
 			.element(page.getByRole('button', { name: 'Ajouter' }))
 			.toHaveAttribute('aria-disabled', 'true');
@@ -155,9 +155,9 @@ describe('RadialMenuEditor', () => {
 
 	it('switches the animation and the vibrations', async () => {
 		const { last } = await renderMenu();
-		await page.getByRole('checkbox', { name: /Animer/ }).click();
+		await page.getByRole('switch', { name: /Animer/ }).click();
 		expect(last().animate).toBe(false);
-		await page.getByRole('checkbox', { name: /Vibrations du menu/ }).click();
+		await page.getByRole('switch', { name: /Vibrations du menu/ }).click();
 		expect(last().haptics).toBe(false);
 		expect(mouseConfig().serial).toBe('mx-1');
 	});

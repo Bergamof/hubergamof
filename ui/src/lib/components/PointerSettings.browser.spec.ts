@@ -36,7 +36,7 @@ describe('PointerSettings', () => {
 	it('changes the mode of the wheel and shows the threshold of the automatic mode only', async () => {
 		const { onwheel } = await renderSettings();
 		expect(document.body.textContent).not.toContain('Seuil de vitesse');
-		await page.getByLabelText('Molette', { exact: true }).selectOptions('auto');
+		await page.getByRole('radio', { name: /Automatique/ }).click();
 		expect(onwheel).toHaveBeenCalledExactlyOnceWith({ mode: 'auto' });
 	});
 
@@ -55,9 +55,9 @@ describe('PointerSettings', () => {
 
 	it('switches the direction and the resolution of the scroll', async () => {
 		const { onwheel } = await renderSettings();
-		await page.getByRole('checkbox', { name: /Défilement naturel/ }).click();
+		await page.getByRole('switch', { name: /Défilement naturel/ }).click();
 		expect(onwheel).toHaveBeenLastCalledWith({ natural: true });
-		await page.getByRole('checkbox', { name: /haute résolution/ }).click();
+		await page.getByRole('switch', { name: /haute résolution/ }).click();
 		expect(onwheel).toHaveBeenLastCalledWith({ hiRes: false });
 	});
 
@@ -65,7 +65,7 @@ describe('PointerSettings', () => {
 		const { onthumbwheel } = await renderSettings();
 		await page.getByLabelText('Vitesse de la molette du pouce').fill('8');
 		expect(onthumbwheel).toHaveBeenLastCalledWith({ speed: 8 });
-		await page.getByRole('checkbox', { name: /Inverser/ }).click();
+		await page.getByRole('switch', { name: /Inverser/ }).click();
 		expect(onthumbwheel).toHaveBeenLastCalledWith({ invert: true });
 	});
 
@@ -76,7 +76,8 @@ describe('PointerSettings', () => {
 
 	it.each(['ratchet', 'free'] as const)('shows the %s mode without a threshold', async (mode) => {
 		await renderSettings({ mode });
-		await expect.element(page.getByLabelText('Molette', { exact: true })).toHaveValue(mode);
+		const name = { ratchet: 'Crantée', free: 'Libre' }[mode];
+		await expect.element(page.getByRole('radio', { name })).toBeChecked();
 		expect(document.body.textContent).not.toContain('Seuil de vitesse');
 	});
 
@@ -90,10 +91,10 @@ describe('PointerSettings', () => {
 	it('shows the saved options of the scroll', async () => {
 		await renderSettings();
 		await expect
-			.element(page.getByRole('checkbox', { name: /Défilement naturel/ }))
+			.element(page.getByRole('switch', { name: /Défilement naturel/ }))
 			.not.toBeChecked();
-		await expect.element(page.getByRole('checkbox', { name: /haute résolution/ })).toBeChecked();
-		await expect.element(page.getByRole('checkbox', { name: /Inverser/ })).not.toBeChecked();
+		await expect.element(page.getByRole('switch', { name: /haute résolution/ })).toBeChecked();
+		await expect.element(page.getByRole('switch', { name: /Inverser/ })).not.toBeChecked();
 	});
 
 	it('sends the end of a drag of the sensitivity at once', async () => {
