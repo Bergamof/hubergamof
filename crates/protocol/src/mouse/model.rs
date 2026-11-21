@@ -153,7 +153,7 @@ impl MouseModel {
         }
     }
 
-    /// What the model offers, as `hubergamof mouse-probe` found it (see
+    /// What the model offers, as read on the real mice (see
     /// `docs/mouse-hidpp.md`).
     #[must_use]
     pub fn capabilities(self) -> MouseCapabilities {
@@ -209,7 +209,7 @@ mod tests {
     const MODELS: [MouseModel; 2] = [MouseModel::MxMaster4, MouseModel::MxAnywhere3S];
 
     #[test]
-    fn models_offer_what_the_probe_found() {
+    fn models_offer_what_was_read_on_the_mice() {
         let master = MouseModel::MxMaster4.capabilities();
         let anywhere = MouseModel::MxAnywhere3S.capabilities();
         assert_eq!(master.controls.len(), 9);

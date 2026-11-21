@@ -4,7 +4,7 @@
 //! - [`channel`]: the byte-level [`channel::Channel`] and the request/answer
 //!   exchange [`channel::Hidpp`] on top of it.
 //! - [`features`]: names of the HID++ features this project knows.
-//! - [`probe`]: the **read-only** inventory of a device (features, buttons).
+//! - [`probe`]: finding a device behind an index (ping and name, getters only).
 //! - [`controls`]: the mouse's own ids for the controls of each model.
 //! - [`diagnostics`]: the actions of `hubergamof mouse-test`, run on a link.
 //! - [`link`]: the operations on a mouse (battery, sensitivity, wheel, buttons,
@@ -13,8 +13,8 @@
 //!   followed.
 //! - [`hidraw`]: discovery and `hidapi` channel on real hardware.
 //!
-//! The probe only sends the HID++ *getter* functions listed in [`probe`]; only
-//! [`link`] writes, and only what its operations name.
+//! [`probe`] only sends the HID++ *getter* functions it lists; only [`link`]
+//! writes, and only what its operations name.
 
 pub mod channel;
 pub mod controls;

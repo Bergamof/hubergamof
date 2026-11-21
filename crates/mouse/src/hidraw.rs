@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use hidapi::{DeviceInfo, HidApi, HidDevice};
+use hidapi::{HidApi, HidDevice};
 use thiserror::Error;
 
 use hubergamof_protocol::MouseModel;
@@ -11,7 +11,7 @@ use hubergamof_protocol::MouseModel;
 use crate::channel::{Channel, ChannelError, Hidpp, HidppError};
 use crate::frame::{DIRECT_DEVICE_INDEX, RECEIVER_DEVICE_INDEXES};
 use crate::link::{MouseLink, UnitId};
-use crate::probe::{InterfaceInfo, InterfaceScan, ping, scan_interface_with_misses};
+use crate::probe::ping;
 
 /// USB vendor id of Logitech.
 pub const LOGITECH_VENDOR_ID: u16 = 0x046D;
@@ -118,75 +118,6 @@ pub fn skip_reason(
     }
 }
 
-fn describe(info: &DeviceInfo) -> InterfaceInfo {
-    InterfaceInfo {
-        path: info.path().to_string_lossy().into_owned(),
-        vendor_id: info.vendor_id(),
-        product_id: info.product_id(),
-        interface_number: info.interface_number(),
-        usage_page: info.usage_page(),
-        usage: info.usage(),
-        product: info.product_string().map(str::to_owned),
-    }
-}
-
-/// Probes every Logitech HID++ interface of the machine.
-///
-/// With `trace`, each interface's scan carries the frames exchanged.
-///
-/// # Errors
-/// [`HidError`] when the HID layer cannot be started; an interface that cannot
-/// be opened is reported in its own scan instead.
-pub fn scan_hardware(trace: bool) -> Result<Vec<InterfaceScan>, HidError> {
-    let api = HidApi::new().map_err(|error| HidError(error.to_string()))?;
-    let mut scans = Vec::new();
-    let mut probed = HashSet::new();
-    for info in api
-        .device_list()
-        .filter(|info| info.vendor_id() == LOGITECH_VENDOR_ID)
-    {
-        let mut scan = InterfaceScan {
-            info: describe(info),
-            skipped: skip_reason(
-                info.vendor_id(),
-                info.product_id(),
-                info.usage_page(),
-                info.usage(),
-            )
-            .map(str::to_owned),
-            open_error: None,
-            misses: Vec::new(),
-            devices: Vec::new(),
-            trace: Vec::new(),
-        };
-        // hidapi lists one entry per collection: a node is probed once.
-        if scan.skipped.is_none() && !probed.insert(info.path().to_owned()) {
-            continue;
-        }
-        if scan.skipped.is_none() {
-            match api.open_path(info.path()) {
-                Ok(device) => {
-                    let mut hidpp = Hidpp::new(HidrawChannel::new(device));
-                    if trace {
-                        hidpp = hidpp.with_trace();
-                    }
-                    let probe = scan_interface_with_misses(&mut hidpp);
-                    scan.devices = probe.devices;
-                    scan.misses = probe
-                        .misses
-                        .iter()
-                        .map(|(index, miss)| format!("index 0x{index:02X}: {}", miss.describe()))
-                        .collect();
-                    scan.trace = hidpp.take_trace();
-                }
-                Err(error) => scan.open_error = Some(error.to_string()),
-            }
-        }
-        scans.push(scan);
-    }
-    Ok(scans)
-}
-
 /// Why no mouse could be chosen.
 #[derive(Debug, Error)]
 pub enum FindError {
@@ -195,7 +126,7 @@ pub enum FindError {
     Hid(#[from] HidError),
     /// No supported mouse answered.
     #[error(
-        "no supported mouse answered: move it to wake it, check that it is paired with the Logi Bolt receiver and that its hidraw node is open to you (docs/mouse-probe.md)"
+        "no supported mouse answered: move it to wake it, check that it is paired with the Logi Bolt receiver and that its hidraw node is open to you"
     )]
     NoMouse,
     /// More than one answered.
@@ -497,16 +428,12 @@ mod tests {
     }
 
     #[test]
-    fn scanning_without_hardware_ends_cleanly() {
-        // A machine (or container) without udev or Logitech devices gives an
-        // empty list or a HID error, never a panic.
-        match scan_hardware(false) {
-            Ok(scans) => assert!(
-                scans
-                    .iter()
-                    .all(|scan| scan.info.vendor_id == LOGITECH_VENDOR_ID)
-            ),
-            Err(error) => assert!(error.to_string().starts_with("cannot list HID devices")),
+    fn searching_without_hardware_ends_cleanly() {
+        // A machine (or container) without udev or Logitech devices gives no
+        // mouse or a HID error, never a panic.
+        match find_mice(&[]) {
+            Ok((mice, _)) => assert!(mice.iter().all(|mouse| !mouse.key.path.is_empty())),
+            Err(error) => assert!(matches!(error, FindError::Hid(_))),
         }
     }
 }

@@ -1,6 +1,6 @@
 # Souris Logitech : relevés HID++
 
-Relevés de `hubergamof mouse-probe` du 2026-11-19, Logi Bolt (`046d:c548`, interface HID++ n° 2, collection `ff00/0001`). Les deux souris répondent en HID++ 4.5 aux emplacements 1 et 2 du récepteur ; les emplacements 3 à 6 sont vides (erreur HID++ 1.0 `0x09`).
+Relevés de la sonde en lecture seule (retirée depuis, `mouse-test` la remplace) du 2026-11-19, Logi Bolt (`046d:c548`, interface HID++ n° 2, collection `ff00/0001`). Les deux souris répondent en HID++ 4.5 aux emplacements 1 et 2 du récepteur ; les emplacements 3 à 6 sont vides (erreur HID++ 1.0 `0x09`).
 
 ## Récepteur
 - Interfaces du Bolt : 0 clavier, 1 souris et commandes multimédia, **2 HID++ seul**, 3 numériseur. Pas de collection DJ.

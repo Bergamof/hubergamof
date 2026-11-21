@@ -1,6 +1,6 @@
 //! How a model numbers its buttons, and which model a device name means.
 //!
-//! The control ids come from `hubergamof mouse-probe` (`docs/mouse-hidpp.md`);
+//! The control ids come from the probe readings kept in `docs/mouse-hidpp.md`;
 //! the haptic panel's, `0x01A0`, is named "Haptic" by Solaar but not confirmed
 //! on the mouse itself.
 
@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn ids_are_the_ones_the_probe_read() {
+    fn ids_are_the_ones_read_on_the_mice() {
         assert_eq!(
             cid(MouseModel::MxMaster4, MouseControlId::Gesture),
             Some(0x00C3)
