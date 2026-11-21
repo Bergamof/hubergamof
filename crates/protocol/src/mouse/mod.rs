@@ -9,6 +9,7 @@ mod action;
 mod config;
 mod haptic;
 mod model;
+mod status;
 
 pub use action::{ButtonAction, MAX_SHORTCUT_CHARS, MouseButton};
 pub use config::{
@@ -20,3 +21,4 @@ pub use haptic::{HapticEventSetting, HapticLevel, HapticSettings, MAX_HAPTIC_EVE
 pub use model::{
     ControlKind, MouseCapabilities, MouseControl, MouseControlId, MouseInfo, MouseModel,
 };
+pub use status::MouseProblem;

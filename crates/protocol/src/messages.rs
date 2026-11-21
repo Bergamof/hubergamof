@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    CatalogModule, DeviceConfig, DeviceInfo, LiveState, MouseConfig, MouseInfo, RadialMenuConfig,
-    UpdateSettings, UpdateStatus,
+    CatalogModule, DeviceConfig, DeviceInfo, LiveState, MouseConfig, MouseInfo, MouseProblem,
+    RadialMenuConfig, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -135,6 +135,15 @@ pub enum ServerMessage {
         serial: String,
         /// Current configuration.
         config: MouseConfig,
+    },
+    /// What a mouse the client selected refused of its configuration: sent
+    /// after its `mouseConfig`, then each time the configuration is applied
+    /// (no problem means the mouse took everything).
+    MouseStatus {
+        /// Mouse serial.
+        serial: String,
+        /// The settings the mouse refused.
+        problems: Vec<MouseProblem>,
     },
     /// Current configuration of the radial menu: sent after `mice`, then at
     /// every change.

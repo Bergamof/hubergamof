@@ -16,7 +16,7 @@ radial menu. Every change is sent at once; the line under the title says whether
 		type MouseEdit,
 		type RadialEdit
 	} from '#lib/deck/mouse-edits.js';
-	import { CONTROL_LABELS } from '#lib/deck/mouse-labels.js';
+	import { CONTROL_LABELS, settingLabel } from '#lib/deck/mouse-labels.js';
 	import type { MouseConfig, MouseInfo, RadialMenuConfig } from '#lib/generated/index.js';
 	import ButtonBindingRow from './ButtonBindingRow.svelte';
 	import HapticsPanel from './HapticsPanel.svelte';
@@ -76,6 +76,22 @@ radial menu. Every change is sent at once; the line under the title says whether
 		<p class="min-h-6 text-sm text-muted" aria-hidden="true">{STATUS_TEXT[status]}</p>
 		<p role="status" class="sr-only">{spoken}</p>
 	</div>
+
+	{#if deck.mice.problems.length > 0}
+		<div
+			role="alert"
+			class="rounded-xl border border-warning bg-warning-soft p-3 text-sm text-warning"
+		>
+			<p class="font-medium">
+				Enregistré, mais la souris n’a pas accepté tous les réglages. Les autres sont appliqués.
+			</p>
+			<ul class="mt-1 list-disc pl-5">
+				{#each deck.mice.problems as problem (problem.setting)}
+					<li>{settingLabel(problem.setting)} : {problem.message}</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
 
 	<section aria-labelledby="{uid}-buttons" class="flex flex-col gap-2 card">
 		<h3 id="{uid}-buttons" class="text-lg font-semibold">Boutons</h3>

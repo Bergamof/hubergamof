@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use hubergamof_protocol::{
     ButtonAction, ErrorCode, HapticLevel, HapticWaveform, MouseCapabilities, MouseConfig,
-    MouseControlId, MouseInfo, RadialMenuConfig,
+    MouseControlId, MouseInfo, MouseProblem, RadialMenuConfig,
 };
 use thiserror::Error;
 use tokio::sync::watch;
@@ -69,6 +69,8 @@ struct Entry {
     id: u64,
     info: MouseInfo,
     config: Arc<watch::Sender<MouseConfig>>,
+    /// What the mouse refused of its configuration.
+    status: Arc<watch::Sender<Vec<MouseProblem>>>,
     haptics: SyncSender<HapticWaveform>,
 }
 
@@ -130,6 +132,7 @@ impl MouseHub {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, updates) = watch::channel(config);
         let sender = Arc::new(sender);
+        let status = Arc::new(watch::channel(Vec::new()).0);
         let (haptic_sender, haptics) = sync_channel(HAPTIC_QUEUE);
         let mut entries = self.entries();
         entries.retain(|entry| entry.info.serial != info.serial);
@@ -137,6 +140,7 @@ impl MouseHub {
             id,
             info,
             config: Arc::clone(&sender),
+            status: Arc::clone(&status),
             haptics: haptic_sender,
         });
         self.publish_mice(&entries);
@@ -145,6 +149,7 @@ impl MouseHub {
             hub: self.clone(),
             id,
             sender,
+            status,
             updates,
             haptics,
         }
@@ -169,6 +174,15 @@ impl MouseHub {
         let entries = self.entries();
         let entry = entries.iter().find(|entry| entry.info.serial == serial)?;
         Some(entry.config.subscribe())
+    }
+
+    /// What a connected mouse refused of its configuration, as it changes;
+    /// `None` when it is not connected.
+    #[must_use]
+    pub fn subscribe_status(&self, serial: &str) -> Option<watch::Receiver<Vec<MouseProblem>>> {
+        let entries = self.entries();
+        let entry = entries.iter().find(|entry| entry.info.serial == serial)?;
+        Some(entry.status.subscribe())
     }
 
     /// Saves a new configuration of a connected mouse and gives it to the
@@ -331,6 +345,7 @@ pub struct MouseRegistration {
     hub: MouseHub,
     id: u64,
     sender: Arc<watch::Sender<MouseConfig>>,
+    status: Arc<watch::Sender<Vec<MouseProblem>>>,
     updates: watch::Receiver<MouseConfig>,
     haptics: Receiver<HapticWaveform>,
 }
@@ -358,9 +373,34 @@ impl MouseRegistration {
         });
     }
 
+    /// Where the mouse thread says what the mouse refused, for the interface.
+    #[must_use]
+    pub fn status_reporter(&self) -> StatusReporter {
+        StatusReporter(Arc::clone(&self.status))
+    }
+
     /// The configuration of the mouse, as the interface changes it.
     pub fn updates(&mut self) -> &mut watch::Receiver<MouseConfig> {
         &mut self.updates
+    }
+}
+
+/// Tells the interface what a mouse refused of its configuration. Cheap to
+/// clone.
+#[derive(Clone)]
+pub struct StatusReporter(Arc<watch::Sender<Vec<MouseProblem>>>);
+
+impl StatusReporter {
+    /// The settings the mouse refused the last time its configuration was
+    /// applied (none: it took everything). Followers are told only of a change.
+    pub fn report(&self, problems: Vec<MouseProblem>) {
+        self.0.send_if_modified(|current| {
+            let changed = *current != problems;
+            if changed {
+                *current = problems;
+            }
+            changed
+        });
     }
 }
 
@@ -688,6 +728,28 @@ mod tests {
             hub.play_at(&step_end(), start + HAPTIC_MIN_GAP * turn);
         }
         assert_eq!(played(&mouse).len(), HAPTIC_QUEUE);
+    }
+
+    #[test]
+    fn what_a_mouse_refused_is_told_only_when_it_changes() {
+        let (_dir, hub) = hub();
+        let mouse = register(&hub, "a");
+        let mut status = hub.subscribe_status("a").unwrap();
+        assert!(status.borrow().is_empty());
+        let reporter = mouse.status_reporter();
+        let refused = vec![MouseProblem {
+            setting: "wheel".to_owned(),
+            message: "refused".to_owned(),
+        }];
+        reporter.report(refused.clone());
+        assert!(status.has_changed().unwrap());
+        assert_eq!(*status.borrow_and_update(), refused);
+        // The same thing again is not news; the mouse taking it all is.
+        reporter.report(refused);
+        assert!(!status.has_changed().unwrap());
+        reporter.report(Vec::new());
+        assert!(status.has_changed().unwrap());
+        assert!(hub.subscribe_status("missing").is_none());
     }
 
     #[test]

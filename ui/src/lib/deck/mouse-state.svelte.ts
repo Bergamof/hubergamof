@@ -1,6 +1,7 @@
 import type {
 	MouseConfig,
 	MouseInfo,
+	MouseProblem,
 	RadialMenuConfig,
 	ServerMessage
 } from '#lib/generated/index.js';
@@ -24,6 +25,8 @@ const RADIAL_UNKNOWN: Problem = {
 export class MouseState {
 	mice: MouseInfo[] = $state([]);
 	selectedSerial: string | undefined = $state();
+	/** What the selected mouse refused of its configuration the last time it was applied. */
+	problems: MouseProblem[] = $state([]);
 
 	readonly #connection: DeckConnection;
 	readonly #mouseEdits: EditQueue<MouseConfig>;
@@ -97,6 +100,9 @@ export class MouseState {
 					this.#mouseEdits.receive(message.config);
 				}
 				break;
+			case 'mouseStatus':
+				if (message.serial === this.selectedSerial) this.problems = message.problems;
+				break;
 			case 'radialMenu':
 				this.#radialEdits.receive(message.config);
 				break;
@@ -128,6 +134,7 @@ export class MouseState {
 
 	#forgetMouse(): void {
 		this.selectedSerial = undefined;
+		this.problems = [];
 		this.#mouseEdits.forget();
 	}
 }

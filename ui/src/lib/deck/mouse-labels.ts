@@ -79,3 +79,20 @@ export const HAPTIC_WAVEFORMS: readonly { value: HapticWaveform; label: string }
 	{ value: 'jingle', label: 'Clochette' },
 	{ value: 'ringing', label: 'Sonnerie' }
 ];
+
+/** What a person calls a setting the mouse refused (the names the manager reports). */
+const SETTING_LABELS: Readonly<Record<string, string>> = {
+	sensitivity: 'la sensibilité du pointeur',
+	wheel: 'le mode de la molette',
+	'high resolution wheel': 'le défilement haute résolution et naturel',
+	'thumb wheel': 'le sens de la molette du pouce',
+	'haptic strength': 'la force des vibrations',
+	button: 'l’action d’un bouton',
+	'new configuration': 'la nouvelle configuration',
+	'buttons left by a previous run': 'des boutons restés détournés par une exécution précédente'
+};
+
+/** The refused setting, in words; an unknown name is shown as it is. */
+export function settingLabel(setting: string): string {
+	return SETTING_LABELS[setting] ?? setting;
+}

@@ -37,6 +37,9 @@ pub enum Notice {
     Problem(ApplyProblem),
     /// A press or a release of a diverted button.
     Button(ButtonEvent),
+    /// A configuration was applied: the problems reported since the previous
+    /// `Applied` are all there were, none meaning that the mouse took it all.
+    Applied,
 }
 
 /// What the person asks of a mouse while it is served.
@@ -498,6 +501,7 @@ impl<C: Channel> MouseSession<C> {
         for problem in self.apply(config)? {
             notify(Notice::Problem(problem));
         }
+        notify(Notice::Applied);
         while !stop.load(Ordering::Relaxed) {
             let update = match requests() {
                 Some(Request::Apply(update)) => {
@@ -631,6 +635,7 @@ impl<C: Channel> MouseSession<C> {
                 error,
             })),
         }
+        notify(Notice::Applied);
         Ok(())
     }
 
@@ -1323,15 +1328,16 @@ mod tests {
         let device = FakeDevice::mx_master_4().with_broken_feature(crate::features::ADJUSTABLE_DPI);
         let mut session = session(device);
         let stop = AtomicBool::new(true);
-        let mut problems = Vec::new();
+        let mut told = Vec::new();
         session
-            .serve(&config(), &stop, |notice| {
-                if let Notice::Problem(problem) = notice {
-                    problems.push(problem.setting);
-                }
+            .serve(&config(), &stop, |notice| match notice {
+                Notice::Problem(problem) => told.push(problem.setting),
+                Notice::Applied => told.push("applied"),
+                Notice::Button(_) => {}
             })
             .unwrap();
-        assert_eq!(problems, ["sensitivity"]);
+        // The end of the application comes after its problems.
+        assert_eq!(told, ["sensitivity", "applied"]);
     }
 
     #[test]

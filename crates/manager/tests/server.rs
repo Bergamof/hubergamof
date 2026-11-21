@@ -34,7 +34,8 @@ use hubergamof_module_api::{
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
     ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, ModuleInstance, MouseConfig,
-    MouseInfo, MouseModel, RadialMenuConfig, ServerMessage, UpdateSettings, UpdateStatus,
+    MouseInfo, MouseModel, MouseProblem, RadialMenuConfig, ServerMessage, UpdateSettings,
+    UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -747,6 +748,12 @@ async fn a_mouse_is_selected_configured_by_one_client_and_followed_by_another() 
         panic!("no configuration for the author");
     };
     assert_eq!(config.revision, 0);
+    // What the mouse refused of its configuration comes with it: nothing yet.
+    let ServerMessage::MouseStatus { serial, problems } = author.receive().await else {
+        panic!("no status for the author");
+    };
+    assert_eq!((serial.as_str(), problems.len()), ("aaaa0001", 0));
+    observer.receive().await;
     observer.receive().await;
 
     let mut update = config.clone();
@@ -794,6 +801,18 @@ async fn a_mouse_is_selected_configured_by_one_client_and_followed_by_another() 
             panic!("expected {expected:?}");
         };
         assert_eq!(code, expected);
+    }
+
+    // What the mouse refuses is told to those who follow it.
+    mouse.status_reporter().report(vec![MouseProblem {
+        setting: "wheel".into(),
+        message: "refused".into(),
+    }]);
+    for client in [&mut author, &mut observer] {
+        let ServerMessage::MouseStatus { problems, .. } = client.receive().await else {
+            panic!("the refusal was not told");
+        };
+        assert_eq!(problems[0].setting, "wheel");
     }
 
     // The mouse leaves: the clients are told, and it cannot be selected.
