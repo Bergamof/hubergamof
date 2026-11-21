@@ -6,6 +6,7 @@ import type { ErrorCode } from "./ErrorCode";
 import type { LiveState } from "./LiveState";
 import type { MouseConfig } from "./MouseConfig";
 import type { MouseInfo } from "./MouseInfo";
+import type { MouseProblem } from "./MouseProblem";
 import type { RadialMenuConfig } from "./RadialMenuConfig";
 import type { UpdateSettings } from "./UpdateSettings";
 import type { UpdateStatus } from "./UpdateStatus";
@@ -33,7 +34,15 @@ serial: string,
 /**
  * Current configuration.
  */
-config: MouseConfig, } | { "type": "radialMenu", 
+config: MouseConfig, } | { "type": "mouseStatus", 
+/**
+ * Mouse serial.
+ */
+serial: string, 
+/**
+ * The settings the mouse refused.
+ */
+problems: Array<MouseProblem>, } | { "type": "radialMenu", 
 /**
  * Current configuration.
  */

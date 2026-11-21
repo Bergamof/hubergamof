@@ -7,12 +7,24 @@ field is left or Enter is pressed, never while it is half typed. While recording
 <script lang="ts">
 	import { tick } from 'svelte';
 	import {
+		layoutForLocale,
+		learnKey,
+		loadKeyboardLayout,
+		mergeLayouts,
+		readLearnedLayout,
+		saveLearnedLayout,
+		type KeyboardLayout,
+		type KeyPress
+	} from '#lib/deck/keyboard-layout.js';
+	import {
 		isReserved,
+		layoutKnowsShortcut,
 		keyName,
 		modifierName,
 		normalizeShortcut,
 		shortcutLabel,
-		shortcutOf
+		shortcutOf,
+		shortcutOnLayout
 	} from '#lib/deck/shortcut.js';
 
 	interface Props {
@@ -22,9 +34,20 @@ field is left or Enter is pressed, never while it is half typed. While recording
 		onchange: (shortcut: string) => void;
 		/** Puts the focus in the field when shown (it appears as the next step of a choice). */
 		focusOnMount?: boolean;
+		/** What the keys produce on the keyboard of the person; read from the browser when not given. */
+		layout?: KeyboardLayout;
+		/** Language the keyboard is guessed from while it is not known; the browser's by default. */
+		locale?: string;
 	}
 
-	let { label, value, onchange, focusOnMount = false }: Props = $props();
+	let {
+		label,
+		value,
+		onchange,
+		focusOnMount = false,
+		layout,
+		locale = navigator.languages?.[0] ?? navigator.language
+	}: Props = $props();
 
 	const uid = $props.id();
 
@@ -41,9 +64,38 @@ field is left or Enter is pressed, never while it is half typed. While recording
 
 	const text = $derived(draft ?? value);
 
+	let loadedLayout: KeyboardLayout | undefined = $state();
+	let learned: KeyboardLayout = $state(new Map());
+	/** What the keys write for sure: what the browser tells, and what the keys pressed here have taught. */
+	const known = $derived(layout ?? mergeLayouts(learned, loadedLayout));
+	const guess = $derived(layoutForLocale(locale));
+	/** What the keys write, the language of the browser filling what is not known. */
+	const probable = $derived(mergeLayouts(guess?.layout, known));
+	const confirmed = $derived(Boolean(value) && layoutKnowsShortcut(value, known));
+	const onKeyboard = $derived(value ? shortcutOnLayout(value, probable) : undefined);
+	/** Worth asking to press the keys: nothing tells them, and the language is not one of the American layout. */
+	const unknownKeyboard = $derived(
+		Boolean(value) && !layoutKnowsShortcut(value, probable) && !/^en\b/i.test(locale)
+	);
+
+	$effect(() => {
+		if (layout !== undefined) return;
+		learned = readLearnedLayout();
+		void loadKeyboardLayout().then((loaded) => (loadedLayout = loaded));
+	});
+
 	$effect(() => {
 		if (focusOnMount) field?.focus();
 	});
+
+	/** A key pressed anywhere on the page tells what it writes (not when the layout is given). */
+	function learn(press: KeyPress) {
+		if (layout !== undefined) return;
+		const next = learnKey(learned, press);
+		if (!next) return;
+		learned = next;
+		saveLearnedLayout(next);
+	}
 
 	async function announce(message: string) {
 		announcement = '';
@@ -112,6 +164,8 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	}
 </script>
 
+<svelte:window onkeydown={learn} />
+
 <div class="flex flex-col gap-1">
 	<label class="font-medium" for="{uid}-field">{label}</label>
 	<span class="flex flex-wrap items-center gap-2">
@@ -141,12 +195,26 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	</span>
 	<p id="{uid}-hint" class="text-sm text-muted">
 		{value ? `Envoie ${shortcutLabel(value)}.` : 'Exemple : ctrl+shift+m.'}
+		{#if onKeyboard && confirmed}
+			Sur votre clavier, ces touches s’écrivent {onKeyboard}.
+		{:else if onKeyboard}
+			Avec le clavier de votre langue ({guess?.name}), ces touches s’écrivent {onKeyboard} ; appuyez une
+			fois dessus pour le confirmer.
+		{/if}
 		Touches de la position américaine du clavier. Le champ est validé en le quittant ou avec Entrée ;
 		pendant l’enregistrement, appuyez sur les touches voulues, Tab pour annuler.
+		{#if unknownKeyboard}
+			Pour voir ces touches telles qu’elles sont écrites sur votre clavier, appuyez une fois dessus.
+		{/if}
 	</p>
 	{#if recording}
 		<p class="text-sm font-medium">Enregistrement : appuyez sur la combinaison…</p>
 	{/if}
+	<p class="text-sm text-muted">
+		Le navigateur garde certaines combinaisons (Ctrl + Q, Ctrl + W, Ctrl + T, Ctrl + N…) : elles ne
+		peuvent pas être enregistrées en appuyant sur les touches. Écrivez-les dans le champ, par
+		exemple ctrl+q.
+	</p>
 	<p role="status" class="sr-only">{announcement}</p>
 	{#if refusal}
 		<p id="{uid}-error" role="alert" class="text-sm font-medium text-danger">{refusal}</p>

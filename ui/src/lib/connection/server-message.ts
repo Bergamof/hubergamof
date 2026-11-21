@@ -9,6 +9,7 @@ const SERVER_MESSAGE_TYPES = {
 	devices: true,
 	mice: true,
 	mouseConfig: true,
+	mouseStatus: true,
 	radialMenu: true,
 	moduleCatalog: true,
 	config: true,

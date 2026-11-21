@@ -166,3 +166,55 @@ export function normalizeShortcut(text: string): string | undefined {
 	const modifiers = MODIFIER_ORDER.filter((name) => unique.includes(name));
 	return [...modifiers, ...unique.filter((name) => !MODIFIER_ORDER.includes(name))].join('+');
 }
+
+/** The codes of the keys that are not letters or digits and carry a character. */
+const CHARACTER_CODES: Readonly<Record<string, string>> = {
+	minus: 'Minus',
+	equal: 'Equal',
+	comma: 'Comma',
+	dot: 'Period',
+	slash: 'Slash'
+};
+
+/** `KeyboardEvent.code` of the key a name stands for, `undefined` when it carries no character. */
+function characterCode(name: string): string | undefined {
+	if (/^[a-z]$/.test(name)) return `Key${name.toUpperCase()}`;
+	if (/^[0-9]$/.test(name)) return `Digit${name}`;
+	return CHARACTER_CODES[name];
+}
+
+/**
+ * The shortcut as the person's keyboard writes it, when it is not the same as the American
+ * positions the manager presses (on an AZERTY keyboard, the key `a` carries `Q`): `undefined`
+ * when nothing differs or the layout is unknown.
+ */
+export function shortcutOnLayout(
+	shortcut: string,
+	layout: ReadonlyMap<string, string> | undefined
+): string | undefined {
+	if (!layout) return undefined;
+	let differs = false;
+	const parts = shortcut.split('+').map((name) => {
+		const code = characterCode(name);
+		const produced = code === undefined ? undefined : layout.get(code)?.toUpperCase();
+		const position = shortcutLabel(name);
+		if (produced === undefined || produced === position) return position;
+		differs = true;
+		return produced;
+	});
+	return differs ? parts.join(' + ') : undefined;
+}
+
+/**
+ * Whether the layout says what every character key of the shortcut writes: when it does not, pressing
+ * those keys once teaches it.
+ */
+export function layoutKnowsShortcut(
+	shortcut: string,
+	layout: ReadonlyMap<string, string> | undefined
+): boolean {
+	return shortcut.split('+').every((name) => {
+		const code = characterCode(name);
+		return code === undefined || layout?.has(code) === true;
+	});
+}

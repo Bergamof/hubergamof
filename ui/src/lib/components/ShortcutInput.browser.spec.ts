@@ -129,4 +129,71 @@ describe('ShortcutInput', () => {
 		await userEvent.tab();
 		await expect.element(page.getByRole('status')).toHaveTextContent('Raccourci Ctrl + M.');
 	});
+
+	it('tells what the keys are on the keyboard of the person when it is not the American one', async () => {
+		const onchange = vi.fn();
+		const azerty = new Map([['KeyA', 'q']]);
+		await render(ShortcutInput, { label: 'Raccourci', value: 'ctrl+a', onchange, layout: azerty });
+		await expect.element(page.getByText(/s’écrivent Ctrl \+ Q/)).toBeVisible();
+	});
+
+	it('says nothing more when the keyboard is the American one', async () => {
+		const onchange = vi.fn();
+		const american = new Map([['KeyA', 'a']]);
+		await render(ShortcutInput, {
+			label: 'Raccourci',
+			value: 'ctrl+a',
+			onchange,
+			layout: american
+		});
+		expect(document.body.textContent).not.toContain('s’écrivent');
+	});
+
+	it('warns that the browser keeps some combinations, which are written in the field', async () => {
+		await renderInput('');
+		await expect
+			.element(page.getByText(/Le navigateur garde certaines combinaisons/))
+			.toBeVisible();
+	});
+
+	it('learns the keyboard from the keys pressed, and tells what the shortcut is on it', async () => {
+		localStorage.removeItem('hubergamof.keyboard-layout');
+		const onchange = vi.fn();
+		await render(ShortcutInput, { label: 'Raccourci', value: 'ctrl+a', onchange, locale: 'it-IT' });
+		await expect.element(page.getByText(/appuyez une fois dessus/)).toBeVisible();
+		// On an AZERTY keyboard, the key at the American A writes q.
+		window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', key: 'q' }));
+		await expect.element(page.getByText(/s’écrivent Ctrl \+ Q/)).toBeVisible();
+		expect(document.body.textContent).not.toContain('appuyez une fois dessus');
+		localStorage.removeItem('hubergamof.keyboard-layout');
+	});
+
+	it('guesses the keyboard from the language while it is not known, and says it is a guess', async () => {
+		await render(ShortcutInput, {
+			label: 'Raccourci',
+			value: 'ctrl+a',
+			onchange: vi.fn(),
+			layout: new Map(),
+			locale: 'fr-FR'
+		});
+		await expect
+			.element(
+				page.getByText(
+					/Avec le clavier de votre langue \(AZERTY\), ces touches s’écrivent Ctrl \+ Q/
+				)
+			)
+			.toBeVisible();
+	});
+
+	it('does not ask for key presses to a person whose language goes with the American keyboard', async () => {
+		await render(ShortcutInput, {
+			label: 'Raccourci',
+			value: 'ctrl+a',
+			onchange: vi.fn(),
+			layout: new Map(),
+			locale: 'en-US'
+		});
+		expect(document.body.textContent).not.toContain('appuyez une fois dessus');
+		expect(document.body.textContent).not.toContain('Avec le clavier de votre langue');
+	});
 });

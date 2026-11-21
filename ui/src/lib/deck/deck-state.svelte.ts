@@ -152,6 +152,7 @@ export class DeckState {
 				break;
 			case 'mice':
 			case 'mouseConfig':
+			case 'mouseStatus':
 			case 'radialMenu':
 				this.mice.handle(message);
 				break;

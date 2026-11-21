@@ -35,8 +35,9 @@ pub use mouse::{
     ButtonAction, ControlKind, DEFAULT_DPI, DEFAULT_THUMB_SPEED, DEFAULT_WHEEL_THRESHOLD,
     DPI_RANGE, DPI_STEP, HapticEventSetting, HapticLevel, HapticSettings, MAX_HAPTIC_EVENTS,
     MAX_SHORTCUT_CHARS, MOUSE_SCHEMA_VERSION, MouseButton, MouseCapabilities, MouseConfig,
-    MouseConfigError, MouseControl, MouseControlId, MouseInfo, MouseModel, PointerSettings,
-    THUMB_SPEED_RANGE, ThumbWheelSettings, WHEEL_THRESHOLD_RANGE, WheelMode, WheelSettings,
+    MouseConfigError, MouseControl, MouseControlId, MouseInfo, MouseModel, MouseProblem,
+    PointerSettings, THUMB_SPEED_RANGE, ThumbWheelSettings, WHEEL_THRESHOLD_RANGE, WheelMode,
+    WheelSettings,
 };
 pub use radial::{
     DEFAULT_HOLD_MS, HOLD_RANGE, MAX_LISTED_ENTRIES, MAX_SHOWN_ENTRIES, MIN_SHOWN_ENTRIES,
