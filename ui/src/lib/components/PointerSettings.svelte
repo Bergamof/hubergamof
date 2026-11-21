@@ -15,12 +15,7 @@ has one. Every change is applied at once.
 	} from '#lib/deck/mouse-edits.js';
 	import { throttle } from '#lib/deck/throttle.js';
 	import { WHEEL_MODES } from '#lib/deck/mouse-labels.js';
-	import type {
-		PointerSettings,
-		ThumbWheelSettings,
-		WheelMode,
-		WheelSettings
-	} from '#lib/generated/index.js';
+	import type { PointerSettings, ThumbWheelSettings, WheelSettings } from '#lib/generated/index.js';
 	import IntegerField from './IntegerField.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
 	import Switch from './Switch.svelte';
