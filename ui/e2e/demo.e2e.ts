@@ -728,6 +728,25 @@ async function openMenu(page: Page) {
 	await expect(page.getByRole('group', { name: 'Aperçu du menu' })).toBeVisible();
 }
 
+test('les pages de la souris et du menu tiennent sans défilement horizontal sur 320 px', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 320, height: 800 });
+	const overflow = () =>
+		page.evaluate(
+			() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+		);
+	await openMouse(page);
+	expect(await overflow(), 'onglet Touches').toBeLessThanOrEqual(0);
+	await page.getByRole('tab', { name: 'Pointeur et molette' }).click();
+	expect(await overflow(), 'onglet Pointeur et molette').toBeLessThanOrEqual(0);
+	await page.getByRole('tab', { name: 'Haptique' }).click();
+	expect(await overflow(), 'onglet Haptique').toBeLessThanOrEqual(0);
+	await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
+	await expect(page.getByRole('group', { name: 'Aperçu du menu' })).toBeVisible();
+	expect(await overflow(), 'menu circulaire').toBeLessThanOrEqual(0);
+});
+
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {
 	await openMenu(page);
 	await expect(page.getByText(/4 actuellement/)).toBeVisible();

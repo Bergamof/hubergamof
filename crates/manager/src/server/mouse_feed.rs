@@ -247,7 +247,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use hubergamof_protocol::MouseModel;
+    use hubergamof_protocol::{MouseBattery, MouseModel};
 
     use super::*;
     use crate::config_store::ConfigStore;
@@ -331,6 +331,53 @@ mod tests {
             .play_haptic("bbbb0001", HapticWaveform::Knock)
             .unwrap_err();
         assert_eq!(failure.code, ErrorCode::UnknownDevice);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn trying_a_waveform_on_a_mouse_without_haptics_is_an_invalid_input() {
+        let (_dir, hub) = hub();
+        let model = MouseModel::MxAnywhere3S;
+        let _registration = hub.register(
+            MouseInfo {
+                serial: SERIAL.to_owned(),
+                model,
+                display_name: model.display_name().to_owned(),
+                capabilities: model.capabilities(),
+            },
+            MouseConfig::default_for(SERIAL, model),
+        );
+        let feed = MouseFeed::new(&hub);
+        let failure = feed.play_haptic(SERIAL, HapticWaveform::Knock).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::InvalidInput);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_battery_of_the_selected_mouse_is_sent_when_it_is_read_and_when_it_is_lost() {
+        let (_dir, hub) = hub();
+        let registration = connect(&hub, SERIAL);
+        let mut feed = MouseFeed::new(&hub);
+        feed.select(SERIAL).unwrap();
+        let status = feed.status().expect("the status of the selected mouse");
+        assert!(matches!(
+            status,
+            ServerMessage::MouseStatus { battery: None, .. }
+        ));
+        let battery = MouseBattery {
+            percent: 64,
+            charging: true,
+        };
+        registration.status_reporter().report_battery(Some(battery));
+        let Some(ServerMessage::MouseStatus { battery: sent, .. }) = feed.next_change().await
+        else {
+            panic!("the battery was not sent");
+        };
+        assert_eq!(sent, Some(battery));
+        registration.status_reporter().report_battery(None);
+        let Some(ServerMessage::MouseStatus { battery: sent, .. }) = feed.next_change().await
+        else {
+            panic!("the lost battery was not sent");
+        };
+        assert_eq!(sent, None);
     }
 
     #[tokio::test(start_paused = true)]

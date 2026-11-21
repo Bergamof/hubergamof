@@ -125,7 +125,7 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 				>
 				<select
 					id="{uid}-primary-{entry.module}"
-					class="field w-auto"
+					class="field w-auto max-w-full"
 					value={entry.primary.kind === 'action' ? entry.primary.action : CLOSE}
 					onchange={(event) =>
 						onedit(
@@ -178,7 +178,7 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 			<label class="font-medium" for="{uid}-add">Ajouter un module</label>
 			<select
 				id="{uid}-add"
-				class="field w-auto"
+				class="field w-auto max-w-full"
 				value={chosenToAdd.kind}
 				onchange={(event) => (toAdd = event.currentTarget.value)}
 			>

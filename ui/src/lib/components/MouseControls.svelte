@@ -96,7 +96,7 @@ Changes are sent at once; `null` gives a control back to the mouse.
 					>
 						<span
 							class={[
-								'grid size-[22px] place-items-center rounded-full font-mono text-[11px] font-semibold',
+								'grid size-[22px] place-items-center rounded-full font-mono text-xs font-semibold',
 								lockedIds.includes(item.id)
 									? 'border-[1.5px] border-dashed border-muted text-muted'
 									: 'bg-accent text-on-accent'
@@ -119,7 +119,7 @@ Changes are sent at once; `null` gives a control back to the mouse.
 					<span
 						aria-hidden="true"
 						class={[
-							'grid size-[22px] place-items-center rounded-full font-mono text-[11px]',
+							'grid size-[22px] place-items-center rounded-full font-mono text-xs',
 							isLocked
 								? 'border-[1.5px] border-dashed border-muted text-muted'
 								: 'bg-accent text-on-accent'

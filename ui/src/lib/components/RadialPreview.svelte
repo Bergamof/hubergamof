@@ -22,6 +22,9 @@ click on it does. The menu has the same colours in both themes, like the real on
 
 	let { menu, catalog }: Props = $props();
 
+	/** The colours of the menu; the name of the petal lit is dark, white on bergamot is not readable. */
+	const TEXT = '#fff';
+	const LIT_TEXT = '#1b1404';
 	/** Half the side of the drawing. */
 	const HALF = RING.outer + MARGIN;
 	/** Distance from the top of the icon (or the baseline of the name) to the middle of a petal. */
@@ -97,7 +100,7 @@ click on it does. The menu has the same colours in both themes, like the real on
 						text-anchor="middle"
 						font-size={LABEL_SIZE}
 						font-weight="600"
-						fill="#fff"
+						fill={lit ? LIT_TEXT : TEXT}
 					>
 						{nameOf(entry.module)}
 					</text>
@@ -108,7 +111,7 @@ click on it does. The menu has the same colours in both themes, like the real on
 						text-anchor="middle"
 						font-size={LABEL_SIZE}
 						font-weight="600"
-						fill="#fff"
+						fill={lit ? LIT_TEXT : TEXT}
 					>
 						{nameOf(entry.module)}
 					</text>
@@ -116,11 +119,10 @@ click on it does. The menu has the same colours in both themes, like the real on
 			</g>
 		{/each}
 	</svg>
-	<p class="min-h-6 text-sm text-muted" aria-live="polite">
+	<p class="text-sm text-muted">Choisissez un pétale pour voir ce que fait un clic dessus.</p>
+	<p class="min-h-6 text-sm" aria-live="polite">
 		{#if details}
 			<strong>{nameOf(details.module)}</strong> — {clickText(details)}
-		{:else}
-			Choisissez un pétale pour voir ce que fait un clic dessus.
 		{/if}
 	</p>
 </div>

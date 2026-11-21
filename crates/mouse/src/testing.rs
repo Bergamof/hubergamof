@@ -62,6 +62,9 @@ pub struct FakeState {
     pub diverted: BTreeSet<u16>,
     pub haptic: [u8; 2],
     pub haptic_mask: u32,
+    /// How many times the haptic strength was written (it lives in the mouse's
+    /// memory: no write is to be wasted).
+    pub haptic_writes: u32,
     /// Waveform ids played, in order.
     pub played: Vec<u8>,
 }
@@ -78,6 +81,7 @@ impl Default for FakeState {
             diverted: BTreeSet::new(),
             haptic: [1, 75],
             haptic_mask: 0x0800_7FFF,
+            haptic_writes: 0,
             played: Vec::new(),
         }
     }
@@ -338,6 +342,7 @@ impl FakeDevice {
             }
             (HAPTIC, 1) => Some(self.state.haptic.to_vec()),
             (HAPTIC, 2) => {
+                self.state.haptic_writes += 1;
                 self.state.haptic = [*params.first()?, *params.get(1)?];
                 Some(self.state.haptic.to_vec())
             }

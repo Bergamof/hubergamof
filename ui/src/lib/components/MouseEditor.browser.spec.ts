@@ -94,8 +94,8 @@ describe('MouseEditor', () => {
 			problems: [],
 			battery: { percent: 12, charging: false }
 		});
-		await expect.element(page.getByText('Batterie 12 %')).toBeVisible();
-		expect(page.getByText('Batterie 12 %').element().className).toContain('text-warning');
+		await expect.element(page.getByText('Batterie 12 % · faible')).toBeVisible();
+		expect(page.getByText('Batterie 12 % · faible').element().className).toContain('text-warning');
 		connection.receive({
 			type: 'mouseStatus',
 			serial: 'mx-1',
@@ -119,7 +119,7 @@ describe('MouseEditor', () => {
 		await renderEditor();
 		await page.getByRole('tab', { name: 'Haptique' }).click();
 		await expect
-			.element(page.getByRole('radiogroup', { name: 'Force des vibrations' }))
+			.element(page.getByRole('radiogroup', { name: 'Intensité générale' }))
 			.toBeVisible();
 	});
 

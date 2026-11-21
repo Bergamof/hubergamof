@@ -83,6 +83,8 @@ Sur le récepteur, une souris qui s'endort laisse son nœud hidraw ouvert et mue
 ## À vérifier : l'écriture de la force haptique
 Relevé du 2026-11-21 (Adrien, MX Master 4) : `set_haptic` (0x19B0, fonction 2) est **persistant**. Force baissée à 50 par `mouse-test haptic --level`, souris éteinte puis rallumée : `mouse-test info` affiche toujours 50. Conséquences : le gestionnaire ne doit écrire la force que lorsqu'elle change (c'est le cas : la session compare avec la dernière configuration appliquée) ; il remet la force d'origine à l'arrêt, donc une session cycle fait deux écritures (appliquer, restituer) si la configuration diffère de l'origine, ce qui est négligeable pour la mémoire de la souris ; après un plantage brutal du gestionnaire, la souris garde la dernière force appliquée (et non l'origine) jusqu'au prochain arrêt normal.
 
+Depuis la revue du 2026-11-21 : le gestionnaire n'écrit la force que si elle diffère (de la dernière configuration appliquée ; au démarrage ou au retour de la souris, de la valeur lue), car une écriture est persistante. Un curseur de sensibilité glissé n'écrit donc que la sensibilité.
+
 ## Un seul interlocuteur par souris
 Toutes nos requêtes portent le même identifiant logiciel (`0x0B`) : un autre programme qui parle HID++ à la même souris en même temps (`mouse-test` pendant que le service tourne, Solaar, logiops, Options+) peut voir ses réponses confondues avec les nôtres, et `mouse-test buttons|release` défait les détournements du service. Le gestionnaire ne sonde jamais un (nœud, index) qu'il tient déjà (`find_mice`) ; les autres programmes sont à arrêter à la main. Une souris atteinte par deux nœuds n'est prise en charge qu'une fois (identifiant d'unité).
 

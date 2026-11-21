@@ -44,6 +44,9 @@ pub struct Palette {
     pub lit: Rgba<u8>,
     /// Labels.
     pub text: Rgba<u8>,
+    /// The label of the petal under the pointer: dark, white on bergamot is
+    /// not readable (about 2.3:1).
+    pub lit_text: Rgba<u8>,
 }
 
 /// The colours of the design: tea green petals, bergamot for the one lit.
@@ -51,6 +54,7 @@ pub const DEFAULT_PALETTE: Palette = Palette {
     petal: Rgba([0x1f, 0x33, 0x2c, 0xe6]),
     lit: Rgba([0xd9, 0xa4, 0x2b, 0xf2]),
     text: Rgba([0xff, 0xff, 0xff, 0xff]),
+    lit_text: Rgba([0x1b, 0x14, 0x04, 0xff]),
 };
 
 /// Side of the image that holds a menu of `layout`, in pixels.
@@ -87,7 +91,7 @@ pub fn paint(
     );
     for (index, petal) in petals.iter().enumerate() {
         push_petal(&mut body, layout, index, lit == Some(index), palette);
-        push_label(&mut body, layout, index, petal, palette);
+        push_label(&mut body, layout, index, petal, lit == Some(index), palette);
     }
     body.push_str("</g>");
     renderer.overlay_svg(&mut canvas, &body)?;
@@ -172,16 +176,18 @@ fn push_label(
     layout: &Layout,
     index: usize,
     petal: &PetalView<'_>,
+    lit: bool,
     palette: Palette,
 ) {
+    let colour = if lit { palette.lit_text } else { palette.text };
     let (centre, _, baseline) = content_places(layout, index, petal.icon.is_some());
     let _ = write!(
         body,
         r#"<text x="{}" y="{baseline}" font-family="{}" font-size="{LABEL_SIZE}" font-weight="600" text-anchor="middle" fill="{}" fill-opacity="{}">"#,
         centre.x,
         crate::render::FONT_FAMILY,
-        svg_color(palette.text),
-        opacity_of(palette.text),
+        svg_color(colour),
+        opacity_of(colour),
     );
     escape_xml(body, petal.label);
     body.push_str("</text>");
@@ -262,6 +268,7 @@ mod tests {
         petal: PETAL,
         lit: LIT,
         text: Rgba([255, 255, 255, 255]),
+        lit_text: Rgba([0, 0, 0, 255]),
     };
 
     fn layout(count: usize) -> Layout {
@@ -387,6 +394,29 @@ mod tests {
             .filter(|pixel| pixel.0[..3] == [255, 255, 255] && pixel.0[3] > 0)
             .count();
         assert!(white > 50, "the text is there: {white}");
+    }
+
+    #[test]
+    fn the_label_of_the_lit_petal_is_dark_and_the_others_are_light() {
+        let petal = PetalView {
+            label: "Pomodoro",
+            icon: None,
+        };
+        let colour_of = |lit| {
+            let mut body = String::new();
+            push_label(&mut body, &layout(3), 0, &petal, lit, PALETTE);
+            body
+        };
+        assert!(
+            colour_of(true).contains(r##"fill="#000000""##),
+            "{}",
+            colour_of(true)
+        );
+        assert!(
+            colour_of(false).contains(r##"fill="#ffffff""##),
+            "{}",
+            colour_of(false)
+        );
     }
 
     #[test]

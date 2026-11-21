@@ -83,21 +83,25 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 	>
 		<header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-5 py-4">
 			<h2 id="{uid}-name" class="font-display text-xl font-semibold">{mouse.displayName}</h2>
-			<span class="rounded-full bg-sunken px-2 py-1 font-mono text-[11px] text-muted">
+			<span class="rounded-full bg-sunken px-2 py-1 font-mono text-xs text-muted">
 				Connectée · Logi Bolt
 			</span>
 			{#if battery}
 				<span
 					class={[
-						'rounded-full px-2 py-1 font-mono text-[11px]',
+						'rounded-full px-2 py-1 font-mono text-xs',
 						batteryLow ? 'bg-warning-soft text-warning' : 'bg-sunken text-muted'
 					]}
 				>
-					Batterie {battery.percent} %{battery.charging ? ' · en charge' : ''}
+					Batterie {battery.percent} %{battery.charging
+						? ' · en charge'
+						: batteryLow
+							? ' · faible'
+							: ''}
 				</span>
 			{/if}
 			{#if mouse.capabilities.haptics}
-				<span class="rounded-full bg-accent px-2 py-1 font-mono text-[11px] text-on-accent">
+				<span class="rounded-full bg-accent px-2 py-1 font-mono text-xs text-on-accent">
 					Retour haptique
 				</span>
 			{/if}

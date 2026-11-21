@@ -35,6 +35,10 @@ pub struct ApplyProblem {
 pub enum Notice {
     /// A setting the mouse refused when the configuration was applied.
     Problem(ApplyProblem),
+    /// A request (a vibration, a toggle of the wheel) the mouse did not carry
+    /// out. Not part of the configuration: nothing to tell the interface, and
+    /// no list that grows with every attempt.
+    Declined(ApplyProblem),
     /// A press or a release of a diverted button.
     Button(ButtonEvent),
     /// A configuration was applied: the problems reported since the previous
@@ -370,28 +374,46 @@ impl<C: Channel> MouseSession<C> {
                 Ok(())
             }
         };
-        attempt("sensitivity", self.link.set_dpi(config.pointer.dpi))?;
-        attempt(
-            "wheel",
-            self.link
-                .set_wheel(config.wheel.mode, config.wheel.auto_threshold),
-        )?;
-        attempt(
-            "high resolution wheel",
-            self.link
-                .set_hires_wheel(config.wheel.hi_res, config.wheel.natural),
-        )?;
-        if self.link.has_thumb_wheel() {
+        // What an update leaves as it was is not written again: the haptic
+        // strength lives in the mouse's memory, which a slider moved for a
+        // second would wear out. After a power cycle (nothing applied) it is
+        // read first and written only when it differs.
+        let before = self.applied.clone();
+        let changed = |different: fn(&MouseConfig, &MouseConfig) -> bool| {
+            before.as_ref().is_none_or(|old| different(old, config))
+        };
+        if changed(|old, new| old.pointer != new.pointer) {
+            attempt("sensitivity", self.link.set_dpi(config.pointer.dpi))?;
+        }
+        if changed(|old, new| {
+            (old.wheel.mode, old.wheel.auto_threshold) != (new.wheel.mode, new.wheel.auto_threshold)
+        }) {
+            attempt(
+                "wheel",
+                self.link
+                    .set_wheel(config.wheel.mode, config.wheel.auto_threshold),
+            )?;
+        }
+        if changed(|old, new| {
+            (old.wheel.hi_res, old.wheel.natural) != (new.wheel.hi_res, new.wheel.natural)
+        }) {
+            attempt(
+                "high resolution wheel",
+                self.link
+                    .set_hires_wheel(config.wheel.hi_res, config.wheel.natural),
+            )?;
+        }
+        if self.link.has_thumb_wheel() && changed(|old, new| old.thumb_wheel != new.thumb_wheel) {
             attempt(
                 "thumb wheel",
                 self.link.set_thumb_invert(config.thumb_wheel.invert),
             )?;
         }
-        if self.link.has_haptics() {
-            attempt(
-                "haptic strength",
-                self.link.set_haptic(haptic_strength(config.haptics.level)),
-            )?;
+        if self.link.has_haptics() && changed(|old, new| old.haptics.level != new.haptics.level) {
+            let wanted = haptic_strength(config.haptics.level);
+            if self.haptic_differs(wanted) {
+                attempt("haptic strength", self.link.set_haptic(wanted))?;
+            }
         }
         for control in self.link.model().capabilities().controls {
             if cid(self.link.model(), control.id).is_none() || control.locked {
@@ -405,6 +427,15 @@ impl<C: Channel> MouseSession<C> {
         }
         self.applied = Some(config.clone());
         Ok(problems)
+    }
+
+    /// Whether the mouse's haptic setting is not `wanted` (`None`: off). When
+    /// it cannot be read, it is taken as different.
+    fn haptic_differs(&mut self, wanted: Option<u8>) -> bool {
+        self.link.haptic_state().map_or(true, |state| match wanted {
+            Some(level) => !(state.enabled && state.level == level),
+            None => state.enabled,
+        })
     }
 
     /// Diverts or gives back one button, writing only when it differs.
@@ -467,10 +498,15 @@ impl<C: Channel> MouseSession<C> {
     /// [`MISSED_PINGS_BEFORE_AWAY`] in a row is taken for switched off, and
     /// for back at its first answer.
     fn check_alive(&mut self) -> Result<Vec<ButtonEvent>, HidppError> {
-        if Instant::now() < self.next_ping {
+        self.check_alive_at(Instant::now())
+    }
+
+    /// [`MouseSession::check_alive`] at the time `now`, which tests choose.
+    fn check_alive_at(&mut self, now: Instant) -> Result<Vec<ButtonEvent>, HidppError> {
+        if now < self.next_ping {
             return Ok(Vec::new());
         }
-        self.next_ping = Instant::now() + self.ping_every;
+        self.next_ping = now + self.ping_every;
         if self.link.answers()? {
             self.missed_pings = 0;
             return Ok(if self.away {
@@ -634,7 +670,7 @@ impl<C: Channel> MouseSession<C> {
                 Err(error)
             }
             Err(error) => {
-                notify(Notice::Problem(ApplyProblem {
+                notify(Notice::Declined(ApplyProblem {
                     setting: "haptic",
                     error,
                 }));
@@ -673,7 +709,7 @@ impl<C: Channel> MouseSession<C> {
             Ok(()) => Ok(()),
             Err(error) if is_fatal(&error) => Err(error),
             Err(error) => {
-                notify(Notice::Problem(ApplyProblem {
+                notify(Notice::Declined(ApplyProblem {
                     setting: "wheel mode",
                     error,
                 }));
@@ -1197,6 +1233,52 @@ mod tests {
         assert!(session.pending.is_none());
     }
 
+    /// Mutes or unmutes the ping of the mouse of `shared`.
+    fn set_ping_muted(shared: &Shared, muted: bool) {
+        let mut link = shared.0.borrow_mut();
+        let device = link.device_at_mut(DEVICE).unwrap();
+        if muted {
+            device.mute_function(0, 1);
+        } else {
+            device.unmute();
+        }
+    }
+
+    #[test]
+    fn one_missed_ping_is_not_a_switched_off_mouse_and_an_answer_forgets_it() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let step = LIVENESS_INTERVAL;
+        let start = Instant::now() + step;
+        let tick = |turn: u32| start + step * turn;
+        set_ping_muted(&shared, true);
+        session.check_alive_at(tick(0)).unwrap();
+        assert!(session.link_changes.is_empty(), "one miss");
+        set_ping_muted(&shared, false);
+        session.check_alive_at(tick(1)).unwrap();
+        // The miss was forgotten: two more are needed.
+        set_ping_muted(&shared, true);
+        session.check_alive_at(tick(2)).unwrap();
+        assert!(session.link_changes.is_empty(), "one miss again");
+        session.check_alive_at(tick(3)).unwrap();
+        assert_eq!(session.link_changes, [false], "two in a row");
+    }
+
+    #[test]
+    fn the_mouse_is_not_pinged_before_its_time() {
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        let writes = || shared.0.borrow().written().len();
+        let start = Instant::now() + LIVENESS_INTERVAL;
+        session.check_alive_at(start).unwrap();
+        let after_first = writes();
+        assert!(after_first > 0, "pinged when due");
+        session
+            .check_alive_at(start + LIVENESS_INTERVAL.saturating_sub(Duration::from_millis(1)))
+            .unwrap();
+        assert_eq!(writes(), after_first, "not again before the interval");
+        session.check_alive_at(start + LIVENESS_INTERVAL).unwrap();
+        assert!(writes() > after_first);
+    }
+
     #[test]
     fn the_link_of_another_mouse_of_the_receiver_changes_nothing_here() {
         let mut other = LOST;
@@ -1507,7 +1589,10 @@ mod tests {
             .serve(&config(), &stop, |notice| match notice {
                 Notice::Problem(problem) => told.push(problem.setting),
                 Notice::Applied => told.push("applied"),
-                Notice::Button(_) | Notice::Battery(_) | Notice::Connection { .. } => {}
+                Notice::Button(_)
+                | Notice::Battery(_)
+                | Notice::Connection { .. }
+                | Notice::Declined(_) => {}
             })
             .unwrap();
         // The end of the application comes after its problems.
@@ -2040,7 +2125,7 @@ mod tests {
                     }
                 },
                 |notice| {
-                    if let Notice::Problem(problem) = notice {
+                    if let Notice::Problem(problem) | Notice::Declined(problem) = notice {
                         problems.push(problem.setting);
                     }
                 },
@@ -2126,6 +2211,45 @@ mod tests {
         assert_eq!(played, [0x0C]);
     }
 
+    fn haptic_writes(shared: &Shared) -> u32 {
+        shared
+            .0
+            .borrow()
+            .device_at(DEVICE)
+            .unwrap()
+            .state
+            .haptic_writes
+    }
+
+    #[test]
+    fn the_haptic_strength_is_written_only_when_it_changes() {
+        let mut other = config();
+        let (mut session, shared) = shared_session(FakeDevice::mx_master_4());
+        // The mouse has the strength of the configuration (medium: 75): read, not written.
+        session.apply(&other).unwrap();
+        assert_eq!(haptic_writes(&shared), 0);
+        // A sensitivity moved like a slider: nothing is written to the haptic memory.
+        for dpi in [1000, 1200, 1400] {
+            other.pointer.dpi = dpi;
+            session.apply(&other).unwrap();
+        }
+        assert_eq!(haptic_writes(&shared), 0);
+        other.haptics.level = HapticLevel::High;
+        session.apply(&other).unwrap();
+        assert_eq!(haptic_writes(&shared), 1);
+    }
+
+    #[test]
+    fn a_haptic_strength_the_mouse_does_not_have_is_written_once() {
+        let mut device = FakeDevice::mx_master_4();
+        device.state.haptic = [1, 10];
+        let (mut session, shared) = shared_session(device);
+        session.apply(&config()).unwrap();
+        assert_eq!(haptic_writes(&shared), 1);
+        session.apply(&config()).unwrap();
+        assert_eq!(haptic_writes(&shared), 1);
+    }
+
     #[test]
     fn a_vibration_the_mouse_does_not_answer_is_reported_and_the_service_goes_on() {
         let device = FakeDevice::mx_master_4().with_mute_function(crate::features::HAPTIC, 4);
@@ -2168,7 +2292,7 @@ mod tests {
                 }
             },
             |notice| {
-                if let Notice::Problem(problem) = notice {
+                if let Notice::Problem(problem) | Notice::Declined(problem) = notice {
                     problems.push(problem.setting);
                 }
             },

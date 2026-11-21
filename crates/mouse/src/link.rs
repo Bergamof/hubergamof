@@ -368,7 +368,8 @@ impl<C: Channel> MouseLink<C> {
             return Err(HidppError::Malformed("short battery state".to_owned()));
         };
         Ok(Battery {
-            percent: (percent != 0).then_some(percent),
+            // 0 is "unknown"; above 100 is not a percentage: the device is not trusted.
+            percent: (1..=100).contains(&percent).then_some(percent),
             level: match level {
                 8 => BatteryLevel::Full,
                 4 => BatteryLevel::Good,
@@ -884,6 +885,21 @@ mod tests {
         let id = link.unit_id().unwrap();
         assert_eq!(id, UnitId([0xDE, 0xAD, 0xBE, 0xEF]));
         assert_eq!(id.to_string(), "deadbeef");
+    }
+
+    #[test]
+    fn a_battery_percentage_out_of_range_is_not_believed() {
+        for (byte, expected) in [
+            (0, None),
+            (1, Some(1)),
+            (100, Some(100)),
+            (101, None),
+            (255, None),
+        ] {
+            let mut device = FakeDevice::mx_master_4();
+            device.state.battery = [byte, 4, 0];
+            assert_eq!(link(device).battery().unwrap().percent, expected, "{byte}");
+        }
     }
 
     #[test]

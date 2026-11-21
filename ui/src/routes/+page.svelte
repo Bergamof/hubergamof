@@ -128,7 +128,7 @@
 			{/if}
 			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline}>
 				{#if sections.length > 1}
-					<div role="group" aria-label="Appareils à configurer" class="flex gap-2">
+					<div role="group" aria-label="Appareils à configurer" class="flex flex-wrap gap-2">
 						{#each sections as choice (choice)}
 							<button
 								type="button"

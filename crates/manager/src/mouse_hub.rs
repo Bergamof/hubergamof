@@ -215,7 +215,7 @@ impl MouseHub {
         let entries = self.entries();
         let entry = entries
             .iter()
-            .find(|entry| entry.info.serial == serial)
+            .find(|entry| entry.connected && entry.info.serial == serial)
             .ok_or_else(|| HubError::UnknownMouse(serial.to_owned()))?;
         if !entry.info.capabilities.haptics {
             return Err(HubError::NoHaptics(serial.to_owned()));
@@ -372,7 +372,8 @@ impl MouseHub {
             tracing::debug!(event = %play.key(), "haptic event repeated too soon: dropped");
             return;
         }
-        for entry in self.entries().iter() {
+        // A mouse switched off is not asked: it would not answer.
+        for entry in self.entries().iter().filter(|entry| entry.connected) {
             let config = entry.config.borrow();
             let Some(waveform) = waveform_to_play(&config, &entry.info.capabilities, play) else {
                 continue;
@@ -392,7 +393,7 @@ impl HapticOutput for MouseHub {
     }
 
     fn play_waveform(&self, waveform: HapticWaveform) {
-        for entry in self.entries().iter() {
+        for entry in self.entries().iter().filter(|entry| entry.connected) {
             let config = entry.config.borrow();
             if !entry.info.capabilities.haptics || config.haptics.level == HapticLevel::Off {
                 continue;
@@ -903,6 +904,19 @@ mod tests {
         assert!(!list.has_changed().unwrap());
         presence.set_connected(true);
         assert_eq!(hub.mice().len(), 2);
+        // A mouse that is off is not asked to vibrate, by the interface or by a module.
+        let mut off = hub.subscribe_mice();
+        off.mark_unchanged();
+        presence.set_connected(false);
+        assert!(matches!(
+            hub.try_waveform("a", HapticWaveform::Wave),
+            Err(HubError::UnknownMouse(_))
+        ));
+        hub.play_waveform(HapticWaveform::Wave);
+        assert_eq!(played(&mouse), []);
+        presence.set_connected(true);
+        hub.play_waveform(HapticWaveform::Wave);
+        assert_eq!(played(&mouse), [HapticWaveform::Wave]);
         // A registration that was replaced says nothing any more.
         drop(other);
         let replaced = register(&hub, "a");
