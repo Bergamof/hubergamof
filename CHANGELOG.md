@@ -18,6 +18,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Souris Logitech MX : une souris endormie ne rendait pas ses boutons à l'arrêt (ses premières requêtes restaient sans réponse) ; elle est réveillée (jusqu'à trois pings) avant d'appliquer une configuration et avant de rendre les boutons, y compris à la destruction de la session.
 
+### Modifié
+
+- Souris Logitech MX : le gestionnaire les sert par défaut (sensibilité, molettes, boutons, menu circulaire), sans option. `--no-mice` coupe tout (pour garder Solaar ou logiops, qui détournent les mêmes boutons) ; `--mice` reste accepté. Une première configuration détourne le bouton du menu circulaire de la souris, comme le décide `MouseConfig::default_for`.
+
 ### Ajouté
 
 - Souris Logitech MX : une souris éteinte puis rallumée (notification de lien `0x41` du récepteur, relevée sur une MX Master 4) est reconfigurée : à l'extinction les boutons tenus sont relâchés, au retour la configuration complète est réappliquée (les boutons détournés ne survivent pas à l'extinction).

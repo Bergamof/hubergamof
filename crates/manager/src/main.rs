@@ -101,10 +101,15 @@ struct Cli {
     no_tray: bool,
 
     /// Serve Logitech MX mice (Logi Bolt receiver): apply their configuration
-    /// and take over their buttons. Experimental, off until the mouse menu
-    /// and actions exist: a diverted button does nothing for now.
-    #[arg(long)]
+    /// and take over their buttons. On by default, so that this is the same as
+    /// not giving the option; kept so that existing command lines still work.
+    #[arg(long, conflicts_with = "no_mice")]
     mice: bool,
+
+    /// Do not touch the Logitech mice: no configuration applied, no button
+    /// taken over (to run Solaar or logiops, which divert the same buttons).
+    #[arg(long)]
+    no_mice: bool,
 
     /// Never look for a newer release: the manager then makes no connection
     /// to the Internet at all.
@@ -651,7 +656,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     outcome
 }
 
-/// The mouse hub, and the mice it lists: the real ones with `--mice`, a simulated one with `--demo`.
+/// The mouse hub, and the mice it lists: the real ones unless `--no-mice`, a simulated one with `--demo`.
 fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
@@ -738,7 +743,7 @@ fn register_simulated_mouse(hub: &MouseHub, store: &ConfigStore) -> Result<Mouse
 
 /// `--demo` never touches the hardware, whatever else is asked.
 fn serves_mice(cli: &Cli) -> bool {
-    cli.mice && !cli.demo
+    !cli.no_mice && !cli.demo
 }
 
 /// The mice the hub lists, and what keeps them so.
@@ -1118,15 +1123,20 @@ mod tests {
     }
 
     #[test]
-    fn serving_the_mice_is_opt_in() {
-        assert!(!Cli::try_parse_from(["hubergamof"]).unwrap().mice);
-        let mice = Cli::try_parse_from(["hubergamof", "--mice"]).unwrap();
-        assert!(mice.mice && serves_mice(&mice));
-        let demo = Cli::try_parse_from(["hubergamof", "--mice", "--demo"]).unwrap();
+    fn the_mice_are_served_unless_refused() {
+        let serves = |args: &[&str]| {
+            let mut all = vec!["hubergamof"];
+            all.extend_from_slice(args);
+            serves_mice(&Cli::try_parse_from(all).unwrap())
+        };
+        assert!(serves(&[]));
+        assert!(serves(&["--mice"]), "the old option still works");
+        assert!(!serves(&["--no-mice"]));
         assert!(
-            demo.mice && !serves_mice(&demo),
+            !serves(&["--demo"]) && !serves(&["--demo", "--mice"]),
             "the demo never serves mice"
         );
+        assert!(Cli::try_parse_from(["hubergamof", "--mice", "--no-mice"]).is_err());
     }
 
     #[test]
