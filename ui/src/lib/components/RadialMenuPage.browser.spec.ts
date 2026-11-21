@@ -23,9 +23,9 @@ async function renderPage(options: { config?: MouseConfig; withMenu?: boolean } 
 describe('RadialMenuPage', () => {
 	it('shows a petal for each entry shown, and says what a click on one does', async () => {
 		await renderPage();
-		const preview = page.getByRole('list', { name: 'Aperçu du menu' });
+		const preview = page.getByRole('group', { name: 'Aperçu du menu' });
 		await expect.element(preview).toBeVisible();
-		const petals = document.querySelectorAll('[aria-label="Aperçu du menu"] button');
+		const petals = document.querySelectorAll('[aria-label="Aperçu du menu"] [role=button]');
 		expect(petals.length).toBeGreaterThan(0);
 		await expect.element(page.getByText(/Choisissez un pétale/)).toBeVisible();
 		await preview.getByRole('button').first().click();

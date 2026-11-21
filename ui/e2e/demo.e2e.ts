@@ -725,7 +725,7 @@ test('essaie une vibration depuis l’onglet Haptique et coupe un module entier'
 async function openMenu(page: Page) {
 	await open(page);
 	await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
-	await expect(page.getByRole('list', { name: 'Aperçu du menu' })).toBeVisible();
+	await expect(page.getByRole('group', { name: 'Aperçu du menu' })).toBeVisible();
 }
 
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {
