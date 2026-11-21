@@ -639,6 +639,7 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).press('Enter');
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
+	await page.getByRole('tab', { name: 'Haptique' }).click();
 	await page.getByRole('radio', { name: 'Forte' }).click();
 	await page.getByRole('switch', { name: "Fin d'une étape" }).uncheck();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
@@ -649,6 +650,7 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await expect(page.getByLabel('Raccourci de : Bouton arrière', { exact: true })).toHaveValue(
 		'ctrl+shift+m'
 	);
+	await page.getByRole('tab', { name: 'Haptique' }).click();
 	await expect(page.getByRole('radio', { name: 'Forte' })).toBeChecked();
 	await expect(page.getByRole('switch', { name: "Fin d'une étape" })).not.toBeChecked();
 });

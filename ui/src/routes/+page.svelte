@@ -6,6 +6,7 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import MouseEditor from '#lib/components/MouseEditor.svelte';
+	import SegmentedControl from '#lib/components/SegmentedControl.svelte';
 	import UpdatePanel from '#lib/components/UpdatePanel.svelte';
 	import Notices from '#lib/components/Notices.svelte';
 	import BrandWordmark from '#lib/components/BrandWordmark.svelte';
@@ -143,12 +144,17 @@
 					</div>
 				{/if}
 				{#if section === 'mouse' && deck.mice.mouse && deck.mice.config}
-					<DeviceSelector
-						devices={deck.mice.mice}
-						selected={deck.mice.selectedSerial}
-						label="Souris"
-						onselect={(serial) => deck?.mice.select(serial)}
-					/>
+					{#if deck.mice.mice.length > 1}
+						<SegmentedControl
+							label="Souris"
+							options={deck.mice.mice.map((mouse) => ({
+								value: mouse.serial,
+								label: mouse.displayName
+							}))}
+							value={deck.mice.selectedSerial ?? ''}
+							onchange={(serial) => deck?.mice.select(serial)}
+						/>
+					{/if}
 				{:else if deck.device}
 					<DeviceSelector
 						devices={deck.devices}
