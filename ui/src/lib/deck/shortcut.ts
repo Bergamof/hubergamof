@@ -204,3 +204,17 @@ export function shortcutOnLayout(
 	});
 	return differs ? parts.join(' + ') : undefined;
 }
+
+/**
+ * Whether the layout says what every character key of the shortcut writes: when it does not, pressing
+ * those keys once teaches it.
+ */
+export function layoutKnowsShortcut(
+	shortcut: string,
+	layout: ReadonlyMap<string, string> | undefined
+): boolean {
+	return shortcut.split('+').every((name) => {
+		const code = characterCode(name);
+		return code === undefined || layout?.has(code) === true;
+	});
+}

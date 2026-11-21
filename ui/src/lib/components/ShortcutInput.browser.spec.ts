@@ -148,4 +148,23 @@ describe('ShortcutInput', () => {
 		});
 		expect(document.body.textContent).not.toContain('s’écrivent');
 	});
+
+	it('warns that the browser keeps some combinations, which are written in the field', async () => {
+		await renderInput('');
+		await expect
+			.element(page.getByText(/Le navigateur garde certaines combinaisons/))
+			.toBeVisible();
+	});
+
+	it('learns the keyboard from the keys pressed, and tells what the shortcut is on it', async () => {
+		localStorage.removeItem('hubergamof.keyboard-layout');
+		const onchange = vi.fn();
+		await render(ShortcutInput, { label: 'Raccourci', value: 'ctrl+a', onchange });
+		await expect.element(page.getByText(/appuyez une fois dessus/)).toBeVisible();
+		// On an AZERTY keyboard, the key at the American A writes q.
+		window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', key: 'q' }));
+		await expect.element(page.getByText(/s’écrivent Ctrl \+ Q/)).toBeVisible();
+		expect(document.body.textContent).not.toContain('appuyez une fois dessus');
+		localStorage.removeItem('hubergamof.keyboard-layout');
+	});
 });

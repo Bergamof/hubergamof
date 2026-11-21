@@ -4,6 +4,7 @@ import {
 	keyName,
 	modifierName,
 	normalizeShortcut,
+	layoutKnowsShortcut,
 	shortcutOnLayout,
 	shortcutLabel,
 	shortcutOf
@@ -108,5 +109,20 @@ describe('shortcutOnLayout', () => {
 		expect(shortcutOnLayout('ctrl+enter', azerty)).toBeUndefined();
 		expect(shortcutOnLayout('ctrl+a', undefined)).toBeUndefined();
 		expect(shortcutOnLayout('ctrl+z', azerty)).toBeUndefined();
+	});
+});
+
+describe('layoutKnowsShortcut', () => {
+	const layout = new Map([['KeyA', 'q']]);
+
+	it('knows a shortcut whose character keys are all known, modifiers and named keys apart', () => {
+		expect(layoutKnowsShortcut('ctrl+a', layout)).toBe(true);
+		expect(layoutKnowsShortcut('ctrl+enter', layout)).toBe(true);
+	});
+
+	it('does not know one with a key the layout does not tell, or without any layout', () => {
+		expect(layoutKnowsShortcut('ctrl+m', layout)).toBe(false);
+		expect(layoutKnowsShortcut('ctrl+a', undefined)).toBe(false);
+		expect(layoutKnowsShortcut('ctrl+enter', undefined)).toBe(true);
 	});
 });

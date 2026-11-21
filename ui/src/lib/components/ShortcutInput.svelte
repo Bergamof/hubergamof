@@ -6,9 +6,18 @@ field is left or Enter is pressed, never while it is half typed. While recording
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { loadKeyboardLayout, type KeyboardLayout } from '#lib/deck/keyboard-layout.js';
+	import {
+		learnKey,
+		loadKeyboardLayout,
+		mergeLayouts,
+		readLearnedLayout,
+		saveLearnedLayout,
+		type KeyboardLayout,
+		type KeyPress
+	} from '#lib/deck/keyboard-layout.js';
 	import {
 		isReserved,
+		layoutKnowsShortcut,
 		keyName,
 		modifierName,
 		normalizeShortcut,
@@ -46,15 +55,30 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	const text = $derived(draft ?? value);
 
 	let loadedLayout: KeyboardLayout | undefined = $state();
-	const onKeyboard = $derived(value ? shortcutOnLayout(value, layout ?? loadedLayout) : undefined);
+	let learned: KeyboardLayout = $state(new Map());
+	/** What the keys write: what the browser tells, and what the keys pressed here have taught. */
+	const known = $derived(layout ?? mergeLayouts(learned, loadedLayout));
+	const onKeyboard = $derived(value ? shortcutOnLayout(value, known) : undefined);
+	const unknownKeyboard = $derived(Boolean(value) && !layoutKnowsShortcut(value, known));
 
 	$effect(() => {
-		if (layout === undefined) void loadKeyboardLayout().then((loaded) => (loadedLayout = loaded));
+		if (layout !== undefined) return;
+		learned = readLearnedLayout();
+		void loadKeyboardLayout().then((loaded) => (loadedLayout = loaded));
 	});
 
 	$effect(() => {
 		if (focusOnMount) field?.focus();
 	});
+
+	/** A key pressed anywhere on the page tells what it writes (not when the layout is given). */
+	function learn(press: KeyPress) {
+		if (layout !== undefined) return;
+		const next = learnKey(learned, press);
+		if (!next) return;
+		learned = next;
+		saveLearnedLayout(next);
+	}
 
 	async function announce(message: string) {
 		announcement = '';
@@ -123,6 +147,8 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	}
 </script>
 
+<svelte:window onkeydown={learn} />
+
 <div class="flex flex-col gap-1">
 	<label class="font-medium" for="{uid}-field">{label}</label>
 	<span class="flex flex-wrap items-center gap-2">
@@ -157,10 +183,18 @@ field is left or Enter is pressed, never while it is half typed. While recording
 		{/if}
 		Touches de la position américaine du clavier. Le champ est validé en le quittant ou avec Entrée ;
 		pendant l’enregistrement, appuyez sur les touches voulues, Tab pour annuler.
+		{#if unknownKeyboard}
+			Pour voir ces touches telles qu’elles sont écrites sur votre clavier, appuyez une fois dessus.
+		{/if}
 	</p>
 	{#if recording}
 		<p class="text-sm font-medium">Enregistrement : appuyez sur la combinaison…</p>
 	{/if}
+	<p class="text-sm text-muted">
+		Le navigateur garde certaines combinaisons (Ctrl + Q, Ctrl + W, Ctrl + T, Ctrl + N…) : elles ne
+		peuvent pas être enregistrées en appuyant sur les touches. Écrivez-les dans le champ, par
+		exemple ctrl+q.
+	</p>
 	<p role="status" class="sr-only">{announcement}</p>
 	{#if refusal}
 		<p id="{uid}-error" role="alert" class="text-sm font-medium text-danger">{refusal}</p>
