@@ -4,28 +4,26 @@ import { render } from 'vitest-browser-svelte';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
 import type { MouseInfo } from '#lib/generated/index.js';
 import MouseEditor from './MouseEditor.svelte';
-import { CATALOG, mouseConfig, mouseInfo, radialMenu } from './mouse-fixtures.js';
+import { CATALOG, mouseConfig, mouseInfo } from './mouse-fixtures.js';
 import { FakeConnection } from '#lib/deck/fake-connection.js';
 
-/** A state following one mouse, its configuration and the menu (unless `withMenu` is false). */
-function connected(mouse: MouseInfo, withMenu = true) {
+/** A state following one mouse and its configuration. */
+function connected(mouse: MouseInfo) {
 	const connection = new FakeConnection();
 	const deck = new DeckState(connection, { load: () => null, save: () => undefined });
 	deck.listen();
 	connection.receive({ type: 'moduleCatalog', modules: CATALOG });
 	connection.receive({ type: 'mice', mice: [mouse] });
 	connection.receive({ type: 'mouseConfig', serial: mouse.serial, config: mouseConfig() });
-	if (withMenu) connection.receive({ type: 'radialMenu', config: radialMenu() });
 	return { connection, deck };
 }
 
-async function renderEditor(mouse: MouseInfo = mouseInfo(), withMenu = true) {
-	const { connection, deck } = connected(mouse, withMenu);
+async function renderEditor(mouse: MouseInfo = mouseInfo()) {
+	const { connection, deck } = connected(mouse);
 	await render(MouseEditor, {
 		deck,
 		mouse: deck.mice.mouse!,
-		config: deck.mice.config!,
-		radialMenu: deck.mice.radialMenu
+		config: deck.mice.config!
 	});
 	return { connection, deck };
 }
@@ -132,20 +130,6 @@ describe('MouseEditor', () => {
 		await page.getByRole('radio', { name: 'Forte' }).click();
 		connection.receive({ type: 'error', code: 'invalidConfig', message: 'refused' });
 		await expect.element(page.getByText('Dernière modification refusée.').first()).toBeVisible();
-	});
-
-	it('sends a change of the radial menu', async () => {
-		const { connection } = await renderEditor();
-		await page.getByRole('switch', { name: /Animer/ }).click();
-		expect(connection.sent.at(-1)).toMatchObject({
-			type: 'updateRadialMenu',
-			config: { animate: false }
-		});
-	});
-
-	it('waits for the radial menu before showing it', async () => {
-		await renderEditor(mouseInfo(), false);
-		await expect.element(page.getByText('Chargement du menu…')).toBeVisible();
 	});
 
 	it('tells what the mouse refused, and that the rest was applied', async () => {
