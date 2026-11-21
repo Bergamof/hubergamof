@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	layoutForLocale,
 	learnKey,
 	loadKeyboardLayout,
 	mergeLayouts,
@@ -119,5 +120,29 @@ describe('the layout kept between visits', () => {
 				}
 			}).size
 		).toBe(0);
+	});
+});
+
+describe('layoutForLocale', () => {
+	it('goes with French and German the usual keyboard of those languages', () => {
+		expect(layoutForLocale('fr-FR')?.name).toBe('AZERTY');
+		expect(layoutForLocale('fr')?.layout.get('KeyA')).toBe('q');
+		expect(layoutForLocale('FR_be')?.name).toBe('AZERTY');
+		expect(layoutForLocale('de-DE')?.name).toBe('QWERTZ');
+		expect(layoutForLocale('de')?.layout.get('KeyY')).toBe('z');
+		expect(layoutForLocale('fr-CH')?.name).toBe('QWERTZ');
+	});
+
+	it('knows every letter of a layout it guesses, and what the digits write on AZERTY', () => {
+		const azerty = layoutForLocale('fr-FR')!.layout;
+		expect(azerty.get('KeyB')).toBe('b');
+		expect(azerty.get('Digit1')).toBe('&');
+		expect(azerty.get('KeyM')).toBe(',');
+	});
+
+	it('guesses nothing for a language that goes with the American keyboard, or when it is unknown', () => {
+		expect(layoutForLocale('en-US')).toBeUndefined();
+		expect(layoutForLocale('fr-CA')).toBeUndefined();
+		expect(layoutForLocale(undefined)).toBeUndefined();
 	});
 });

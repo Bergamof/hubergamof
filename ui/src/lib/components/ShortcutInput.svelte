@@ -7,6 +7,7 @@ field is left or Enter is pressed, never while it is half typed. While recording
 <script lang="ts">
 	import { tick } from 'svelte';
 	import {
+		layoutForLocale,
 		learnKey,
 		loadKeyboardLayout,
 		mergeLayouts,
@@ -35,9 +36,18 @@ field is left or Enter is pressed, never while it is half typed. While recording
 		focusOnMount?: boolean;
 		/** What the keys produce on the keyboard of the person; read from the browser when not given. */
 		layout?: KeyboardLayout;
+		/** Language the keyboard is guessed from while it is not known; the browser's by default. */
+		locale?: string;
 	}
 
-	let { label, value, onchange, focusOnMount = false, layout }: Props = $props();
+	let {
+		label,
+		value,
+		onchange,
+		focusOnMount = false,
+		layout,
+		locale = navigator.languages?.[0] ?? navigator.language
+	}: Props = $props();
 
 	const uid = $props.id();
 
@@ -56,10 +66,17 @@ field is left or Enter is pressed, never while it is half typed. While recording
 
 	let loadedLayout: KeyboardLayout | undefined = $state();
 	let learned: KeyboardLayout = $state(new Map());
-	/** What the keys write: what the browser tells, and what the keys pressed here have taught. */
+	/** What the keys write for sure: what the browser tells, and what the keys pressed here have taught. */
 	const known = $derived(layout ?? mergeLayouts(learned, loadedLayout));
-	const onKeyboard = $derived(value ? shortcutOnLayout(value, known) : undefined);
-	const unknownKeyboard = $derived(Boolean(value) && !layoutKnowsShortcut(value, known));
+	const guess = $derived(layoutForLocale(locale));
+	/** What the keys write, the language of the browser filling what is not known. */
+	const probable = $derived(mergeLayouts(guess?.layout, known));
+	const confirmed = $derived(Boolean(value) && layoutKnowsShortcut(value, known));
+	const onKeyboard = $derived(value ? shortcutOnLayout(value, probable) : undefined);
+	/** Worth asking to press the keys: nothing tells them, and the language is not one of the American layout. */
+	const unknownKeyboard = $derived(
+		Boolean(value) && !layoutKnowsShortcut(value, probable) && !/^en\b/i.test(locale)
+	);
 
 	$effect(() => {
 		if (layout !== undefined) return;
@@ -178,8 +195,11 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	</span>
 	<p id="{uid}-hint" class="text-sm text-muted">
 		{value ? `Envoie ${shortcutLabel(value)}.` : 'Exemple : ctrl+shift+m.'}
-		{#if onKeyboard}
+		{#if onKeyboard && confirmed}
 			Sur votre clavier, ces touches s’écrivent {onKeyboard}.
+		{:else if onKeyboard}
+			Avec le clavier de votre langue ({guess?.name}), ces touches s’écrivent {onKeyboard} ; appuyez une
+			fois dessus pour le confirmer.
 		{/if}
 		Touches de la position américaine du clavier. Le champ est validé en le quittant ou avec Entrée ;
 		pendant l’enregistrement, appuyez sur les touches voulues, Tab pour annuler.

@@ -94,3 +94,87 @@ function safeStorage(): Storage | undefined {
 		return undefined;
 	}
 }
+
+/** A layout guessed from the language, with its name. */
+export interface GuessedLayout {
+	name: string;
+	layout: KeyboardLayout;
+}
+
+/** Every letter key writing its own letter: the layouts of a language then differ by a few. */
+function ownLetters(): [string, string][] {
+	return [...'abcdefghijklmnopqrstuvwxyz'].map((letter) => [`Key${letter.toUpperCase()}`, letter]);
+}
+
+const AZERTY: GuessedLayout = {
+	name: 'AZERTY',
+	layout: new Map([
+		...ownLetters(),
+		['KeyA', 'q'],
+		['KeyQ', 'a'],
+		['KeyW', 'z'],
+		['KeyZ', 'w'],
+		['KeyM', ','],
+		['Comma', ';'],
+		['Period', ':'],
+		['Slash', '!'],
+		['Digit1', '&'],
+		['Digit2', 'é'],
+		['Digit3', '"'],
+		['Digit4', "'"],
+		['Digit5', '('],
+		['Digit6', '-'],
+		['Digit7', 'è'],
+		['Digit8', '_'],
+		['Digit9', 'ç'],
+		['Digit0', 'à'],
+		['Minus', ')'],
+		['Equal', '=']
+	])
+};
+
+const QWERTZ: GuessedLayout = {
+	name: 'QWERTZ',
+	layout: new Map([
+		...ownLetters(),
+		['Digit1', '1'],
+		['Digit2', '2'],
+		['Digit3', '3'],
+		['Digit4', '4'],
+		['Digit5', '5'],
+		['Digit6', '6'],
+		['Digit7', '7'],
+		['Digit8', '8'],
+		['Digit9', '9'],
+		['Digit0', '0'],
+		['Comma', ','],
+		['Period', '.'],
+		['Equal', '´'],
+		['KeyY', 'z'],
+		['KeyZ', 'y'],
+		['Minus', 'ß'],
+		['Slash', '-']
+	])
+};
+
+/** Languages whose usual keyboard is not the American one (a Canadian French keyboard is QWERTY: left out). */
+const LAYOUTS_BY_LANGUAGE: Readonly<Record<string, GuessedLayout>> = {
+	fr: AZERTY,
+	'fr-fr': AZERTY,
+	'fr-be': AZERTY,
+	de: QWERTZ,
+	'de-de': QWERTZ,
+	'de-at': QWERTZ,
+	'de-ch': QWERTZ,
+	'fr-ch': QWERTZ
+};
+
+/**
+ * The layout the language of the browser usually goes with, when it is not the American one. Only a guess:
+ * a French browser can have a QWERTY or Bépo keyboard. The layout the browser tells, or the keys pressed,
+ * replace it.
+ */
+export function layoutForLocale(locale: string | undefined): GuessedLayout | undefined {
+	const normalised = locale?.toLowerCase().replace('_', '-');
+	return normalised === undefined ? undefined : LAYOUTS_BY_LANGUAGE[normalised];
+}
