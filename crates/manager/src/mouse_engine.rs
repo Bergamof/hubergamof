@@ -335,6 +335,7 @@ fn serve_mouse<C: Channel>(
         listed.refresh(latest.config);
     }
     let status = listed.status_reporter();
+    let presence = listed.presence_reporter();
     let (updates, haptics) = listed.streams();
     // The configuration in force, which says what each button does, and the
     // actions of this mouse: shared by the two closures the session calls.
@@ -372,6 +373,7 @@ fn serve_mouse<C: Channel>(
             }),
             Notice::Applied => status.report(refused.take()),
             Notice::Battery(battery) => status.report_battery(battery.and_then(known_battery)),
+            Notice::Connection { connected } => presence.set_connected(*connected),
             Notice::Button(_) => {}
         }
         if let Notice::Button(event) = &notice {
@@ -434,6 +436,9 @@ fn log_notice(serial: &str, notice: Notice) {
         ),
         Notice::Applied => tracing::debug!(%serial, "configuration applied"),
         Notice::Battery(battery) => tracing::debug!(%serial, ?battery, "battery read"),
+        Notice::Connection { connected } => {
+            tracing::info!(%serial, connected, "mouse link changed");
+        }
     }
 }
 
@@ -629,7 +634,7 @@ mod tests {
             &stop,
             |_, notice| match notice {
                 Notice::Problem(problem) => problems.push(problem.setting),
-                Notice::Applied | Notice::Battery(_) => {}
+                Notice::Applied | Notice::Battery(_) | Notice::Connection { .. } => {}
                 Notice::Button(event) => {
                     let state = state(&shared);
                     events.push((event.pressed, state.dpi, state.diverted.len()));

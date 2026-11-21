@@ -80,6 +80,9 @@ struct Entry {
     /// What the mouse refused of its configuration.
     status: Arc<watch::Sender<MouseStatus>>,
     haptics: SyncSender<HapticWaveform>,
+    /// The link to the mouse is up: one that is switched off stays registered
+    /// (its thread waits for it) but is not listed.
+    connected: bool,
 }
 
 struct Shared {
@@ -131,7 +134,11 @@ impl MouseHub {
     }
 
     fn publish_mice(&self, entries: &[Entry]) {
-        let mice = entries.iter().map(|entry| entry.info.clone()).collect();
+        let mice = entries
+            .iter()
+            .filter(|entry| entry.connected)
+            .map(|entry| entry.info.clone())
+            .collect();
         self.shared.mice.send_replace(mice);
     }
 
@@ -153,6 +160,7 @@ impl MouseHub {
             config: Arc::clone(&sender),
             status: Arc::clone(&status),
             haptics: haptic_sender,
+            connected: true,
         });
         self.publish_mice(&entries);
         drop(entries);
@@ -435,6 +443,15 @@ impl MouseRegistration {
         StatusReporter(Arc::clone(&self.status))
     }
 
+    /// Where the mouse thread says that the mouse was switched off or is back.
+    #[must_use]
+    pub fn presence_reporter(&self) -> PresenceReporter {
+        PresenceReporter {
+            hub: self.hub.clone(),
+            id: self.id,
+        }
+    }
+
     /// The configuration of the mouse, as the interface changes it.
     pub fn updates(&mut self) -> &mut watch::Receiver<MouseConfig> {
         &mut self.updates
@@ -468,6 +485,29 @@ impl StatusReporter {
             }
             changed
         });
+    }
+}
+
+/// Tells the interface that a mouse is switched off (it leaves the list) or
+/// back (it is listed again). Cheap to clone.
+#[derive(Clone)]
+pub struct PresenceReporter {
+    hub: MouseHub,
+    id: u64,
+}
+
+impl PresenceReporter {
+    /// Lists the mouse (`true`) or hides it (`false`); followers are told only
+    /// of a change. Nothing when the registration has been replaced or dropped.
+    pub fn set_connected(&self, connected: bool) {
+        let mut entries = self.hub.entries();
+        let Some(entry) = entries.iter_mut().find(|entry| entry.id == self.id) else {
+            return;
+        };
+        if entry.connected != connected {
+            entry.connected = connected;
+            self.hub.publish_mice(&entries);
+        }
     }
 }
 
@@ -843,6 +883,32 @@ mod tests {
         assert!(!status.has_changed().unwrap());
         reporter.report_battery(None);
         assert!(status.has_changed().unwrap());
+    }
+
+    #[test]
+    fn a_mouse_switched_off_leaves_the_list_and_comes_back_with_its_registration() {
+        let (_dir, hub) = hub();
+        let mouse = register(&hub, "a");
+        let other = register(&hub, "b");
+        let presence = mouse.presence_reporter();
+        let mut list = hub.subscribe_mice();
+        list.mark_unchanged();
+        presence.set_connected(false);
+        assert!(list.has_changed().unwrap());
+        let serials: Vec<String> = hub.mice().into_iter().map(|info| info.serial).collect();
+        assert_eq!(serials, ["b"]);
+        // Said again: not news.
+        list.borrow_and_update();
+        presence.set_connected(false);
+        assert!(!list.has_changed().unwrap());
+        presence.set_connected(true);
+        assert_eq!(hub.mice().len(), 2);
+        // A registration that was replaced says nothing any more.
+        drop(other);
+        let replaced = register(&hub, "a");
+        presence.set_connected(false);
+        assert_eq!(hub.mice().len(), 1);
+        drop(replaced);
     }
 
     #[test]

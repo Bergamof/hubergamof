@@ -43,6 +43,12 @@ pub enum Notice {
     /// The battery as the mouse says it, `None` when it did not answer (it may
     /// be busy; the next read tries again).
     Battery(Option<Battery>),
+    /// The mouse was switched off (`false`) or is back (`true`), as the receiver
+    /// says it: a mouse that is off is not there to configure.
+    Connection {
+        /// The link to the mouse is up.
+        connected: bool,
+    },
 }
 
 /// What the person asks of a mouse while it is served.
@@ -213,6 +219,8 @@ pub struct MouseSession<C: Channel> {
     pending: Option<MouseConfig>,
     /// Updates in a row the mouse did not wake up for.
     wake_failures: u32,
+    /// Changes of the link seen and not yet reported, oldest first.
+    link_changes: Vec<bool>,
     /// Buttons may be diverted: set by [`MouseSession::apply`], cleared once
     /// they are given back.
     buttons_diverted: bool,
@@ -231,6 +239,7 @@ impl<C: Channel> MouseSession<C> {
             applied: None,
             pending: None,
             wake_failures: 0,
+            link_changes: Vec::new(),
             buttons_diverted: false,
         }
     }
@@ -411,6 +420,7 @@ impl<C: Channel> MouseSession<C> {
     /// released, and once back the configuration is applied again, in full.
     fn link_changed(&mut self, change: LinkChange) -> Vec<ButtonEvent> {
         let released = self.tracker.release_all();
+        self.link_changes.push(change.established);
         if change.established {
             self.wake_failures = 0;
             self.pending = self.applied.take().or_else(|| self.pending.take());
@@ -536,6 +546,9 @@ impl<C: Channel> MouseSession<C> {
             }
             for event in self.poll(SERVE_STEP)? {
                 notify(Notice::Button(event));
+            }
+            for connected in self.link_changes.drain(..) {
+                notify(Notice::Connection { connected });
             }
         }
         Ok(())
@@ -1051,6 +1064,40 @@ mod tests {
     }
 
     #[test]
+    fn a_link_that_goes_down_and_up_is_reported_in_order_while_serving() {
+        let fake = FakeLink::direct(FakeDevice::mx_master_4())
+            .with_incoming(vec![LOST.to_vec(), BACK.to_vec()]);
+        let mut session = session_with(fake);
+        session.apply(&config()).unwrap();
+        session.poll(Duration::from_millis(1)).unwrap();
+        session.poll(Duration::from_millis(1)).unwrap();
+        assert_eq!(session.link_changes, [false, true]);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut told = Vec::new();
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                &mut || {
+                    turn.set(turn.get() + 1);
+                    if turn.get() > 1 {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                    None
+                },
+                &mut |notice| {
+                    if let Notice::Connection { connected } = notice {
+                        told.push(connected);
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(told, [false, true]);
+        assert_eq!(session.link_changes, [] as [bool; 0]);
+    }
+
+    #[test]
     fn the_link_of_another_mouse_of_the_receiver_changes_nothing_here() {
         let mut other = LOST;
         other[1] = DEVICE.wrapping_add(1);
@@ -1360,7 +1407,7 @@ mod tests {
             .serve(&config(), &stop, |notice| match notice {
                 Notice::Problem(problem) => told.push(problem.setting),
                 Notice::Applied => told.push("applied"),
-                Notice::Button(_) | Notice::Battery(_) => {}
+                Notice::Button(_) | Notice::Battery(_) | Notice::Connection { .. } => {}
             })
             .unwrap();
         // The end of the application comes after its problems.
