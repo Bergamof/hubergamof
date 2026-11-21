@@ -38,15 +38,39 @@ describe('MouseEditor', () => {
 		expect(document.body.textContent).not.toContain('Action de : Molette du pouce');
 	});
 
-	it('shows the vibrations of a haptic model only', async () => {
+	it('shows the name of the mouse, what it is connected to and its tabs', async () => {
 		await renderEditor();
-		await expect.element(page.getByRole('heading', { name: 'Vibrations' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'MX Master 4' })).toBeVisible();
+		await expect.element(page.getByText('Connectée · Logi Bolt')).toBeVisible();
+		await expect.element(page.getByText('Retour haptique', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByRole('tab', { name: 'Touches' }))
+			.toHaveAttribute('aria-selected', 'true');
+	});
+
+	it('shows the pointer settings in their tab', async () => {
+		await renderEditor();
+		expect(document.body.textContent).not.toContain('Sensibilité du pointeur');
+		await page.getByRole('tab', { name: 'Pointeur et molette' }).click();
+		await expect.element(page.getByLabelText('Sensibilité du pointeur')).toBeVisible();
+		const tab = page.getByRole('tab', { name: 'Pointeur et molette' }).element();
+		expect(page.getByRole('tabpanel').element().getAttribute('aria-labelledby')).toBe(tab.id);
+	});
+
+	it('shows the vibrations of a haptic model, in their tab', async () => {
+		await renderEditor();
+		await page.getByRole('tab', { name: 'Haptique' }).click();
+		await expect
+			.element(page.getByRole('radiogroup', { name: 'Force des vibrations' }))
+			.toBeVisible();
 	});
 
 	it('leaves the vibrations out of a model that cannot play them', async () => {
 		const info = mouseInfo();
 		await renderEditor({ ...info, capabilities: { ...info.capabilities, haptics: false } });
-		expect(document.body.textContent).not.toContain('Force des vibrations');
+		expect(document.querySelectorAll('[role=tab]')).toHaveLength(2);
+		expect(document.body.textContent).not.toContain('Haptique');
+		expect(document.body.textContent).not.toContain('Retour haptique');
 	});
 
 	it('sends a change at once and says when the manager has saved it', async () => {
@@ -68,6 +92,7 @@ describe('MouseEditor', () => {
 
 	it('says when a change was refused', async () => {
 		const { connection } = await renderEditor();
+		await page.getByRole('tab', { name: 'Haptique' }).click();
 		await page.getByRole('radio', { name: 'Forte' }).click();
 		connection.receive({ type: 'error', code: 'invalidConfig', message: 'refused' });
 		await expect.element(page.getByText('Dernière modification refusée.').first()).toBeVisible();

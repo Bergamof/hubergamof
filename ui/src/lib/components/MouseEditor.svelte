@@ -22,6 +22,7 @@ radial menu. Every change is sent at once; the line under the title says whether
 	import HapticsPanel from './HapticsPanel.svelte';
 	import PointerSettings from './PointerSettings.svelte';
 	import RadialMenuEditor from './RadialMenuEditor.svelte';
+	import Tabs, { panelId, tabId } from './Tabs.svelte';
 
 	interface Props {
 		deck: DeckState;
@@ -37,6 +38,16 @@ radial menu. Every change is sent at once; the line under the title says whether
 
 	/** Where the last change stands: waiting for the manager, saved, or refused (the notice says why). */
 	let status: 'idle' | 'saving' | 'saved' | 'refused' = $state('idle');
+
+	type TabId = 'touches' | 'settings' | 'haptic';
+	let wanted: TabId = $state('touches');
+	const tabs = $derived([
+		{ id: 'touches' as const, label: 'Touches' },
+		{ id: 'settings' as const, label: 'Pointeur et molette' },
+		...(mouse.capabilities.haptics ? [{ id: 'haptic' as const, label: 'Haptique' }] : [])
+	]);
+	/** The tab shown: the one asked for, unless this mouse has not got it (another mouse was chosen). */
+	const tab = $derived(tabs.some((candidate) => candidate.id === wanted) ? wanted : 'touches');
 
 	const buttons = $derived(
 		mouse.capabilities.controls.filter((control) => control.kind === 'button')
@@ -93,51 +104,75 @@ radial menu. Every change is sent at once; the line under the title says whether
 		</div>
 	{/if}
 
-	<section aria-labelledby="{uid}-buttons" class="flex flex-col gap-2 card">
-		<h3 id="{uid}-buttons" class="text-lg font-semibold">Boutons</h3>
-		<p class="text-sm text-muted">
-			Un bouton sans action choisie ici garde son comportement d’origine.
-		</p>
-		<div class="flex flex-col divide-y divide-line">
-			{#each buttons as control (control.id)}
-				<ButtonBindingRow
-					label={CONTROL_LABELS[control.id]}
-					locked={control.locked}
-					action={config.bindings[control.id]}
-					catalog={deck.catalog}
-					onchange={(action) => edit(bindControl(control.id, action))}
+	<section
+		aria-labelledby="{uid}-name"
+		class="overflow-hidden rounded-2xl border border-line bg-surface shadow-card"
+	>
+		<header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-5 py-4">
+			<h2 id="{uid}-name" class="font-display text-xl font-semibold">{mouse.displayName}</h2>
+			<span class="rounded-full bg-sunken px-2 py-1 font-mono text-[11px] text-muted">
+				Connectée · Logi Bolt
+			</span>
+			{#if mouse.capabilities.haptics}
+				<span class="rounded-full bg-accent px-2 py-1 font-mono text-[11px] text-on-accent">
+					Retour haptique
+				</span>
+			{/if}
+		</header>
+
+		<Tabs
+			label="Réglages de {mouse.displayName}"
+			{tabs}
+			selected={tab}
+			prefix={uid}
+			onselect={(id) => (wanted = id)}
+		/>
+
+		<div
+			role="tabpanel"
+			id={panelId(uid, tab)}
+			aria-labelledby={tabId(uid, tab)}
+			tabindex="0"
+			class="px-5 pt-5 pb-6 focus-ring"
+		>
+			{#if tab === 'touches'}
+				<p class="mb-2 text-sm text-muted">
+					Un bouton sans action choisie ici garde son comportement d’origine.
+				</p>
+				<div class="flex flex-col divide-y divide-line">
+					{#each buttons as control (control.id)}
+						<ButtonBindingRow
+							label={CONTROL_LABELS[control.id]}
+							locked={control.locked}
+							action={config.bindings[control.id]}
+							catalog={deck.catalog}
+							onchange={(action) => edit(bindControl(control.id, action))}
+						/>
+					{/each}
+				</div>
+			{:else if tab === 'settings'}
+				<PointerSettings
+					pointer={config.pointer}
+					wheel={config.wheel}
+					thumbWheel={config.thumbWheel}
+					hasThumbWheel={mouse.capabilities.thumbWheel}
+					onpointer={(dpi) => edit(setDpi(dpi))}
+					onwheel={(change) => edit(setWheel(change))}
+					onthumbwheel={(change) => edit(setThumbWheel(change))}
 				/>
-			{/each}
+			{:else}
+				<HapticsPanel
+					haptics={config.haptics}
+					catalog={deck.catalog}
+					onlevel={(level) => edit(setHapticLevel(level))}
+					onevent={(key, setting) => edit(setHapticEvent(key, setting))}
+				/>
+			{/if}
 		</div>
 	</section>
 
-	<section aria-labelledby="{uid}-pointer" class="flex flex-col gap-4 card">
-		<h3 id="{uid}-pointer" class="text-lg font-semibold">Pointeur et molettes</h3>
-		<PointerSettings
-			pointer={config.pointer}
-			wheel={config.wheel}
-			thumbWheel={config.thumbWheel}
-			hasThumbWheel={mouse.capabilities.thumbWheel}
-			onpointer={(dpi) => edit(setDpi(dpi))}
-			onwheel={(change) => edit(setWheel(change))}
-			onthumbwheel={(change) => edit(setThumbWheel(change))}
-		/>
-	</section>
-
-	{#if mouse.capabilities.haptics}
-		<section aria-labelledby="{uid}-haptics" class="flex flex-col gap-4 card">
-			<h3 id="{uid}-haptics" class="text-lg font-semibold">Vibrations</h3>
-			<HapticsPanel
-				haptics={config.haptics}
-				catalog={deck.catalog}
-				onlevel={(level) => edit(setHapticLevel(level))}
-				onevent={(key, setting) => edit(setHapticEvent(key, setting))}
-			/>
-		</section>
-	{/if}
-
 	<section aria-labelledby="{uid}-radial" class="flex flex-col gap-4 card">
-		<h3 id="{uid}-radial" class="text-lg font-semibold">Menu circulaire</h3>
+		<h2 id="{uid}-radial" class="text-lg font-semibold">Menu circulaire</h2>
 		<p class="text-sm text-muted">
 			Le même pour toutes les souris. Il s’ouvre depuis le bouton auquel vous avez donné l’action «
 			Menu circulaire ».

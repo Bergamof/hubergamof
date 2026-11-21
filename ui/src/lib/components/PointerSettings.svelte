@@ -13,11 +13,11 @@ has one. Every change is applied at once.
 		WHEEL_THRESHOLD_MAX,
 		WHEEL_THRESHOLD_MIN
 	} from '#lib/deck/mouse-edits.js';
-	import { throttle } from '#lib/deck/throttle.js';
 	import { WHEEL_MODES } from '#lib/deck/mouse-labels.js';
 	import type { PointerSettings, ThumbWheelSettings, WheelSettings } from '#lib/generated/index.js';
-	import IntegerField from './IntegerField.svelte';
+	import RangeControl from './RangeControl.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
+	import SettingRow from './SettingRow.svelte';
 	import Switch from './Switch.svelte';
 
 	interface Props {
@@ -33,84 +33,85 @@ has one. Every change is applied at once.
 
 	let { pointer, wheel, thumbWheel, hasThumbWheel, onpointer, onwheel, onthumbwheel }: Props =
 		$props();
-
-	const uid = $props.id();
-
-	/** Longest delay between two updates sent while dragging. */
-	const SEND_PERIOD_MS = 150;
-	const send = throttle((dpi: number) => onpointer(dpi), SEND_PERIOD_MS);
-
-	$effect(() => () => send.cancel());
 </script>
 
-<div class="flex flex-col gap-5">
-	<div class="flex flex-col gap-1">
-		<label class="font-medium" for="{uid}-dpi">Sensibilité du pointeur</label>
-		<span class="flex flex-wrap items-center gap-3">
-			<input
-				id="{uid}-dpi"
-				type="range"
-				min={DPI_MIN}
-				max={DPI_MAX}
-				step={DPI_STEP}
-				value={pointer.dpi}
-				aria-valuetext="{pointer.dpi} dpi"
-				aria-describedby="{uid}-dpi-hint"
-				class="h-6 w-64 accent-ring focus-ring"
-				oninput={(event) => send(event.currentTarget.valueAsNumber)}
-				onchange={(event) => send.flush(event.currentTarget.valueAsNumber)}
-			/>
-			<output for="{uid}-dpi" aria-hidden="true" class="w-20 tabular-nums">{pointer.dpi} dpi</output
-			>
-		</span>
-		<p id="{uid}-dpi-hint" class="text-sm text-muted">
-			De {DPI_MIN} à {DPI_MAX}, par pas de {DPI_STEP}.
-		</p>
-	</div>
+<div class="max-w-4xl">
+	<SettingRow
+		label="Sensibilité du pointeur"
+		description="Points par pouce. Plus c’est haut, plus le pointeur va loin."
+	>
+		<RangeControl
+			label="Sensibilité du pointeur"
+			value={pointer.dpi}
+			min={DPI_MIN}
+			max={DPI_MAX}
+			step={DPI_STEP}
+			unit="dpi"
+			onchange={onpointer}
+		/>
+	</SettingRow>
 
-	<div class="flex flex-col gap-1">
-		<span class="font-medium" id="{uid}-mode">Molette</span>
+	<SettingRow
+		label="Molette principale"
+		description="Cran par cran, libre, ou automatique : la molette passe en libre quand on la lance vite."
+	>
 		<SegmentedControl
-			label="Molette"
+			label="Mode de la molette"
 			options={WHEEL_MODES}
 			value={wheel.mode}
 			onchange={(mode) => onwheel({ mode })}
 		/>
-	</div>
+	</SettingRow>
 
 	{#if wheel.mode === 'auto'}
-		<IntegerField
-			label="Seuil de vitesse du mode automatique"
-			value={wheel.autoThreshold}
-			min={WHEEL_THRESHOLD_MIN}
-			max={WHEEL_THRESHOLD_MAX}
-			unit=""
-			hint="Vitesse à partir de laquelle la molette quitte ses crans : de {WHEEL_THRESHOLD_MIN} à {WHEEL_THRESHOLD_MAX}."
-			error="Entrez un nombre entier de {WHEEL_THRESHOLD_MIN} à {WHEEL_THRESHOLD_MAX}."
-			onchange={(autoThreshold) => onwheel({ autoThreshold })}
-		/>
+		<SettingRow
+			label="Seuil du mode automatique"
+			description="Vitesse à partir de laquelle la molette devient libre."
+		>
+			<RangeControl
+				label="Seuil du mode automatique"
+				value={wheel.autoThreshold}
+				min={WHEEL_THRESHOLD_MIN}
+				max={WHEEL_THRESHOLD_MAX}
+				onchange={(autoThreshold) => onwheel({ autoThreshold })}
+			/>
+		</SettingRow>
 	{/if}
 
-	<Switch checked={wheel.natural} onchange={(natural) => onwheel({ natural })}>
-		Défilement naturel (le contenu suit le doigt)
-	</Switch>
-	<Switch checked={wheel.hiRes} onchange={(hiRes) => onwheel({ hiRes })}>
-		Défilement haute résolution (plus fin)
-	</Switch>
+	<SettingRow
+		label="Défilement naturel"
+		description="Le contenu suit le geste, comme sur un écran tactile."
+	>
+		<Switch
+			checked={wheel.natural}
+			label="Défilement naturel"
+			onchange={(natural) => onwheel({ natural })}
+		/>
+	</SettingRow>
+
+	<SettingRow
+		label="Défilement haute résolution"
+		description="Un défilement plus fin et plus fluide dans les applications compatibles."
+	>
+		<Switch
+			checked={wheel.hiRes}
+			label="Défilement haute résolution"
+			onchange={(hiRes) => onwheel({ hiRes })}
+		/>
+	</SettingRow>
 
 	{#if hasThumbWheel}
-		<IntegerField
-			label="Vitesse de la molette du pouce"
-			value={thumbWheel.speed}
-			min={THUMB_SPEED_MIN}
-			max={THUMB_SPEED_MAX}
-			unit=""
-			hint="De {THUMB_SPEED_MIN} (lente) à {THUMB_SPEED_MAX} (rapide)."
-			error="Entrez un nombre entier de {THUMB_SPEED_MIN} à {THUMB_SPEED_MAX}."
-			onchange={(speed) => onthumbwheel({ speed })}
-		/>
-		<Switch checked={thumbWheel.invert} onchange={(invert) => onthumbwheel({ invert })}>
-			Inverser le sens de la molette du pouce
-		</Switch>
+		<SettingRow label="Molette du pouce" description="Vitesse et sens du défilement horizontal.">
+			<RangeControl
+				label="Vitesse de la molette du pouce"
+				value={thumbWheel.speed}
+				min={THUMB_SPEED_MIN}
+				max={THUMB_SPEED_MAX}
+				onchange={(speed) => onthumbwheel({ speed })}
+			/>
+			<Switch checked={thumbWheel.invert} onchange={(invert) => onthumbwheel({ invert })}>
+				Inverser
+			</Switch>
+		</SettingRow>
 	{/if}
 </div>
