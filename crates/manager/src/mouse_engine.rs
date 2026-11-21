@@ -772,6 +772,34 @@ mod tests {
     }
 
     #[test]
+    fn a_mouse_switched_off_leaves_the_list_while_its_thread_waits_for_it() {
+        const LOST: [u8; 7] = [0x10, DEVICE, 0x41, 0x10, 0x42, 0x42, 0xB0];
+        const BACK: [u8; 7] = [0x10, DEVICE, 0x41, 0x10, 0x02, 0x42, 0xB0];
+        let (_dir, store) = store();
+        let hub = hub_of(&store);
+        let fake = FakeLink::direct(FakeDevice::mx_master_4())
+            .with_incoming(vec![LOST.to_vec(), BACK.to_vec()]);
+        let stop = AtomicBool::new(false);
+        let mut listed_after = Vec::new();
+        serve_mouse(
+            found(fake, Some(UNIT), 2),
+            &store,
+            &hub,
+            &no_actions(),
+            &stop,
+            |_, notice| {
+                if let Notice::Connection { .. } = notice {
+                    listed_after.push(hub.mice().len());
+                    if listed_after.len() == 2 {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            },
+        );
+        assert_eq!(listed_after, [0, 1]);
+    }
+
+    #[test]
     fn a_button_bound_to_a_click_clicks_while_the_mouse_is_served() {
         use crate::input::Key;
         let recorder = Recorder::default();
