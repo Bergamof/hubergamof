@@ -277,6 +277,12 @@ enum MouseTestAction {
         #[arg(long, default_value_t = DEFAULT_WATCH_SECONDS, value_parser = clap::value_parser!(u64).range(1..=MAX_WATCH_SECONDS))]
         seconds: u64,
     },
+    /// Print every frame the receiver sends, changing nothing (what a mouse that sleeps or wakes announces).
+    Events {
+        /// How long to listen, in seconds.
+        #[arg(long, default_value_t = DEFAULT_EVENTS_SECONDS, value_parser = clap::value_parser!(u64).range(1..=MAX_WATCH_SECONDS))]
+        seconds: u64,
+    },
     /// Give back every diverted button (after a crash).
     Release,
 }
@@ -289,6 +295,8 @@ const PREVIEW_MAX_SECONDS: u64 = 120;
 /// Length of `mouse-test buttons` when none is given, and its longest.
 const DEFAULT_WATCH_SECONDS: u64 = 20;
 const MAX_WATCH_SECONDS: u64 = 300;
+/// Length of `mouse-test events` when none is given: long enough for a mouse to fall asleep.
+const DEFAULT_EVENTS_SECONDS: u64 = 120;
 
 /// Refuses a sensitivity the mouse would refuse, before looking for it.
 fn parse_dpi(text: &str) -> Result<u16, String> {
@@ -345,6 +353,7 @@ impl From<MouseTestAction> for Action {
                 threshold,
             },
             MouseTestAction::Buttons { seconds } => Self::Buttons(Duration::from_secs(seconds)),
+            MouseTestAction::Events { seconds } => Self::Events(Duration::from_secs(seconds)),
             MouseTestAction::Release => Self::Release,
         }
     }
@@ -1162,6 +1171,14 @@ mod tests {
         assert_eq!(
             action(&["buttons", "--seconds", "5"]),
             Action::Buttons(Duration::from_secs(5))
+        );
+        assert_eq!(
+            action(&["events"]),
+            Action::Events(Duration::from_secs(120))
+        );
+        assert_eq!(
+            action(&["events", "--seconds", "30"]),
+            Action::Events(Duration::from_secs(30))
         );
     }
 

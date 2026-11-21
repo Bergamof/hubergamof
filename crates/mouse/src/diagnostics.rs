@@ -42,6 +42,9 @@ pub enum Action {
     },
     /// Divert the buttons and print their presses for a while, then give them back.
     Buttons(Duration),
+    /// Print every frame the receiver sends for a while, changing nothing: what
+    /// a mouse that falls asleep or wakes up announces.
+    Events(Duration),
     /// Give back every diverted button.
     Release,
 }
@@ -108,6 +111,7 @@ pub fn run<C: Channel>(
             Ok(())
         }
         Action::Buttons(duration) => watch_buttons(link, *duration, out, stop),
+        Action::Events(duration) => watch_events(link, *duration, out, stop),
         Action::Release => {
             link.release_buttons()?;
             writeln!(out, "Every button of the {} is given back.", link.model())?;
@@ -223,6 +227,38 @@ fn watch_buttons<C: Channel>(
     result?;
     released?;
     writeln!(out, "Buttons given back.")?;
+    Ok(())
+}
+
+/// Prints each frame received, in hexadecimal, with its time, until the time
+/// is up. Nothing is sent: the point is to see what arrives while the mouse
+/// is left alone, then moved.
+fn watch_events<C: Channel>(
+    link: &mut MouseLink<C>,
+    duration: Duration,
+    out: &mut impl Write,
+    stop: &AtomicBool,
+) -> Result<(), DiagnosticError> {
+    writeln!(
+        out,
+        "Listening for {} s (device index 0x{:02X}): leave the mouse alone until it sleeps, then move it. Columns: time, report id, device index, sub-id or feature index, bytes.",
+        duration.as_secs(),
+        link.device()
+    )?;
+    let started = Instant::now();
+    while started.elapsed() < duration && !stop.load(Ordering::Relaxed) {
+        let Some(bytes) = link.hidpp_mut().next_frame(WATCH_STEP)? else {
+            continue;
+        };
+        let hex: Vec<String> = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+        writeln!(
+            out,
+            "  {:>7} ms  {}",
+            started.elapsed().as_millis(),
+            hex.join(" ")
+        )?;
+    }
+    writeln!(out, "Done.")?;
     Ok(())
 }
 
@@ -460,6 +496,28 @@ mod tests {
             text.contains("Every button of the MX Master 4 is given back"),
             "{text}"
         );
+        assert!(state(&link).diverted.is_empty());
+    }
+
+    #[test]
+    fn listening_prints_every_frame_and_changes_nothing() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let announcement = frame(DEVICE, reprog, 0x00, &[0, 0x53]);
+        let fake = FakeLink::direct(device).with_incoming(vec![announcement]);
+        let mut link = MouseLink::connect(Hidpp::new(fake), DEVICE).unwrap();
+        let mut out = Vec::new();
+        run(
+            &mut link,
+            &Action::Events(Duration::from_millis(300)),
+            &mut out,
+            &NEVER,
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("11 FF"), "{text}");
+        assert!(text.contains("00 53"), "{text}");
+        assert!(text.trim_end().ends_with("Done."), "{text}");
         assert!(state(&link).diverted.is_empty());
     }
 

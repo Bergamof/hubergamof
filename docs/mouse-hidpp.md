@@ -108,3 +108,7 @@ Quatre niveaux d'intensité côté Logitech (subtil, faible, moyen, fort), actif
 - Les ondes jouées par `Request::PlayHaptic` (`MouseLink::play_haptic`, fonction 4 de `0x19B0`) : d'après le protocole une lecture d'onde n'écrit rien de persistant (la force, elle, est écrite par la configuration) ; à confirmer en jouant beaucoup d'ondes puis en relisant `mouse-test info` après un cycle d'alimentation.
 - La force de chaque niveau sur la MX Master 4 (`Subtle`, `Low`, `Medium`, `High`) et l'effet d'une onde jouée juste après une écriture de la force.
 
+## Relever ce que la souris annonce en s'endormant et au réveil
+
+`hubergamof mouse-test events [--seconds 120]` écoute le récepteur et affiche chaque trame reçue (hexadécimal, avec l'heure), sans rien envoyer ni détourner : laisser la souris tranquille jusqu'à ce qu'elle s'endorme, puis la bouger, et recopier la sortie. Elle donnera le format des notifications de connexion (sous-id `0x41`) à traiter pour réappliquer la configuration au réveil. Tant que ce n'est pas fait, `--mice` reste désactivé par défaut.
+
