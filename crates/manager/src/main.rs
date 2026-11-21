@@ -656,7 +656,7 @@ fn start_mouse_service(
         Mice::Served(start_served_mice(&hub, services, engines, haptics))
     } else if cli.demo {
         Mice::Simulated {
-            _listed: register_simulated_mouse(&hub, &services.store)?,
+            _listed: register_simulated_mice(&hub, &services.store)?,
         }
     } else {
         Mice::None
@@ -708,26 +708,33 @@ fn start_served_mice(
     MiceService { supervisor, menu }
 }
 
-/// Serial of the mouse `--demo` lists.
-const SIMULATED_MOUSE_SERIAL: &str = "demo-mx-master-4";
+/// The mice `--demo` lists, with the serial of each.
+const SIMULATED_MICE: [(MouseModel, &str); 2] = [
+    (MouseModel::MxMaster4, "demo-mx-master-4"),
+    (MouseModel::MxAnywhere3S, "demo-mx-anywhere-3s"),
+];
 
-/// Lists a mouse that does not exist, for the interface to configure: the
+/// Lists mice that do not exist, for the interface to configure (one with a haptic panel, one without): the
 /// configuration is saved as for a real one, nothing is ever sent to a device.
-fn register_simulated_mouse(hub: &MouseHub, store: &ConfigStore) -> Result<MouseRegistration> {
-    let model = MouseModel::MxMaster4;
-    let config = store
-        .load_mouse(SIMULATED_MOUSE_SERIAL, model)
-        .context("cannot load the simulated mouse configuration")?
-        .config;
-    Ok(hub.register(
-        MouseInfo {
-            serial: SIMULATED_MOUSE_SERIAL.to_owned(),
-            model,
-            display_name: model.display_name().to_owned(),
-            capabilities: model.capabilities(),
-        },
-        config,
-    ))
+fn register_simulated_mice(hub: &MouseHub, store: &ConfigStore) -> Result<Vec<MouseRegistration>> {
+    SIMULATED_MICE
+        .into_iter()
+        .map(|(model, serial)| {
+            let config = store
+                .load_mouse(serial, model)
+                .context("cannot load the simulated mouse configuration")?
+                .config;
+            Ok(hub.register(
+                MouseInfo {
+                    serial: serial.to_owned(),
+                    model,
+                    display_name: model.display_name().to_owned(),
+                    capabilities: model.capabilities(),
+                },
+                config,
+            ))
+        })
+        .collect()
 }
 
 /// `--demo` never touches the hardware, whatever else is asked.
@@ -740,10 +747,10 @@ enum Mice {
     None,
     /// The mice found on the hardware.
     Served(MiceService),
-    /// The simulated mouse of `--demo`, listed while the registration lives.
+    /// The simulated mice of `--demo`, listed while the registrations live.
     Simulated {
-        /// Dropped with the manager, which takes the mouse off the list.
-        _listed: MouseRegistration,
+        /// Dropped with the manager, which takes the mice off the list.
+        _listed: Vec<MouseRegistration>,
     },
 }
 
@@ -1263,30 +1270,26 @@ mod tests {
     }
 
     #[test]
-    fn the_demo_lists_a_simulated_mouse_that_can_be_configured() {
+    fn the_demo_lists_simulated_mice_that_can_be_configured() {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(
             dir.path(),
             Arc::new(builtin_registry_with(builtin_services(true))),
         );
         let hub = MouseHub::new(store.clone()).unwrap();
-        let listed = register_simulated_mouse(&hub, &store).unwrap();
-        let mice = hub.mice();
-        assert_eq!(mice.len(), 1);
-        assert_eq!(mice[0].serial, SIMULATED_MOUSE_SERIAL);
-        assert_eq!(mice[0].model, MouseModel::MxMaster4);
-        let mut config = store
-            .load_mouse(SIMULATED_MOUSE_SERIAL, MouseModel::MxMaster4)
-            .unwrap()
-            .config;
+        let listed = register_simulated_mice(&hub, &store).unwrap();
+        let models: Vec<MouseModel> = hub.mice().iter().map(|mouse| mouse.model).collect();
+        assert_eq!(models, [MouseModel::MxMaster4, MouseModel::MxAnywhere3S]);
+        let (model, serial) = SIMULATED_MICE[0];
+        let mut config = store.load_mouse(serial, model).unwrap().config;
         config.pointer.dpi = 800;
-        let saved = hub.update_mouse(SIMULATED_MOUSE_SERIAL, config).unwrap();
+        let saved = hub.update_mouse(serial, config).unwrap();
         assert_eq!(saved.pointer.dpi, 800);
         drop(listed);
         assert_eq!(hub.mice().len(), 0);
         // The next run of the demo finds what the interface saved.
-        let again = register_simulated_mouse(&hub, &store).unwrap();
-        let mut updates = hub.subscribe_config(SIMULATED_MOUSE_SERIAL).unwrap();
+        let again = register_simulated_mice(&hub, &store).unwrap();
+        let mut updates = hub.subscribe_config(serial).unwrap();
         assert_eq!(updates.borrow_and_update().pointer.dpi, 800);
         drop(again);
     }

@@ -617,12 +617,18 @@ for (const colorScheme of ['light', 'dark'] as const) {
 	});
 }
 
-// The demo also lists a simulated MX Master 4: its configuration is saved as a real mouse's.
+// The demo also lists two simulated mice (MX Master 4, MX Anywhere 3S): their configuration is saved as a
+// real mouse's.
 
 async function openMouse(page: Page) {
 	await open(page);
 	await page.getByRole('button', { name: 'Souris' }).click();
 	await expect(page.getByRole('heading', { name: 'MX Master 4' })).toBeVisible();
+}
+
+/** The control of the list under the drawings, which shows its editor. */
+async function chooseControl(page: Page, name: string | RegExp) {
+	await page.getByRole('list').first().getByRole('button', { name }).click();
 }
 
 test('configure les boutons, le pointeur et les vibrations de la souris, et les retrouve', async ({
@@ -634,9 +640,10 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 		'true'
 	);
 
-	await page.getByLabel('Action de : Bouton arrière').selectOption('shortcut');
-	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).fill('Ctrl + Maj + M');
-	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).press('Enter');
+	await chooseControl(page, /Précédent/);
+	await page.getByLabel('Action', { exact: true }).selectOption('shortcut');
+	await page.getByLabel('Raccourci', { exact: true }).fill('Ctrl + Maj + M');
+	await page.getByLabel('Raccourci', { exact: true }).press('Enter');
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
 	await page.getByRole('tab', { name: 'Haptique' }).click();
@@ -647,12 +654,45 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await page.reload();
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	await page.getByRole('button', { name: 'Souris' }).click();
-	await expect(page.getByLabel('Raccourci de : Bouton arrière', { exact: true })).toHaveValue(
-		'ctrl+shift+m'
-	);
+	await chooseControl(page, /Précédent/);
+	await expect(page.getByLabel('Raccourci', { exact: true })).toHaveValue('ctrl+shift+m');
 	await page.getByRole('tab', { name: 'Haptique' }).click();
 	await expect(page.getByRole('radio', { name: 'Forte' })).toBeChecked();
 	await expect(page.getByRole('switch', { name: "Fin d'une étape" })).not.toBeChecked();
+});
+
+test('montre les schémas de chaque modèle, avec un repère par bouton', async ({ page }) => {
+	await openMouse(page);
+	await expect(page.getByRole('group', { name: 'MX Master 4, vue de dessus' })).toBeVisible();
+	await expect(
+		page.getByRole('group', { name: 'MX Master 4, côté pouce (face gauche)' })
+	).toBeVisible();
+	await expect(page.locator('.mk')).toHaveCount(9);
+	await expect(page.getByRole('tab', { name: 'Haptique' })).toBeVisible();
+
+	await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
+	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S' })).toBeVisible();
+	await expect(page.locator('.mk')).toHaveCount(6);
+	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
+	await expect(
+		page
+			.getByRole('list')
+			.first()
+			.getByRole('button', { name: /Bouton du dessus/ })
+	).toBeVisible();
+});
+
+test('choisit un bouton sur le schéma, au pointeur et au clavier', async ({ page }) => {
+	await openMouse(page);
+	// The zone of the control on the drawing, then its marker with the keyboard.
+	await page.locator('.part[data-id="forward"]').dispatchEvent('click');
+	await expect(page.getByRole('heading', { name: 'Suivant', level: 3 })).toBeVisible();
+	const marker = page.locator('.mk[data-id="back"]');
+	await marker.focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('heading', { name: 'Précédent', level: 3 })).toBeVisible();
+	await chooseControl(page, /Clic gauche/);
+	await expect(page.getByText(/Ce bouton est verrouillé/)).toBeVisible();
 });
 
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {
@@ -669,8 +709,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
 	test(`la page de la souris reste accessible (thème ${colorScheme})`, async ({ page }) => {
 		await page.emulateMedia({ colorScheme });
 		await openMouse(page);
-		await expectAccessible(page, 'page de la souris');
-		await page.getByLabel('Action de : Bouton arrière').selectOption('shortcut');
+		await expectAccessible(page, 'onglet Touches');
+		await chooseControl(page, /Précédent/);
+		await page.getByLabel('Action', { exact: true }).selectOption('shortcut');
 		await expectAccessible(page, 'raccourci en cours de saisie');
+		await page.getByRole('tab', { name: 'Pointeur et molette' }).click();
+		await expectAccessible(page, 'onglet Pointeur et molette');
+		await page.getByRole('tab', { name: 'Haptique' }).click();
+		await expectAccessible(page, 'onglet Haptique');
+		await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
+		await expectAccessible(page, 'MX Anywhere 3S');
 	});
 }

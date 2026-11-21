@@ -1,7 +1,8 @@
 <!--
 @component
-What one control of the mouse does: its own behaviour, or an action chosen here. A locked control (left
-and right click) is only named. Changes are sent at once; `null` gives the control back to the mouse.
+What one control of the mouse does: its own behaviour, or an action chosen here, with the module and its
+action or the shortcut that goes with it. Changes are sent at once; `null` gives the control back to the
+mouse.
 -->
 <script lang="ts">
 	import { ACTION_KINDS, MOUSE_BUTTONS, NATIVE, type ActionKind } from '#lib/deck/mouse-labels.js';
@@ -9,16 +10,13 @@ and right click) is only named. Changes are sent at once; `null` gives the contr
 	import ShortcutInput from './ShortcutInput.svelte';
 
 	interface Props {
-		label: string;
-		/** Cannot be given another action. */
-		locked: boolean;
 		action: ButtonAction | undefined;
 		/** Modules, the ones offering actions can be chosen. */
 		catalog: readonly CatalogModule[];
 		onchange: (action: ButtonAction | null) => void;
 	}
 
-	let { label, locked, action, catalog, onchange }: Props = $props();
+	let { action, catalog, onchange }: Props = $props();
 
 	const uid = $props.id();
 
@@ -59,43 +57,43 @@ and right click) is only named. Changes are sent at once; `null` gives the contr
 	}
 </script>
 
-<div class="flex flex-col gap-2 py-3" role="group" aria-labelledby="{uid}-name">
-	<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-		<span id="{uid}-name" class="w-56 font-medium">{label}</span>
-		{#if locked}
-			<span class="text-sm text-muted"
-				>Garde toujours son rôle, pour que la souris reste utilisable.</span
-			>
-		{:else}
-			<label class="sr-only" for="{uid}-kind">Action de : {label}</label>
+<div class="flex flex-col gap-3">
+	<div class="flex flex-col gap-1">
+		<label class="font-semibold" for="{uid}-kind">Action</label>
+		<select
+			id="{uid}-kind"
+			class="field"
+			value={shownKind}
+			onchange={(event) => chooseKind(event.currentTarget.value as ActionKind)}
+		>
+			{#each ACTION_KINDS as choice (choice.value)}
+				<option value={choice.value}>{choice.label}</option>
+			{/each}
+		</select>
+	</div>
+
+	{#if action?.kind === 'click'}
+		<div class="flex flex-col gap-1">
+			<label class="font-semibold" for="{uid}-button">Bouton cliqué</label>
 			<select
-				id="{uid}-kind"
-				class="field w-auto"
-				value={shownKind}
-				onchange={(event) => chooseKind(event.currentTarget.value as ActionKind)}
+				id="{uid}-button"
+				class="field"
+				value={action.button}
+				onchange={(event) =>
+					onchange({ kind: 'click', button: event.currentTarget.value as typeof action.button })}
 			>
-				{#each ACTION_KINDS as choice (choice.value)}
-					<option value={choice.value}>{choice.label}</option>
+				{#each MOUSE_BUTTONS as button (button.value)}
+					<option value={button.value}>{button.label}</option>
 				{/each}
 			</select>
-			{#if action?.kind === 'click'}
-				<label class="sr-only" for="{uid}-button">Bouton cliqué par : {label}</label>
-				<select
-					id="{uid}-button"
-					class="field w-auto"
-					value={action.button}
-					onchange={(event) =>
-						onchange({ kind: 'click', button: event.currentTarget.value as typeof action.button })}
-				>
-					{#each MOUSE_BUTTONS as button (button.value)}
-						<option value={button.value}>{button.label}</option>
-					{/each}
-				</select>
-			{:else if action?.kind === 'module'}
-				<label class="sr-only" for="{uid}-module">Module de : {label}</label>
+		</div>
+	{:else if action?.kind === 'module'}
+		<div class="grid gap-3 sm:grid-cols-2">
+			<div class="flex flex-col gap-1">
+				<label class="font-semibold" for="{uid}-module">Module</label>
 				<select
 					id="{uid}-module"
-					class="field w-auto"
+					class="field"
 					value={action.module}
 					onchange={(event) => {
 						const module = modules.find((entry) => entry.kind === event.currentTarget.value);
@@ -111,10 +109,12 @@ and right click) is only named. Changes are sent at once; `null` gives the contr
 						<option value={action.module}>{action.module} (absent)</option>
 					{/if}
 				</select>
-				<label class="sr-only" for="{uid}-module-action">Action du module de : {label}</label>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="font-semibold" for="{uid}-module-action">Action du module</label>
 				<select
 					id="{uid}-module-action"
-					class="field w-auto"
+					class="field"
 					value={action.action}
 					onchange={(event) =>
 						onchange({ kind: 'module', module: action.module, action: event.currentTarget.value })}
@@ -126,12 +126,13 @@ and right click) is only named. Changes are sent at once; `null` gives the contr
 						<option value={action.action}>{action.action} (absente)</option>
 					{/if}
 				</select>
-			{/if}
-		{/if}
-	</div>
-	{#if !locked && (action?.kind === 'shortcut' || pending)}
+			</div>
+		</div>
+	{/if}
+
+	{#if action?.kind === 'shortcut' || pending}
 		<ShortcutInput
-			label="Raccourci de : {label}"
+			label="Raccourci"
 			focusOnMount={pending}
 			value={action?.kind === 'shortcut' ? action.keys : ''}
 			onchange={(keys) => {
@@ -139,5 +140,20 @@ and right click) is only named. Changes are sent at once; `null` gives the contr
 				onchange({ kind: 'shortcut', keys });
 			}}
 		/>
+	{/if}
+
+	{#if action !== undefined || pending}
+		<div>
+			<button
+				type="button"
+				class="secondary-button"
+				onclick={() => {
+					pending = false;
+					onchange(null);
+				}}
+			>
+				Rétablir l’action d’origine
+			</button>
+		</div>
 	{/if}
 </div>
