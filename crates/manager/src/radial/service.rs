@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, watch};
 use super::backend;
 use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
+use super::looks::Looks;
 use super::paint::DEFAULT_PALETTE;
 use super::window::Surface;
 use crate::haptics::HapticOutput;
@@ -136,7 +137,14 @@ impl RadialService {
         nudge: impl Fn() + Send + Sync + 'static,
         chooser: impl Fn(&RadialEntryConfig) + Send + 'static,
         feel: Arc<dyn HapticOutput>,
+        looks: Looks,
     ) -> Self {
+        let parts = Parts {
+            nudge: Arc::new(nudge),
+            chooser: Box::new(chooser),
+            feel,
+            looks,
+        };
         Self::start_on(
             |events| {
                 let report = Arc::new(move |event| events.send(Event::Window(event)).is_ok());
@@ -148,9 +156,7 @@ impl RadialService {
                     }
                 }
             },
-            Arc::new(nudge),
-            Box::new(chooser),
-            feel,
+            parts,
             config,
             locked,
             runtime,
@@ -161,9 +167,7 @@ impl RadialService {
     /// reports to.
     fn start_on<S: Surface + Send + 'static>(
         make_surface: impl FnOnce(mpsc::UnboundedSender<Event>) -> Option<S> + Send + 'static,
-        nudge: Arc<dyn Fn() + Send + Sync>,
-        chooser: Chooser,
-        feel: Arc<dyn HapticOutput>,
+        parts: Parts,
         config: watch::Receiver<RadialMenuConfig>,
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
@@ -172,6 +176,12 @@ impl RadialService {
         let first = config.borrow().clone();
         runtime.spawn(follow(config, locked.clone(), events.clone()));
         let window_events = events.clone();
+        let Parts {
+            nudge,
+            chooser,
+            feel,
+            looks,
+        } = parts;
         let wake = PointerWake {
             nudge,
             schedule: {
@@ -185,7 +195,7 @@ impl RadialService {
             .name("radial-menu".to_owned())
             .spawn(move || {
                 let surface = make_surface(window_events);
-                let mut menu = Menu::new(&first, locked, surface, chooser, wake, feel);
+                let mut menu = Menu::new(&first, locked, surface, chooser, wake, (feel, looks));
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -263,6 +273,15 @@ async fn follow(
 /// What is done with the entry that is chosen.
 type Chooser = Box<dyn Fn(&RadialEntryConfig) + Send>;
 
+/// What the menu is given besides its window and its configuration.
+struct Parts {
+    /// Moves the pointer a pixel and back.
+    nudge: Arc<dyn Fn() + Send + Sync>,
+    chooser: Chooser,
+    feel: Arc<dyn HapticOutput>,
+    looks: Looks,
+}
+
 /// The menu and what it is shown on.
 struct Menu<S: Surface> {
     controller: Controller,
@@ -289,10 +308,12 @@ impl<S: Surface> Menu<S> {
         surface: Option<S>,
         chooser: Chooser,
         wake: PointerWake,
-        feel: Arc<dyn HapticOutput>,
+        (feel, looks): (Arc<dyn HapticOutput>, Looks),
     ) -> Self {
+        let mut controller = Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN);
+        controller.set_looks(looks);
         Self {
-            controller: Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN),
+            controller,
             surface,
             chooser,
             wake,
@@ -505,7 +526,7 @@ mod tests {
             Some(notes.clone()),
             Box::new(move |entry| chosen.push(&entry.module.to_string())),
             quiet_wake(notes),
-            Arc::new(notes.clone()),
+            (Arc::new(notes.clone()), Looks::default()),
         );
         (menu, lock)
     }
@@ -606,7 +627,7 @@ mod tests {
             None,
             Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
             quiet_wake(&Notes::default()),
-            Arc::new(Notes::default()),
+            (Arc::new(Notes::default()), Looks::default()),
         );
         menu.handle(Event::Press(menu.started));
         menu.handle(Event::Press(menu.started));
@@ -784,9 +805,12 @@ mod tests {
         let for_menu = notes.clone();
         let service = RadialService::start_on(
             move |_| Some(for_menu),
-            Arc::new(|| {}),
-            Box::new(|_| {}),
-            Arc::new(crate::haptics::NoHaptics),
+            Parts {
+                nudge: Arc::new(|| {}),
+                chooser: Box::new(|_| {}),
+                feel: Arc::new(crate::haptics::NoHaptics),
+                looks: Looks::default(),
+            },
             config,
             locked,
             &tokio::runtime::Handle::current(),

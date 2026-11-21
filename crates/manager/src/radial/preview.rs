@@ -13,6 +13,7 @@ use thiserror::Error;
 use super::backend::{self, NoWindow};
 use super::controller::{Controller, Effect};
 use super::geometry::{DEFAULT_RING, Size};
+use super::looks::Looks;
 use super::paint::DEFAULT_PALETTE;
 use super::service::{NUDGE_PERIOD, NUDGE_TRIES};
 use super::window::Surface;
@@ -42,12 +43,18 @@ pub enum PreviewError {
 
 /// Shows the default menu for at most `duration`, reporting on `out` what the
 /// person chooses. `nudge` moves the pointer a pixel and back, tried while the
-/// menu is not placed, as the service does.
+/// menu is not placed, as the service does. `looks` gives the petals their
+/// names and icons.
 ///
 /// # Errors
 ///
 /// [`PreviewError`] when the window cannot start or the report cannot be written.
-pub fn run(duration: Duration, out: &mut impl Write, nudge: impl Fn()) -> Result<(), PreviewError> {
+pub fn run(
+    duration: Duration,
+    out: &mut impl Write,
+    nudge: impl Fn(),
+    looks: Looks,
+) -> Result<(), PreviewError> {
     let (events, window_events) = mpsc::channel();
     let overlay = backend::start(Arc::new(move |event| events.send(event).is_ok()))?;
     let mut controller = Controller::new(
@@ -55,6 +62,7 @@ pub fn run(duration: Duration, out: &mut impl Write, nudge: impl Fn()) -> Result
         DEFAULT_RING,
         UNKNOWN_SCREEN,
     );
+    controller.set_looks(looks);
     let content = controller
         .content(DEFAULT_PALETTE, true)
         .ok_or(PreviewError::NoEntry)?;
