@@ -350,4 +350,54 @@ mod tests {
             Point::new(100.0, 500.0)
         );
     }
+
+    /// The corners of every petal of menus of 2 to 8 entries, and the ring: what
+    /// `ui/src/lib/deck/radial-geometry.ts` must draw. Regenerate the file with
+    /// `UPDATE_RADIAL_FIXTURE=1 cargo test -p hubergamof radial_geometry_fixture`.
+    #[test]
+    fn the_geometry_of_the_ui_preview_is_the_one_of_the_menu() {
+        use serde_json::{Value, json};
+        let round = |value: f64| (value * 1e6).round() / 1e6;
+        let point = |p: Point| json!([round(p.x), round(p.y)]);
+        let petals: Vec<Value> = (2..=8)
+            .map(|count| {
+                let layout = Layout::new(count, DEFAULT_RING).unwrap();
+                let outlines: Vec<Value> = (0..count)
+                    .map(|petal| {
+                        let outline = layout.outline(petal).unwrap();
+                        json!({
+                            "innerStart": point(outline.inner_start),
+                            "outerStart": point(outline.outer_start),
+                            "outerEnd": point(outline.outer_end),
+                            "innerEnd": point(outline.inner_end),
+                        })
+                    })
+                    .collect();
+                json!({ "count": count, "outlines": outlines })
+            })
+            .collect();
+        let generated = json!({
+            "ring": {
+                "inner": DEFAULT_RING.inner,
+                "outer": DEFAULT_RING.outer,
+                "gap": DEFAULT_RING.gap,
+            },
+            "menus": petals,
+        });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ui/src/lib/deck/radial-geometry.fixture.json");
+        if std::env::var_os("UPDATE_RADIAL_FIXTURE").is_some() {
+            std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&generated).unwrap() + "\n",
+            )
+            .unwrap();
+        }
+        let committed: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            committed, generated,
+            "the menu changed: regenerate the fixture (see this test)"
+        );
+    }
 }

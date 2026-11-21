@@ -113,6 +113,20 @@
 }
 
 @layer base {
+	/* Room for the bar of the save status, which sticks to the top: a focused control is not left under it. */
+	html {
+		scroll-padding-top: 3rem;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		::before,
+		::after {
+			transition-duration: 0s !important;
+			animation-duration: 0s !important;
+		}
+	}
+
 	body {
 		@apply bg-page font-sans text-fg antialiased;
 	}

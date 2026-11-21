@@ -36,7 +36,7 @@ describe('HapticsPanel', () => {
 	it('shows the strength and lists the events of the modules that have some', async () => {
 		await renderPanel();
 		await expect
-			.element(page.getByRole('radiogroup', { name: 'Force des vibrations' }))
+			.element(page.getByRole('radiogroup', { name: 'Intensité générale' }))
 			.toBeVisible();
 		await expect.element(page.getByRole('radio', { name: 'Moyenne' })).toBeChecked();
 		await expect.element(page.getByRole('heading', { name: /Pomodoro/ })).toBeVisible();

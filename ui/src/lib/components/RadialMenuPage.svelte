@@ -62,7 +62,7 @@ holds. Every change is sent at once; the line under the title says whether the m
 			</p>
 		{/if}
 		{#if menu}
-			<div class="grid gap-6 md:grid-cols-[18rem_1fr]">
+			<div class="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[18rem_minmax(0,1fr)]">
 				<RadialPreview {menu} catalog={deck.catalog} />
 				<RadialMenuEditor {menu} catalog={deck.catalog} onedit={edit} />
 			</div>

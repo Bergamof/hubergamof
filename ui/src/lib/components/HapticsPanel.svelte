@@ -67,6 +67,11 @@ Every change is applied at once; changing a waveform plays it.
 
 	$effect(() => stopTimers);
 
+	/** The mouse of the monitor stays still for whoever asked for less motion; the bars and the text still tell. */
+	function prefersReducedMotion(): boolean {
+		return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	}
+
 	/** Draws and plays `waveform` on the monitor, at the strength `level`. */
 	function animate(waveform: HapticWaveform, level: HapticLevel) {
 		stopTimers();
@@ -84,7 +89,10 @@ Every change is applied at once; changing a waveform plays it.
 			timers.push(
 				setTimeout(() => {
 					litSteps = step + 1;
-					shake = strength > 0 ? (step % 2 ? 1 : -1) * strength * gain * (SHAKE_PIXELS / 9) : 0;
+					shake =
+						strength > 0 && !prefersReducedMotion()
+							? (step % 2 ? 1 : -1) * strength * gain * (SHAKE_PIXELS / 9)
+							: 0;
 				}, step * STEP_MS)
 			);
 		});
@@ -175,9 +183,8 @@ Every change is applied at once; changing a waveform plays it.
 			<span class="font-mono text-xs text-muted" role="status">{message}</span>
 		</div>
 		<div class="ml-auto flex flex-col gap-1.5">
-			<span class="text-sm font-semibold" id="{uid}-level">Intensité générale</span>
 			<SegmentedControl
-				label="Force des vibrations"
+				label="Intensité générale"
 				options={HAPTIC_LEVELS}
 				value={haptics.level}
 				onchange={chooseLevel}

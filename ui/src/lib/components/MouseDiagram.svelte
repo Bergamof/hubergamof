@@ -104,7 +104,7 @@ keyboard use; the zones on the drawing are only a shortcut for the pointer.
 					</g>
 				{/each}
 			</svg>
-			<figcaption class="font-mono text-[11px] tracking-wide text-muted uppercase">
+			<figcaption class="font-mono text-xs tracking-wide text-muted uppercase">
 				{view.caption}
 			</figcaption>
 		</figure>

@@ -341,7 +341,7 @@ fn serve_mouse<C: Channel>(
     // actions of this mouse: shared by the two closures the session calls.
     let current = RefCell::new(config.clone());
     let dispatcher = RefCell::new(ButtonDispatcher::new(actions.clone()));
-    let battery_due = Cell::new(Instant::now());
+    let battery_clock = BatteryClock::new(Instant::now());
     let next_request = || {
         if let Some(request) = dispatcher.borrow_mut().next_request() {
             return Some(request);
@@ -358,10 +358,9 @@ fn serve_mouse<C: Channel>(
             return Some(Request::PlayHaptic(waveform));
         }
         // The least urgent: the battery, read now and then.
-        (Instant::now() >= battery_due.get()).then(|| {
-            battery_due.set(Instant::now() + BATTERY_INTERVAL);
-            Request::ReadBattery
-        })
+        battery_clock
+            .take(Instant::now())
+            .then_some(Request::ReadBattery)
     };
     let refused = RefCell::new(Vec::new());
     let on_notice = |notice: Notice| {
@@ -373,8 +372,17 @@ fn serve_mouse<C: Channel>(
             }),
             Notice::Applied => status.report(refused.take()),
             Notice::Battery(battery) => status.report_battery(battery.and_then(known_battery)),
-            Notice::Connection { connected } => presence.set_connected(*connected),
-            Notice::Button(_) => {}
+            Notice::Connection { connected } => {
+                presence.set_connected(*connected);
+                // The charge of a mouse that was off is not known any more, and
+                // is read again as soon as it is back.
+                if *connected {
+                    battery_clock.read_soon(Instant::now());
+                } else {
+                    status.report_battery(None);
+                }
+            }
+            Notice::Declined(_) | Notice::Button(_) => {}
         }
         if let Notice::Button(event) = &notice {
             let configuration = current.borrow();
@@ -387,6 +395,34 @@ fn serve_mouse<C: Channel>(
     match session.serve_with_requests(&config, stop, next_request, on_notice) {
         Ok(()) => tracing::info!(%model, "mouse released"),
         Err(error) => tracing::warn!(%model, %error, "mouse lost"),
+    }
+}
+
+/// When the battery is read: at once, then every [`BATTERY_INTERVAL`], and at
+/// once again when the mouse is back. The time is given by the caller.
+struct BatteryClock {
+    due: Cell<Instant>,
+}
+
+impl BatteryClock {
+    fn new(now: Instant) -> Self {
+        Self {
+            due: Cell::new(now),
+        }
+    }
+
+    /// Whether a reading is due at `now`; it then is not again before
+    /// [`BATTERY_INTERVAL`].
+    fn take(&self, now: Instant) -> bool {
+        let due = now >= self.due.get();
+        if due {
+            self.due.set(now + BATTERY_INTERVAL);
+        }
+        due
+    }
+
+    fn read_soon(&self, now: Instant) {
+        self.due.set(now);
     }
 }
 
@@ -435,6 +471,12 @@ fn log_notice(serial: &str, notice: Notice) {
             "mouse button"
         ),
         Notice::Applied => tracing::debug!(%serial, "configuration applied"),
+        Notice::Declined(problem) => tracing::debug!(
+            %serial,
+            setting = problem.setting,
+            error = %problem.error,
+            "the mouse did not carry out a request"
+        ),
         Notice::Battery(battery) => tracing::debug!(%serial, ?battery, "battery read"),
         Notice::Connection { connected } => {
             tracing::info!(%serial, connected, "mouse link changed");
@@ -634,7 +676,10 @@ mod tests {
             &stop,
             |_, notice| match notice {
                 Notice::Problem(problem) => problems.push(problem.setting),
-                Notice::Applied | Notice::Battery(_) | Notice::Connection { .. } => {}
+                Notice::Applied
+                | Notice::Battery(_)
+                | Notice::Connection { .. }
+                | Notice::Declined(_) => {}
                 Notice::Button(event) => {
                     let state = state(&shared);
                     events.push((event.pressed, state.dpi, state.diverted.len()));
@@ -769,6 +814,54 @@ mod tests {
             },
         );
         shared
+    }
+
+    #[test]
+    fn the_battery_is_read_at_once_then_every_interval_and_again_when_the_mouse_is_back() {
+        let start = Instant::now();
+        let clock = BatteryClock::new(start);
+        assert!(clock.take(start));
+        assert!(!clock.take(start));
+        assert!(!clock.take(start + BATTERY_INTERVAL.saturating_sub(Duration::from_secs(1))));
+        assert!(clock.take(start + BATTERY_INTERVAL));
+        let later = start + BATTERY_INTERVAL + Duration::from_secs(10);
+        assert!(!clock.take(later));
+        clock.read_soon(later);
+        assert!(clock.take(later));
+    }
+
+    #[test]
+    fn the_battery_is_unknown_while_the_mouse_is_off_and_read_again_when_it_is_back() {
+        const LOST: [u8; 7] = [0x10, DEVICE, 0x41, 0x10, 0x42, 0x42, 0xB0];
+        const BACK: [u8; 7] = [0x10, DEVICE, 0x41, 0x10, 0x02, 0x42, 0xB0];
+        let (_dir, store) = store();
+        let hub = hub_of(&store);
+        let fake = FakeLink::direct(FakeDevice::mx_master_4())
+            .with_incoming(vec![LOST.to_vec(), BACK.to_vec()]);
+        let stop = AtomicBool::new(false);
+        let status = || hub.subscribe_status("deadbeef").map(|s| s.borrow().battery);
+        let mut seen = Vec::new();
+        serve_mouse(
+            found(fake, Some(UNIT), 2),
+            &store,
+            &hub,
+            &no_actions(),
+            &stop,
+            |_, notice| match notice {
+                Notice::Connection { connected } => seen.push(("link", connected, status())),
+                Notice::Battery(_) if seen.len() >= 2 => {
+                    seen.push(("battery", true, status()));
+                    stop.store(true, Ordering::Relaxed);
+                }
+                _ => {}
+            },
+        );
+        let known =
+            |entry: &(&str, bool, Option<Option<MouseBattery>>)| entry.2.flatten().is_some();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert!(!known(&seen[0]), "off: unknown");
+        assert!(!known(&seen[1]), "back, not read yet");
+        assert!(known(&seen[2]), "read again");
     }
 
     #[test]
