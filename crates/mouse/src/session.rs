@@ -16,7 +16,7 @@ use hubergamof_protocol::{
 
 use crate::channel::{Channel, HidppError};
 use crate::controls::cid;
-use crate::frame::Notification;
+use crate::frame::{LinkChange, Notification};
 use crate::link::{
     ButtonEvent, ButtonTracker, HapticState, MouseLink, WheelState, haptic_strength,
 };
@@ -384,6 +384,11 @@ impl<C: Channel> MouseSession<C> {
             self.dropped_frames = dropped;
             events.extend(self.tracker.release_all());
         }
+        if let Some(change) = frame.as_deref().and_then(LinkChange::parse)
+            && change.device == self.link.device()
+        {
+            events.extend(self.link_changed(change));
+        }
         let held = frame
             .and_then(|bytes| Notification::parse(&bytes))
             .and_then(|notification| self.link.held_buttons(&notification));
@@ -391,6 +396,18 @@ impl<C: Channel> MouseSession<C> {
             events.extend(self.tracker.update(&held));
         }
         Ok(events)
+    }
+
+    /// The mouse was switched off or is back. Nothing it was told survives a
+    /// power cycle (the buttons are no longer diverted): what was held is
+    /// released, and once back the configuration is applied again, in full.
+    fn link_changed(&mut self, change: LinkChange) -> Vec<ButtonEvent> {
+        let released = self.tracker.release_all();
+        if change.established {
+            self.wake_failures = 0;
+            self.pending = self.applied.take().or_else(|| self.pending.take());
+        }
+        released
     }
 
     /// The releases of the buttons believed held, for the caller to undo what
@@ -967,6 +984,54 @@ mod tests {
         );
         session.give_back().unwrap();
         assert!(state(&session).diverted.is_empty());
+    }
+
+    const LOST: [u8; 7] = [0x10, DEVICE, 0x41, 0x10, 0x42, 0x42, 0xB0];
+    const BACK: [u8; 7] = [0x10, DEVICE, 0x41, 0x10, 0x02, 0x42, 0xB0];
+
+    #[test]
+    fn a_mouse_switched_off_releases_what_was_held_and_is_configured_again_when_back() {
+        let device = FakeDevice::mx_master_4();
+        let reprog = device.index_of(REPROG_CONTROLS_V4).unwrap();
+        let fake = FakeLink::direct(device).with_incoming(vec![
+            frame(DEVICE, reprog, 0x00, &[0, 0x53]),
+            LOST.to_vec(),
+            BACK.to_vec(),
+        ]);
+        let mut session = session_with(fake);
+        session.apply(&config()).unwrap();
+        assert_eq!(session.poll(Duration::from_millis(1)).unwrap().len(), 1);
+        let released = session.poll(Duration::from_millis(1)).unwrap();
+        assert_eq!(
+            released,
+            [ButtonEvent {
+                control: MouseControlId::Back,
+                pressed: false
+            }]
+        );
+        assert!(
+            session.applied.is_some(),
+            "still switched off: nothing to redo yet"
+        );
+        session.poll(Duration::from_millis(1)).unwrap();
+        assert!(session.applied.is_none());
+        assert_eq!(session.pending.as_ref(), Some(&config()));
+    }
+
+    #[test]
+    fn the_link_of_another_mouse_of_the_receiver_changes_nothing_here() {
+        let mut other = LOST;
+        other[1] = DEVICE.wrapping_add(1);
+        let mut back = BACK;
+        back[1] = other[1];
+        let fake = FakeLink::direct(FakeDevice::mx_master_4())
+            .with_incoming(vec![other.to_vec(), back.to_vec()]);
+        let mut session = session_with(fake);
+        session.apply(&config()).unwrap();
+        session.poll(Duration::from_millis(1)).unwrap();
+        session.poll(Duration::from_millis(1)).unwrap();
+        assert!(session.applied.is_some());
+        assert!(session.pending.is_none());
     }
 
     #[test]
