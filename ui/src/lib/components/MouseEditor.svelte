@@ -16,10 +16,10 @@ radial menu. Every change is sent at once; the line under the title says whether
 		type MouseEdit,
 		type RadialEdit
 	} from '#lib/deck/mouse-edits.js';
-	import { CONTROL_LABELS, settingLabel } from '#lib/deck/mouse-labels.js';
+	import { settingLabel } from '#lib/deck/mouse-labels.js';
 	import type { MouseConfig, MouseInfo, RadialMenuConfig } from '#lib/generated/index.js';
-	import ButtonBindingRow from './ButtonBindingRow.svelte';
 	import HapticsPanel from './HapticsPanel.svelte';
+	import MouseControls from './MouseControls.svelte';
 	import PointerSettings from './PointerSettings.svelte';
 	import RadialMenuEditor from './RadialMenuEditor.svelte';
 	import Tabs, { panelId, tabId } from './Tabs.svelte';
@@ -48,10 +48,6 @@ radial menu. Every change is sent at once; the line under the title says whether
 	]);
 	/** The tab shown: the one asked for, unless this mouse has not got it (another mouse was chosen). */
 	const tab = $derived(tabs.some((candidate) => candidate.id === wanted) ? wanted : 'touches');
-
-	const buttons = $derived(
-		mouse.capabilities.controls.filter((control) => control.kind === 'button')
-	);
 
 	/** What the status region says, emptied first so that a repeated message is read again. */
 	let spoken = $state('');
@@ -136,20 +132,12 @@ radial menu. Every change is sent at once; the line under the title says whether
 			class="px-5 pt-5 pb-6 focus-ring"
 		>
 			{#if tab === 'touches'}
-				<p class="mb-2 text-sm text-muted">
-					Un bouton sans action choisie ici garde son comportement d’origine.
-				</p>
-				<div class="flex flex-col divide-y divide-line">
-					{#each buttons as control (control.id)}
-						<ButtonBindingRow
-							label={CONTROL_LABELS[control.id]}
-							locked={control.locked}
-							action={config.bindings[control.id]}
-							catalog={deck.catalog}
-							onchange={(action) => edit(bindControl(control.id, action))}
-						/>
-					{/each}
-				</div>
+				<MouseControls
+					{mouse}
+					{config}
+					catalog={deck.catalog}
+					onbind={(control, action) => edit(bindControl(control, action))}
+				/>
 			{:else if tab === 'settings'}
 				<PointerSettings
 					pointer={config.pointer}

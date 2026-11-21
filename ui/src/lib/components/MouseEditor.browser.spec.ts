@@ -31,11 +31,42 @@ async function renderEditor(mouse: MouseInfo = mouseInfo(), withMenu = true) {
 }
 
 describe('MouseEditor', () => {
-	it('lists the buttons of the model, locked ones included, and leaves the wheel out of them', async () => {
+	it('lists the controls of the model, locked ones included, each with what it does', async () => {
 		await renderEditor();
-		await expect.element(page.getByRole('group', { name: 'Clic gauche' })).toBeVisible();
-		await expect.element(page.getByRole('group', { name: 'Bouton arrière' })).toBeVisible();
-		expect(document.body.textContent).not.toContain('Action de : Molette du pouce');
+		const list = page.getByRole('list').first();
+		await expect.element(list.getByRole('button', { name: /Clic gauche/ })).toBeVisible();
+		await expect.element(list.getByRole('button', { name: /Précédent/ })).toBeVisible();
+		await expect.element(list.getByRole('button', { name: /Molette du pouce/ })).toBeVisible();
+	});
+
+	it('shows the drawings of the model with a marker on each control', async () => {
+		await renderEditor();
+		await expect
+			.element(page.getByRole('group', { name: /MX Master 4, vue de dessus/ }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('group', { name: /MX Master 4, côté pouce/ }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /^3, Molette \(clic\)/ }).first())
+			.toBeVisible();
+	});
+
+	it('describes a locked control and a wheel that only turns instead of offering actions', async () => {
+		await renderEditor();
+		await page
+			.getByRole('list')
+			.first()
+			.getByRole('button', { name: /Clic gauche/ })
+			.click();
+		await expect.element(page.getByText(/Ce bouton est verrouillé/)).toBeVisible();
+		await page
+			.getByRole('list')
+			.first()
+			.getByRole('button', { name: /Molette du pouce/ })
+			.click();
+		await expect.element(page.getByText(/Cette molette n’a pas d’action/)).toBeVisible();
+		expect(document.body.textContent).not.toContain('Rétablir');
 	});
 
 	it('shows the name of the mouse, what it is connected to and its tabs', async () => {
@@ -75,7 +106,12 @@ describe('MouseEditor', () => {
 
 	it('sends a change at once and says when the manager has saved it', async () => {
 		const { connection } = await renderEditor();
-		await page.getByLabelText('Action de : Bouton arrière').selectOptions('doubleClick');
+		await page
+			.getByRole('list')
+			.first()
+			.getByRole('button', { name: /Précédent/ })
+			.click();
+		await page.getByLabelText('Action', { exact: true }).selectOptions('doubleClick');
 		await expect.element(page.getByText('Enregistrement…').first()).toBeVisible();
 		expect(connection.sent.at(-1)).toMatchObject({
 			type: 'updateMouseConfig',

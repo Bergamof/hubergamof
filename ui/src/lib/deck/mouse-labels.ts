@@ -1,10 +1,12 @@
 import type {
 	ButtonAction,
+	CatalogModule,
 	HapticLevel,
 	HapticWaveform,
 	MouseControlId,
 	WheelMode
 } from '#lib/generated/index.js';
+import { shortcutLabel } from './shortcut.js';
 
 /** What a person calls each control of a mouse. */
 export const CONTROL_LABELS: Readonly<Record<MouseControlId, string>> = {
@@ -95,4 +97,49 @@ const SETTING_LABELS: Readonly<Record<string, string>> = {
 /** The refused setting, in words; an unknown name is shown as it is. */
 export function settingLabel(setting: string): string {
 	return SETTING_LABELS[setting] ?? setting;
+}
+
+/** What a control does by itself, on the mice that have it, as the manager leaves it when it has no action here. */
+export const ORIGINAL_LABELS: Readonly<Record<MouseControlId, string>> = {
+	left: 'Clic gauche',
+	right: 'Clic droit',
+	wheelClick: 'Clic milieu',
+	wheelMode: 'Cran / libre',
+	back: 'Précédent',
+	forward: 'Suivant',
+	gesture: 'Aucune action',
+	thumbWheel: 'Défilement horizontal',
+	hapticPanel: 'Aucune action'
+};
+
+/**
+ * What a control does, in a few words: its action when it has one, else what the mouse does by itself.
+ * A module or an action the catalog does not know is shown by its identifier.
+ */
+export function describeAction(
+	action: ButtonAction | undefined,
+	original: string,
+	catalog: readonly CatalogModule[]
+): string {
+	switch (action?.kind) {
+		case undefined:
+			return original;
+		case 'none':
+			return 'Désactivé';
+		case 'click':
+			return `Clic ${MOUSE_BUTTONS.find((button) => button.value === action.button)?.label.toLowerCase() ?? action.button}`;
+		case 'doubleClick':
+			return 'Double clic';
+		case 'toggleWheelMode':
+			return 'Cran / libre';
+		case 'radialMenu':
+			return 'Menu circulaire';
+		case 'module': {
+			const module = catalog.find((entry) => entry.kind === action.module);
+			const named = module?.radialActions.find((entry) => entry.id === action.action);
+			return `${module?.name ?? action.module} › ${named?.name ?? action.action}`;
+		}
+		case 'shortcut':
+			return `Raccourci ${shortcutLabel(action.keys)}`;
+	}
 }
