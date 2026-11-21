@@ -46,8 +46,8 @@ use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_mouse::diagnostics::{self, Action, parse_waveform};
 use hubergamof_protocol::CatalogModule;
 use hubergamof_protocol::{
-    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseInfo, MouseModel, WHEEL_THRESHOLD_RANGE,
-    WheelMode,
+    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseBattery, MouseInfo, MouseModel,
+    WHEEL_THRESHOLD_RANGE, WheelMode,
 };
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -709,9 +709,23 @@ fn start_served_mice(
 }
 
 /// The mice `--demo` lists, with the serial of each.
-const SIMULATED_MICE: [(MouseModel, &str); 2] = [
-    (MouseModel::MxMaster4, "demo-mx-master-4"),
-    (MouseModel::MxAnywhere3S, "demo-mx-anywhere-3s"),
+const SIMULATED_MICE: [(MouseModel, &str, MouseBattery); 2] = [
+    (
+        MouseModel::MxMaster4,
+        "demo-mx-master-4",
+        MouseBattery {
+            percent: 76,
+            charging: false,
+        },
+    ),
+    (
+        MouseModel::MxAnywhere3S,
+        "demo-mx-anywhere-3s",
+        MouseBattery {
+            percent: 18,
+            charging: true,
+        },
+    ),
 ];
 
 /// Lists mice that do not exist, for the interface to configure (one with a haptic panel, one without): the
@@ -719,12 +733,12 @@ const SIMULATED_MICE: [(MouseModel, &str); 2] = [
 fn register_simulated_mice(hub: &MouseHub, store: &ConfigStore) -> Result<Vec<MouseRegistration>> {
     SIMULATED_MICE
         .into_iter()
-        .map(|(model, serial)| {
+        .map(|(model, serial, battery)| {
             let config = store
                 .load_mouse(serial, model)
                 .context("cannot load the simulated mouse configuration")?
                 .config;
-            Ok(hub.register(
+            let registration = hub.register(
                 MouseInfo {
                     serial: serial.to_owned(),
                     model,
@@ -732,7 +746,9 @@ fn register_simulated_mice(hub: &MouseHub, store: &ConfigStore) -> Result<Vec<Mo
                     capabilities: model.capabilities(),
                 },
                 config,
-            ))
+            );
+            registration.status_reporter().report_battery(Some(battery));
+            Ok(registration)
         })
         .collect()
 }
@@ -1280,11 +1296,13 @@ mod tests {
         let listed = register_simulated_mice(&hub, &store).unwrap();
         let models: Vec<MouseModel> = hub.mice().iter().map(|mouse| mouse.model).collect();
         assert_eq!(models, [MouseModel::MxMaster4, MouseModel::MxAnywhere3S]);
-        let (model, serial) = SIMULATED_MICE[0];
+        let (model, serial, _) = SIMULATED_MICE[0];
         let mut config = store.load_mouse(serial, model).unwrap().config;
         config.pointer.dpi = 800;
         let saved = hub.update_mouse(serial, config).unwrap();
         assert_eq!(saved.pointer.dpi, 800);
+        let mut status = hub.subscribe_status(serial).unwrap();
+        assert!(status.borrow_and_update().battery.is_some());
         drop(listed);
         assert_eq!(hub.mice().len(), 0);
         // The next run of the demo finds what the interface saved.

@@ -235,6 +235,21 @@ describe('MouseState', () => {
 		expect(mice.problems).toEqual([]);
 	});
 
+	it('follows the battery of the selected mouse, and forgets it with the mouse', () => {
+		const { connection, mice } = setup();
+		const battery = { percent: 64, charging: true };
+		connection.receive({ type: 'mice', mice: [mouse('a'), mouse('b')] });
+		connection.receive({ type: 'mouseStatus', serial: 'b', problems: [], battery });
+		expect(mice.battery).toBeUndefined();
+		connection.receive({ type: 'mouseStatus', serial: 'a', problems: [], battery });
+		expect(mice.battery).toEqual(battery);
+		connection.receive({ type: 'mouseStatus', serial: 'a', problems: [] });
+		expect(mice.battery).toBeUndefined();
+		connection.receive({ type: 'mouseStatus', serial: 'a', problems: [], battery });
+		mice.select('b');
+		expect(mice.battery).toBeUndefined();
+	});
+
 	it('has the selected mouse play a waveform, once a mouse is selected', () => {
 		const { connection, mice } = setup();
 		expect(mice.playHaptic('knock')).toBe(false);

@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use hubergamof_protocol::{
-    ButtonAction, ErrorCode, HapticLevel, HapticWaveform, MouseCapabilities, MouseConfig,
-    MouseControlId, MouseInfo, MouseProblem, RadialMenuConfig,
+    ButtonAction, ErrorCode, HapticLevel, HapticWaveform, MouseBattery, MouseCapabilities,
+    MouseConfig, MouseControlId, MouseInfo, MouseProblem, MouseStatus, RadialMenuConfig,
 };
 use thiserror::Error;
 use tokio::sync::watch;
@@ -78,7 +78,7 @@ struct Entry {
     info: MouseInfo,
     config: Arc<watch::Sender<MouseConfig>>,
     /// What the mouse refused of its configuration.
-    status: Arc<watch::Sender<Vec<MouseProblem>>>,
+    status: Arc<watch::Sender<MouseStatus>>,
     haptics: SyncSender<HapticWaveform>,
 }
 
@@ -143,7 +143,7 @@ impl MouseHub {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, updates) = watch::channel(config);
         let sender = Arc::new(sender);
-        let status = Arc::new(watch::channel(Vec::new()).0);
+        let status = Arc::new(watch::channel(MouseStatus::default()).0);
         let (haptic_sender, haptics) = sync_channel(HAPTIC_QUEUE);
         let mut entries = self.entries();
         entries.retain(|entry| entry.info.serial != info.serial);
@@ -235,7 +235,7 @@ impl MouseHub {
     /// What a connected mouse refused of its configuration, as it changes;
     /// `None` when it is not connected.
     #[must_use]
-    pub fn subscribe_status(&self, serial: &str) -> Option<watch::Receiver<Vec<MouseProblem>>> {
+    pub fn subscribe_status(&self, serial: &str) -> Option<watch::Receiver<MouseStatus>> {
         let entries = self.entries();
         let entry = entries.iter().find(|entry| entry.info.serial == serial)?;
         Some(entry.status.subscribe())
@@ -401,7 +401,7 @@ pub struct MouseRegistration {
     hub: MouseHub,
     id: u64,
     sender: Arc<watch::Sender<MouseConfig>>,
-    status: Arc<watch::Sender<Vec<MouseProblem>>>,
+    status: Arc<watch::Sender<MouseStatus>>,
     updates: watch::Receiver<MouseConfig>,
     haptics: Receiver<HapticWaveform>,
 }
@@ -441,19 +441,30 @@ impl MouseRegistration {
     }
 }
 
-/// Tells the interface what a mouse refused of its configuration. Cheap to
-/// clone.
+/// Tells the interface what is known of a mouse: what it refused of its
+/// configuration, and its battery. Cheap to clone.
 #[derive(Clone)]
-pub struct StatusReporter(Arc<watch::Sender<Vec<MouseProblem>>>);
+pub struct StatusReporter(Arc<watch::Sender<MouseStatus>>);
 
 impl StatusReporter {
     /// The settings the mouse refused the last time its configuration was
     /// applied (none: it took everything). Followers are told only of a change.
     pub fn report(&self, problems: Vec<MouseProblem>) {
+        self.update(|status| &mut status.problems, problems);
+    }
+
+    /// The battery as the mouse last said it (`None`: it did not say).
+    /// Followers are told only of a change.
+    pub fn report_battery(&self, battery: Option<MouseBattery>) {
+        self.update(|status| &mut status.battery, battery);
+    }
+
+    fn update<T: PartialEq>(&self, field: impl FnOnce(&mut MouseStatus) -> &mut T, value: T) {
         self.0.send_if_modified(|current| {
-            let changed = *current != problems;
+            let slot = field(current);
+            let changed = *slot != value;
             if changed {
-                *current = problems;
+                *slot = value;
             }
             changed
         });
@@ -791,7 +802,7 @@ mod tests {
         let (_dir, hub) = hub();
         let mouse = register(&hub, "a");
         let mut status = hub.subscribe_status("a").unwrap();
-        assert!(status.borrow().is_empty());
+        assert_eq!(status.borrow().problems, Vec::new());
         let reporter = mouse.status_reporter();
         let refused = vec![MouseProblem {
             setting: "wheel".to_owned(),
@@ -799,13 +810,39 @@ mod tests {
         }];
         reporter.report(refused.clone());
         assert!(status.has_changed().unwrap());
-        assert_eq!(*status.borrow_and_update(), refused);
+        assert_eq!(status.borrow_and_update().problems, refused);
         // The same thing again is not news; the mouse taking it all is.
         reporter.report(refused);
         assert!(!status.has_changed().unwrap());
         reporter.report(Vec::new());
         assert!(status.has_changed().unwrap());
         assert!(hub.subscribe_status("missing").is_none());
+    }
+
+    #[test]
+    fn the_battery_is_told_only_when_it_changes_and_keeps_what_was_refused() {
+        let (_dir, hub) = hub();
+        let mouse = register(&hub, "a");
+        let mut status = hub.subscribe_status("a").unwrap();
+        let reporter = mouse.status_reporter();
+        let refused = vec![MouseProblem {
+            setting: "wheel".to_owned(),
+            message: "refused".to_owned(),
+        }];
+        reporter.report(refused.clone());
+        let battery = MouseBattery {
+            percent: 80,
+            charging: false,
+        };
+        reporter.report_battery(Some(battery));
+        assert!(status.has_changed().unwrap());
+        let known = status.borrow_and_update().clone();
+        assert_eq!(known.battery, Some(battery));
+        assert_eq!(known.problems, refused);
+        reporter.report_battery(Some(battery));
+        assert!(!status.has_changed().unwrap());
+        reporter.report_battery(None);
+        assert!(status.has_changed().unwrap());
     }
 
     #[test]

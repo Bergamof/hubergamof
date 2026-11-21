@@ -4,6 +4,7 @@ import type { DeviceConfig } from "./DeviceConfig";
 import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
 import type { LiveState } from "./LiveState";
+import type { MouseBattery } from "./MouseBattery";
 import type { MouseConfig } from "./MouseConfig";
 import type { MouseInfo } from "./MouseInfo";
 import type { MouseProblem } from "./MouseProblem";
@@ -42,7 +43,11 @@ serial: string,
 /**
  * The settings the mouse refused.
  */
-problems: Array<MouseProblem>, } | { "type": "radialMenu", 
+problems: Array<MouseProblem>, 
+/**
+ * Its battery, once read; absent while unknown.
+ */
+battery?: MouseBattery | null, } | { "type": "radialMenu", 
 /**
  * Current configuration.
  */

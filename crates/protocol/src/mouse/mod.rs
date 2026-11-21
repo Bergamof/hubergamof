@@ -21,4 +21,4 @@ pub use haptic::{HapticEventSetting, HapticLevel, HapticSettings, MAX_HAPTIC_EVE
 pub use model::{
     ControlKind, MouseCapabilities, MouseControl, MouseControlId, MouseInfo, MouseModel,
 };
-pub use status::MouseProblem;
+pub use status::{MouseBattery, MouseProblem, MouseStatus};

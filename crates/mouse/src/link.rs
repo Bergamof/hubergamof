@@ -83,6 +83,18 @@ pub struct Battery {
     pub status: u8,
 }
 
+impl Battery {
+    /// Charging status codes of the unified battery feature: recharging,
+    /// charge in its final stage, recharging below the optimal speed.
+    const CHARGING_STATUSES: [u8; 3] = [1, 2, 4];
+
+    /// Plugged in and taking charge.
+    #[must_use]
+    pub fn charging(&self) -> bool {
+        Self::CHARGING_STATUSES.contains(&self.status)
+    }
+}
+
 /// Haptic feedback state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HapticState {

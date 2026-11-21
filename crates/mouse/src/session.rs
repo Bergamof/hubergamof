@@ -18,7 +18,7 @@ use crate::channel::{Channel, HidppError};
 use crate::controls::cid;
 use crate::frame::{LinkChange, Notification};
 use crate::link::{
-    ButtonEvent, ButtonTracker, HapticState, MouseLink, WheelState, haptic_strength,
+    Battery, ButtonEvent, ButtonTracker, HapticState, MouseLink, WheelState, haptic_strength,
 };
 
 /// A setting that could not be applied, the others having been.
@@ -40,6 +40,9 @@ pub enum Notice {
     /// A configuration was applied: the problems reported since the previous
     /// `Applied` are all there were, none meaning that the mouse took it all.
     Applied,
+    /// The battery as the mouse says it, `None` when it did not answer (it may
+    /// be busy; the next read tries again).
+    Battery(Option<Battery>),
 }
 
 /// What the person asks of a mouse while it is served.
@@ -51,6 +54,8 @@ pub enum Request {
     ToggleWheelMode,
     /// Play a waveform on the haptic panel, at the strength configured.
     PlayHaptic(HapticWaveform),
+    /// Read the battery and report it.
+    ReadBattery,
 }
 
 /// How long [`MouseSession::serve`] waits for the buttons before looking at
@@ -517,6 +522,10 @@ impl<C: Channel> MouseSession<C> {
                     self.play_haptic(waveform, notify)?;
                     None
                 }
+                Some(Request::ReadBattery) => {
+                    self.read_battery(notify)?;
+                    None
+                }
                 None => self.pending.take(),
             };
             if let Some(update) = update {
@@ -555,6 +564,20 @@ impl<C: Channel> MouseSession<C> {
                 Ok(())
             }
         }
+    }
+
+    /// Reads the battery. A mouse that does not answer, or that has no
+    /// battery feature, is reported as without a reading; only a gone one ends
+    /// the service, as for a vibration.
+    fn read_battery(&mut self, notify: &mut impl FnMut(Notice)) -> Result<(), HidppError> {
+        match self.link.battery() {
+            Ok(battery) => notify(Notice::Battery(Some(battery))),
+            Err(error) if is_fatal(&error) && !matches!(error, HidppError::Timeout(_)) => {
+                return Err(error);
+            }
+            Err(_) => notify(Notice::Battery(None)),
+        }
+        Ok(())
     }
 
     /// Switches the wheel between ratchet and free spin, as it is now (a
@@ -1337,7 +1360,7 @@ mod tests {
             .serve(&config(), &stop, |notice| match notice {
                 Notice::Problem(problem) => told.push(problem.setting),
                 Notice::Applied => told.push("applied"),
-                Notice::Button(_) => {}
+                Notice::Button(_) | Notice::Battery(_) => {}
             })
             .unwrap();
         // The end of the application comes after its problems.
@@ -1885,6 +1908,65 @@ mod tests {
             .played
             .clone();
         (problems, played)
+    }
+
+    /// What the mouse said of its battery when asked once.
+    fn battery_read(device: FakeDevice) -> Vec<Option<Battery>> {
+        let (mut session, _shared) = shared_session(device);
+        let stop = AtomicBool::new(false);
+        let turn = std::cell::Cell::new(0);
+        let mut told = Vec::new();
+        session
+            .serve_with_requests(
+                &config(),
+                &stop,
+                || {
+                    turn.set(turn.get() + 1);
+                    if turn.get() == 1 {
+                        Some(Request::ReadBattery)
+                    } else {
+                        stop.store(true, Ordering::Relaxed);
+                        None
+                    }
+                },
+                |notice| {
+                    if let Notice::Battery(battery) = notice {
+                        told.push(battery);
+                    }
+                },
+            )
+            .unwrap();
+        told
+    }
+
+    #[test]
+    fn the_battery_of_the_mouse_is_read_when_asked() {
+        let told = battery_read(FakeDevice::mx_master_4());
+        let battery = told.first().copied().flatten().expect("a reading");
+        assert_eq!(battery.percent, Some(82));
+        assert!(!battery.charging());
+    }
+
+    #[test]
+    fn a_mouse_that_does_not_answer_for_its_battery_is_still_served() {
+        let device =
+            FakeDevice::mx_master_4().with_mute_function(crate::features::UNIFIED_BATTERY, 1);
+        assert_eq!(battery_read(device), [None]);
+    }
+
+    #[test]
+    fn the_charging_codes_of_the_device_say_when_the_mouse_is_plugged_in() {
+        let battery = |status| Battery {
+            percent: Some(50),
+            level: crate::link::BatteryLevel::Good,
+            status,
+        };
+        assert!([1, 2, 4].into_iter().all(|code| battery(code).charging()));
+        assert!(
+            [0, 3, 5, 7]
+                .into_iter()
+                .all(|code| !battery(code).charging())
+        );
     }
 
     #[test]

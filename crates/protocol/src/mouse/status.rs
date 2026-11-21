@@ -14,3 +14,24 @@ pub struct MouseProblem {
     /// Why, as the mouse or its receiver said it.
     pub message: String,
 }
+
+/// How full the battery of a mouse is, as the mouse says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MouseBattery {
+    /// Charge, from 0 to 100.
+    pub percent: u8,
+    /// Plugged in and charging.
+    pub charging: bool,
+}
+
+/// What is known of a connected mouse besides its configuration: what it
+/// refused of the configuration, and its battery once read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MouseStatus {
+    /// The settings the mouse refused when its configuration was last applied.
+    pub problems: Vec<MouseProblem>,
+    /// `None` until the mouse has said, or when it does not.
+    pub battery: Option<MouseBattery>,
+}

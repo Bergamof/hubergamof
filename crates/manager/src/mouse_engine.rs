@@ -13,18 +13,18 @@
 //! notifications are to be observed on the hardware first
 //! (`docs/mouse-hidpp.md`).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hubergamof_mouse::channel::Channel;
 use hubergamof_mouse::hidraw::{FoundMouse, HidrawChannel, MouseKey, find_mice};
-use hubergamof_mouse::link::UnitId;
+use hubergamof_mouse::link::{Battery, UnitId};
 use hubergamof_mouse::session::{MouseSession, Notice, Request};
-use hubergamof_protocol::{MouseConfig, MouseInfo, MouseModel, MouseProblem};
+use hubergamof_protocol::{MouseBattery, MouseConfig, MouseInfo, MouseModel, MouseProblem};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -34,6 +34,10 @@ use crate::mouse_hub::MouseHub;
 
 /// Delay between two searches for mice not served yet.
 pub const SCAN_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Time between two readings of the battery of a mouse: it drains over days,
+/// and every reading is a frame the mouse has to answer.
+const BATTERY_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Where mice come from: the hardware, or scripted devices in the tests.
 pub trait MouseSource: Send + 'static {
@@ -336,6 +340,7 @@ fn serve_mouse<C: Channel>(
     // actions of this mouse: shared by the two closures the session calls.
     let current = RefCell::new(config.clone());
     let dispatcher = RefCell::new(ButtonDispatcher::new(actions.clone()));
+    let battery_due = Cell::new(Instant::now());
     let next_request = || {
         if let Some(request) = dispatcher.borrow_mut().next_request() {
             return Some(request);
@@ -348,7 +353,14 @@ fn serve_mouse<C: Channel>(
         }
         // What the events of the modules ask this mouse to play comes after the
         // configuration (a new strength is in force by then).
-        haptics.try_recv().ok().map(Request::PlayHaptic)
+        if let Ok(waveform) = haptics.try_recv() {
+            return Some(Request::PlayHaptic(waveform));
+        }
+        // The least urgent: the battery, read now and then.
+        (Instant::now() >= battery_due.get()).then(|| {
+            battery_due.set(Instant::now() + BATTERY_INTERVAL);
+            Request::ReadBattery
+        })
     };
     let refused = RefCell::new(Vec::new());
     let on_notice = |notice: Notice| {
@@ -359,6 +371,7 @@ fn serve_mouse<C: Channel>(
                 message: problem.error.to_string(),
             }),
             Notice::Applied => status.report(refused.take()),
+            Notice::Battery(battery) => status.report_battery(battery.and_then(known_battery)),
             Notice::Button(_) => {}
         }
         if let Notice::Button(event) = &notice {
@@ -373,6 +386,15 @@ fn serve_mouse<C: Channel>(
         Ok(()) => tracing::info!(%model, "mouse released"),
         Err(error) => tracing::warn!(%model, %error, "mouse lost"),
     }
+}
+
+/// What the interface shows of a battery reading: nothing when the mouse gave
+/// no percentage.
+fn known_battery(battery: Battery) -> Option<MouseBattery> {
+    Some(MouseBattery {
+        percent: battery.percent?,
+        charging: battery.charging(),
+    })
 }
 
 /// The stored configuration of a mouse. A new one (or one that had to be set
@@ -411,6 +433,7 @@ fn log_notice(serial: &str, notice: Notice) {
             "mouse button"
         ),
         Notice::Applied => tracing::debug!(%serial, "configuration applied"),
+        Notice::Battery(battery) => tracing::debug!(%serial, ?battery, "battery read"),
     }
 }
 
@@ -606,7 +629,7 @@ mod tests {
             &stop,
             |_, notice| match notice {
                 Notice::Problem(problem) => problems.push(problem.setting),
-                Notice::Applied => {}
+                Notice::Applied | Notice::Battery(_) => {}
                 Notice::Button(event) => {
                     let state = state(&shared);
                     events.push((event.pressed, state.dpi, state.diverted.len()));
@@ -832,6 +855,25 @@ mod tests {
             state(&shared).played,
             [hubergamof_mouse::link::waveform_id(HapticWaveform::Completed).unwrap()]
         );
+    }
+
+    #[test]
+    fn the_battery_of_the_mouse_reaches_the_interface_while_it_is_served() {
+        let recorder = Recorder::default();
+        let mut told = None;
+        serve_back_button(
+            ButtonAction::None,
+            1,
+            &recording_actions(&recorder, false),
+            |_, hub, _| {
+                told = hub
+                    .subscribe_status("deadbeef")
+                    .and_then(|status| status.borrow().battery);
+            },
+        );
+        let battery = told.expect("the battery was read at the start");
+        assert_eq!(battery.percent, 82);
+        assert!(!battery.charging);
     }
 
     #[test]

@@ -671,11 +671,13 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(9);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toBeVisible();
+	await expect(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
 
 	await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
 	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S' })).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(6);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
+	await expect(page.getByText('Batterie 18 % · en charge')).toBeVisible();
 	await expect(
 		page
 			.getByRole('list')
