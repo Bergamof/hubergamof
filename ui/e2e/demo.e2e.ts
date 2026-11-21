@@ -720,8 +720,14 @@ test('essaie une vibration depuis l’onglet Haptique et coupe un module entier'
 	await expect(page.getByText(/Retour haptique désactivé/)).toBeVisible();
 });
 
+async function openMenu(page: Page) {
+	await open(page);
+	await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
+	await expect(page.getByRole('list', { name: 'Aperçu du menu' })).toBeVisible();
+}
+
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {
-	await openMouse(page);
+	await openMenu(page);
 	await expect(page.getByText(/4 actuellement/)).toBeVisible();
 	await page.getByRole('button', { name: 'Descendre : Pomodoro' }).click();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
@@ -744,5 +750,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await expectAccessible(page, 'onglet Haptique');
 		await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
 		await expectAccessible(page, 'MX Anywhere 3S');
+		await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
+		await expect(page.getByTestId('menu-trigger')).toContainText('Bouton de mode de la molette');
+		await expectAccessible(page, 'page du menu circulaire');
 	});
 }

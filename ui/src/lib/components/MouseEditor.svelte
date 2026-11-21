@@ -1,10 +1,8 @@
 <!--
 @component
-Configuration of the selected mouse (buttons, pointer and wheels, vibrations on a haptic model) and of the
-radial menu. Every change is sent at once; the line under the title says whether the manager has saved it.
+Configuration of the selected mouse (buttons, pointer and wheels, vibrations on a haptic model). Every change is sent at once; the line under the title says whether the manager has saved it.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
 	import type { DeckState, EditOutcome } from '#lib/deck/deck-state.svelte.js';
 	import {
 		bindControl,
@@ -13,31 +11,28 @@ radial menu. Every change is sent at once; the line under the title says whether
 		setHapticLevel,
 		setThumbWheel,
 		setWheel,
-		type MouseEdit,
-		type RadialEdit
+		type MouseEdit
 	} from '#lib/deck/mouse-edits.js';
+	import { SaveTracker } from '#lib/deck/save-tracker.svelte.js';
 	import { settingLabel } from '#lib/deck/mouse-labels.js';
-	import type { MouseConfig, MouseInfo, RadialMenuConfig } from '#lib/generated/index.js';
+	import type { MouseConfig, MouseInfo } from '#lib/generated/index.js';
 	import HapticsPanel from './HapticsPanel.svelte';
 	import MouseControls from './MouseControls.svelte';
 	import PointerSettings from './PointerSettings.svelte';
-	import RadialMenuEditor from './RadialMenuEditor.svelte';
+	import SaveStatusLine from './SaveStatusLine.svelte';
 	import Tabs, { panelId, tabId } from './Tabs.svelte';
 
 	interface Props {
 		deck: DeckState;
 		mouse: MouseInfo;
 		config: MouseConfig;
-		/** `undefined` until the manager has sent it. */
-		radialMenu: RadialMenuConfig | undefined;
 	}
 
-	let { deck, mouse, config, radialMenu }: Props = $props();
+	let { deck, mouse, config }: Props = $props();
 
 	const uid = $props.id();
 
-	/** Where the last change stands: waiting for the manager, saved, or refused (the notice says why). */
-	let status: 'idle' | 'saving' | 'saved' | 'refused' = $state('idle');
+	const saves = new SaveTracker();
 
 	type TabId = 'touches' | 'settings' | 'haptic';
 	let wanted: TabId = $state('touches');
@@ -49,42 +44,15 @@ radial menu. Every change is sent at once; the line under the title says whether
 	/** The tab shown: the one asked for, unless this mouse has not got it (another mouse was chosen). */
 	const tab = $derived(tabs.some((candidate) => candidate.id === wanted) ? wanted : 'touches');
 
-	/** What the status region says, emptied first so that a repeated message is read again. */
-	let spoken = $state('');
-
-	async function track(outcome: Promise<EditOutcome>) {
-		status = 'saving';
-		const saved = (await outcome).saved;
-		status = saved ? 'saved' : 'refused';
-		spoken = '';
-		await tick();
-		spoken = STATUS_TEXT[status];
-	}
-
 	function edit(change: MouseEdit): Promise<EditOutcome> {
 		const outcome = deck.mice.edit(change);
-		void track(outcome);
+		void saves.track(outcome);
 		return outcome;
 	}
-
-	function editRadial(change: RadialEdit) {
-		void track(deck.mice.editRadialMenu(change));
-	}
-
-	const STATUS_TEXT = {
-		idle: '',
-		saving: 'Enregistrement…',
-		saved: 'Modifications enregistrées.',
-		refused: 'Dernière modification refusée.'
-	} as const;
 </script>
 
 <div class="flex flex-col gap-8">
-	<!-- Kept in view while the page scrolls: the changes are made far from the top. -->
-	<div class="sticky top-0 z-10 -mx-1 bg-page px-1 py-1">
-		<p class="min-h-6 text-sm text-muted" aria-hidden="true">{STATUS_TEXT[status]}</p>
-		<p role="status" class="sr-only">{spoken}</p>
-	</div>
+	<SaveStatusLine tracker={saves} />
 
 	{#if deck.mice.problems.length > 0}
 		<div
@@ -160,18 +128,5 @@ radial menu. Every change is sent at once; the line under the title says whether
 				/>
 			{/if}
 		</div>
-	</section>
-
-	<section aria-labelledby="{uid}-radial" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-radial" class="text-lg font-semibold">Menu circulaire</h2>
-		<p class="text-sm text-muted">
-			Le même pour toutes les souris. Il s’ouvre depuis le bouton auquel vous avez donné l’action «
-			Menu circulaire ».
-		</p>
-		{#if radialMenu}
-			<RadialMenuEditor menu={radialMenu} catalog={deck.catalog} onedit={editRadial} />
-		{:else}
-			<p class="text-muted">Chargement du menu…</p>
-		{/if}
 	</section>
 </div>

@@ -6,6 +6,7 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import MouseEditor from '#lib/components/MouseEditor.svelte';
+	import RadialMenuPage from '#lib/components/RadialMenuPage.svelte';
 	import SegmentedControl from '#lib/components/SegmentedControl.svelte';
 	import UpdatePanel from '#lib/components/UpdatePanel.svelte';
 	import Notices from '#lib/components/Notices.svelte';
@@ -19,25 +20,28 @@
 	let connection = $state<ManagerConnection>();
 	let deck = $state<DeckState>();
 
-	type Section = 'deck' | 'mouse';
+	type Section = 'deck' | 'mouse' | 'menu';
 	/** What the person asked to see; what is shown also depends on what is connected. */
 	let wanted = $state<Section>('deck');
 	const hasDecks = $derived((deck?.devices.length ?? 0) > 0);
 	const hasMice = $derived((deck?.mice.mice.length ?? 0) > 0);
 	const section: Section = $derived(
-		hasMice && (wanted === 'mouse' || !hasDecks) ? 'mouse' : 'deck'
+		hasMice && wanted !== 'deck' ? wanted : hasMice && !hasDecks ? 'mouse' : 'deck'
 	);
 	const SECTIONS: readonly { value: Section; label: string }[] = [
 		{ value: 'deck', label: 'Stream Deck' },
-		{ value: 'mouse', label: 'Souris' }
+		{ value: 'mouse', label: 'Souris' },
+		{ value: 'menu', label: 'Menu circulaire' }
 	];
 
 	const isOnline = $derived(connection?.status === 'open');
 	/** The editor shown: the mouse one, or the deck one, once its configuration is known. */
 	const editorShown = $derived(
-		section === 'mouse'
-			? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
-			: deck?.device !== undefined && deck.config !== undefined
+		section === 'menu'
+			? deck?.mice.radialMenu !== undefined
+			: section === 'mouse'
+				? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
+				: deck?.device !== undefined && deck.config !== undefined
 	);
 	/** The page then shows its own alert about the lost connection: the header does not repeat it. */
 	const offlineAlertShown = $derived(!isOnline && editorShown);
@@ -80,8 +84,8 @@
 
 <svelte:head>
 	<title>
-		{(section === 'mouse' ? deck?.mice.mouse : deck?.device)
-			? `${(section === 'mouse' ? deck?.mice.mouse : deck?.device)?.displayName} · HuBergamof`
+		{(section !== 'deck' ? deck?.mice.mouse : deck?.device)
+			? `${(section !== 'deck' ? deck?.mice.mouse : deck?.device)?.displayName} · HuBergamof`
 			: 'HuBergamof'}
 	</title>
 </svelte:head>
@@ -143,7 +147,7 @@
 						{/each}
 					</div>
 				{/if}
-				{#if section === 'mouse' && deck.mice.mouse && deck.mice.config}
+				{#if section !== 'deck' && deck.mice.mouse}
 					{#if deck.mice.mice.length > 1}
 						<SegmentedControl
 							label="Souris"
@@ -167,13 +171,10 @@
 					fallbackFocusId={MAIN_ID}
 					ondismiss={(id) => deck?.dismiss(id)}
 				/>
-				{#if section === 'mouse' && deck.mice.mouse && deck.mice.config}
-					<MouseEditor
-						{deck}
-						mouse={deck.mice.mouse}
-						config={deck.mice.config}
-						radialMenu={deck.mice.radialMenu}
-					/>
+				{#if section === 'menu'}
+					<RadialMenuPage {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
+				{:else if section === 'mouse' && deck.mice.mouse && deck.mice.config}
+					<MouseEditor {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
 				{:else if deck.device && deck.config}
 					<DeckEditor {deck} device={deck.device} config={deck.config} {api} />
 				{/if}
