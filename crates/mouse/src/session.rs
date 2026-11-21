@@ -533,8 +533,10 @@ impl<C: Channel> MouseSession<C> {
     }
 
     /// Plays `waveform`. What the mouse refuses (a waveform it does not have,
-    /// a panel it does not answer for) is reported; only a mouse that stops
-    /// answering ends the service.
+    /// a panel it does not answer for) is reported. A late answer is not a lost
+    /// mouse either: the panel is busy while it plays, and vibrations asked in
+    /// quick succession leave it silent for a moment. A mouse that is really
+    /// gone is found by the next request or the next read of its buttons.
     fn play_haptic(
         &mut self,
         waveform: HapticWaveform,
@@ -542,7 +544,9 @@ impl<C: Channel> MouseSession<C> {
     ) -> Result<(), HidppError> {
         match self.link.play_haptic(waveform) {
             Ok(()) => Ok(()),
-            Err(error) if is_fatal(&error) => Err(error),
+            Err(error) if is_fatal(&error) && !matches!(error, HidppError::Timeout(_)) => {
+                Err(error)
+            }
             Err(error) => {
                 notify(Notice::Problem(ApplyProblem {
                     setting: "haptic",
@@ -1891,6 +1895,15 @@ mod tests {
         );
         assert_eq!(problems, [] as [&str; 0]);
         assert_eq!(played, [0x0C]);
+    }
+
+    #[test]
+    fn a_vibration_the_mouse_does_not_answer_is_reported_and_the_service_goes_on() {
+        let device = FakeDevice::mx_master_4().with_mute_function(crate::features::HAPTIC, 4);
+        let (problems, played) =
+            serve_one_request(device, &Request::PlayHaptic(HapticWaveform::Knock));
+        assert_eq!(problems, ["haptic"]);
+        assert_eq!(played, [] as [u8; 0]);
     }
 
     #[test]

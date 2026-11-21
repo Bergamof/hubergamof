@@ -71,7 +71,7 @@ const HAPTIC_MIN_GAP: Duration = Duration::from_secs(2);
 
 /// Shortest time between two waveforms the interface asks a mouse to play (a
 /// button pressed again and again is not a flood on the mouse).
-const TRY_MIN_GAP: Duration = Duration::from_millis(250);
+const TRY_MIN_GAP: Duration = Duration::from_millis(600);
 
 struct Entry {
     id: u64,

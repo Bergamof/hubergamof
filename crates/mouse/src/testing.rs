@@ -42,6 +42,8 @@ pub struct FakeDevice {
     controls: Vec<[u8; 9]>,
     /// Features whose functions all fail with "invalid function".
     broken: Vec<u16>,
+    /// Functions of features that get no answer at all (a mouse busy playing).
+    mute: Vec<(u16, u8)>,
     /// Features whose lookup at the root fails with an error.
     lookup_errors: Vec<u16>,
     /// What the settings of the device currently are.
@@ -88,6 +90,7 @@ impl FakeDevice {
             name: String::new(),
             controls: Vec::new(),
             broken: Vec::new(),
+            mute: Vec::new(),
             lookup_errors: Vec::new(),
             state: FakeState::default(),
         }
@@ -190,6 +193,17 @@ impl FakeDevice {
     pub fn with_broken_feature(mut self, id: u16) -> Self {
         self.broken.push(id);
         self
+    }
+
+    pub fn with_mute_function(mut self, feature: u16, function: u8) -> Self {
+        self.mute.push((feature, function));
+        self
+    }
+
+    /// Whether the device stays silent when asked for `function` of the feature at `index`.
+    fn is_mute_at(&self, index: u8, function: u8) -> bool {
+        self.feature_at(index)
+            .is_some_and(|feature| self.mute.contains(&(feature, function)))
     }
 
     /// Feature id at an HID++ feature index (0 is `Root`, 1 is `FeatureSet`).
@@ -465,6 +479,7 @@ impl Channel for FakeLink {
         };
         self.queue.extend(self.noise.clone());
         match self.devices.iter_mut().find(|(index, _)| index == device) {
+            Some((_, scripted)) if scripted.is_mute_at(*feature, function_byte >> 4) => {}
             Some((_, scripted)) => {
                 if let Some(answer) = scripted.answer(*feature, function_byte >> 4, params) {
                     self.queue
