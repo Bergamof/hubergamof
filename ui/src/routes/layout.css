@@ -154,6 +154,24 @@
 	@apply rounded-2xl border border-line bg-surface p-5 shadow-card;
 }
 
+/* On/off switch (a checkbox with role="switch"): the thumb slides, the track takes the ring colour when on. */
+@utility switch {
+	@apply relative h-[22px] w-[38px] shrink-0 cursor-pointer appearance-none rounded-full bg-line focus-ring transition-colors checked:bg-ring disabled:cursor-default disabled:opacity-50;
+	&::after {
+		content: '';
+		@apply absolute inset-y-[3px] left-[3px] w-4 rounded-full bg-surface shadow-sm transition-transform;
+	}
+	&:checked::after {
+		@apply translate-x-4;
+	}
+	&:indeterminate {
+		@apply bg-ring/55;
+	}
+	&:indeterminate::after {
+		@apply translate-x-2;
+	}
+}
+
 /* A key or dial of the device, selectable to configure it. The selection is drawn with the
    accent, on the device's dark body. */
 @utility surface-button {

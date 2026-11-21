@@ -7,6 +7,8 @@ the way its module made it. Every change is applied at once.
 <script lang="ts">
 	import { hapticKey } from '#lib/deck/mouse-edits.js';
 	import { HAPTIC_LEVELS, HAPTIC_WAVEFORMS } from '#lib/deck/mouse-labels.js';
+	import SegmentedControl from './SegmentedControl.svelte';
+	import Switch from './Switch.svelte';
 	import type {
 		CatalogModule,
 		HapticEventDescriptor,
@@ -53,18 +55,13 @@ the way its module made it. Every change is applied at once.
 
 <div class="flex flex-col gap-5">
 	<div class="flex flex-col gap-1">
-		<label class="font-medium" for="{uid}-level">Force des vibrations</label>
-		<select
-			id="{uid}-level"
-			class="field w-auto self-start"
+		<span class="font-medium">Force des vibrations</span>
+		<SegmentedControl
+			label="Force des vibrations"
+			options={HAPTIC_LEVELS}
 			value={haptics.level}
-			aria-describedby="{uid}-level-hint"
-			onchange={(event) => onlevel(event.currentTarget.value as HapticLevel)}
-		>
-			{#each HAPTIC_LEVELS as level (level.value)}
-				<option value={level.value}>{level.label}</option>
-			{/each}
-		</select>
+			onchange={onlevel}
+		/>
 		<p id="{uid}-level-hint" class="text-sm text-muted">
 			« Aucune vibration » coupe tout sur cette souris, y compris le menu circulaire.
 		</p>
@@ -82,15 +79,14 @@ the way its module made it. Every change is applied at once.
 				{@const setting = settingOf(module, event)}
 				<div class="flex flex-col gap-1">
 					<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-						<label class="flex w-64 items-center gap-2">
-							<input
-								type="checkbox"
-								class="size-5 accent-ring focus-ring"
+						<span class="w-64">
+							<Switch
 								checked={setting.enabled}
-								onchange={(e) => change(module, event, { enabled: e.currentTarget.checked })}
-							/>
-							{event.name}
-						</label>
+								onchange={(enabled) => change(module, event, { enabled })}
+							>
+								{event.name}
+							</Switch>
+						</span>
 						<label class="sr-only" for="{uid}-{module.kind}-{event.id}">
 							Vibration de : {module.name}, {event.name}
 						</label>

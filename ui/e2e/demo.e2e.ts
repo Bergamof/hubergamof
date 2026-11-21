@@ -639,8 +639,8 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).press('Enter');
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
-	await page.getByLabel('Force des vibrations').selectOption('high');
-	await page.getByRole('checkbox', { name: "Fin d'une étape" }).uncheck();
+	await page.getByRole('radio', { name: 'Forte' }).click();
+	await page.getByRole('switch', { name: "Fin d'une étape" }).uncheck();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
 	await page.reload();
@@ -649,8 +649,8 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await expect(page.getByLabel('Raccourci de : Bouton arrière', { exact: true })).toHaveValue(
 		'ctrl+shift+m'
 	);
-	await expect(page.getByLabel('Force des vibrations')).toHaveValue('high');
-	await expect(page.getByRole('checkbox', { name: "Fin d'une étape" })).not.toBeChecked();
+	await expect(page.getByRole('radio', { name: 'Forte' })).toBeChecked();
+	await expect(page.getByRole('switch', { name: "Fin d'une étape" })).not.toBeChecked();
 });
 
 test('compose le menu circulaire et garde le minimum d’entrées', async ({ page }) => {
@@ -658,9 +658,9 @@ test('compose le menu circulaire et garde le minimum d’entrées', async ({ pag
 	await expect(page.getByText(/4 actuellement/)).toBeVisible();
 	await page.getByRole('button', { name: 'Descendre : Pomodoro' }).click();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
-	await page.getByRole('checkbox', { name: 'Teams' }).uncheck();
+	await page.getByRole('switch', { name: 'Teams' }).uncheck();
 	await expect(page.getByText(/3 actuellement/)).toBeVisible();
-	await expect(page.getByRole('checkbox', { name: 'Pomodoro' })).toBeDisabled();
+	await expect(page.getByRole('switch', { name: 'Pomodoro' })).toBeDisabled();
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {

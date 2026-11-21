@@ -16,20 +16,20 @@ const WAVEFORM = page.getByLabelText('Vibration de : Pomodoro, Fin d’étape');
 describe('HapticsPanel', () => {
 	it('shows the strength and lists the events of the modules that have some', async () => {
 		await renderPanel();
-		await expect.element(page.getByLabelText('Force des vibrations')).toHaveValue('medium');
+		await expect.element(page.getByRole('radio', { name: 'Moyenne' })).toBeChecked();
 		await expect.element(page.getByRole('group', { name: 'Pomodoro' })).toBeVisible();
 		expect(document.body.textContent).not.toContain('Docker');
 	});
 
 	it('sends the strength chosen', async () => {
 		const { onlevel } = await renderPanel();
-		await page.getByLabelText('Force des vibrations').selectOptions('off');
+		await page.getByRole('radio', { name: 'Aucune vibration' }).click();
 		expect(onlevel).toHaveBeenCalledExactlyOnceWith('off');
 	});
 
 	it('plays an event the way its module made it until told otherwise', async () => {
 		await renderPanel();
-		await expect.element(page.getByRole('checkbox', { name: 'Fin d’étape' })).toBeChecked();
+		await expect.element(page.getByRole('switch', { name: 'Fin d’étape' })).toBeChecked();
 		await expect.element(WAVEFORM).toHaveValue('completed');
 	});
 
@@ -38,7 +38,7 @@ describe('HapticsPanel', () => {
 			level: 'low',
 			events: { 'pomodoro.step-end': { enabled: false, waveform: 'knock' } }
 		});
-		await expect.element(page.getByRole('checkbox', { name: 'Fin d’étape' })).not.toBeChecked();
+		await expect.element(page.getByRole('switch', { name: 'Fin d’étape' })).not.toBeChecked();
 		await expect.element(WAVEFORM).toHaveValue('knock');
 		await expect.element(WAVEFORM).toBeDisabled();
 	});
@@ -54,7 +54,7 @@ describe('HapticsPanel', () => {
 
 	it('switches an event off', async () => {
 		const { onevent } = await renderPanel();
-		await page.getByRole('checkbox', { name: 'Fin d’étape' }).click();
+		await page.getByRole('switch', { name: 'Fin d’étape' }).click();
 		expect(onevent).toHaveBeenCalledExactlyOnceWith('pomodoro.step-end', {
 			enabled: false,
 			waveform: 'completed'
@@ -66,7 +66,7 @@ describe('HapticsPanel', () => {
 			level: 'medium',
 			events: { 'pomodoro.step-end': { enabled: false, waveform: 'completed' } }
 		});
-		await page.getByRole('checkbox', { name: 'Fin d’étape' }).click();
+		await page.getByRole('switch', { name: 'Fin d’étape' }).click();
 		expect(onevent).toHaveBeenCalledExactlyOnceWith('pomodoro.step-end', null);
 	});
 

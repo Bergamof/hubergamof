@@ -68,14 +68,14 @@ describe('MouseEditor', () => {
 
 	it('says when a change was refused', async () => {
 		const { connection } = await renderEditor();
-		await page.getByLabelText('Force des vibrations').selectOptions('high');
+		await page.getByRole('radio', { name: 'Forte' }).click();
 		connection.receive({ type: 'error', code: 'invalidConfig', message: 'refused' });
 		await expect.element(page.getByText('Dernière modification refusée.').first()).toBeVisible();
 	});
 
 	it('sends a change of the radial menu', async () => {
 		const { connection } = await renderEditor();
-		await page.getByRole('checkbox', { name: /Animer/ }).click();
+		await page.getByRole('switch', { name: /Animer/ }).click();
 		expect(connection.sent.at(-1)).toMatchObject({
 			type: 'updateRadialMenu',
 			config: { animate: false }
