@@ -4,6 +4,7 @@ import {
 	keyName,
 	modifierName,
 	normalizeShortcut,
+	shortcutOnLayout,
 	shortcutLabel,
 	shortcutOf
 } from './shortcut.js';
@@ -82,5 +83,30 @@ describe('normalizeShortcut', () => {
 		expect(normalizeShortcut('ctrl++m')).toBeUndefined();
 		expect(normalizeShortcut('a+b+c+d+e+f+g')).toBeUndefined();
 		expect(normalizeShortcut('f13')).toBeUndefined();
+	});
+});
+
+describe('shortcutOnLayout', () => {
+	const azerty = new Map([
+		['KeyA', 'q'],
+		['KeyQ', 'a'],
+		['KeyM', ','],
+		['KeyB', 'b'],
+		['Digit1', '&'],
+		['Comma', ';']
+	]);
+
+	it('writes the shortcut with what an AZERTY keyboard shows on those positions', () => {
+		expect(shortcutOnLayout('ctrl+a', azerty)).toBe('Ctrl + Q');
+		expect(shortcutOnLayout('ctrl+shift+m', azerty)).toBe('Ctrl + Maj + ,');
+		expect(shortcutOnLayout('alt+1', azerty)).toBe('Alt + &');
+		expect(shortcutOnLayout('comma', azerty)).toBe(';');
+	});
+
+	it('says nothing when the keys are the same, or the layout is unknown', () => {
+		expect(shortcutOnLayout('ctrl+b', azerty)).toBeUndefined();
+		expect(shortcutOnLayout('ctrl+enter', azerty)).toBeUndefined();
+		expect(shortcutOnLayout('ctrl+a', undefined)).toBeUndefined();
+		expect(shortcutOnLayout('ctrl+z', azerty)).toBeUndefined();
 	});
 });

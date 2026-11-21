@@ -129,4 +129,23 @@ describe('ShortcutInput', () => {
 		await userEvent.tab();
 		await expect.element(page.getByRole('status')).toHaveTextContent('Raccourci Ctrl + M.');
 	});
+
+	it('tells what the keys are on the keyboard of the person when it is not the American one', async () => {
+		const onchange = vi.fn();
+		const azerty = new Map([['KeyA', 'q']]);
+		await render(ShortcutInput, { label: 'Raccourci', value: 'ctrl+a', onchange, layout: azerty });
+		await expect.element(page.getByText(/s’écrivent Ctrl \+ Q/)).toBeVisible();
+	});
+
+	it('says nothing more when the keyboard is the American one', async () => {
+		const onchange = vi.fn();
+		const american = new Map([['KeyA', 'a']]);
+		await render(ShortcutInput, {
+			label: 'Raccourci',
+			value: 'ctrl+a',
+			onchange,
+			layout: american
+		});
+		expect(document.body.textContent).not.toContain('s’écrivent');
+	});
 });

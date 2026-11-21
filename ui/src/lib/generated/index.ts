@@ -43,6 +43,7 @@ export type * from "./MouseControl";
 export type * from "./MouseControlId";
 export type * from "./MouseInfo";
 export type * from "./MouseModel";
+export type * from "./MouseProblem";
 export type * from "./PageView";
 export type * from "./PointerSettings";
 export type * from "./RadialActionDescriptor";

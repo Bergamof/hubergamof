@@ -6,13 +6,15 @@ field is left or Enter is pressed, never while it is half typed. While recording
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { loadKeyboardLayout, type KeyboardLayout } from '#lib/deck/keyboard-layout.js';
 	import {
 		isReserved,
 		keyName,
 		modifierName,
 		normalizeShortcut,
 		shortcutLabel,
-		shortcutOf
+		shortcutOf,
+		shortcutOnLayout
 	} from '#lib/deck/shortcut.js';
 
 	interface Props {
@@ -22,9 +24,11 @@ field is left or Enter is pressed, never while it is half typed. While recording
 		onchange: (shortcut: string) => void;
 		/** Puts the focus in the field when shown (it appears as the next step of a choice). */
 		focusOnMount?: boolean;
+		/** What the keys produce on the keyboard of the person; read from the browser when not given. */
+		layout?: KeyboardLayout;
 	}
 
-	let { label, value, onchange, focusOnMount = false }: Props = $props();
+	let { label, value, onchange, focusOnMount = false, layout }: Props = $props();
 
 	const uid = $props.id();
 
@@ -40,6 +44,13 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	let pressedOther = false;
 
 	const text = $derived(draft ?? value);
+
+	let loadedLayout: KeyboardLayout | undefined = $state();
+	const onKeyboard = $derived(value ? shortcutOnLayout(value, layout ?? loadedLayout) : undefined);
+
+	$effect(() => {
+		if (layout === undefined) void loadKeyboardLayout().then((loaded) => (loadedLayout = loaded));
+	});
 
 	$effect(() => {
 		if (focusOnMount) field?.focus();
@@ -141,6 +152,9 @@ field is left or Enter is pressed, never while it is half typed. While recording
 	</span>
 	<p id="{uid}-hint" class="text-sm text-muted">
 		{value ? `Envoie ${shortcutLabel(value)}.` : 'Exemple : ctrl+shift+m.'}
+		{#if onKeyboard}
+			Sur votre clavier, ces touches s’écrivent {onKeyboard}.
+		{/if}
 		Touches de la position américaine du clavier. Le champ est validé en le quittant ou avec Entrée ;
 		pendant l’enregistrement, appuyez sur les touches voulues, Tab pour annuler.
 	</p>

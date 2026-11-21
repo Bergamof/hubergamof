@@ -86,4 +86,20 @@ describe('MouseEditor', () => {
 		await renderEditor(mouseInfo(), false);
 		await expect.element(page.getByText('Chargement du menu…')).toBeVisible();
 	});
+
+	it('tells what the mouse refused, and that the rest was applied', async () => {
+		const { connection } = await renderEditor();
+		expect(document.body.textContent).not.toContain('la souris n’a pas accepté');
+		connection.receive({
+			type: 'mouseStatus',
+			serial: 'mx-1',
+			problems: [{ setting: 'sensitivity', message: 'no answer within 500ms' }]
+		});
+		await expect
+			.element(page.getByText(/la sensibilité du pointeur : no answer within 500ms/))
+			.toBeVisible();
+		await expect.element(page.getByText(/Les autres sont appliqués/)).toBeVisible();
+		connection.receive({ type: 'mouseStatus', serial: 'mx-1', problems: [] });
+		await expect.element(page.getByText(/Les autres sont appliqués/)).not.toBeInTheDocument();
+	});
 });

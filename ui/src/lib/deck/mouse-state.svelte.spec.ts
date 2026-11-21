@@ -219,6 +219,21 @@ describe('MouseState', () => {
 		await expect(outcome).resolves.toMatchObject({ saved: false });
 		expect(mice.pending).toBe(false);
 	});
+
+	it('keeps what the selected mouse refused, and forgets it with the mouse', () => {
+		const { connection, mice } = setup();
+		const refusal = { setting: 'wheel', message: 'refused' };
+		connection.receive({ type: 'mice', mice: [mouse('a'), mouse('b')] });
+		connection.receive({ type: 'mouseStatus', serial: 'b', problems: [refusal] });
+		expect(mice.problems).toEqual([]);
+		connection.receive({ type: 'mouseStatus', serial: 'a', problems: [refusal] });
+		expect(mice.problems).toEqual([refusal]);
+		connection.receive({ type: 'mouseStatus', serial: 'a', problems: [] });
+		expect(mice.problems).toEqual([]);
+		connection.receive({ type: 'mouseStatus', serial: 'a', problems: [refusal] });
+		mice.select('b');
+		expect(mice.problems).toEqual([]);
+	});
 });
 
 function device(serial: string): DeviceInfo {

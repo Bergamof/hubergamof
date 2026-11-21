@@ -24,7 +24,7 @@ use hubergamof_mouse::channel::Channel;
 use hubergamof_mouse::hidraw::{FoundMouse, HidrawChannel, MouseKey, find_mice};
 use hubergamof_mouse::link::UnitId;
 use hubergamof_mouse::session::{MouseSession, Notice, Request};
-use hubergamof_protocol::{MouseConfig, MouseInfo, MouseModel};
+use hubergamof_protocol::{MouseConfig, MouseInfo, MouseModel, MouseProblem};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -330,6 +330,7 @@ fn serve_mouse<C: Channel>(
     if let Ok(latest) = store.load_mouse(&serial, model) {
         listed.refresh(latest.config);
     }
+    let status = listed.status_reporter();
     let (updates, haptics) = listed.streams();
     // The configuration in force, which says what each button does, and the
     // actions of this mouse: shared by the two closures the session calls.
@@ -349,7 +350,17 @@ fn serve_mouse<C: Channel>(
         // configuration (a new strength is in force by then).
         haptics.try_recv().ok().map(Request::PlayHaptic)
     };
+    let refused = RefCell::new(Vec::new());
     let on_notice = |notice: Notice| {
+        match &notice {
+            // The problems of an application come one by one, then its end.
+            Notice::Problem(problem) => refused.borrow_mut().push(MouseProblem {
+                setting: problem.setting.to_owned(),
+                message: problem.error.to_string(),
+            }),
+            Notice::Applied => status.report(refused.take()),
+            Notice::Button(_) => {}
+        }
         if let Notice::Button(event) = &notice {
             let configuration = current.borrow();
             dispatcher
@@ -399,6 +410,7 @@ fn log_notice(serial: &str, notice: Notice) {
             pressed = event.pressed,
             "mouse button"
         ),
+        Notice::Applied => tracing::debug!(%serial, "configuration applied"),
     }
 }
 
@@ -594,6 +606,7 @@ mod tests {
             &stop,
             |_, notice| match notice {
                 Notice::Problem(problem) => problems.push(problem.setting),
+                Notice::Applied => {}
                 Notice::Button(event) => {
                     let state = state(&shared);
                     events.push((event.pressed, state.dpi, state.diverted.len()));

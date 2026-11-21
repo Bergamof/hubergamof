@@ -2,7 +2,9 @@
 //! connected, the configuration of the radial menu, and the configuration of
 //! the one mouse it selected.
 
-use hubergamof_protocol::{ErrorCode, MouseConfig, MouseInfo, RadialMenuConfig, ServerMessage};
+use hubergamof_protocol::{
+    ErrorCode, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, ServerMessage,
+};
 use tokio::sync::watch;
 
 use super::errors::client_message;
@@ -28,6 +30,7 @@ impl Failure {
 struct Selected {
     serial: String,
     config: watch::Receiver<MouseConfig>,
+    status: watch::Receiver<Vec<MouseProblem>>,
 }
 
 /// One client's view of the mice.
@@ -79,7 +82,10 @@ impl MouseFeed {
     /// configuration.
     pub(super) fn select(&mut self, serial: &str) -> Result<ServerMessage, Failure> {
         self.selected = None;
-        let Some(mut config) = self.hub.subscribe_config(serial) else {
+        let (Some(mut config), Some(status)) = (
+            self.hub.subscribe_config(serial),
+            self.hub.subscribe_status(serial),
+        ) else {
             return Err(Failure::of(
                 ErrorCode::UnknownDevice,
                 "no connected mouse with this serial",
@@ -92,8 +98,16 @@ impl MouseFeed {
         self.selected = Some(Selected {
             serial: serial.to_owned(),
             config,
+            status,
         });
         Ok(message)
+    }
+
+    /// What the selected mouse refused of its configuration, to send after
+    /// the configuration itself; `None` without a selection.
+    pub(super) fn status(&mut self) -> Option<ServerMessage> {
+        let selected = self.selected.as_mut()?;
+        Some(status_message(selected))
     }
 
     /// Saves a configuration of a mouse and answers the author with the saved
@@ -147,26 +161,46 @@ impl MouseFeed {
     }
 }
 
-/// The next configuration of the selected mouse; the selection ends with the
-/// mouse. Never ready without a selection.
+fn status_message(selected: &mut Selected) -> ServerMessage {
+    ServerMessage::MouseStatus {
+        serial: selected.serial.clone(),
+        problems: selected.status.borrow_and_update().clone(),
+    }
+}
+
+/// The next change of the selected mouse (its configuration, or what it
+/// refused of it); the selection ends with the mouse. Never ready without a
+/// selection.
 ///
 /// A mouse registered again under its serial (it came back before the old
-/// entry was released) is followed again, and its configuration sent.
+/// entry was released) is followed again, and its configuration sent, its
+/// status following.
 async fn selected_change(hub: &MouseHub, selected: &mut Option<Selected>) -> Option<ServerMessage> {
     let Some(current) = selected else {
         return std::future::pending().await;
     };
-    if current.config.changed().await.is_err() {
-        let Some(config) = hub.subscribe_config(&current.serial) else {
-            *selected = None;
-            return None;
-        };
-        current.config = config;
+    tokio::select! {
+        config = current.config.changed() => {
+            if config.is_err() {
+                let (Some(config), Some(status)) = (
+                    hub.subscribe_config(&current.serial),
+                    hub.subscribe_status(&current.serial),
+                ) else {
+                    *selected = None;
+                    return None;
+                };
+                current.config = config;
+                current.status = status;
+                // What the new registration refused is told next.
+                current.status.mark_changed();
+            }
+            Some(ServerMessage::MouseConfig {
+                serial: current.serial.clone(),
+                config: current.config.borrow_and_update().clone(),
+            })
+        }
+        Ok(()) = current.status.changed() => Some(status_message(current)),
     }
-    Some(ServerMessage::MouseConfig {
-        serial: current.serial.clone(),
-        config: current.config.borrow_and_update().clone(),
-    })
 }
 
 /// What the author of an update is told: the configuration saved, and the
@@ -432,7 +466,8 @@ mod tests {
         let followed = loop {
             match feed.next_change().await {
                 Some(ServerMessage::MouseConfig { config, .. }) => break config,
-                Some(ServerMessage::Mice { .. }) => {}
+                // The status of the new registration comes after its configuration.
+                Some(ServerMessage::Mice { .. } | ServerMessage::MouseStatus { .. }) => {}
                 other => panic!("the new mouse is not followed: {other:?}"),
             }
         };

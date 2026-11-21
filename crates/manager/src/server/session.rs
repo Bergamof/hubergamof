@@ -240,10 +240,13 @@ impl Session {
                 return self.update_config(serial, config).await;
             }
             ClientMessage::SelectMouse { serial } => {
-                let selected = self.mouse.select(&serial);
-                return self
-                    .answer_mouse(selected.map(|message| vec![message]))
-                    .await;
+                // The configuration, then what the mouse refused of it.
+                let selected = self.mouse.select(&serial).map(|config| {
+                    let mut messages = vec![config];
+                    messages.extend(self.mouse.status());
+                    messages
+                });
+                return self.answer_mouse(selected).await;
             }
             ClientMessage::UpdateMouseConfig { serial, config } => {
                 let saved = self.mouse.update_mouse(serial, config).await;
