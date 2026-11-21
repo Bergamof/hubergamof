@@ -37,4 +37,14 @@ describe('DeviceSelector', () => {
 		await choice.selectOptions(STUDIO.displayName);
 		expect(onselect).toHaveBeenCalledExactlyOnceWith('STUDIO');
 	});
+
+	it('names what is chosen, so that mice are picked the same way', async () => {
+		await render(DeviceSelector, {
+			devices: [DESK, STUDIO],
+			selected: 'DESK',
+			label: 'Souris',
+			onselect: vi.fn()
+		});
+		await expect.element(page.getByRole('combobox', { name: 'Souris' })).toBeVisible();
+	});
 });

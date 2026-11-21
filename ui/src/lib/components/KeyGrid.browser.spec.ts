@@ -9,6 +9,8 @@ const CLOCK: CatalogModule = {
 	icon: null,
 	settingIcons: {},
 	defaultSettings: {},
+	radialActions: [],
+	hapticEvents: [],
 	kind: 'clock',
 	name: 'Horloge',
 	description: '',

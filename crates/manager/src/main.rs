@@ -24,7 +24,7 @@ use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
-use hubergamof_manager::mouse_hub::MouseHub;
+use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
 use hubergamof_manager::radial::{self, actions::ModuleActions, service::RadialService};
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
@@ -44,7 +44,8 @@ use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_mouse::diagnostics::{self, Action, parse_waveform};
 use hubergamof_protocol::CatalogModule;
 use hubergamof_protocol::{
-    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseModel, WHEEL_THRESHOLD_RANGE, WheelMode,
+    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseInfo, MouseModel, WHEEL_THRESHOLD_RANGE,
+    WheelMode,
 };
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -641,56 +642,106 @@ async fn run_manager(cli: Cli) -> Result<()> {
     outcome
 }
 
-/// The mouse hub, and the service of the mice with `--mice` and on real hardware only.
+/// The mouse hub, and the mice it lists: the real ones with `--mice`, a simulated one with `--demo`.
 fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
     engines: &EngineRegistry,
     haptics: &HapticRelay,
-) -> Result<(MouseHub, Option<MiceService>)> {
+) -> Result<(MouseHub, Mice)> {
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
-    let service = serves_mice(cli).then(|| {
-        // The events of the modules are played on the mice from now on.
-        haptics.connect(Arc::new(hub.clone()));
-        let locked = services.screen_lock.watch();
-        let actions = ButtonActions::uinput(locked.clone());
-        let menu = RadialService::start(
-            hub.subscribe_radial_menu(),
-            locked,
-            &tokio::runtime::Handle::current(),
-            {
-                let actions = actions.clone();
-                move || actions.nudge_pointer()
-            },
-            {
-                let module_actions = ModuleActions::new(
-                    engines.clone(),
-                    &tokio::runtime::Handle::current(),
-                    Arc::clone(&services.registry),
-                );
-                move |entry| {
-                    // The action runs on its own: the menu does not wait for it.
-                    let _ = module_actions.run(entry);
-                }
-            },
-            Arc::new(hub.clone()),
-        );
-        let actions = actions.with_radial(menu.handle());
-        let supervisor = MouseSupervisor::start(
-            HidrawSource,
-            services.store.clone(),
-            hub.clone(),
-            actions,
-            SCAN_INTERVAL,
-        );
-        MiceService { supervisor, menu }
-    });
-    Ok((hub, service))
+    let mice = if serves_mice(cli) {
+        Mice::Served(start_served_mice(&hub, services, engines, haptics))
+    } else if cli.demo {
+        Mice::Simulated {
+            _listed: register_simulated_mouse(&hub, &services.store)?,
+        }
+    } else {
+        Mice::None
+    };
+    Ok((hub, mice))
+}
+
+/// Serves the mice found on the hardware, and the radial menu their button opens.
+fn start_served_mice(
+    hub: &MouseHub,
+    services: &EngineServices,
+    engines: &EngineRegistry,
+    haptics: &HapticRelay,
+) -> MiceService {
+    // The events of the modules are played on the mice from now on.
+    haptics.connect(Arc::new(hub.clone()));
+    let locked = services.screen_lock.watch();
+    let actions = ButtonActions::uinput(locked.clone());
+    let menu = RadialService::start(
+        hub.subscribe_radial_menu(),
+        locked,
+        &tokio::runtime::Handle::current(),
+        {
+            let actions = actions.clone();
+            move || actions.nudge_pointer()
+        },
+        {
+            let module_actions = ModuleActions::new(
+                engines.clone(),
+                &tokio::runtime::Handle::current(),
+                Arc::clone(&services.registry),
+            );
+            move |entry| {
+                // The action runs on its own: the menu does not wait for it.
+                let _ = module_actions.run(entry);
+            }
+        },
+        Arc::new(hub.clone()),
+    );
+    let actions = actions.with_radial(menu.handle());
+    let supervisor = MouseSupervisor::start(
+        HidrawSource,
+        services.store.clone(),
+        hub.clone(),
+        actions,
+        SCAN_INTERVAL,
+    );
+    MiceService { supervisor, menu }
+}
+
+/// Serial of the mouse `--demo` lists.
+const SIMULATED_MOUSE_SERIAL: &str = "demo-mx-master-4";
+
+/// Lists a mouse that does not exist, for the interface to configure: the
+/// configuration is saved as for a real one, nothing is ever sent to a device.
+fn register_simulated_mouse(hub: &MouseHub, store: &ConfigStore) -> Result<MouseRegistration> {
+    let model = MouseModel::MxMaster4;
+    let config = store
+        .load_mouse(SIMULATED_MOUSE_SERIAL, model)
+        .context("cannot load the simulated mouse configuration")?
+        .config;
+    Ok(hub.register(
+        MouseInfo {
+            serial: SIMULATED_MOUSE_SERIAL.to_owned(),
+            model,
+            display_name: model.display_name().to_owned(),
+            capabilities: model.capabilities(),
+        },
+        config,
+    ))
 }
 
 /// `--demo` never touches the hardware, whatever else is asked.
 fn serves_mice(cli: &Cli) -> bool {
     cli.mice && !cli.demo
+}
+
+/// The mice the hub lists, and what keeps them so.
+enum Mice {
+    None,
+    /// The mice found on the hardware.
+    Served(MiceService),
+    /// The simulated mouse of `--demo`, listed while the registration lives.
+    Simulated {
+        /// Dropped with the manager, which takes the mouse off the list.
+        _listed: MouseRegistration,
+    },
 }
 
 /// The mice being served and the radial menu their button opens.
@@ -701,8 +752,8 @@ struct MiceService {
 
 /// Gives the buttons of the mice back and stops serving them, then closes the
 /// menu (a button held at that moment cancels it).
-async fn stop_mice(mice: Option<MiceService>) {
-    if let Some(MiceService { supervisor, menu }) = mice {
+async fn stop_mice(mice: Mice) {
+    if let Mice::Served(MiceService { supervisor, menu }) = mice {
         supervisor.shutdown().await;
         // Stopping the menu waits for its threads: not on the async workers.
         if let Err(error) = tokio::task::spawn_blocking(move || drop(menu)).await {
@@ -1207,6 +1258,35 @@ mod tests {
     #[test]
     fn invalid_dev_origin_is_rejected() {
         assert!(Cli::try_parse_from(["hubergamof", "--dev-origin", "localhost:5173"]).is_err());
+    }
+
+    #[test]
+    fn the_demo_lists_a_simulated_mouse_that_can_be_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConfigStore::new(
+            dir.path(),
+            Arc::new(builtin_registry_with(builtin_services(true))),
+        );
+        let hub = MouseHub::new(store.clone()).unwrap();
+        let listed = register_simulated_mouse(&hub, &store).unwrap();
+        let mice = hub.mice();
+        assert_eq!(mice.len(), 1);
+        assert_eq!(mice[0].serial, SIMULATED_MOUSE_SERIAL);
+        assert_eq!(mice[0].model, MouseModel::MxMaster4);
+        let mut config = store
+            .load_mouse(SIMULATED_MOUSE_SERIAL, MouseModel::MxMaster4)
+            .unwrap()
+            .config;
+        config.pointer.dpi = 800;
+        let saved = hub.update_mouse(SIMULATED_MOUSE_SERIAL, config).unwrap();
+        assert_eq!(saved.pointer.dpi, 800);
+        drop(listed);
+        assert_eq!(hub.mice().len(), 0);
+        // The next run of the demo finds what the interface saved.
+        let again = register_simulated_mouse(&hub, &store).unwrap();
+        let mut updates = hub.subscribe_config(SIMULATED_MOUSE_SERIAL).unwrap();
+        assert_eq!(updates.borrow_and_update().pointer.dpi, 800);
+        drop(again);
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::ModuleDescriptor;
+use crate::{HapticEventDescriptor, ModuleDescriptor, RadialActionDescriptor};
 
 /// A module kind the user can configure, with the image standing for it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -26,4 +26,9 @@ pub struct CatalogModule {
     /// Settings of a new instance, as the module chooses them (usually the
     /// default of every field, but a module may compute its own).
     pub default_settings: Value,
+    /// What the module offers to the radial menu of the mice, first action
+    /// first (the one a click on its petal runs by default).
+    pub radial_actions: Vec<RadialActionDescriptor>,
+    /// The events of the module a haptic mouse can signal.
+    pub haptic_events: Vec<HapticEventDescriptor>,
 }

@@ -29,6 +29,8 @@ pub fn module_catalog(registry: &ModuleRegistry, renderer: &Renderer) -> Arc<[Ca
                 icon,
                 setting_icons,
                 default_settings: factory.default_settings(),
+                radial_actions: factory.radial_actions(),
+                haptic_events: factory.haptic_events(),
             }
         })
         .collect()
@@ -72,6 +74,8 @@ mod tests {
         ModuleFactory,
     };
     use serde_json::Value;
+
+    use hubergamof_protocol::HapticWaveform;
 
     use super::*;
 
@@ -163,6 +167,34 @@ mod tests {
             let factory = registry.get(&module.descriptor.kind).unwrap();
             assert_eq!(module.default_settings, factory.default_settings());
         }
+    }
+
+    #[test]
+    fn the_catalog_carries_what_modules_offer_to_the_mice() {
+        let registry = crate::testing::builtin_registry();
+        let catalog = module_catalog(&registry, &Renderer::new().unwrap());
+        let module = |kind: &str| {
+            catalog
+                .iter()
+                .find(|module| module.descriptor.kind.0 == kind)
+                .unwrap()
+        };
+        let pomodoro = module("pomodoro");
+        assert!(
+            pomodoro
+                .radial_actions
+                .iter()
+                .any(|action| action.id == "toggle")
+        );
+        let step_end = pomodoro
+            .haptic_events
+            .iter()
+            .find(|event| event.id == "step-end")
+            .unwrap();
+        assert_eq!(step_end.waveform, HapticWaveform::Completed);
+        let docker = module("docker");
+        assert_eq!(docker.radial_actions, []);
+        assert_eq!(docker.haptic_events, []);
     }
 
     #[test]

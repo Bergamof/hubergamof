@@ -26,7 +26,9 @@ const audio: CatalogModule = {
 	settings: [],
 	icon: null,
 	settingIcons: {},
-	defaultSettings: {}
+	defaultSettings: {},
+	radialActions: [],
+	hapticEvents: []
 };
 
 describe('dial options', () => {

@@ -21,6 +21,8 @@ const POMODORO: CatalogModule = {
 	icon: null,
 	settingIcons: {},
 	defaultSettings: { workMinutes: 25, sound: false },
+	radialActions: [],
+	hapticEvents: [],
 	settings: [
 		{
 			key: 'workMinutes',
@@ -45,6 +47,8 @@ const DOCKER: CatalogModule = {
 	kind: 'docker',
 	name: 'Docker',
 	defaultSettings: { files: [] },
+	radialActions: [],
+	hapticEvents: [],
 	settings: [
 		{
 			key: 'files',

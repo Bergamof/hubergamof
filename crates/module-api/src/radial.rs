@@ -16,9 +16,7 @@ use serde::{Deserialize, Serialize};
 /// display therefore changes that default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-// Not exported to TypeScript yet: the contract does not carry it. It will be
-// once the catalog sends the actions to the configuration interface.
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[non_exhaustive]
 pub struct RadialActionDescriptor {
     /// Identifier, passed back to the module when the action runs: letters,

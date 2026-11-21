@@ -4,10 +4,10 @@
 
 use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
-    DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode, ImageSize,
-    InstallSupport, KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor,
-    ModuleInstance, PageView, ServerMessage, SettingField, SettingKind, StripConfig,
-    UpdateSettings, UpdateStatus,
+    DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode,
+    HapticEventDescriptor, HapticWaveform, ImageSize, InstallSupport, KeyState, KeyView, LiveState,
+    ModuleCapabilities, ModuleDescriptor, ModuleInstance, PageView, RadialActionDescriptor,
+    ServerMessage, SettingField, SettingKind, StripConfig, UpdateSettings, UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -116,6 +116,17 @@ fn catalog_module_without_icon() {
             icon: None,
             setting_icons: std::collections::BTreeMap::new(),
             default_settings: json!({}),
+            radial_actions: vec![RadialActionDescriptor::new(
+                "mute",
+                "Couper",
+                "Coupe le son",
+            )],
+            haptic_events: vec![HapticEventDescriptor::new(
+                "muted",
+                "Son coupé",
+                "Quand le son est coupé",
+                HapticWaveform::SharpStateChange,
+            )],
         },
         &json!({
             "kind": "audio",
@@ -130,7 +141,14 @@ fn catalog_module_without_icon() {
             "settings": [],
             "icon": null,
             "settingIcons": {},
-            "defaultSettings": {}
+            "defaultSettings": {},
+            "radialActions": [{ "id": "mute", "name": "Couper", "description": "Coupe le son" }],
+            "hapticEvents": [{
+                "id": "muted",
+                "name": "Son coupé",
+                "description": "Quand le son est coupé",
+                "waveform": "sharpStateChange"
+            }]
         }),
     );
 }
@@ -397,6 +415,8 @@ fn server_module_catalog() {
                     "data:image/png;base64,Ag==".to_owned(),
                 )]),
                 default_settings: json!({ "workMinutes": 25, "target": "sink" }),
+                radial_actions: Vec::new(),
+                haptic_events: Vec::new(),
             }],
         },
         &json!({
@@ -427,7 +447,9 @@ fn server_module_catalog() {
                 ],
                 "icon": "data:image/png;base64,AA==",
                 "settingIcons": { "files": "data:image/png;base64,Ag==" },
-                "defaultSettings": { "workMinutes": 25, "target": "sink" }
+                "defaultSettings": { "workMinutes": 25, "target": "sink" },
+                "radialActions": [],
+                "hapticEvents": []
             }]
         }),
     );

@@ -1,40 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-	ClientMessage,
-	DeviceConfig,
-	DeviceInfo,
-	ServerMessage
-} from '#lib/generated/index.js';
+import type { DeviceConfig, DeviceInfo } from '#lib/generated/index.js';
 import { addKey, removeKey, setBrightness } from './config-edits.js';
-import { DeckState, UPDATE_TIMEOUT_MS, type DeckConnection } from './deck-state.svelte.js';
+import { DeckState, UPDATE_TIMEOUT_MS } from './deck-state.svelte.js';
 import type { DevicePreference } from './device-preference.js';
-
-class FakeConnection implements DeckConnection {
-	readonly sent: ClientMessage[] = [];
-	open = true;
-	#listener: ((message: ServerMessage) => void) | undefined;
-
-	send(message: ClientMessage): boolean {
-		if (!this.open) return false;
-		this.sent.push(message);
-		return true;
-	}
-
-	onMessage(listener: (message: ServerMessage) => void): () => void {
-		this.#listener = listener;
-		return () => {
-			this.#listener = undefined;
-		};
-	}
-
-	receive(message: ServerMessage): void {
-		this.#listener?.(message);
-	}
-
-	lastSent(): ClientMessage | undefined {
-		return this.sent.at(-1);
-	}
-}
+import { FakeConnection } from './fake-connection.js';
 
 class MemoryPreference implements DevicePreference {
 	constructor(public serial: string | null = null) {}
@@ -175,7 +144,9 @@ describe('device selection', () => {
 			settings: [],
 			icon: null,
 			settingIcons: {},
-			defaultSettings: {}
+			defaultSettings: {},
+			radialActions: [],
+			hapticEvents: []
 		};
 		connection.receive({ type: 'moduleCatalog', modules: [audio] });
 		expect(state.moduleOf('audio')).toEqual(audio);
@@ -252,7 +223,9 @@ describe('configuration updates', () => {
 			settings: [],
 			icon: null,
 			settingIcons: {},
-			defaultSettings: {}
+			defaultSettings: {},
+			radialActions: [],
+			hapticEvents: []
 		};
 		state.edit(addKey(clock));
 		state.edit(addKey(clock));
