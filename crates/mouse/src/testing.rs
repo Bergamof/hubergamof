@@ -196,8 +196,18 @@ impl FakeDevice {
     }
 
     pub fn with_mute_function(mut self, feature: u16, function: u8) -> Self {
-        self.mute.push((feature, function));
+        self.mute_function(feature, function);
         self
+    }
+
+    /// From now on, `function` of `feature` gets no answer.
+    pub fn mute_function(&mut self, feature: u16, function: u8) {
+        self.mute.push((feature, function));
+    }
+
+    /// From now on, every function answers again.
+    pub fn unmute(&mut self) {
+        self.mute.clear();
     }
 
     /// Whether the device stays silent when asked for `function` of the feature at `index`.
@@ -412,6 +422,14 @@ impl FakeLink {
     pub fn device_at(&self, index: u8) -> Option<&FakeDevice> {
         self.devices
             .iter()
+            .find(|(at, _)| *at == index)
+            .map(|(_, device)| device)
+    }
+
+    /// The device at `index`, to change while a session owns the link.
+    pub fn device_at_mut(&mut self, index: u8) -> Option<&mut FakeDevice> {
+        self.devices
+            .iter_mut()
             .find(|(at, _)| *at == index)
             .map(|(_, device)| device)
     }

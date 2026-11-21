@@ -116,3 +116,5 @@ Relevé du 2026-11-21 (`mouse-test events`, MX Master 4 éteinte puis rallumée 
 
 Traitement (`MouseSession::link_changed`) : un lien perdu rend les boutons tenus (la souris éteinte ne dira plus rien) ; un lien rétabli remet la configuration en attente d'application complète (les détournements ne survivent pas à une extinction, hypothèse à confirmer en essayant un bouton détourné après avoir rallumé la souris). Vérifié sur le matériel (2026-11-21) : une souris rallumée retrouve ses boutons détournés.
 
+
+Relevé du 2026-11-21 (`mouse-test events`, interrupteur des deux souris derrière le Bolt) : **aucune trame à l'extinction** ; à l'allumage, deux notifications longues de la souris (`11 0N 04 00 01 01 01 …` puis `11 0N 09 00 19 02 …` sur la MX Master 4, `… 1E 02 …` sur la 3S ; non exploitées). L'extinction se découvre donc par un ping resté sans réponse (la session en envoie un toutes les 3 s).

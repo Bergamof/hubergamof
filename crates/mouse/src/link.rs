@@ -574,6 +574,20 @@ impl<C: Channel> MouseLink<C> {
         }
     }
 
+    /// Whether the mouse answers one ping now, without waiting for a sleeper
+    /// as [`MouseLink::wake`] does. A receiver that says there is no such
+    /// device any more (a mouse switched off) counts as no answer.
+    ///
+    /// # Errors
+    /// [`HidppError::Channel`] when the interface fails.
+    pub fn answers(&mut self) -> Result<bool, HidppError> {
+        match ping_attempts(&mut self.hidpp, self.device, 1) {
+            Ok(_) | Err(Miss::WrongEcho) => Ok(true),
+            Err(Miss::Silent { .. } | Miss::Refused(_)) => Ok(false),
+            Err(Miss::Interface(message)) => Err(HidppError::Channel(ChannelError(message))),
+        }
+    }
+
     /// The mouse's own id of a control, `None` for one that is not a button of
     /// this model.
     fn button_cid(&self, control: MouseControlId) -> Result<u16, HidppError> {
