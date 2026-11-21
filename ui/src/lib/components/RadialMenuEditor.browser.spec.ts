@@ -58,8 +58,12 @@ describe('RadialMenuEditor', () => {
 
 	it('moves an entry, except past the ends of the list', async () => {
 		const { last } = await renderMenu();
-		await expect.element(page.getByRole('button', { name: 'Monter : Pomodoro' })).toBeDisabled();
-		await expect.element(page.getByRole('button', { name: 'Descendre : IntelliJ' })).toBeDisabled();
+		await expect
+			.element(page.getByRole('button', { name: 'Monter : Pomodoro' }))
+			.toHaveAttribute('aria-disabled', 'true');
+		await expect
+			.element(page.getByRole('button', { name: 'Descendre : IntelliJ' }))
+			.toHaveAttribute('aria-disabled', 'true');
 		await page.getByRole('button', { name: 'Descendre : Pomodoro' }).click();
 		expect(last().entries.map((entry) => entry.module)).toEqual([
 			'audio',
@@ -87,7 +91,10 @@ describe('RadialMenuEditor', () => {
 	it('does not let the menu fall under the fewest entries', async () => {
 		await renderMenu(radialMenu({ entries: radialMenu().entries.slice(0, 3) }));
 		await expect.element(page.getByRole('checkbox', { name: 'Pomodoro' })).toBeDisabled();
-		await expect.element(page.getByRole('button', { name: 'Retirer : Pomodoro' })).toBeDisabled();
+		await expect
+			.element(page.getByRole('button', { name: 'Retirer : Pomodoro' }))
+			.toHaveAttribute('aria-disabled', 'true');
+		await expect.element(page.getByText(/Minimum atteint/)).toBeVisible();
 	});
 
 	it('does not let the menu go over the most entries', async () => {
@@ -105,7 +112,10 @@ describe('RadialMenuEditor', () => {
 			})
 		);
 		await expect.element(page.getByRole('checkbox', { name: 'extra' })).toBeDisabled();
-		await expect.element(page.getByRole('button', { name: 'Ajouter' })).toBeDisabled();
+		await expect
+			.element(page.getByRole('button', { name: 'Ajouter' }))
+			.toHaveAttribute('aria-disabled', 'true');
+		await expect.element(page.getByText(/Maximum atteint/)).toBeVisible();
 	});
 
 	it('adds a module that offers actions and is not listed yet', async () => {
@@ -150,5 +160,56 @@ describe('RadialMenuEditor', () => {
 		await page.getByRole('checkbox', { name: /Vibrations du menu/ }).click();
 		expect(last().haptics).toBe(false);
 		expect(mouseConfig().serial).toBe('mx-1');
+	});
+
+	it('adds the module chosen when several are not listed', async () => {
+		const { last } = await renderMenu(
+			radialMenu({ entries: radialMenu().entries.filter((entry) => entry.module !== 'audio') })
+		);
+		await page.getByLabelText('Ajouter un module').selectOptions('audio');
+		await page.getByRole('button', { name: 'Ajouter' }).click();
+		expect(last().entries.at(-1)?.module).toBe('audio');
+	});
+
+	it('names a module the catalog no longer has by its identifier', async () => {
+		await renderMenu(
+			radialMenu({
+				entries: [
+					...radialMenu().entries,
+					{ module: 'gone', enabled: false, primary: { kind: 'close' } }
+				]
+			})
+		);
+		await expect.element(page.getByRole('button', { name: 'Monter : gone' })).toBeVisible();
+		await expect.element(page.getByLabelText('Action du clic sur : gone')).toHaveValue('');
+	});
+
+	it('announces a move and keeps the button, inactive at the end of the list', async () => {
+		const { onedit } = await renderMenu();
+		// Playwright treats aria-disabled as disabled: forced, like a person pressing it.
+		await page.getByRole('button', { name: 'Monter : Pomodoro' }).click({ force: true });
+		expect(onedit).not.toHaveBeenCalled();
+		await page.getByRole('button', { name: 'Descendre : Pomodoro' }).click();
+		await expect.element(page.getByText('Pomodoro : position 2 sur 4.')).toBeInTheDocument();
+	});
+
+	it('does not remove the entry that keeps the menu at its minimum', async () => {
+		const { onedit } = await renderMenu(radialMenu({ entries: radialMenu().entries.slice(0, 3) }));
+		await page.getByRole('button', { name: 'Retirer : Pomodoro' }).click({ force: true });
+		expect(onedit).not.toHaveBeenCalled();
+	});
+
+	it('moves the focus to the list once an entry is removed', async () => {
+		const { onedit } = await renderMenu(
+			radialMenu({
+				entries: [
+					...radialMenu().entries,
+					{ module: 'x', enabled: false, primary: { kind: 'close' } }
+				]
+			})
+		);
+		await page.getByRole('button', { name: 'Retirer : x' }).click();
+		expect(onedit).toHaveBeenCalledOnce();
+		await expect.element(page.getByRole('list', { name: 'Entrées du menu' })).toHaveFocus();
 	});
 });

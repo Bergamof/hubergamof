@@ -132,6 +132,7 @@ and right click) is only named. Changes are sent at once; `null` gives the contr
 	{#if !locked && (action?.kind === 'shortcut' || pending)}
 		<ShortcutInput
 			label="Raccourci de : {label}"
+			focusOnMount={pending}
 			value={action?.kind === 'shortcut' ? action.keys : ''}
 			onchange={(keys) => {
 				pending = false;

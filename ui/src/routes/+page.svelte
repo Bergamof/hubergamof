@@ -124,7 +124,7 @@
 			{/if}
 			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline}>
 				{#if hasDecks && hasMice}
-					<nav aria-label="Appareils à configurer" class="flex gap-2">
+					<div role="group" aria-label="Appareils à configurer" class="flex gap-2">
 						{#each SECTIONS as choice (choice.value)}
 							<button
 								type="button"
@@ -134,13 +134,13 @@
 										? 'border-accent bg-accent text-on-accent'
 										: 'border-line bg-surface text-muted'
 								]}
-								aria-current={section === choice.value ? 'page' : undefined}
+								aria-pressed={section === choice.value}
 								onclick={() => (wanted = choice.value)}
 							>
 								{choice.label}
 							</button>
 						{/each}
-					</nav>
+					</div>
 				{/if}
 				{#if section === 'mouse' && deck.mice.mouse && deck.mice.config}
 					<DeviceSelector

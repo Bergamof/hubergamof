@@ -1,29 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import { DeckState, type DeckConnection } from '#lib/deck/deck-state.svelte.js';
-import type { ClientMessage, MouseInfo, ServerMessage } from '#lib/generated/index.js';
+import { DeckState } from '#lib/deck/deck-state.svelte.js';
+import type { MouseInfo } from '#lib/generated/index.js';
 import MouseEditor from './MouseEditor.svelte';
 import { CATALOG, mouseConfig, mouseInfo, radialMenu } from './mouse-fixtures.js';
-
-class FakeConnection implements DeckConnection {
-	readonly sent: ClientMessage[] = [];
-	#listener: ((message: ServerMessage) => void) | undefined;
-
-	send(message: ClientMessage): boolean {
-		this.sent.push(message);
-		return true;
-	}
-
-	onMessage(listener: (message: ServerMessage) => void): () => void {
-		this.#listener = listener;
-		return () => (this.#listener = undefined);
-	}
-
-	receive(message: ServerMessage): void {
-		this.#listener?.(message);
-	}
-}
+import { FakeConnection } from '#lib/deck/fake-connection.js';
 
 /** A state following one mouse, its configuration and the menu (unless `withMenu` is false). */
 function connected(mouse: MouseInfo, withMenu = true) {
@@ -70,7 +52,7 @@ describe('MouseEditor', () => {
 	it('sends a change at once and says when the manager has saved it', async () => {
 		const { connection } = await renderEditor();
 		await page.getByLabelText('Action de : Bouton arrière').selectOptions('doubleClick');
-		await expect.element(page.getByText('Enregistrement…')).toBeVisible();
+		await expect.element(page.getByText('Enregistrement…').first()).toBeVisible();
 		expect(connection.sent.at(-1)).toMatchObject({
 			type: 'updateMouseConfig',
 			serial: 'mx-1',
@@ -81,14 +63,14 @@ describe('MouseEditor', () => {
 			serial: 'mx-1',
 			config: mouseConfig({ bindings: { back: { kind: 'doubleClick' } }, revision: 1 })
 		});
-		await expect.element(page.getByText('Modifications enregistrées.')).toBeVisible();
+		await expect.element(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 	});
 
 	it('says when a change was refused', async () => {
 		const { connection } = await renderEditor();
 		await page.getByLabelText('Force des vibrations').selectOptions('high');
 		connection.receive({ type: 'error', code: 'invalidConfig', message: 'refused' });
-		await expect.element(page.getByText('Dernière modification refusée.')).toBeVisible();
+		await expect.element(page.getByText('Dernière modification refusée.').first()).toBeVisible();
 	});
 
 	it('sends a change of the radial menu', async () => {

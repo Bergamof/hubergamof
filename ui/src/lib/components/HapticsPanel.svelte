@@ -58,15 +58,21 @@ the way its module made it. Every change is applied at once.
 			id="{uid}-level"
 			class="field w-auto self-start"
 			value={haptics.level}
+			aria-describedby="{uid}-level-hint"
 			onchange={(event) => onlevel(event.currentTarget.value as HapticLevel)}
 		>
 			{#each HAPTIC_LEVELS as level (level.value)}
 				<option value={level.value}>{level.label}</option>
 			{/each}
 		</select>
-		<p class="text-sm text-muted">
+		<p id="{uid}-level-hint" class="text-sm text-muted">
 			« Aucune vibration » coupe tout sur cette souris, y compris le menu circulaire.
 		</p>
+		{#if haptics.level === 'off'}
+			<p class="text-sm font-medium">
+				Les vibrations sont coupées : les réglages ci-dessous restent enregistrés mais sans effet.
+			</p>
+		{/if}
 	</div>
 
 	{#each modules as module (module.kind)}

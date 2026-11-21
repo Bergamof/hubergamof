@@ -1,37 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
-	ClientMessage,
+	DeviceConfig,
+	DeviceInfo,
 	MouseConfig,
 	MouseInfo,
-	RadialMenuConfig,
-	ServerMessage
+	RadialMenuConfig
 } from '#lib/generated/index.js';
-import { DeckState, UPDATE_TIMEOUT_MS, type DeckConnection } from './deck-state.svelte.js';
+import { DeckState, UPDATE_TIMEOUT_MS } from './deck-state.svelte.js';
 import type { DevicePreference } from './device-preference.js';
+import { setBrightness } from './config-edits.js';
 import { setDpi, setHoldMs } from './mouse-edits.js';
-
-class FakeConnection implements DeckConnection {
-	readonly sent: ClientMessage[] = [];
-	open = true;
-	#listener: ((message: ServerMessage) => void) | undefined;
-
-	send(message: ClientMessage): boolean {
-		if (!this.open) return false;
-		this.sent.push(message);
-		return true;
-	}
-
-	onMessage(listener: (message: ServerMessage) => void): () => void {
-		this.#listener = listener;
-		return () => {
-			this.#listener = undefined;
-		};
-	}
-
-	receive(message: ServerMessage): void {
-		this.#listener?.(message);
-	}
-}
+import { FakeConnection } from './fake-connection.js';
 
 const NO_PREFERENCE: DevicePreference = { load: () => null, save: () => undefined };
 
@@ -173,4 +152,108 @@ describe('MouseState', () => {
 		connection.receive({ type: 'hello', version: '1' });
 		await expect(outcome).resolves.toMatchObject({ saved: false });
 	});
+
+	it('fails what waits for a mouse that is no longer followed', async () => {
+		const { connection, mice } = setup();
+		connection.receive({ type: 'mice', mice: [mouse('a'), mouse('b')] });
+		connection.receive({ type: 'mouseConfig', serial: 'a', config: mouseConfig('a', 0) });
+		const inFlight = mice.edit(setDpi(800), { notify: false });
+		const queued = mice.edit(setDpi(900), { notify: false });
+		mice.select('b');
+		await expect(inFlight).resolves.toMatchObject({ saved: false });
+		await expect(queued).resolves.toMatchObject({ saved: false });
+		expect(mice.config).toBeUndefined();
+	});
+
+	it('fails what waits for a mouse that went away, and takes it back when it returns', async () => {
+		const { connection, mice } = setup();
+		connection.receive({ type: 'mice', mice: [mouse('a')] });
+		connection.receive({ type: 'mouseConfig', serial: 'a', config: mouseConfig('a', 0) });
+		const outcome = mice.edit(setDpi(800), { notify: false });
+		connection.receive({ type: 'mice', mice: [] });
+		await expect(outcome).resolves.toMatchObject({ saved: false });
+		connection.receive({ type: 'mice', mice: [mouse('a')] });
+		expect(connection.sent.at(-1)).toEqual({ type: 'selectMouse', serial: 'a' });
+		connection.receive({ type: 'mouseConfig', serial: 'a', config: mouseConfig('a', 3) });
+		void mice.edit(setDpi(700));
+		expect(connection.sent.at(-1)).toMatchObject({ type: 'updateMouseConfig' });
+	});
+
+	it('ignores the configuration a mouse sends after another one was chosen', () => {
+		const { connection, mice } = setup();
+		connection.receive({ type: 'mice', mice: [mouse('a'), mouse('b')] });
+		mice.select('b');
+		connection.receive({ type: 'mouseConfig', serial: 'a', config: mouseConfig('a', 9) });
+		expect(mice.config).toBeUndefined();
+	});
+
+	it('keeps the radial menu edit when the mouse goes away', async () => {
+		const { connection, mice } = setup();
+		connection.receive({ type: 'radialMenu', config: radialMenu(0) });
+		connection.receive({ type: 'mice', mice: [mouse('a')] });
+		const outcome = mice.editRadialMenu(setHoldMs(300));
+		connection.receive({ type: 'mice', mice: [] });
+		connection.receive({ type: 'radialMenu', config: radialMenu(1, 300) });
+		await expect(outcome).resolves.toEqual({ saved: true });
+	});
+
+	it('shows one notice when an error answers the deck and the mice at once', async () => {
+		const { connection, mice, state } = setup();
+		connection.receive({ type: 'devices', devices: [device('d')] });
+		connection.receive({ type: 'config', serial: 'd', config: deckConfig('d', 0) });
+		connection.receive({ type: 'mice', mice: [mouse('a')] });
+		connection.receive({ type: 'mouseConfig', serial: 'a', config: mouseConfig('a', 0) });
+		const deckOutcome = state.edit(setBrightness(10), { notify: false });
+		const mouseOutcome = mice.edit(setDpi(800), { notify: false });
+		connection.receive({ type: 'error', code: 'internal', message: 'boom' });
+		await expect(deckOutcome).resolves.toMatchObject({ saved: false });
+		await expect(mouseOutcome).resolves.toMatchObject({ saved: false });
+		expect(state.notices).toHaveLength(1);
+	});
+
+	it('fails the edits of the menu and of the mouse when the connection starts over', async () => {
+		const { connection, mice } = setup();
+		connection.receive({ type: 'radialMenu', config: radialMenu(0) });
+		const outcome = mice.editRadialMenu(setHoldMs(300), { notify: false });
+		connection.receive({ type: 'hello', version: '1' });
+		await expect(outcome).resolves.toMatchObject({ saved: false });
+		expect(mice.pending).toBe(false);
+	});
 });
+
+function device(serial: string): DeviceInfo {
+	return {
+		serial,
+		model: 'plus',
+		displayName: `Stream Deck+ ${serial}`,
+		capabilities: {
+			keyColumns: 4,
+			keyRows: 2,
+			keyImageSize: { width: 120, height: 120 },
+			dialCount: 4,
+			touchStrip: { width: 800, height: 100 }
+		}
+	};
+}
+
+function deckConfig(serial: string, revision: number): DeviceConfig {
+	return {
+		schemaVersion: 3,
+		serial,
+		model: 'plus',
+		brightness: 50,
+		lockSleepSeconds: 5,
+		home: [],
+		modules: [],
+		dials: [{ kind: 'none' }, { kind: 'none' }, { kind: 'none' }, { kind: 'none' }],
+		strip: {
+			showSeconds: true,
+			showPomodoroProgress: true,
+			systemRefreshSeconds: 2,
+			showHistory: true,
+			loadAlertPercent: 85
+		},
+		theme: 'light',
+		revision
+	};
+}

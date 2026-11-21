@@ -130,13 +130,16 @@ export class EditQueue<C extends { revision: number }> {
 		this.dropPending(this.#host.gone);
 	}
 
-	/** Drops the update in flight and the queued edits, all failed with `problem`. */
-	dropPending(problem: Problem): void {
+	/**
+	 * Drops the update in flight and the queued edits, all failed with `problem`, shown as a
+	 * notice unless `silent` (the caller shows it once for several queues).
+	 */
+	dropPending(problem: Problem, { silent = false }: { silent?: boolean } = {}): void {
 		const waiters: Waiter[] = [...(this.#inFlight?.waiters ?? []), ...this.#queued];
 		clearTimeout(this.#inFlight?.timer);
 		this.#inFlight = undefined;
 		this.#queued = [];
-		this.#fail(waiters, problem);
+		this.#fail(waiters, problem, silent);
 	}
 
 	#sendQueued(base: C): void {
@@ -159,8 +162,8 @@ export class EditQueue<C extends { revision: number }> {
 	}
 
 	/** Settles the waiters as failed, with one notice if any of them wants it. */
-	#fail(waiters: readonly Waiter[], problem: Problem): void {
+	#fail(waiters: readonly Waiter[], problem: Problem, silent = false): void {
 		for (const waiter of waiters) waiter.settle({ saved: false, problem });
-		if (waiters.some((waiter) => waiter.notify)) this.#host.report(problem);
+		if (!silent && waiters.some((waiter) => waiter.notify)) this.#host.report(problem);
 	}
 }

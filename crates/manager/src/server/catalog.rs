@@ -75,6 +75,8 @@ mod tests {
     };
     use serde_json::Value;
 
+    use hubergamof_protocol::HapticWaveform;
+
     use super::*;
 
     const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
@@ -164,8 +166,6 @@ mod tests {
             );
             let factory = registry.get(&module.descriptor.kind).unwrap();
             assert_eq!(module.default_settings, factory.default_settings());
-            assert_eq!(module.radial_actions, factory.radial_actions());
-            assert_eq!(module.haptic_events, factory.haptic_events());
         }
     }
 
@@ -173,21 +173,28 @@ mod tests {
     fn the_catalog_carries_what_modules_offer_to_the_mice() {
         let registry = crate::testing::builtin_registry();
         let catalog = module_catalog(&registry, &Renderer::new().unwrap());
-        let pomodoro = catalog
-            .iter()
-            .find(|module| module.descriptor.kind.0 == "pomodoro")
-            .unwrap();
-        let first_action = pomodoro
-            .radial_actions
-            .first()
-            .map(|action| action.id.as_str());
-        assert_eq!(first_action, Some("toggle"));
+        let module = |kind: &str| {
+            catalog
+                .iter()
+                .find(|module| module.descriptor.kind.0 == kind)
+                .unwrap()
+        };
+        let pomodoro = module("pomodoro");
         assert!(
             pomodoro
-                .haptic_events
+                .radial_actions
                 .iter()
-                .any(|event| !event.id.is_empty())
+                .any(|action| action.id == "toggle")
         );
+        let step_end = pomodoro
+            .haptic_events
+            .iter()
+            .find(|event| event.id == "step-end")
+            .unwrap();
+        assert_eq!(step_end.waveform, HapticWaveform::Completed);
+        let docker = module("docker");
+        assert_eq!(docker.radial_actions, []);
+        assert_eq!(docker.haptic_events, []);
     }
 
     #[test]

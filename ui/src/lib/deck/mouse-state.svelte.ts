@@ -80,9 +80,9 @@ export class MouseState {
 	}
 
 	/** Drops what waits for an answer, failed with `problem`. */
-	dropPending(problem: Problem): void {
-		this.#mouseEdits.dropPending(problem);
-		this.#radialEdits.dropPending(problem);
+	dropPending(problem: Problem, options: { silent?: boolean } = {}): void {
+		this.#mouseEdits.dropPending(problem, options);
+		this.#radialEdits.dropPending(problem, options);
 	}
 
 	/** Takes the mouse messages; the others are not its business. */

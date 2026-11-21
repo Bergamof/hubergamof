@@ -1282,6 +1282,11 @@ mod tests {
         assert_eq!(saved.pointer.dpi, 800);
         drop(listed);
         assert_eq!(hub.mice().len(), 0);
+        // The next run of the demo finds what the interface saved.
+        let again = register_simulated_mouse(&hub, &store).unwrap();
+        let mut updates = hub.subscribe_config(SIMULATED_MOUSE_SERIAL).unwrap();
+        assert_eq!(updates.borrow_and_update().pointer.dpi, 800);
+        drop(again);
     }
 
     #[tokio::test]

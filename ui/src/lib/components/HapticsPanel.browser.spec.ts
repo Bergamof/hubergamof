@@ -69,4 +69,19 @@ describe('HapticsPanel', () => {
 		await page.getByRole('checkbox', { name: 'Fin d’étape' }).click();
 		expect(onevent).toHaveBeenCalledExactlyOnceWith('pomodoro.step-end', null);
 	});
+
+	it('says when the vibrations are off', async () => {
+		await renderPanel({ level: 'off', events: {} });
+		await expect.element(page.getByText(/Les vibrations sont coupées/)).toBeVisible();
+	});
+
+	it('says when no module signals anything', async () => {
+		const handlers = { onlevel: vi.fn(), onevent: vi.fn() };
+		await render(HapticsPanel, {
+			haptics: { level: 'medium', events: {} },
+			catalog: [],
+			...handlers
+		});
+		await expect.element(page.getByText(/Aucun module ne signale/)).toBeVisible();
+	});
 });

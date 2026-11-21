@@ -630,18 +630,18 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 }) => {
 	await openMouse(page);
 	await expect(page.getByRole('button', { name: 'Souris' })).toHaveAttribute(
-		'aria-current',
-		'page'
+		'aria-pressed',
+		'true'
 	);
 
 	await page.getByLabel('Action de : Bouton arrière').selectOption('shortcut');
 	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).fill('Ctrl + Maj + M');
 	await page.getByLabel('Raccourci de : Bouton arrière', { exact: true }).press('Enter');
-	await expect(page.getByText('Modifications enregistrées.')).toBeVisible();
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
 	await page.getByLabel('Force des vibrations').selectOption('high');
 	await page.getByRole('checkbox', { name: "Fin d'une étape" }).uncheck();
-	await expect(page.getByText('Modifications enregistrées.')).toBeVisible();
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
 	await page.reload();
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
@@ -657,7 +657,7 @@ test('compose le menu circulaire et garde le minimum d’entrées', async ({ pag
 	await openMouse(page);
 	await expect(page.getByText(/4 actuellement/)).toBeVisible();
 	await page.getByRole('button', { name: 'Descendre : Pomodoro' }).click();
-	await expect(page.getByText('Modifications enregistrées.')).toBeVisible();
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 	await page.getByRole('checkbox', { name: 'Teams' }).uncheck();
 	await expect(page.getByText(/3 actuellement/)).toBeVisible();
 	await expect(page.getByRole('checkbox', { name: 'Pomodoro' })).toBeDisabled();

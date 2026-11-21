@@ -4,6 +4,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 radial menu. Every change is sent at once; the line under the title says whether the manager has saved it.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { DeckState, EditOutcome } from '#lib/deck/deck-state.svelte.js';
 	import {
 		bindControl,
@@ -41,9 +42,16 @@ radial menu. Every change is sent at once; the line under the title says whether
 		mouse.capabilities.controls.filter((control) => control.kind === 'button')
 	);
 
+	/** What the status region says, emptied first so that a repeated message is read again. */
+	let spoken = $state('');
+
 	async function track(outcome: Promise<EditOutcome>) {
 		status = 'saving';
-		status = (await outcome).saved ? 'saved' : 'refused';
+		const saved = (await outcome).saved;
+		status = saved ? 'saved' : 'refused';
+		spoken = '';
+		await tick();
+		spoken = STATUS_TEXT[status];
 	}
 
 	function edit(change: MouseEdit) {
@@ -63,10 +71,14 @@ radial menu. Every change is sent at once; the line under the title says whether
 </script>
 
 <div class="flex flex-col gap-8">
-	<p role="status" class="min-h-6 text-sm text-muted">{STATUS_TEXT[status]}</p>
+	<!-- Kept in view while the page scrolls: the changes are made far from the top. -->
+	<div class="sticky top-0 z-10 -mx-1 bg-page px-1 py-1">
+		<p class="min-h-6 text-sm text-muted" aria-hidden="true">{STATUS_TEXT[status]}</p>
+		<p role="status" class="sr-only">{spoken}</p>
+	</div>
 
 	<section aria-labelledby="{uid}-buttons" class="flex flex-col gap-2 card">
-		<h2 id="{uid}-buttons" class="text-lg font-semibold">Boutons</h2>
+		<h3 id="{uid}-buttons" class="text-lg font-semibold">Boutons</h3>
 		<p class="text-sm text-muted">
 			Un bouton sans action choisie ici garde son comportement d’origine.
 		</p>
@@ -84,7 +96,7 @@ radial menu. Every change is sent at once; the line under the title says whether
 	</section>
 
 	<section aria-labelledby="{uid}-pointer" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-pointer" class="text-lg font-semibold">Pointeur et molettes</h2>
+		<h3 id="{uid}-pointer" class="text-lg font-semibold">Pointeur et molettes</h3>
 		<PointerSettings
 			pointer={config.pointer}
 			wheel={config.wheel}
@@ -98,7 +110,7 @@ radial menu. Every change is sent at once; the line under the title says whether
 
 	{#if mouse.capabilities.haptics}
 		<section aria-labelledby="{uid}-haptics" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-haptics" class="text-lg font-semibold">Vibrations</h2>
+			<h3 id="{uid}-haptics" class="text-lg font-semibold">Vibrations</h3>
 			<HapticsPanel
 				haptics={config.haptics}
 				catalog={deck.catalog}
@@ -109,7 +121,7 @@ radial menu. Every change is sent at once; the line under the title says whether
 	{/if}
 
 	<section aria-labelledby="{uid}-radial" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-radial" class="text-lg font-semibold">Menu circulaire</h2>
+		<h3 id="{uid}-radial" class="text-lg font-semibold">Menu circulaire</h3>
 		<p class="text-sm text-muted">
 			Le même pour toutes les souris. Il s’ouvre depuis le bouton auquel vous avez donné l’action «
 			Menu circulaire ».

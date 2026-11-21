@@ -20,6 +20,7 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 		shownCount,
 		type RadialEdit
 	} from '#lib/deck/mouse-edits.js';
+	import { tick } from 'svelte';
 	import type { CatalogModule, RadialMenuConfig } from '#lib/generated/index.js';
 	import IntegerField from './IntegerField.svelte';
 
@@ -47,17 +48,59 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 	let toAdd = $state('');
 	const chosenToAdd = $derived(unlisted.find((module) => module.kind === toAdd) ?? unlisted[0]);
 
+	let list: HTMLUListElement | undefined = $state();
+	/** Said by the status region, emptied first so that a repeated message is read again. */
+	let announcement = $state('');
+
+	async function announce(message: string) {
+		announcement = '';
+		await tick();
+		announcement = message;
+	}
+
+	/** Moves an entry, unless it is already at the end of the list (the button then only looks inactive). */
+	function move(module: string, name: string, offset: -1 | 1) {
+		const from = menu.entries.findIndex((entry) => entry.module === module);
+		const to = from + offset;
+		if (to < 0 || to >= menu.entries.length) return;
+		onedit(moveEntry(module, offset));
+		void announce(`${name} : position ${to + 1} sur ${menu.entries.length}.`);
+	}
+
+	/** Removes an entry; the focus goes to the list, the button it was on being gone. */
+	async function remove(module: string, name: string) {
+		if (isLastShown(module)) return;
+		onedit(removeEntry(module));
+		void announce(`${name} retiré du menu.`);
+		await tick();
+		list?.focus();
+	}
+
+	/** Whether removing the entry would leave fewer entries shown than a menu needs. */
+	function isLastShown(module: string): boolean {
+		return minimal && menu.entries.some((entry) => entry.module === module && entry.enabled);
+	}
+
 	function moduleOf(kind: string): CatalogModule | undefined {
 		return catalog.find((module) => module.kind === kind);
 	}
 </script>
 
 <div class="flex flex-col gap-5">
+	<p role="status" class="sr-only">{announcement}</p>
 	<p class="text-sm text-muted" id="{uid}-count">
-		Entre {MIN_SHOWN_ENTRIES} et {MAX_SHOWN_ENTRIES} entrées affichées ({shown} actuellement).
+		Entre {MIN_SHOWN_ENTRIES} et {MAX_SHOWN_ENTRIES} entrées affichées ({shown} actuellement).{#if full}
+			Maximum atteint : masquez une entrée pour en afficher une autre.{:else if minimal}
+			Minimum atteint : gardez au moins {MIN_SHOWN_ENTRIES} entrées affichées.{/if}
 	</p>
 
-	<ul class="flex flex-col divide-y divide-line" aria-describedby="{uid}-count">
+	<ul
+		bind:this={list}
+		tabindex="-1"
+		aria-label="Entrées du menu"
+		class="flex flex-col divide-y divide-line outline-none"
+		aria-describedby="{uid}-count"
+	>
 		{#each menu.entries as entry, index (entry.module)}
 			{@const module = moduleOf(entry.module)}
 			{@const name = module?.name ?? entry.module}
@@ -68,6 +111,7 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 						class="size-5 accent-ring focus-ring"
 						checked={entry.enabled}
 						disabled={entry.enabled ? minimal : full}
+						aria-describedby="{uid}-count"
 						onchange={(event) => onedit(setEntryEnabled(entry.module, event.currentTarget.checked))}
 					/>
 					{#if module?.icon}
@@ -102,24 +146,25 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 				<span class="flex gap-2">
 					<button
 						type="button"
-						class="secondary-button"
-						disabled={index === 0}
+						class="secondary-button aria-disabled:opacity-50"
+						aria-disabled={index === 0}
 						aria-label="Monter : {name}"
-						onclick={() => onedit(moveEntry(entry.module, -1))}>↑</button
+						onclick={() => move(entry.module, name, -1)}>↑</button
 					>
 					<button
 						type="button"
-						class="secondary-button"
-						disabled={index === menu.entries.length - 1}
+						class="secondary-button aria-disabled:opacity-50"
+						aria-disabled={index === menu.entries.length - 1}
 						aria-label="Descendre : {name}"
-						onclick={() => onedit(moveEntry(entry.module, 1))}>↓</button
+						onclick={() => move(entry.module, name, 1)}>↓</button
 					>
 					<button
 						type="button"
-						class="secondary-button"
-						disabled={entry.enabled && minimal}
+						class="secondary-button aria-disabled:opacity-50"
+						aria-disabled={isLastShown(entry.module)}
+						aria-describedby={isLastShown(entry.module) ? `${uid}-count` : undefined}
 						aria-label="Retirer : {name}"
-						onclick={() => onedit(removeEntry(entry.module))}>Retirer</button
+						onclick={() => void remove(entry.module, name)}>Retirer</button
 					>
 				</span>
 			</li>
@@ -141,9 +186,12 @@ on each does, and how it opens. The manager only accepts between {@link MIN_SHOW
 			</select>
 			<button
 				type="button"
-				class="secondary-button"
-				disabled={full}
-				onclick={() => onedit(addEntry(chosenToAdd.kind, chosenToAdd.radialActions[0].id))}
+				class="secondary-button aria-disabled:opacity-50"
+				aria-disabled={full}
+				aria-describedby={full ? `${uid}-count` : undefined}
+				onclick={() => {
+					if (!full) onedit(addEntry(chosenToAdd.kind, chosenToAdd.radialActions[0].id));
+				}}
 			>
 				Ajouter
 			</button>

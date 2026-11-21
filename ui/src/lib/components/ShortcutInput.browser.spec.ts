@@ -60,8 +60,11 @@ describe('ShortcutInput', () => {
 		const onchange = await renderInput('');
 		await page.getByRole('button', { name: RECORD }).click();
 		await expect
-			.element(page.getByRole('button', { name: 'Appuyez sur les touches…' }))
+			.element(page.getByRole('button', { name: RECORD }))
 			.toHaveAttribute('aria-pressed', 'true');
+		await expect
+			.element(page.getByText(/Enregistrement : appuyez sur la combinaison/))
+			.toBeVisible();
 		await userEvent.keyboard('{Control>}{Shift>}m{/Shift}{/Control}');
 		expect(onchange).toHaveBeenCalledExactlyOnceWith('ctrl+shift+m');
 		await expect
@@ -88,7 +91,7 @@ describe('ShortcutInput', () => {
 		await renderInput('');
 		const button = page.getByRole('button', { name: RECORD });
 		await button.click();
-		await page.getByRole('button', { name: 'Appuyez sur les touches…' }).click();
+		await button.click();
 		await expect.element(button).toHaveAttribute('aria-pressed', 'false');
 		await button.click();
 		await userEvent.tab();
@@ -100,5 +103,30 @@ describe('ShortcutInput', () => {
 		await page.getByRole('button', { name: RECORD }).click();
 		await userEvent.tab();
 		expect(onchange).not.toHaveBeenCalled();
+	});
+
+	it('does not stop recording at the release of Enter that started it', async () => {
+		const onchange = await renderInput('');
+		const button = page.getByRole('button', { name: RECORD });
+		await button.element().focus();
+		await userEvent.keyboard('{Enter}');
+		await expect.element(button).toHaveAttribute('aria-pressed', 'true');
+		await userEvent.keyboard('{Control>}k{/Control}');
+		expect(onchange).toHaveBeenCalledExactlyOnceWith('ctrl+k');
+	});
+
+	it('refuses to record a reserved combination', async () => {
+		const onchange = await renderInput('');
+		await page.getByRole('button', { name: RECORD }).click();
+		await userEvent.keyboard('{Control>}{Alt>}{Delete}{/Alt}{/Control}');
+		expect(onchange).not.toHaveBeenCalled();
+		await expect.element(page.getByText(/réservée/)).toBeVisible();
+	});
+
+	it('announces what was saved', async () => {
+		await renderInput('');
+		await page.getByLabelText('Raccourci').fill('ctrl+m');
+		await userEvent.tab();
+		await expect.element(page.getByRole('status')).toHaveTextContent('Raccourci Ctrl + M.');
 	});
 });

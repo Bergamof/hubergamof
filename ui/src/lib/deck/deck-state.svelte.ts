@@ -196,9 +196,20 @@ export class DeckState {
 	#receiveError(problem: Problem): void {
 		const deckPending = this.#edits.pending;
 		const micePending = this.mice.pending;
-		if (!deckPending && !micePending) this.report(problem);
-		if (deckPending) this.#edits.dropPending(problem);
-		if (micePending) this.mice.dropPending(problem);
+		if (!deckPending && !micePending) {
+			this.report(problem);
+			return;
+		}
+		if (deckPending && micePending) {
+			// Shown once, whichever of the two wanted it.
+			this.#edits.dropPending(problem, { silent: true });
+			this.mice.dropPending(problem, { silent: true });
+			this.report(problem);
+		} else if (deckPending) {
+			this.#edits.dropPending(problem);
+		} else {
+			this.mice.dropPending(problem);
+		}
 	}
 
 	/** Shows `problem` until dismissed: a failure, or a warning of the editor. */

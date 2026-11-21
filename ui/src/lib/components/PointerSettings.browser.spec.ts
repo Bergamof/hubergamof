@@ -73,4 +73,32 @@ describe('PointerSettings', () => {
 		await renderSettings({ hasThumbWheel: false });
 		expect(document.body.textContent).not.toContain('molette du pouce');
 	});
+
+	it.each(['ratchet', 'free'] as const)('shows the %s mode without a threshold', async (mode) => {
+		await renderSettings({ mode });
+		await expect.element(page.getByLabelText('Molette', { exact: true })).toHaveValue(mode);
+		expect(document.body.textContent).not.toContain('Seuil de vitesse');
+	});
+
+	it('tells an invalid thumb wheel speed and does not send it', async () => {
+		const { onthumbwheel } = await renderSettings();
+		await page.getByLabelText('Vitesse de la molette du pouce').fill('11');
+		expect(onthumbwheel).not.toHaveBeenCalled();
+		await expect.element(page.getByRole('alert')).toBeVisible();
+	});
+
+	it('shows the saved options of the scroll', async () => {
+		await renderSettings();
+		await expect
+			.element(page.getByRole('checkbox', { name: /Défilement naturel/ }))
+			.not.toBeChecked();
+		await expect.element(page.getByRole('checkbox', { name: /haute résolution/ })).toBeChecked();
+		await expect.element(page.getByRole('checkbox', { name: /Inverser/ })).not.toBeChecked();
+	});
+
+	it('sends the end of a drag of the sensitivity at once', async () => {
+		const { onpointer } = await renderSettings();
+		await page.getByLabelText('Sensibilité du pointeur').fill('200');
+		expect(onpointer).toHaveBeenLastCalledWith(200);
+	});
 });
