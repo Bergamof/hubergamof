@@ -10,7 +10,6 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 ### Corrigé
 
 - Souris Logitech MX : une souris éteinte quitte la liste de l'interface, et y revient quand elle se rallume. Le récepteur annonce la perte et le retour du lien ; la souris restait jusque-là listée tant que son fil n'avait pas échoué à lui parler.
-
 - Souris Logitech MX : servir une souris (`--mice`) ne change plus ses réglages sans que la personne l'ait demandé. La première configuration d'une souris reprend ce qu'elle a (sensibilité, mode et seuil de la molette, haute résolution, défilement naturel, molette du pouce, force haptique) au lieu de valeurs fixes, et à l'arrêt (ou si le fil plante) le gestionnaire remet les réglages que la souris avait avant lui. `mouse-test info` affiche aussi les drapeaux de la molette.
 - Souris Logitech MX : une souris endormie ne rendait pas ses boutons à l'arrêt (ses premières requêtes restaient sans réponse) ; elle est réveillée (jusqu'à trois pings) avant d'appliquer une configuration et avant de rendre les boutons, y compris à la destruction de la session.
 - Molettes : « Affecter » une fonction qui retire un module placé nulle part ailleurs (sauf fonctions du gestionnaire) demande maintenant confirmation, comme le retrait d'une touche ; ses réglages seraient perdus (#69).
