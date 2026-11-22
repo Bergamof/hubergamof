@@ -27,7 +27,10 @@ use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
 use hubergamof_manager::radial::{
-    self, actions::ModuleActions, looks::Looks, service::RadialService,
+    self,
+    actions::ModuleActions,
+    looks::{Looks, Statuses},
+    service::RadialService,
 };
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
@@ -697,6 +700,18 @@ async fn stop_host(host: &ModuleHost, mut task: tokio::task::JoinHandle<()>) {
     }
 }
 
+/// What the modules of the application say under their names in the menu,
+/// read from what the application shows.
+fn petal_statuses(host: &ModuleHost) -> Statuses {
+    let views = host.views();
+    Statuses::new(move |kind| {
+        views
+            .borrow()
+            .get(kind)
+            .and_then(|view| view.radial_status.clone())
+    })
+}
+
 /// The mouse hub, and the mice it lists: the real ones unless `--no-mice`, a simulated one with `--demo`.
 fn start_mouse_service(
     cli: &Cli,
@@ -751,7 +766,10 @@ fn start_served_mice(
             }
         },
         Arc::new(hub.clone()),
-        Looks::of_modules(&services.registry, &services.renderer),
+        (
+            Looks::of_modules(&services.registry, &services.renderer),
+            petal_statuses(host),
+        ),
     );
     let actions = actions.with_radial(menu.handle());
     let supervisor = MouseSupervisor::start(

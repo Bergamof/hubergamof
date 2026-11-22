@@ -2,6 +2,7 @@
 //! on the deck and in the interface.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{ImageSize, ModuleKind};
@@ -67,12 +68,43 @@ impl Looks {
             || Petal {
                 label: title_case(&module.0),
                 icon: None,
+                status: None,
             },
             |look| Petal {
                 label: look.name.clone(),
                 icon: look.icon.clone(),
+                status: None,
             },
         )
+    }
+}
+
+/// What each module says under its name in the menu, read when the menu opens
+/// and again while it stays open: what the modules show now, where `Looks` has
+/// what they always look like.
+#[derive(Clone, Default)]
+pub struct Statuses(Option<StatusReader>);
+
+/// Reads what a module says now.
+type StatusReader = Arc<dyn Fn(&ModuleKind) -> Option<String> + Send + Sync>;
+
+impl Statuses {
+    /// The statuses read by `read`.
+    #[must_use]
+    pub fn new(read: impl Fn(&ModuleKind) -> Option<String> + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(read)))
+    }
+
+    /// What `module` says now, if it says anything.
+    #[must_use]
+    pub fn of(&self, module: &ModuleKind) -> Option<String> {
+        self.0.as_ref().and_then(|read| read(module))
+    }
+}
+
+impl std::fmt::Debug for Statuses {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Statuses").field(&self.0.is_some()).finish()
     }
 }
 
@@ -108,5 +140,18 @@ mod tests {
             let descriptor = factory.descriptor();
             assert_eq!(looks.petal(&descriptor.kind).label, descriptor.name);
         }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn statuses_say_what_the_reader_says_and_nothing_by_default() {
+        assert_eq!(Statuses::default().of(&"pomodoro".into()), None);
+        let statuses = Statuses::new(|kind| (kind.0 == "pomodoro").then(|| "Focus".to_owned()));
+        assert_eq!(statuses.of(&"pomodoro".into()).as_deref(), Some("Focus"));
+        assert_eq!(statuses.of(&"audio".into()), None);
     }
 }

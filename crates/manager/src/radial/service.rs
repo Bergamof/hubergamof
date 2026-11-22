@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, watch};
 use super::backend;
 use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
-use super::looks::Looks;
+use super::looks::{Looks, Statuses};
 use super::paint::DEFAULT_PALETTE;
 use super::window::Surface;
 use crate::haptics::HapticOutput;
@@ -31,6 +31,14 @@ pub(super) const NUDGE_PERIOD: std::time::Duration = std::time::Duration::from_m
 
 /// Nudges tried at most for one opening.
 pub(super) const NUDGE_TRIES: u32 = 6;
+
+/// Time between two readings of what the modules say under their names while
+/// the menu is open.
+pub(super) const REFRESH_PERIOD: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Readings made at most for one opening: as long as a window may stay open
+/// (30 s).
+pub(super) const REFRESH_TRIES: u32 = 60;
 
 /// The waveforms of the feel of the menu: it opens, the pointer comes onto a
 /// petal, an entry is chosen.
@@ -50,6 +58,8 @@ enum Event {
     Window(WindowEvent),
     /// Time to nudge the pointer, if the menu is still waiting for it.
     Nudge,
+    /// Time to read again what the modules say, if the menu is open.
+    Refresh,
     Config(Box<RadialMenuConfig>),
     Locked(bool),
     /// The service is dropped.
@@ -137,13 +147,14 @@ impl RadialService {
         nudge: impl Fn() + Send + Sync + 'static,
         chooser: impl Fn(&RadialEntryConfig) + Send + 'static,
         feel: Arc<dyn HapticOutput>,
-        looks: Looks,
+        (looks, statuses): (Looks, Statuses),
     ) -> Self {
         let parts = Parts {
             nudge: Arc::new(nudge),
             chooser: Box::new(chooser),
             feel,
             looks,
+            statuses,
         };
         Self::start_on(
             |events| {
@@ -181,6 +192,7 @@ impl RadialService {
             chooser,
             feel,
             looks,
+            statuses,
         } = parts;
         let wake = PointerWake {
             nudge,
@@ -190,12 +202,25 @@ impl RadialService {
                     runtime.spawn(nudges(events.clone()));
                 })
             },
+            refresh: {
+                let (runtime, events) = (runtime.clone(), events.clone());
+                Box::new(move || {
+                    runtime.spawn(refreshes(events.clone()));
+                })
+            },
         };
         let thread = std::thread::Builder::new()
             .name("radial-menu".to_owned())
             .spawn(move || {
                 let surface = make_surface(window_events);
-                let mut menu = Menu::new(&first, locked, surface, chooser, wake, (feel, looks));
+                let mut menu = Menu::new(
+                    &first,
+                    locked,
+                    surface,
+                    chooser,
+                    wake,
+                    (feel, looks, statuses),
+                );
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -237,12 +262,25 @@ async fn nudges(events: mpsc::UnboundedSender<Event>) {
     }
 }
 
+/// Asks, while the menu may be open, that what the modules say be read again:
+/// a timer goes on while the menu is shown.
+async fn refreshes(events: mpsc::UnboundedSender<Event>) {
+    for _ in 0..REFRESH_TRIES {
+        tokio::time::sleep(REFRESH_PERIOD).await;
+        if events.send(Event::Refresh).is_err() {
+            return;
+        }
+    }
+}
+
 /// How the menu learns where the pointer is when the desktop does not say.
 struct PointerWake {
     /// Moves the pointer one pixel and back.
     nudge: Arc<dyn Fn() + Send + Sync>,
     /// Asks for [`Event::Nudge`]s to come, after the window is opened.
     schedule: Box<dyn Fn() + Send>,
+    /// Asks for [`Event::Refresh`]es to come, after the window is opened.
+    refresh: Box<dyn Fn() + Send>,
 }
 
 /// Passes the changes of the configuration and of the lock to the menu, until
@@ -280,6 +318,7 @@ struct Parts {
     chooser: Chooser,
     feel: Arc<dyn HapticOutput>,
     looks: Looks,
+    statuses: Statuses,
 }
 
 /// The menu and what it is shown on.
@@ -297,6 +336,9 @@ struct Menu<S: Surface> {
     /// must not get through.
     locked: watch::Receiver<bool>,
     started: Instant,
+    /// What the petals say, as the window shows it: a reading that changes
+    /// nothing draws nothing.
+    shown_statuses: Vec<Option<String>>,
     /// A press that found no window is said once.
     warned: bool,
 }
@@ -308,10 +350,11 @@ impl<S: Surface> Menu<S> {
         surface: Option<S>,
         chooser: Chooser,
         wake: PointerWake,
-        (feel, looks): (Arc<dyn HapticOutput>, Looks),
+        (feel, looks, statuses): (Arc<dyn HapticOutput>, Looks, Statuses),
     ) -> Self {
         let mut controller = Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN);
         controller.set_looks(looks);
+        controller.set_statuses(statuses);
         Self {
             controller,
             surface,
@@ -322,6 +365,7 @@ impl<S: Surface> Menu<S> {
             animate: config.animate,
             locked,
             started: Instant::now(),
+            shown_statuses: Vec::new(),
             warned: false,
         }
     }
@@ -337,6 +381,10 @@ impl<S: Surface> Menu<S> {
                 if self.controller.is_open() && self.controller.view().is_none() {
                     (self.wake.nudge)();
                 }
+                Vec::new()
+            }
+            Event::Refresh => {
+                self.refresh_statuses();
                 Vec::new()
             }
             Event::Stop => Vec::new(),
@@ -393,8 +441,14 @@ impl<S: Surface> Menu<S> {
                 Effect::Open => {
                     let content = self.controller.content(DEFAULT_PALETTE, self.animate);
                     if let (Some(surface), Some(content)) = (&self.surface, content) {
+                        self.shown_statuses = content
+                            .petals
+                            .iter()
+                            .map(|petal| petal.status.clone())
+                            .collect();
                         surface.open(content);
                         (self.wake.schedule)();
+                        (self.wake.refresh)();
                         self.feel(OPEN_WAVEFORM);
                     }
                 }
@@ -419,6 +473,18 @@ impl<S: Surface> Menu<S> {
                 }
                 Effect::Close => self.with_surface(Surface::close),
             }
+        }
+    }
+
+    /// Reads again what the modules say, and shows it if it changed.
+    fn refresh_statuses(&mut self) {
+        if !self.controller.is_open() {
+            return;
+        }
+        let statuses = self.controller.statuses();
+        if statuses != self.shown_statuses {
+            self.with_surface(|surface| surface.update_statuses(statuses.clone()));
+            self.shown_statuses = statuses;
         }
     }
 
@@ -502,6 +568,10 @@ mod tests {
             self.push(&format!("redraw {:?}", view.lit));
         }
 
+        fn update_statuses(&self, statuses: Vec<Option<String>>) {
+            self.push(&format!("statuses {statuses:?}"));
+        }
+
         fn close(&self) {
             self.push("close");
         }
@@ -509,10 +579,11 @@ mod tests {
 
     /// A pointer wake that writes `nudge` and `schedule` in `notes`.
     fn quiet_wake(notes: &Notes) -> PointerWake {
-        let (for_nudge, for_schedule) = (notes.clone(), notes.clone());
+        let (for_nudge, for_schedule, for_refresh) = (notes.clone(), notes.clone(), notes.clone());
         PointerWake {
             nudge: Arc::new(move || for_nudge.push_wake("nudge")),
             schedule: Box::new(move || for_schedule.push_wake("schedule")),
+            refresh: Box::new(move || for_refresh.push_wake("refresh")),
         }
     }
 
@@ -526,9 +597,65 @@ mod tests {
             Some(notes.clone()),
             Box::new(move |entry| chosen.push(&entry.module.to_string())),
             quiet_wake(notes),
-            (Arc::new(notes.clone()), Looks::default()),
+            (
+                Arc::new(notes.clone()),
+                Looks::default(),
+                Statuses::default(),
+            ),
         );
         (menu, lock)
+    }
+
+    /// A menu whose pomodoro petal says what `says` holds.
+    fn menu_saying(notes: &Notes, says: &Arc<Mutex<String>>) -> (Menu<Notes>, watch::Sender<bool>) {
+        let reader = Arc::clone(says);
+        let (lock, locked) = watch::channel(false);
+        let menu = Menu::new(
+            &RadialMenuConfig::default_menu(),
+            locked,
+            Some(notes.clone()),
+            Box::new(|_| {}),
+            quiet_wake(notes),
+            (
+                Arc::new(notes.clone()),
+                Looks::default(),
+                Statuses::new(move |module| {
+                    (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone())
+                }),
+            ),
+        );
+        (menu, lock)
+    }
+
+    #[test]
+    fn what_the_petals_say_is_read_again_while_the_menu_is_open_and_drawn_when_it_changed() {
+        let notes = Notes::default();
+        let says = Arc::new(Mutex::new("Focus 1/4".to_owned()));
+        let (mut menu, _lock) = menu_saying(&notes, &says);
+
+        // Closed: nothing to update.
+        menu.handle(Event::Refresh);
+        assert_eq!(notes.all().len(), 0);
+
+        open(&mut menu);
+        assert_eq!(notes.all(), ["open 4", "place"]);
+        assert!(
+            notes
+                .wakes()
+                .starts_with(&["schedule".to_owned(), "refresh".to_owned()])
+        );
+
+        menu.handle(Event::Refresh);
+        assert_eq!(notes.all().len(), 2, "nothing changed: nothing drawn");
+
+        "Focus 2/4".clone_into(&mut says.lock().unwrap());
+        menu.handle(Event::Refresh);
+        assert_eq!(
+            notes.all().last().unwrap(),
+            r#"statuses [Some("Focus 2/4"), None, None, None]"#
+        );
+        menu.handle(Event::Refresh);
+        assert_eq!(notes.all().len(), 3, "said once");
     }
 
     fn at(menu: &Menu<Notes>, milliseconds: u64) -> Instant {
@@ -627,7 +754,11 @@ mod tests {
             None,
             Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
             quiet_wake(&Notes::default()),
-            (Arc::new(Notes::default()), Looks::default()),
+            (
+                Arc::new(Notes::default()),
+                Looks::default(),
+                Statuses::default(),
+            ),
         );
         menu.handle(Event::Press(menu.started));
         menu.handle(Event::Press(menu.started));
@@ -660,7 +791,7 @@ mod tests {
             "closed: nothing to nudge for"
         );
         menu.handle(Event::Press(at(&menu, 0)));
-        assert_eq!(wake_calls(&notes), ["schedule"]);
+        assert_eq!(wake_calls(&notes), ["schedule", "refresh"]);
         menu.handle(Event::Nudge);
         menu.handle(Event::Nudge);
         // The pointer says where it is: the menu is placed, no more nudges.
@@ -668,7 +799,10 @@ mod tests {
             900.0, 500.0,
         ))));
         menu.handle(Event::Nudge);
-        assert_eq!(wake_calls(&notes), ["schedule", "nudge", "nudge"]);
+        assert_eq!(
+            wake_calls(&notes),
+            ["schedule", "refresh", "nudge", "nudge"]
+        );
         assert_eq!(notes.all(), ["open 4", "place"]);
     }
 
@@ -810,6 +944,7 @@ mod tests {
                 chooser: Box::new(|_| {}),
                 feel: Arc::new(crate::haptics::NoHaptics),
                 looks: Looks::default(),
+                statuses: Statuses::default(),
             },
             config,
             locked,

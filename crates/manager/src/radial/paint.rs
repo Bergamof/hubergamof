@@ -22,6 +22,15 @@ const ICON_SIZE: f64 = 36.0;
 const LABEL_SIZE: f64 = 13.0;
 /// Space between an icon and its label, in pixels.
 const LABEL_GAP: f64 = 6.0;
+/// Font size of a line of status under the label, in pixels.
+const STATUS_SIZE: f64 = 11.0;
+/// Distance from one line of status (or the label) to the next, in pixels.
+const STATUS_LINE: f64 = 14.0;
+/// Most lines of status a petal shows: more would not fit in it.
+const MAX_STATUS_LINES: usize = 2;
+/// Most characters of a line of status that are drawn: a petal is about a
+/// hundred pixels wide, and a module that says more is not allowed to spill.
+const MAX_STATUS_CHARS: usize = 24;
 /// Smallest the menu is while it opens, as a fraction of its size.
 const OPENING_SCALE: f64 = 0.85;
 
@@ -33,6 +42,20 @@ pub struct PetalView<'a> {
     /// Icon, already rendered, if the entry has one. It is drawn on top of the
     /// petals: the renderer of the drawing reads no images.
     pub icon: Option<&'a RgbaImage>,
+    /// What the module says under the name, lines separated by `\n`.
+    pub status: Option<&'a str>,
+}
+
+impl PetalView<'_> {
+    /// The lines of the status that are drawn, cut to fit the petal.
+    fn status_lines(&self) -> Vec<String> {
+        self.status
+            .into_iter()
+            .flat_map(str::lines)
+            .take(MAX_STATUS_LINES)
+            .map(|line| line.chars().take(MAX_STATUS_CHARS).collect())
+            .collect()
+    }
 }
 
 /// Colours of the menu.
@@ -97,7 +120,8 @@ pub fn paint(
     renderer.overlay_svg(&mut canvas, &body)?;
     for (index, petal) in petals.iter().enumerate() {
         if let Some(icon) = petal.icon {
-            overlay_icon(&mut canvas, layout, index, icon, scale, opening);
+            let lines = petal.status_lines().len();
+            overlay_icon(&mut canvas, layout, index, (icon, lines), scale, opening);
         }
     }
     Ok(canvas)
@@ -159,15 +183,24 @@ fn whole_ring(inner: f64, outer: f64) -> String {
 }
 
 /// Where the icon (if any) and the label of petal `index` go, from the middle
-/// of the menu: the top of the icon and the baseline of the label.
-fn content_places(layout: &Layout, index: usize, has_icon: bool) -> (Point, f64, f64) {
+/// of the menu: the top of the icon and the baseline of the label. The block
+/// stays centred in the petal whatever the number of `status_lines` under the
+/// label.
+fn content_places(
+    layout: &Layout,
+    index: usize,
+    has_icon: bool,
+    status_lines: usize,
+) -> (Point, f64, f64) {
     let ring = layout.ring();
     let centre = petal_centre(layout, index, f64::midpoint(ring.inner, ring.outer));
+    let status = count_as_f64(status_lines) * STATUS_LINE;
     if has_icon {
-        let top = centre.y - (ICON_SIZE + LABEL_GAP + LABEL_SIZE) / 2.0;
+        let height = ICON_SIZE + LABEL_GAP + LABEL_SIZE + status;
+        let top = centre.y - height / 2.0;
         (centre, top, top + ICON_SIZE + LABEL_GAP + LABEL_SIZE)
     } else {
-        (centre, centre.y, centre.y + LABEL_SIZE / 3.0)
+        (centre, centre.y, centre.y + LABEL_SIZE / 3.0 - status / 2.0)
     }
 }
 
@@ -180,7 +213,8 @@ fn push_label(
     palette: Palette,
 ) {
     let colour = if lit { palette.lit_text } else { palette.text };
-    let (centre, _, baseline) = content_places(layout, index, petal.icon.is_some());
+    let lines = petal.status_lines();
+    let (centre, _, baseline) = content_places(layout, index, petal.icon.is_some(), lines.len());
     let _ = write!(
         body,
         r#"<text x="{}" y="{baseline}" font-family="{}" font-size="{LABEL_SIZE}" font-weight="600" text-anchor="middle" fill="{}" fill-opacity="{}">"#,
@@ -191,6 +225,19 @@ fn push_label(
     );
     escape_xml(body, petal.label);
     body.push_str("</text>");
+    for (line, text) in lines.into_iter().enumerate() {
+        let y = baseline + count_as_f64(line + 1) * STATUS_LINE;
+        let _ = write!(
+            body,
+            r#"<text x="{}" y="{y}" font-family="{}" font-size="{STATUS_SIZE}" font-weight="500" text-anchor="middle" fill="{}" fill-opacity="{}">"#,
+            centre.x,
+            crate::render::FONT_FAMILY,
+            svg_color(colour),
+            opacity_of(colour),
+        );
+        escape_xml(body, &text);
+        body.push_str("</text>");
+    }
 }
 
 /// Draws `icon` where petal `index` has it, scaled and faded like the rest of
@@ -199,11 +246,11 @@ fn overlay_icon(
     canvas: &mut RgbaImage,
     layout: &Layout,
     index: usize,
-    icon: &RgbaImage,
+    (icon, status_lines): (&RgbaImage, usize),
     scale: f64,
     opening: f64,
 ) {
-    let (centre, top, _) = content_places(layout, index, true);
+    let (centre, top, _) = content_places(layout, index, true, status_lines);
     let side = side_in_pixels(ICON_SIZE * scale);
     if side == 0 {
         return;
@@ -280,7 +327,11 @@ mod tests {
             .into_iter()
             .cycle()
             .take(count)
-            .map(|label| PetalView { label, icon: None })
+            .map(|label| PetalView {
+                label,
+                icon: None,
+                status: None,
+            })
             .collect()
     }
 
@@ -378,14 +429,17 @@ mod tests {
             PetalView {
                 label: "<b>&\"'",
                 icon: None,
+                status: None,
             },
             PetalView {
                 label: "a\u{1}b",
                 icon: None,
+                status: None,
             },
             PetalView {
                 label: "Audio",
                 icon: None,
+                status: None,
             },
         ];
         let image = paint(&renderer, &layout(3), &petals, None, 1.0, PALETTE).unwrap();
@@ -401,6 +455,7 @@ mod tests {
         let petal = PetalView {
             label: "Pomodoro",
             icon: None,
+            status: None,
         };
         let colour_of = |lit| {
             let mut body = String::new();
@@ -428,6 +483,26 @@ mod tests {
     }
 
     #[test]
+    fn a_status_is_drawn_under_the_label_and_two_lines_at_most() {
+        let renderer = TextRenderer::new().unwrap();
+        let paint_with = |status: Option<&'static str>| {
+            let petals: Vec<_> = views(4)
+                .into_iter()
+                .map(|view| PetalView { status, ..view })
+                .collect();
+            paint(&renderer, &layout(4), &petals, None, 1.0, PALETTE).unwrap()
+        };
+        let none = paint_with(None);
+        let two = paint_with(Some("Focus 1/4\n25:00 · prêt"));
+        let three = paint_with(Some("Focus 1/4\n25:00 · prêt\nlost"));
+        assert_ne!(none, two, "the status is drawn");
+        assert_eq!(two, three, "a third line is not");
+        let long = paint_with(Some("Focus 1/4\n25:00 · prêt and a great deal more text"));
+        let cut = paint_with(Some("Focus 1/4\n25:00 · prêt and a great"));
+        assert_eq!(long, cut, "a line is cut at the width of a petal");
+    }
+
+    #[test]
     fn an_icon_is_drawn_above_the_label() {
         let renderer = TextRenderer::new().unwrap();
         let red = RgbaImage::from_pixel(8, 8, Rgba([255, 0, 0, 255]));
@@ -435,6 +510,7 @@ mod tests {
             .into_iter()
             .map(|view| PetalView {
                 icon: Some(&red),
+                status: None,
                 ..view
             })
             .collect();

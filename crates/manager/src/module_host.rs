@@ -85,6 +85,8 @@ pub struct ModuleView {
     pub strip_popup: Option<StripPopup>,
     /// Reminder of what each dial function does, by function.
     pub dial_hints: HashMap<DialFunctionId, DialHint>,
+    /// What its petal says in the radial menu.
+    pub radial_status: Option<String>,
 }
 
 /// The views of the instances of the application, by module kind.
@@ -559,6 +561,7 @@ impl Hosted {
                     strip_widget: self.instances.strip_widget(id),
                     strip_popup: self.instances.strip_popup(id),
                     dial_hints,
+                    radial_status: self.instances.radial_status(id),
                 }),
             );
         }
@@ -950,6 +953,15 @@ mod tests {
             .await
             .unwrap();
         let before = views.borrow().get(&"pomodoro".into()).unwrap().key.clone();
+        assert_eq!(
+            views
+                .borrow()
+                .get(&"pomodoro".into())
+                .unwrap()
+                .radial_status
+                .as_deref(),
+            Some("Focus 1/4\n25:00 · prêt")
+        );
 
         let outcome = host
             .call(&"pomodoro".into(), Call::RadialAction("toggle".into()))

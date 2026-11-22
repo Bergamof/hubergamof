@@ -382,6 +382,14 @@ impl Instances {
         self.inspect(id, "strip_widget", |module| module.strip_widget())
     }
 
+    /// What the petal of instance `id` says in the radial menu, if anything.
+    pub(crate) fn radial_status(&mut self, id: &ModuleInstanceId) -> Option<String> {
+        if self.shared.contains_key(id) {
+            return self.view(id)?.radial_status.clone();
+        }
+        self.inspect(id, "radial_status", |module| module.radial_status())
+    }
+
     /// The menu instance `id` has open, if any.
     pub(crate) fn strip_popup(&mut self, id: &ModuleInstanceId) -> Option<StripPopup> {
         if self.shared.contains_key(id) {

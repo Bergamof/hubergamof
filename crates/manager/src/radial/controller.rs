@@ -13,9 +13,9 @@ use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 
 use super::geometry::{Layout, Point, Ring, Size, fit_on_screen};
 use super::interaction::{Input, Menu, Output};
-use super::looks::Looks;
+use super::looks::{Looks, Statuses};
 use super::paint::Palette;
-use super::window::Content;
+use super::window::{Content, Petal};
 
 /// What the window must show of the menu.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,6 +70,7 @@ pub struct Controller {
     layout: Option<Layout>,
     centre: Option<Point>,
     looks: Looks,
+    statuses: Statuses,
 }
 
 impl Controller {
@@ -88,6 +89,7 @@ impl Controller {
             layout: None,
             centre: None,
             looks: Looks::default(),
+            statuses: Statuses::default(),
         };
         controller.apply_wanted();
         controller
@@ -126,15 +128,33 @@ impl Controller {
         self.looks = looks;
     }
 
+    /// What the modules say under their names while the menu is open.
+    pub fn set_statuses(&mut self, statuses: Statuses) {
+        self.statuses = statuses;
+    }
+
+    /// What the modules of the shown entries say now, in the order of the
+    /// petals.
+    #[must_use]
+    pub fn statuses(&self) -> Vec<Option<String>> {
+        self.entries
+            .iter()
+            .map(|entry| self.statuses.of(&entry.module))
+            .collect()
+    }
+
     /// What the window draws: a petal per shown entry, with the name and the
-    /// icon of its module.
+    /// icon of its module, and what it says now.
     #[must_use]
     pub fn content(&self, palette: Palette, animate: bool) -> Option<Content> {
         let layout = self.layout?;
         let petals = self
             .entries
             .iter()
-            .map(|entry| self.looks.petal(&entry.module))
+            .map(|entry| Petal {
+                status: self.statuses.of(&entry.module),
+                ..self.looks.petal(&entry.module)
+            })
             .collect();
         Some(Content {
             petals,
@@ -319,6 +339,31 @@ mod tests {
             .collect();
         assert_eq!(modules, ["pomodoro", "teams", "audio", "intellij"]);
         assert_eq!(controller.layout().unwrap().count(), 4);
+    }
+
+    #[test]
+    fn the_petals_say_what_their_modules_say_now() {
+        let mut controller = controller();
+        let says = std::sync::Arc::new(std::sync::Mutex::new("Focus 1/4".to_owned()));
+        let reader = std::sync::Arc::clone(&says);
+        controller.set_statuses(Statuses::new(move |module| {
+            (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone())
+        }));
+        let petals = |controller: &Controller| {
+            controller
+                .content(crate::radial::paint::DEFAULT_PALETTE, false)
+                .unwrap()
+                .petals
+        };
+        let statuses: Vec<_> = petals(&controller)
+            .iter()
+            .map(|petal| petal.status.clone())
+            .collect();
+        assert_eq!(statuses, [Some("Focus 1/4".to_owned()), None, None, None]);
+        assert_eq!(controller.statuses(), statuses);
+
+        "Focus 2/4".clone_into(&mut says.lock().unwrap());
+        assert_eq!(controller.statuses()[0].as_deref(), Some("Focus 2/4"));
     }
 
     #[test]

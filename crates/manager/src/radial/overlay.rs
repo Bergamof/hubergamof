@@ -40,8 +40,8 @@ use super::controller::{View, WindowEvent};
 use super::geometry::{Point, Size};
 use super::paint::{PetalView, paint};
 use super::window::{
-    BYTES_PER_PIXEL, Content, Gone, MAX_SURFACE_SIDE, Report, Surface, blit, has_expired,
-    opening_progress, pixels, signed,
+    BYTES_PER_PIXEL, Content, Gone, MAX_SURFACE_SIDE, Report, Surface, apply_statuses, blit,
+    has_expired, opening_progress, pixels, signed,
 };
 use crate::render::{RenderError, TextRenderer};
 
@@ -60,6 +60,7 @@ enum Command {
     Open(Box<Content>),
     Place(View),
     Redraw(View),
+    Statuses(Vec<Option<String>>),
     Close,
     Stop,
 }
@@ -260,6 +261,12 @@ impl State {
                 }
                 self.draw();
             }
+            Command::Statuses(statuses) => {
+                if let Some(window) = &mut self.window {
+                    apply_statuses(&mut window.content.petals, statuses);
+                }
+                self.draw();
+            }
             Command::Close => self.window = None,
             Command::Stop => self.stop(),
         }
@@ -355,6 +362,7 @@ impl State {
                 .map(|petal| PetalView {
                     label: &petal.label,
                     icon: petal.icon.as_ref(),
+                    status: petal.status.as_deref(),
                 })
                 .collect();
             match paint(
@@ -642,6 +650,10 @@ impl Surface for Overlay {
 
     fn redraw(&self, view: View) {
         Self::redraw(self, view);
+    }
+
+    fn update_statuses(&self, statuses: Vec<Option<String>>) {
+        self.send(Command::Statuses(statuses));
     }
 
     fn close(&self) {

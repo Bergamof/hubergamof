@@ -28,8 +28,8 @@ use super::controller::{View, WindowEvent};
 use super::geometry::{Point, Size};
 use super::paint::{PetalView, paint};
 use super::window::{
-    Content, Gone, MAX_OPEN, MAX_SURFACE_SIDE, Report, Surface, has_expired, opening_progress,
-    premultiplied_bgra,
+    Content, Gone, MAX_OPEN, MAX_SURFACE_SIDE, Report, Surface, apply_statuses, has_expired,
+    opening_progress, premultiplied_bgra,
 };
 use crate::render::{RenderError, TextRenderer};
 
@@ -77,6 +77,7 @@ enum Command {
     Open(Box<Content>),
     Place(View),
     Redraw(View),
+    Statuses(Vec<Option<String>>),
     Close,
     Stop,
 }
@@ -236,6 +237,10 @@ impl Surface for X11Overlay {
 
     fn redraw(&self, view: View) {
         self.send(Command::Redraw(view));
+    }
+
+    fn update_statuses(&self, statuses: Vec<Option<String>>) {
+        self.send(Command::Statuses(statuses));
     }
 
     fn close(&self) {
@@ -676,6 +681,12 @@ impl State {
                 }
                 self.draw();
             }
+            Command::Statuses(statuses) => {
+                if let Some(shown) = &mut self.shown {
+                    apply_statuses(&mut shown.content.petals, statuses);
+                }
+                self.draw();
+            }
             Command::Close => self.hide(),
             Command::Stop => {
                 self.hide();
@@ -776,6 +787,7 @@ impl State {
             .map(|petal| PetalView {
                 label: &petal.label,
                 icon: petal.icon.as_ref(),
+                status: petal.status.as_deref(),
             })
             .collect();
         let image = match paint(

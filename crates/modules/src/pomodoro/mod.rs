@@ -353,28 +353,35 @@ impl Pomodoro {
         self.timer.elapsed(self.now()).is_zero()
     }
 
-    /// The widget of the touch strip: step, time left and progress.
-    fn widget(&self) -> PomodoroWidget {
+    /// The state of the timer, its step name (`Focus 2/4`) and, when it does
+    /// not run, what it waits for.
+    fn state_and_note(&self) -> (PomodoroState, String, Option<&'static str>) {
         let timer = &self.timer;
-        let remaining = timer.remaining(self.now());
         let name = step_name(timer);
-        let (state, label) = if timer.is_running() {
+        if timer.is_running() {
             let state = if timer.phase().is_break() {
                 PomodoroState::Resting
             } else {
                 PomodoroState::Working
             };
-            (state, name)
+            (state, name, None)
         } else if self.is_untouched() {
-            (PomodoroState::Ready, format!("{name} · {READY_SUFFIX}"))
+            (PomodoroState::Ready, name, Some(READY_SUFFIX))
         } else {
-            (PomodoroState::Paused, format!("{name} · {PAUSED_SUFFIX}"))
-        };
+            (PomodoroState::Paused, name, Some(PAUSED_SUFFIX))
+        }
+    }
+
+    /// The widget of the touch strip: step, time left and progress.
+    fn widget(&self) -> PomodoroWidget {
+        let remaining = self.timer.remaining(self.now());
+        let (state, name, note) = self.state_and_note();
+        let label = note.map_or_else(|| name.clone(), |note| format!("{name} · {note}"));
         PomodoroWidget::new(
             state,
             label,
             format_remaining(remaining),
-            displayed_progress(timer.step_duration(), remaining),
+            displayed_progress(self.timer.step_duration(), remaining),
         )
     }
 
@@ -490,6 +497,16 @@ impl Module for Pomodoro {
 
     fn strip_widget(&self) -> Option<StripWidget> {
         Some(StripWidget::Pomodoro(self.widget()))
+    }
+
+    /// The step and its position on the first line (`Focus 2/4`), the time
+    /// left on the second, followed by what the timer waits for when it does
+    /// not run (`12:34 · pause`): the same words as the widget of the strip.
+    fn radial_status(&self) -> Option<String> {
+        let (_, name, note) = self.state_and_note();
+        let time = format_remaining(self.timer.remaining(self.now()));
+        let detail = note.map_or_else(|| time.clone(), |note| format!("{time} · {note}"));
+        Some(format!("{name}\n{detail}"))
     }
 
     fn strip_popup(&self) -> Option<StripPopup> {
