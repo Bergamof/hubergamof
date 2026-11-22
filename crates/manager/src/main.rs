@@ -22,6 +22,7 @@ use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
+use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
@@ -565,7 +566,8 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let discovery = DeviceDiscovery::new();
     // The menu runs actions on the engines, known before they start.
     let engines = EngineRegistry::default();
-    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines, &haptics)?;
+    let (host, host_task) = start_module_host(&services);
+    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines, &haptics, &host)?;
     let supervisor = Supervisor::start_in(&discovery, services, engines);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -592,6 +594,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         Err(error) => {
             supervisor.shutdown().await;
             stop_mice(mice).await;
+            stop_host(&host, host_task).await;
             return Err(error).context("cannot start the web interface");
         }
     };
@@ -605,6 +608,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
             stop_server(server_task).await;
             supervisor.shutdown().await;
             stop_mice(mice).await;
+            stop_host(&host, host_task).await;
             return Err(error);
         }
     };
@@ -636,6 +640,8 @@ async fn run_manager(cli: Cli) -> Result<()> {
     stop_server(server_task).await;
     supervisor.shutdown().await;
     stop_mice(mice).await;
+    // After the menu, which hands it actions: the pomodoro pauses where it is.
+    stop_host(&host, host_task).await;
     shutdown_devices(&discovery, source).await;
     if let Some(tray) = tray {
         tray.stop().await;
@@ -644,16 +650,35 @@ async fn run_manager(cli: Cli) -> Result<()> {
     outcome
 }
 
+/// The modules that live in the application, apart from any device.
+fn start_module_host(services: &EngineServices) -> (ModuleHost, tokio::task::JoinHandle<()>) {
+    ModuleHost::start(HostServices {
+        registry: Arc::clone(&services.registry),
+        store: services.store.clone(),
+        haptics: Arc::clone(&services.haptics),
+        screen_lock: Arc::clone(&services.screen_lock),
+    })
+}
+
+/// Stops the module host and waits for its task.
+async fn stop_host(host: &ModuleHost, task: tokio::task::JoinHandle<()>) {
+    host.shutdown().await;
+    if let Err(error) = task.await {
+        tracing::warn!(%error, "module host failed");
+    }
+}
+
 /// The mouse hub, and the mice it lists: the real ones unless `--no-mice`, a simulated one with `--demo`.
 fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
     engines: &EngineRegistry,
     haptics: &HapticRelay,
+    host: &ModuleHost,
 ) -> Result<(MouseHub, Mice)> {
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
     let mice = if serves_mice(cli) {
-        Mice::Served(start_served_mice(&hub, services, engines, haptics))
+        Mice::Served(start_served_mice(&hub, services, engines, haptics, host))
     } else if cli.demo {
         Mice::Simulated {
             _listed: register_simulated_mice(&hub, &services.store)?,
@@ -670,6 +695,7 @@ fn start_served_mice(
     services: &EngineServices,
     engines: &EngineRegistry,
     haptics: &HapticRelay,
+    host: &ModuleHost,
 ) -> MiceService {
     // The events of the modules are played on the mice from now on.
     haptics.connect(Arc::new(hub.clone()));
@@ -686,6 +712,7 @@ fn start_served_mice(
         {
             let module_actions = ModuleActions::new(
                 engines.clone(),
+                host.clone(),
                 &tokio::runtime::Handle::current(),
                 Arc::clone(&services.registry),
             );

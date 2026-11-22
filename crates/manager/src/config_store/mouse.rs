@@ -15,7 +15,7 @@ use super::files::{io_error, set_invalid_aside, write_atomically};
 use super::{ConfigStore, ConfigStoreError, LoadOutcome, Loaded, MOUSE_FILE, RADIAL_MENU_FILE};
 
 /// A document of the store that carries a revision and checks itself.
-trait Document: Serialize + DeserializeOwned {
+pub(super) trait Document: Serialize + DeserializeOwned {
     fn revision(&self) -> u64;
     fn set_revision(&mut self, revision: u64);
     fn check(&self) -> Result<(), ConfigStoreError>;
@@ -125,7 +125,7 @@ impl ConfigStore {
 
 /// The stored document, or the default written in its place when there is
 /// none or the stored one was invalid (set aside, not overwritten).
-fn load_or_default<T: Document>(
+pub(super) fn load_or_default<T: Document>(
     path: &Path,
     accept: impl Fn(&T) -> Result<(), ConfigStoreError>,
     default: impl FnOnce() -> T,
@@ -155,7 +155,10 @@ fn load_or_default<T: Document>(
     Ok(Loaded { config, outcome })
 }
 
-fn save_document<T: Document>(path: &Path, mut config: T) -> Result<T, ConfigStoreError> {
+pub(super) fn save_document<T: Document>(
+    path: &Path,
+    mut config: T,
+) -> Result<T, ConfigStoreError> {
     let current = match fs::read(path) {
         Ok(bytes) => serde_json::from_slice::<T>(&bytes)
             .map_err(|source| ConfigStoreError::Json {

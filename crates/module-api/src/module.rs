@@ -43,6 +43,19 @@ pub fn parse_settings<T: DeserializeOwned>(settings: &Value) -> Result<T, Module
     T::deserialize(settings).map_err(|error| ModuleError::InvalidSettings(error.to_string()))
 }
 
+/// How long the instances of a module live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ModuleLifetime {
+    /// Instances belong to the configuration of a device and live with the
+    /// engine of that device: nothing runs without it.
+    #[default]
+    Device,
+    /// The application holds an instance that works whether or not a device
+    /// is connected; devices, mice and the interface only show and drive it.
+    Application,
+}
+
 /// Creates instances of one module kind and describes it in the catalog.
 pub trait ModuleFactory: Send + Sync {
     /// Kind, name, capabilities and settings of the module.
@@ -69,6 +82,11 @@ pub trait ModuleFactory: Send + Sync {
     /// another. Nothing by default: the module has no petal.
     fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
         Vec::new()
+    }
+
+    /// Where the instances of the module live. On a device only by default.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Device
     }
 
     /// The events of the module that haptic mice can signal. Nothing by
@@ -232,6 +250,12 @@ pub trait Module: Send {
         let _ = action;
         Vec::new()
     }
+
+    /// Called once when the manager stops cleanly, before the instance is
+    /// dropped, so that a module can keep what it needs for the next run (a
+    /// timer pauses). Not called when a device is unplugged, nor after a
+    /// crash. Quick and synchronous: the manager is leaving.
+    fn on_shutdown(&mut self) {}
 
     /// Handles an event sent through [`ModuleContext::events`], usually by a
     /// background task of the instance; downcast it to the type sent.

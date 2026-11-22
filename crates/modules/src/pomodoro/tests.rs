@@ -969,3 +969,30 @@ async fn a_state_saved_under_longer_steps_is_brought_back_within_the_new_setting
     pomodoro.restart_after(Duration::ZERO);
     assert_eq!(label(&pomodoro.key()), "10:00 Travail");
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_clean_stop_pauses_the_step_where_it_was() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(5 * MINUTE).await;
+
+    pomodoro.module.on_shutdown();
+    // The manager is away for ten minutes: they do not count.
+    pomodoro.restart_after(10 * MINUTE);
+    assert_eq!(label(&pomodoro.key()), "20:00 Travail");
+    assert_eq!(pomodoro.widget().state, PomodoroState::Paused);
+    assert_eq!(pomodoro.run_for(MINUTE).await, 0, "paused, no tick");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_clean_stop_of_a_paused_step_changes_nothing() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_shutdown();
+    pomodoro.restart_after(3 * MINUTE);
+    assert_ready(&pomodoro.widget(), "Focus 1/4 · prêt", "25:00");
+}
+
+#[test]
+fn the_application_keeps_a_pomodoro() {
+    assert_eq!(simple_factory().lifetime(), ModuleLifetime::Application);
+}

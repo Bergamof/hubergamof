@@ -33,6 +33,7 @@ pub mod file_chooser;
 pub mod haptics;
 pub mod input;
 pub mod launcher;
+pub mod module_host;
 pub mod mouse_actions;
 pub mod mouse_engine;
 pub mod mouse_hub;

@@ -29,6 +29,16 @@ const FORMAT_VERSION: u32 = 1;
 /// Longest state file read: the real one is a few hundred bytes.
 const MAX_FILE_LENGTH: u64 = 4096;
 
+/// Longest wait for the writer to catch up when the manager stops.
+const FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// What the writer thread is asked.
+enum Order {
+    Write(String, Vec<u8>),
+    /// Answer once everything before is written.
+    Flush(Sender<()>),
+}
+
 /// Longest identifier of an instance that is kept (the bound of the
 /// configuration).
 const MAX_INSTANCE_ID_LENGTH: usize = 64;
@@ -53,6 +63,14 @@ enum SavedCountdown {
     Paused { remaining_ms: u64 },
     #[serde(rename_all = "camelCase")]
     Running { deadline_ms: u64 },
+}
+
+impl SavedTimer {
+    /// Whether the saved step was running.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        matches!(self.countdown, SavedCountdown::Running { .. })
+    }
 }
 
 impl From<TimerState> for SavedTimer {
@@ -106,6 +124,10 @@ pub trait PomodoroStateStore: Send + Sync + fmt::Debug {
     /// Saves `state` for `instance`. Never waits for the disk; a failure is
     /// logged.
     fn save(&self, instance: &str, state: SavedTimer);
+
+    /// Waits, a moment at most, until what was saved is on the disk: for the
+    /// manager that is stopping. Nothing to wait for by default.
+    fn flush(&self) {}
 }
 
 /// State kept in memory only: simulations, tests, and the fallback when there
@@ -144,7 +166,7 @@ struct Envelope {
 pub struct FileStateStore {
     folder: Arc<PrivateFolder>,
     boot_id: String,
-    writes: Sender<(String, Vec<u8>)>,
+    writes: Sender<Order>,
 }
 
 impl fmt::Debug for FileStateStore {
@@ -181,15 +203,22 @@ impl FileStateStore {
             return Err("empty boot identifier".to_owned());
         }
         let folder = Arc::new(PrivateFolder::open(runtime_dir)?);
-        let (writes, queued) = mpsc::channel::<(String, Vec<u8>)>();
+        let (writes, queued) = mpsc::channel::<Order>();
         let thread_folder = Arc::clone(&folder);
         std::thread::Builder::new()
             .name("pomodoro-state".to_owned())
             .spawn(move || {
                 // Ends when the store, which holds the sender, is dropped.
-                for (name, content) in queued {
-                    if let Err(error) = thread_folder.write_atomic(&name, &content) {
-                        tracing::warn!(%error, "pomodoro state not saved");
+                for order in queued {
+                    match order {
+                        Order::Write(name, content) => {
+                            if let Err(error) = thread_folder.write_atomic(&name, &content) {
+                                tracing::warn!(%error, "pomodoro state not saved");
+                            }
+                        }
+                        Order::Flush(done) => {
+                            let _ = done.send(());
+                        }
                     }
                 }
             })
@@ -251,10 +280,23 @@ impl PomodoroStateStore for FileStateStore {
         match serde_json::to_vec(&envelope) {
             Ok(content) => {
                 // The writer outlives the store; a send fails only at exit.
-                let _ = self.writes.send((name, content));
+                let _ = self.writes.send(Order::Write(name, content));
             }
             Err(error) => tracing::warn!(%error, "pomodoro state not saved"),
         }
+    }
+
+    fn flush(&self) {
+        if !self.flushed() {
+            tracing::warn!("pomodoro state may not be on the disk");
+        }
+    }
+}
+
+impl FileStateStore {
+    fn flushed(&self) -> bool {
+        let (done, answered) = mpsc::channel();
+        self.writes.send(Order::Flush(done)).is_ok() && answered.recv_timeout(FLUSH_TIMEOUT).is_ok()
     }
 }
 
@@ -380,6 +422,16 @@ mod tests {
             assert_eq!(store.load(instance), None, "{instance:?}");
         }
         assert!(FileStateStore::new(runtime.path(), "").is_err());
+    }
+
+    #[test]
+    fn a_flush_returns_once_the_writes_before_it_are_on_the_disk() {
+        let runtime = runtime_dir();
+        let store = FileStateStore::new(runtime.path(), BOOT).unwrap();
+        store.save("pomodoro", paused());
+        store.flush();
+        // No waiting loop: after the flush the state is there.
+        assert_eq!(store.load("pomodoro"), Some(paused()));
     }
 
     #[test]

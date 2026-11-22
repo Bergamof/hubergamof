@@ -182,6 +182,19 @@ impl Instances {
         self.live.clear();
     }
 
+    /// Tells every instance that the manager stops clean (see
+    /// [`Module::on_shutdown`]), then destroys them. A panic of one does not
+    /// keep the others from being told.
+    pub(crate) fn shutdown(&mut self) {
+        for (id, instance) in &mut self.live {
+            let module = instance.module.as_mut();
+            if catch_unwind(AssertUnwindSafe(|| module.on_shutdown())).is_err() {
+                tracing::error!(module = %id, kind = %instance.kind, "module panicked on shutdown");
+            }
+        }
+        self.clear();
+    }
+
     /// Key of the home page of instance `id`.
     pub(crate) fn key(&mut self, id: &ModuleInstanceId) -> Option<KeyContent> {
         self.inspect(id, "key", |module| Some(module.key()))

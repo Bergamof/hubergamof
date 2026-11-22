@@ -175,7 +175,9 @@ pub use file_entries::{EntryNaming, FileChooser, FileEntry, FileFilter, is_hidde
 pub use haptics::{HapticEventDescriptor, HapticWaveform};
 pub use ids::{DialFunctionId, ItemId, ModuleInstanceId, ModuleKind, PageId};
 pub use images::{ImageFuture, ImageLibrary, MAX_IMAGE_NAME_LENGTH, is_safe_image_name};
-pub use module::{HANDLER_BUDGET, Module, ModuleError, ModuleFactory, parse_settings};
+pub use module::{
+    HANDLER_BUDGET, Module, ModuleError, ModuleFactory, ModuleLifetime, parse_settings,
+};
 pub use notification::{
     MAX_NOTIFICATION_CHARS, Notification, NotificationId, Rgb, UnreadNotification,
     UnreadNotifications,
