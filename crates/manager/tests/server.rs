@@ -158,6 +158,7 @@ impl Devices {
             system: Arc::new(SimulatedProbe::default()),
             screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
             haptics: Arc::new(hubergamof_manager::haptics::NoHaptics),
+            application: None,
         };
         let catalog = module_catalog(&registry, &services.renderer);
         let store = services.store.clone();

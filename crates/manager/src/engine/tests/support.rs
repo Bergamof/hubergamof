@@ -28,6 +28,7 @@ use crate::config_store::ConfigStore;
 use crate::device::virtual_deck::VirtualDeck;
 use crate::device::{DeckBackend, DeviceError, InputEvent};
 use crate::engine::*;
+use crate::module_host::{HostServices, ModuleHost};
 use crate::screen_lock::SimulatedScreenLock;
 use crate::strip::{HintFace, SimulatedProbe, StripFace, SystemProbe, SystemSample, WallClock};
 use crate::testing::builtin_registry;
@@ -725,6 +726,8 @@ pub(super) struct Fixture {
     pub(super) engine: EngineHandle,
     pub(super) task: JoinHandle<()>,
     pub(super) probe: Probe,
+    /// The modules of the application, when the engine was started with them.
+    pub(super) host: Option<ModuleHost>,
 }
 
 pub(super) fn registry(probe: &Probe) -> Arc<ModuleRegistry> {
@@ -747,6 +750,7 @@ pub(super) fn services(dir: &TempDir, probe: &Probe) -> EngineServices {
         }),
         screen_lock: Arc::new(probe.screen_lock.clone()),
         haptics: Arc::new(probe.haptics.clone()),
+        application: None,
     }
 }
 
@@ -773,12 +777,12 @@ pub(super) async fn start_settled(info: DeviceInfo) -> Fixture {
 
 /// Starts an engine on a deck whose brightness fails if `fail_brightness`.
 pub(super) async fn start_with(info: DeviceInfo, fail_brightness: bool) -> Fixture {
-    start_after(info, fail_brightness, false, |_| {}).await
+    start_after(info, fail_brightness, false, false, |_| {}).await
 }
 
 /// Starts an engine on a computer that is already locked.
 pub(super) async fn start_locked(info: DeviceInfo) -> Fixture {
-    start_after(info, false, true, |_| {}).await
+    start_after(info, false, true, false, |_| {}).await
 }
 
 /// Starts an engine on a device whose configuration `prepare` stored first.
@@ -787,19 +791,47 @@ pub(super) async fn start_with_stored(
     prepare: impl FnOnce(&DeviceInfo, &ConfigStore),
 ) -> Fixture {
     let stored_for = info.clone();
-    start_after(info, false, false, move |store| prepare(&stored_for, store)).await
+    start_after(info, false, false, false, move |store| {
+        prepare(&stored_for, store);
+    })
+    .await
+}
+
+/// Starts an engine on a device that places the modules of the application,
+/// the application being started with it, after `prepare` stored a
+/// configuration first.
+pub(super) async fn start_applied(
+    info: DeviceInfo,
+    prepare: impl FnOnce(&DeviceInfo, &ConfigStore),
+) -> Fixture {
+    let stored_for = info.clone();
+    start_after(info, false, false, true, move |store| {
+        prepare(&stored_for, store);
+    })
+    .await
 }
 
 async fn start_after(
     info: DeviceInfo,
     fail_brightness: bool,
     locked: bool,
+    applied: bool,
     prepare: impl FnOnce(&ConfigStore),
 ) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let probe = Probe::default();
     probe.screen_lock.set(locked);
-    let services = services(&dir, &probe);
+    let mut services = services(&dir, &probe);
+    let host = applied.then(|| {
+        let (host, _task) = ModuleHost::start(HostServices {
+            registry: Arc::clone(&services.registry),
+            store: services.store.clone(),
+            haptics: Arc::clone(&services.haptics),
+            screen_lock: Arc::clone(&services.screen_lock),
+        });
+        host
+    });
+    services.application.clone_from(&host);
     let store = services.store.clone();
     prepare(&store);
     let deck = Arc::new(CountingDeck {
@@ -819,6 +851,7 @@ async fn start_after(
         engine: handle,
         task: tokio::spawn(engine.run()),
         probe,
+        host,
     }
 }
 

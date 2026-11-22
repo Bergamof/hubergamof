@@ -1,3 +1,4 @@
+mod application;
 mod context;
 mod haptics;
 mod lock;
