@@ -12,8 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hubergamof_module_api::{
-    Command, ImageLibrary, ModuleInstanceId, ModuleKind, ModuleLifetime, RedrawHandle,
-    ScreenLockState, UnreadNotifications,
+    Command, ModuleInstanceId, ModuleKind, ModuleLifetime, ScreenLockState,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -28,14 +27,20 @@ use crate::screen_lock::ScreenLock;
 /// Requests waiting for the host, at most.
 const REQUEST_CAPACITY: usize = 16;
 
-/// Longest wait for the host to stop when the manager leaves.
+/// Longest wait for the host to stop when the manager leaves, request
+/// included.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Longest the instances are given to hear that the manager stops: a module
+/// that blocks there must not hold the manager back.
+const INSTANCES_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Prefix of the identifier of the instance the host creates for a kind that
 /// the configuration does not mention.
 const DEFAULT_ID_PREFIX: &str = "app-";
 
 /// What the host needs from the manager.
+#[derive(Clone)]
 pub struct HostServices {
     /// Available modules.
     pub registry: Arc<ModuleRegistry>,
@@ -51,9 +56,28 @@ enum Request {
     RadialAction {
         module: ModuleKind,
         action: String,
-        reply: oneshot::Sender<bool>,
+        reply: oneshot::Sender<RadialReply>,
     },
     Shutdown(oneshot::Sender<()>),
+}
+
+/// What the host answers to a radial action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadialReply {
+    /// The host holds no instance of the module: somebody else may.
+    NotHeld,
+    /// The host holds it and refused the action: the computer is locked.
+    Refused,
+    /// The host holds it and ran the action.
+    Done,
+}
+
+impl RadialReply {
+    /// Whether the host holds the module, whatever it did with the action.
+    #[must_use]
+    pub fn is_held(self) -> bool {
+        self != Self::NotHeld
+    }
 }
 
 /// Entry point of the host: cheap to clone.
@@ -63,36 +87,51 @@ pub struct ModuleHost {
 }
 
 impl ModuleHost {
-    /// Starts the host on the current Tokio runtime.
+    /// Starts the host on the current Tokio runtime. The configuration is
+    /// read by the task, off the async threads: requests sent meanwhile wait.
     #[must_use]
     pub fn start(services: HostServices) -> (Self, JoinHandle<()>) {
         let (requests, received) = mpsc::channel(REQUEST_CAPACITY);
-        let task = tokio::spawn(run(Hosted::new(services), received));
+        let task = tokio::spawn(async move {
+            let for_reading = services.clone();
+            let configured =
+                tokio::task::spawn_blocking(move || configured_instances(&for_reading))
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::error!(%error, "application modules not read, none run");
+                        Vec::new()
+                    });
+            run(Hosted::new(services, configured), received).await;
+        });
         (Self { requests }, task)
     }
 
     /// Runs the radial action `action` of the instance of `module` the host
-    /// holds, as the menu asks. Whether the host has such an instance (a
-    /// refused action, locked computer included, counts as found).
-    pub async fn radial_action(&self, module: &ModuleKind, action: &str) -> bool {
+    /// holds, as the menu asks.
+    pub async fn radial_action(&self, module: &ModuleKind, action: &str) -> RadialReply {
         let (reply, answer) = oneshot::channel();
         let request = Request::RadialAction {
             module: module.clone(),
             action: action.to_owned(),
             reply,
         };
-        self.requests.send(request).await.is_ok() && answer.await.unwrap_or(false)
+        if self.requests.send(request).await.is_err() {
+            return RadialReply::NotHeld;
+        }
+        answer.await.unwrap_or(RadialReply::NotHeld)
     }
 
     /// Stops the host: its instances are told that the manager stops clean,
-    /// then destroyed. Gives up after [`SHUTDOWN_TIMEOUT`].
+    /// then destroyed. Gives up after [`SHUTDOWN_TIMEOUT`], the request
+    /// waiting for room in the queue included.
     pub async fn shutdown(&self) {
-        let (done, stopped) = oneshot::channel();
-        if self.requests.send(Request::Shutdown(done)).await.is_ok()
-            && tokio::time::timeout(SHUTDOWN_TIMEOUT, stopped)
-                .await
-                .is_err()
-        {
+        let stop = async {
+            let (done, stopped) = oneshot::channel();
+            if self.requests.send(Request::Shutdown(done)).await.is_ok() {
+                let _ = stopped.await;
+            }
+        };
+        if tokio::time::timeout(SHUTDOWN_TIMEOUT, stop).await.is_err() {
             tracing::warn!("the module host did not stop in time");
         }
     }
@@ -109,19 +148,15 @@ struct Hosted {
 }
 
 impl Hosted {
-    fn new(services: HostServices) -> Self {
+    fn new(services: HostServices, configured: Vec<ModuleInstance>) -> Self {
         let (events_tx, events) = mpsc::channel(MODULE_EVENT_CAPACITY);
         let locked = services.screen_lock.watch();
         let screen = locked.clone();
-        let mut instances = Instances::new(
+        let mut instances = Instances::detached(
             Arc::clone(&services.registry),
-            RedrawHandle::noop(),
             events_tx,
-            UnreadNotifications::new(Vec::new),
-            ImageLibrary::empty(),
             ScreenLockState::new(move || *screen.borrow()),
         );
-        let configured = configured_instances(&services);
         instances.sync(&configured);
         let by_kind = configured
             .into_iter()
@@ -136,22 +171,22 @@ impl Hosted {
         }
     }
 
-    async fn radial_action(&mut self, module: &ModuleKind, action: String) -> bool {
+    async fn radial_action(&mut self, module: &ModuleKind, action: String) -> RadialReply {
         let Some(id) = self.by_kind.get(module).cloned() else {
-            return false;
+            return RadialReply::NotHeld;
         };
         // Stricter than a key, as on a device: the menu shows nothing on a
         // locked computer, so nothing runs from it then.
         if *self.locked.borrow() {
             tracing::debug!(%id, "radial action refused: the computer is locked");
-            return true;
+            return RadialReply::Refused;
         }
         if let Some(Outcome::Done(commands)) =
             self.instances.call(&id, Call::RadialAction(action)).await
         {
             self.run(&id, commands);
         }
-        true
+        RadialReply::Done
     }
 
     async fn on_event(&mut self, routed: RoutedEvent) {
@@ -229,11 +264,11 @@ async fn run(mut hosted: Hosted, mut requests: mpsc::Receiver<Request>) {
         tokio::select! {
             request = requests.recv() => match request {
                 Some(Request::RadialAction { module, action, reply }) => {
-                    let found = hosted.radial_action(&module, action).await;
-                    let _ = reply.send(found);
+                    let answer = hosted.radial_action(&module, action).await;
+                    let _ = reply.send(answer);
                 }
                 Some(Request::Shutdown(done)) => {
-                    hosted.instances.shutdown();
+                    stop_instances(hosted.instances).await;
                     let _ = done.send(());
                     return;
                 }
@@ -243,7 +278,20 @@ async fn run(mut hosted: Hosted, mut requests: mpsc::Receiver<Request>) {
         }
         hosted.instances.take_task_panics();
     }
-    hosted.instances.shutdown();
+    stop_instances(hosted.instances).await;
+}
+
+/// Tells the instances that the manager stops, off the async threads and for
+/// no longer than [`INSTANCES_STOP_TIMEOUT`]: a module that blocks is
+/// abandoned.
+async fn stop_instances(mut instances: Instances) {
+    let stopping = tokio::task::spawn_blocking(move || instances.shutdown());
+    if tokio::time::timeout(INSTANCES_STOP_TIMEOUT, stopping)
+        .await
+        .is_err()
+    {
+        tracing::warn!("a module did not stop in time, abandoned");
+    }
 }
 
 #[cfg(test)]
@@ -342,9 +390,12 @@ mod tests {
     async fn a_radial_action_reaches_the_pomodoro_of_the_application() {
         let fixture = Fixture::new();
         let (host, _task) = fixture.start();
-        assert!(host.radial_action(&"pomodoro".into(), "toggle").await);
+        assert_eq!(
+            host.radial_action(&"pomodoro".into(), "toggle").await,
+            RadialReply::Done
+        );
         assert!(fixture.saved().is_some_and(|saved| saved.is_running()));
-        assert!(host.radial_action(&"pomodoro".into(), "toggle").await);
+        host.radial_action(&"pomodoro".into(), "toggle").await;
         assert!(fixture.saved().is_some_and(|saved| !saved.is_running()));
     }
 
@@ -352,22 +403,28 @@ mod tests {
     async fn a_module_the_application_does_not_hold_is_not_found() {
         let fixture = Fixture::new();
         let (host, _task) = fixture.start();
-        assert!(!host.radial_action(&"audio".into(), "mute-speakers").await);
-        assert!(!host.radial_action(&"nothing".into(), "toggle").await);
+        for module in ["audio", "nothing"] {
+            assert_eq!(
+                host.radial_action(&module.into(), "toggle").await,
+                RadialReply::NotHeld
+            );
+        }
     }
 
     #[tokio::test]
     async fn nothing_runs_from_the_menu_while_the_computer_is_locked() {
         let fixture = Fixture::new();
-        let (locked, _keep) = (watch::Sender::new(true), ());
+        let locked = watch::Sender::new(true);
         let lock = Arc::new(FakeLock(locked.clone()));
         let (host, _task) = ModuleHost::start(fixture.services(Arc::new(NoHaptics), lock));
-        // Found, so that the menu does not go looking elsewhere, but refused.
-        assert!(host.radial_action(&"pomodoro".into(), "toggle").await);
+        // Held, so that the menu does not go looking elsewhere, but refused.
+        let reply = host.radial_action(&"pomodoro".into(), "toggle").await;
+        assert_eq!(reply, RadialReply::Refused);
+        assert!(reply.is_held());
         assert_eq!(fixture.saved(), None);
 
         locked.send_replace(false);
-        assert!(host.radial_action(&"pomodoro".into(), "toggle").await);
+        host.radial_action(&"pomodoro".into(), "toggle").await;
         assert!(fixture.saved().is_some_and(|saved| saved.is_running()));
     }
 
@@ -381,8 +438,11 @@ mod tests {
         host.shutdown().await;
         task.await.unwrap();
         assert!(fixture.saved().is_some_and(|saved| !saved.is_running()));
-        // The host is gone: nothing is found any more.
-        assert!(!host.radial_action(&"pomodoro".into(), "toggle").await);
+        // The host is gone: nothing is held any more.
+        assert_eq!(
+            host.radial_action(&"pomodoro".into(), "toggle").await,
+            RadialReply::NotHeld
+        );
     }
 
     #[tokio::test]
@@ -399,10 +459,12 @@ mod tests {
     async fn the_haptic_events_a_module_declares_reach_the_mice_without_any_device() {
         let fixture = Fixture::new();
         let recorder = Arc::new(Recorder::default());
-        let mut hosted = Hosted::new(fixture.services(
+        let services = fixture.services(
             Arc::clone(&recorder) as Arc<dyn HapticOutput>,
             Arc::new(NoScreenLock),
-        ));
+        );
+        let configured = configured_instances(&services);
+        let mut hosted = Hosted::new(services, configured);
         let id = ModuleInstanceId(POMODORO_ID.to_owned());
         hosted.run(
             &id,

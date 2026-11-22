@@ -53,6 +53,11 @@ pub enum ModuleLifetime {
     Device,
     /// The application holds an instance that works whether or not a device
     /// is connected; devices, mice and the interface only show and drive it.
+    ///
+    /// Nothing of a device reaches such an instance: no unread notifications,
+    /// no image library, no redraw to request. The commands it returns that
+    /// have no surface to show on are dropped (haptic events still reach the
+    /// mice).
     Application,
 }
 

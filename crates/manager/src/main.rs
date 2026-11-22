@@ -64,6 +64,10 @@ const DEFAULT_LOG_FILTER: &str = "info";
 /// Longest wait for a device to blank its screens on shutdown.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Longest wait for the task of the module host to end once it was told to
+/// stop.
+const HOST_TASK_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Longest wait for the web server to close its connections on shutdown.
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -567,7 +571,13 @@ async fn run_manager(cli: Cli) -> Result<()> {
     // The menu runs actions on the engines, known before they start.
     let engines = EngineRegistry::default();
     let (host, host_task) = start_module_host(&services);
-    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines, &haptics, &host)?;
+    let (mouse_hub, mice) = match start_mouse_service(&cli, &services, &engines, &haptics, &host) {
+        Ok(started) => started,
+        Err(error) => {
+            stop_host(&host, host_task).await;
+            return Err(error);
+        }
+    };
     let supervisor = Supervisor::start_in(&discovery, services, engines);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -628,13 +638,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         .await
     };
 
-    let outcome = tokio::select! {
-        signal = tokio::signal::ctrl_c() => signal.context("cannot listen for Ctrl-C"),
-        _ = terminate.recv() => Ok(()),
-        _ = hangup.recv() => Ok(()),
-        () = wait_for_quit(stopping) => Ok(()),
-        result = &mut server_task => server_outcome(result),
-    };
+    let outcome = wait_for_stop(&mut terminate, &mut hangup, stopping, &mut server_task).await;
     tracing::info!("shutting down");
     shutdown.send_replace(true);
     stop_server(server_task).await;
@@ -650,6 +654,23 @@ async fn run_manager(cli: Cli) -> Result<()> {
     outcome
 }
 
+/// Waits for whatever ends the manager: a signal, the tray's quit, or the web
+/// server stopping on its own.
+async fn wait_for_stop(
+    terminate: &mut tokio::signal::unix::Signal,
+    hangup: &mut tokio::signal::unix::Signal,
+    stopping: watch::Receiver<bool>,
+    server_task: &mut JoinHandle<std::io::Result<()>>,
+) -> Result<()> {
+    tokio::select! {
+        signal = tokio::signal::ctrl_c() => signal.context("cannot listen for Ctrl-C"),
+        _ = terminate.recv() => Ok(()),
+        _ = hangup.recv() => Ok(()),
+        () = wait_for_quit(stopping) => Ok(()),
+        result = server_task => server_outcome(result),
+    }
+}
+
 /// The modules that live in the application, apart from any device.
 fn start_module_host(services: &EngineServices) -> (ModuleHost, tokio::task::JoinHandle<()>) {
     ModuleHost::start(HostServices {
@@ -660,11 +681,17 @@ fn start_module_host(services: &EngineServices) -> (ModuleHost, tokio::task::Joi
     })
 }
 
-/// Stops the module host and waits for its task.
-async fn stop_host(host: &ModuleHost, task: tokio::task::JoinHandle<()>) {
+/// Stops the module host, then waits for its task: it is aborted past
+/// [`HOST_TASK_TIMEOUT`], so that a stuck module cannot hold the manager back.
+async fn stop_host(host: &ModuleHost, mut task: tokio::task::JoinHandle<()>) {
     host.shutdown().await;
-    if let Err(error) = task.await {
-        tracing::warn!(%error, "module host failed");
+    match tokio::time::timeout(HOST_TASK_TIMEOUT, &mut task).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "module host failed"),
+        Err(_) => {
+            tracing::warn!("module host did not end in time");
+            task.abort();
+        }
     }
 }
 

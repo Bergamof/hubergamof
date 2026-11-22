@@ -157,6 +157,25 @@ impl Instances {
         }
     }
 
+    /// Instances that belong to no device (the application's): nothing of a
+    /// device reaches them, so they have no notifications to read, no images
+    /// and nothing to redraw. A module that lives in the application must
+    /// not rely on those (see [`hubergamof_module_api::ModuleLifetime`]).
+    pub(crate) fn detached(
+        registry: Arc<ModuleRegistry>,
+        events: mpsc::Sender<RoutedEvent>,
+        screen_lock: ScreenLockState,
+    ) -> Self {
+        Self::new(
+            registry,
+            RedrawHandle::noop(),
+            events,
+            UnreadNotifications::none(),
+            ImageLibrary::empty(),
+            screen_lock,
+        )
+    }
+
     /// Makes the instances match `configured`: an instance keeping its id
     /// and kind keeps its state and receives the settings if they changed;
     /// others are created or destroyed. A placeholder is retried when its
@@ -526,6 +545,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct Probe {
         handled: Arc<AtomicUsize>,
+        shutdowns: Arc<AtomicUsize>,
         senders: Arc<Mutex<Vec<EventSender>>>,
     }
 
@@ -533,6 +553,10 @@ mod tests {
 
     #[async_trait]
     impl Module for Counter {
+        fn on_shutdown(&mut self) {
+            self.0.shutdowns.fetch_add(1, Ordering::SeqCst);
+        }
+
         async fn on_event(&mut self, _event: ModuleEvent) -> Vec<Command> {
             self.0.handled.fetch_add(1, Ordering::SeqCst);
             Vec::new()
@@ -580,21 +604,70 @@ mod tests {
         }
     }
 
+    /// A module whose shutdown panics.
+    struct Fragile;
+
+    #[async_trait]
+    impl Module for Fragile {
+        fn on_shutdown(&mut self) {
+            panic!("fragile on shutdown");
+        }
+
+        fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
+            Ok(())
+        }
+    }
+
+    struct FragileFactory;
+
+    impl ModuleFactory for FragileFactory {
+        fn descriptor(&self) -> ModuleDescriptor {
+            ModuleDescriptor {
+                kind: FRAGILE_KIND.into(),
+                name: String::new(),
+                description: String::new(),
+                capabilities: ModuleCapabilities::default(),
+                dial_functions: Vec::new(),
+                settings: Vec::new(),
+            }
+        }
+
+        fn create(
+            &self,
+            _ctx: ModuleContext,
+            _settings: &Value,
+        ) -> Result<Box<dyn Module>, ModuleError> {
+            Ok(Box::new(Fragile))
+        }
+    }
+
+    const FRAGILE_KIND: &str = "fragile";
+
     fn instances(probe: &Probe) -> (Instances, mpsc::Receiver<RoutedEvent>) {
         let mut registry = ModuleRegistry::new();
         registry.register(Arc::new(CounterFactory(probe.clone())));
+        registry.register(Arc::new(FragileFactory));
         let (events, received) = mpsc::channel(8);
         (
-            Instances::new(
-                Arc::new(registry),
-                RedrawHandle::noop(),
-                events,
-                UnreadNotifications::none(),
-                ImageLibrary::empty(),
-                ScreenLockState::never(),
-            ),
+            Instances::detached(Arc::new(registry), events, ScreenLockState::never()),
             received,
         )
+    }
+
+    #[tokio::test]
+    async fn a_shutdown_tells_every_instance_even_after_one_panicked() {
+        let probe = Probe::default();
+        let (mut instances, _received) = instances(&probe);
+        let fragile = ModuleInstance {
+            id: "a".into(),
+            kind: FRAGILE_KIND.into(),
+            ..counter()
+        };
+        // `a` is told first (ids are ordered) and panics.
+        instances.sync(&[fragile, counter()]);
+        instances.shutdown();
+        assert_eq!(probe.shutdowns.load(Ordering::SeqCst), 1);
+        assert!(instances.key(&"c".into()).is_none(), "everything is gone");
     }
 
     #[tokio::test]

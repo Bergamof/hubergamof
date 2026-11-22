@@ -58,7 +58,7 @@ impl ModuleActions {
         let (queue, mut received) = mpsc::channel::<(ModuleKind, String)>(QUEUE_CAPACITY);
         runtime.spawn(async move {
             while let Some((module, action)) = received.recv().await {
-                run_on_first_device(&engines, &host, &module, &action).await;
+                run_on_first_holder(&engines, &host, &module, &action).await;
             }
         });
         Self { registry, queue }
@@ -103,9 +103,9 @@ impl ModuleActions {
 
 /// Runs `action` on the first device (in the order of the serial numbers) that
 /// has `module`, giving up on a device that does not take it within
-/// [`ACTION_TIMEOUT`]; when none has it, on the instance of the application.
-/// Whether somebody had the module.
-async fn run_on_first_device(
+/// [`ACTION_TIMEOUT`]; when none has it, on the instance of the application,
+/// under the same limit. Returns whether somebody holds the module.
+async fn run_on_first_holder(
     engines: &EngineRegistry,
     host: &ModuleHost,
     module: &ModuleKind,
@@ -120,8 +120,12 @@ async fn run_on_first_device(
             }
         }
     }
-    if host.radial_action(module, action).await {
-        return true;
+    match tokio::time::timeout(ACTION_TIMEOUT, host.radial_action(module, action)).await {
+        Ok(reply) if reply.is_held() => return true,
+        Ok(_) => {}
+        Err(_) => {
+            tracing::warn!(%module, action, "the application did not take the radial action in time");
+        }
     }
     tracing::warn!(%module, action, "nobody has the module of the radial entry");
     false
@@ -213,7 +217,7 @@ mod tests {
         let registry = registry();
         let host = host_of(&registry);
         let engines = EngineRegistry::default();
-        assert!(run_on_first_device(&engines, &host, &"pomodoro".into(), "toggle").await);
+        assert!(run_on_first_holder(&engines, &host, &"pomodoro".into(), "toggle").await);
     }
 
     #[tokio::test]
@@ -221,7 +225,7 @@ mod tests {
         let registry = registry();
         let host = host_of(&registry);
         let engines = EngineRegistry::default();
-        assert!(!run_on_first_device(&engines, &host, &"docker".into(), "start").await);
+        assert!(!run_on_first_holder(&engines, &host, &"docker".into(), "start").await);
     }
 
     #[tokio::test]
