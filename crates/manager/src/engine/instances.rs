@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::FutureExt as _;
+use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId,
     KeyContent, Module, ModuleContext, ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind,
@@ -22,8 +23,10 @@ use hubergamof_module_api::{
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
 use serde_json::Value;
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::{mpsc, watch};
+
+use crate::module_host::{ModuleHost, ModuleView, ModuleViews};
 
 /// A getter taking longer than this is logged: getters run on every redraw.
 const SLOW_GETTER_THRESHOLD: Duration = Duration::from_millis(1);
@@ -46,6 +49,16 @@ impl Module for UnavailableModule {
     fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
         Ok(())
     }
+}
+
+/// Longest a device waits for the application to take an input.
+const APPLICATION_CALL_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// An instance of the application that a device places: the device keeps its
+/// place (key, dial, strip) and its settings as the user last saved them there.
+struct Shared {
+    kind: ModuleKind,
+    settings: Value,
 }
 
 /// Alive exactly as long as the module it was issued for: the event senders
@@ -130,6 +143,11 @@ pub(crate) struct Instances {
     /// overflow is logged once, when it starts.
     queue_full: Arc<AtomicBool>,
     live: BTreeMap<ModuleInstanceId, Instance>,
+    /// The application, when this device places modules that live there:
+    /// those have no instance here, only a place.
+    application: Option<ModuleHost>,
+    views: Option<watch::Receiver<ModuleViews>>,
+    shared: BTreeMap<ModuleInstanceId, Shared>,
     /// Instances replaced after a panic outside of a handler, not yet
     /// reported.
     failures: Vec<ModuleInstanceId>,
@@ -153,7 +171,74 @@ impl Instances {
             screen_lock,
             queue_full: Arc::default(),
             live: BTreeMap::new(),
+            application: None,
+            views: None,
+            shared: BTreeMap::new(),
             failures: Vec::new(),
+        }
+    }
+
+    /// The modules that live in the application are not instantiated here but
+    /// placed: what they show is read from `application`, their inputs are
+    /// handed to it, and the settings saved on this device reach it.
+    pub(crate) fn with_application(mut self, application: Option<ModuleHost>) -> Self {
+        self.views = application.as_ref().map(ModuleHost::views);
+        self.application = application;
+        self
+    }
+
+    /// Whether `kind` lives in the application, which this device has.
+    fn lives_in_application(&self, kind: &ModuleKind) -> bool {
+        self.application.is_some()
+            && self
+                .registry
+                .get(kind)
+                .is_some_and(|factory| factory.lifetime() == ModuleLifetime::Application)
+    }
+
+    /// Kind of the module of instance `id`, local or placed.
+    fn kind_of(&self, id: &ModuleInstanceId) -> Option<&ModuleKind> {
+        self.live
+            .get(id)
+            .map(|instance| &instance.kind)
+            .or_else(|| self.shared.get(id).map(|shared| &shared.kind))
+    }
+
+    /// What the application shows for the placed instance `id`.
+    fn view(&self, id: &ModuleInstanceId) -> Option<ModuleView> {
+        let kind = &self.shared.get(id)?.kind;
+        self.views.as_ref()?.borrow().get(kind).cloned()
+    }
+
+    /// Places or updates the instances of the application among `configured`:
+    /// a new one offers its settings to the application (kept if it had none),
+    /// one whose settings changed saves them there.
+    fn sync_shared(&mut self, configured: &[ModuleInstance]) {
+        let mut previous = std::mem::take(&mut self.shared);
+        for config in configured {
+            if !self.lives_in_application(&config.kind) {
+                continue;
+            }
+            let Some(host) = &self.application else {
+                continue;
+            };
+            match previous
+                .remove(&config.id)
+                .filter(|p| p.kind == config.kind)
+            {
+                None => host.adopt(&config.kind, &config.settings),
+                Some(before) if before.settings != config.settings => {
+                    host.update_settings(&config.kind, &config.settings);
+                }
+                Some(_) => {}
+            }
+            self.shared.insert(
+                config.id.clone(),
+                Shared {
+                    kind: config.kind.clone(),
+                    settings: config.settings.clone(),
+                },
+            );
         }
     }
 
@@ -181,8 +266,12 @@ impl Instances {
     /// others are created or destroyed. A placeholder is retried when its
     /// kind became available.
     pub(crate) fn sync(&mut self, configured: &[ModuleInstance]) {
+        self.sync_shared(configured);
         let mut previous = std::mem::take(&mut self.live);
         for config in configured {
+            if self.shared.contains_key(&config.id) {
+                continue;
+            }
             let kept = previous
                 .remove(&config.id)
                 .filter(|instance| instance.kind == config.kind)
@@ -199,6 +288,7 @@ impl Instances {
     /// Destroys every instance.
     pub(crate) fn clear(&mut self) {
         self.live.clear();
+        self.shared.clear();
     }
 
     /// Tells every instance that the manager stops clean (see
@@ -216,21 +306,22 @@ impl Instances {
 
     /// Key of the home page of instance `id`.
     pub(crate) fn key(&mut self, id: &ModuleInstanceId) -> Option<KeyContent> {
+        if self.shared.contains_key(id) {
+            return self.view(id).map(|view| view.key);
+        }
         self.inspect(id, "key", |module| Some(module.key()))
     }
 
     /// Icon of the module kind of instance `id`, if it has one.
     pub(crate) fn icon(&self, id: &ModuleInstanceId) -> Option<hubergamof_module_api::ImageData> {
-        let instance = self.live.get(id)?;
-        self.registry.get(&instance.kind)?.icon()
+        self.registry.get(self.kind_of(id)?)?.icon()
     }
 
     /// Whether instance `id` keeps working while the computer is locked: its
     /// module declares it. An unknown instance does not.
     pub(crate) fn usable_when_locked(&self, id: &ModuleInstanceId) -> bool {
-        self.live
-            .get(id)
-            .and_then(|instance| self.registry.get(&instance.kind))
+        self.kind_of(id)
+            .and_then(|kind| self.registry.get(kind))
             .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
     }
 
@@ -241,15 +332,15 @@ impl Instances {
         id: &ModuleInstanceId,
         event: &str,
     ) -> Option<crate::haptics::HapticPlay> {
-        let instance = self.live.get(id)?;
+        let kind = self.kind_of(id)?;
         let declared = self
             .registry
-            .get(&instance.kind)?
+            .get(kind)?
             .haptic_events()
             .into_iter()
             .find(|declared| declared.id == event)?;
         Some(crate::haptics::HapticPlay {
-            module: instance.kind.clone(),
+            module: kind.clone(),
             event: declared.id,
             waveform: declared.waveform,
         })
@@ -259,14 +350,17 @@ impl Instances {
     /// while the computer is locked: its module declares it. An unknown
     /// instance does not.
     pub(crate) fn lock_safe_pages(&self, id: &ModuleInstanceId) -> bool {
-        self.live
-            .get(id)
-            .and_then(|instance| self.registry.get(&instance.kind))
+        self.kind_of(id)
+            .and_then(|kind| self.registry.get(kind))
             .is_some_and(|factory| factory.descriptor().capabilities.lock_safe_pages)
     }
 
     /// Page `page` of instance `id`, if it exists.
     pub(crate) fn page(&mut self, id: &ModuleInstanceId, page: &PageId) -> Option<PageContent> {
+        // A module of the application offers no pages (see `ModuleLifetime`).
+        if self.shared.contains_key(id) {
+            return None;
+        }
         self.inspect(id, "page", |module| module.page(page))
     }
 
@@ -276,16 +370,26 @@ impl Instances {
         id: &ModuleInstanceId,
         function: &DialFunctionId,
     ) -> Option<DialHint> {
+        if self.shared.contains_key(id) {
+            let view = self.view(id)?;
+            return Some(view.dial_hints.get(function).cloned().unwrap_or_default());
+        }
         self.inspect(id, "dial_hint", |module| Some(module.dial_hint(function)))
     }
 
     /// What instance `id` shows on the touch strip, if anything.
     pub(crate) fn strip_widget(&mut self, id: &ModuleInstanceId) -> Option<StripWidget> {
+        if self.shared.contains_key(id) {
+            return self.view(id)?.strip_widget;
+        }
         self.inspect(id, "strip_widget", |module| module.strip_widget())
     }
 
     /// The menu instance `id` has open, if any.
     pub(crate) fn strip_popup(&mut self, id: &ModuleInstanceId) -> Option<StripPopup> {
+        if self.shared.contains_key(id) {
+            return self.view(id)?.strip_popup;
+        }
         self.inspect(id, "strip_popup", |module| module.strip_popup())
     }
 
@@ -312,6 +416,10 @@ impl Instances {
     /// Runs a handler of instance `id`; `None` when there is no such
     /// instance.
     pub(crate) async fn call(&mut self, id: &ModuleInstanceId, call: Call) -> Option<Outcome> {
+        if let Some(shared) = self.shared.get(id) {
+            let (host, kind) = (self.application.clone()?, shared.kind.clone());
+            return call_application(host, kind, call).await;
+        }
         let instance = self.live.get_mut(id)?;
         let result = run_handler(instance.module.as_mut(), call).await;
         Some(match result {
@@ -478,6 +586,18 @@ impl Instances {
             }
         })
     }
+}
+
+/// An input for a module of the application, taken by the application within
+/// [`APPLICATION_CALL_TIMEOUT`].
+async fn call_application(host: ModuleHost, kind: ModuleKind, call: Call) -> Option<Outcome> {
+    if let Ok(outcome) =
+        tokio::time::timeout(APPLICATION_CALL_TIMEOUT, host.call(&kind, call)).await
+    {
+        return outcome;
+    }
+    tracing::warn!(%kind, "the application did not take the input in time");
+    Some(Outcome::Failed)
 }
 
 enum HandlerResult {

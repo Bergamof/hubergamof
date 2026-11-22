@@ -77,6 +77,10 @@ pub struct EngineServices {
     pub screen_lock: Arc<dyn ScreenLock>,
     /// Where the haptic events of the modules go.
     pub haptics: Arc<dyn crate::haptics::HapticOutput>,
+    /// The modules that live in the application: a device that places one
+    /// shows and drives that instance instead of making its own. `None`: the
+    /// device makes its own, as before.
+    pub application: Option<crate::module_host::ModuleHost>,
 }
 
 /// Failure of an engine operation.

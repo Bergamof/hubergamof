@@ -163,6 +163,7 @@ pub(super) mod tests {
                 system: Arc::new(SimulatedProbe::default()),
                 screen_lock: Arc::new(crate::screen_lock::NoScreenLock),
                 haptics: Arc::new(crate::haptics::NoHaptics),
+                application: None,
             };
             let discovery = DeviceDiscovery::new();
             let supervisor = Supervisor::start(&discovery, services);

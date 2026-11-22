@@ -563,7 +563,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
 
     // The mice, started after the devices, play their haptic events.
     let haptics = Arc::new(HapticRelay::new());
-    let services = real_services(&cli, Arc::clone(&haptics) as Arc<dyn HapticOutput>)?;
+    let mut services = real_services(&cli, Arc::clone(&haptics) as Arc<dyn HapticOutput>)?;
     let catalog = catalog_of(&services).await?;
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
@@ -571,6 +571,8 @@ async fn run_manager(cli: Cli) -> Result<()> {
     // The menu runs actions on the engines, known before they start.
     let engines = EngineRegistry::default();
     let (host, host_task) = start_module_host(&services);
+    // The devices place the modules of the application instead of making their own.
+    services.application = Some(host.clone());
     let (mouse_hub, mice) = match start_mouse_service(&cli, &services, &engines, &haptics, &host) {
         Ok(started) => started,
         Err(error) => {
@@ -1038,6 +1040,7 @@ fn services(
 ) -> Result<EngineServices> {
     let registry = Arc::new(builtin_registry_with(builtins));
     Ok(EngineServices {
+        application: None,
         store: ConfigStore::new(config_dir, Arc::clone(&registry)),
         renderer: Arc::new(Renderer::new().context("cannot initialise the renderer")?),
         registry,

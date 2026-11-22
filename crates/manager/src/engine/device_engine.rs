@@ -32,6 +32,7 @@ use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
 use crate::config_store::{LoadOutcome, check_config};
 use crate::device::{self, DeckBackend, InputEvent, StripLayout, TouchPoint};
+use crate::module_host::{AppCommands, ModuleHost, ModuleViews};
 use crate::render::{ImageSource, is_system_panel};
 use crate::strip::SystemHistory;
 
@@ -150,6 +151,8 @@ enum Wake {
     Request(Request),
     Input(InputEvent),
     ModuleEvent(RoutedEvent),
+    /// An instance of the application asked for something outside of an input.
+    ApplicationCommands(AppCommands),
     Redraw,
     FeedbackExpired,
     /// The notification on the strip moves a step or may have expired.
@@ -209,6 +212,11 @@ pub struct DeviceEngine {
     inputs: broadcast::Receiver<InputEvent>,
     requests: Option<mpsc::Receiver<Request>>,
     events: mpsc::Receiver<RoutedEvent>,
+    /// What the instances of the application show, when this device places
+    /// some.
+    app_views: Option<watch::Receiver<ModuleViews>>,
+    /// What they ask for outside of an input.
+    app_commands: Option<broadcast::Receiver<AppCommands>>,
     redraw: Arc<Notify>,
     live: watch::Sender<LiveSnapshot>,
     config_tx: watch::Sender<DeviceConfig>,
@@ -261,8 +269,14 @@ impl DeviceEngine {
                 let screen = services.screen_lock.watch();
                 ScreenLockState::new(move || *screen.borrow())
             },
-        );
+        )
+        .with_application(services.application.clone());
         instances.sync(&loaded.config.modules);
+        let app_views = services.application.as_ref().map(ModuleHost::views);
+        let app_commands = services
+            .application
+            .as_ref()
+            .map(ModuleHost::subscribe_commands);
 
         let (requests_tx, requests) = mpsc::channel(REQUEST_CAPACITY);
         let (live, live_rx) = watch::channel(LiveSnapshot::empty(&deck.info().serial));
@@ -291,6 +305,8 @@ impl DeviceEngine {
             inputs,
             requests: Some(requests),
             events,
+            app_views,
+            app_commands,
             redraw,
             live,
             config_tx,
@@ -344,6 +360,10 @@ impl DeviceEngine {
                     if self.handle_queued().await == Queued::Disconnected {
                         break;
                     }
+                    self.refresh_or_log().await;
+                }
+                Wake::ApplicationCommands(commands) => {
+                    self.handle_application_commands(commands);
                     self.refresh_or_log().await;
                 }
                 Wake::ModuleEvent(routed) => {
@@ -415,6 +435,10 @@ impl DeviceEngine {
                 },
                 // The instances keep a sender: the queue never closes.
                 Some(routed) = self.events.recv() => Some(Wake::ModuleEvent(routed)),
+                () = views_changed(self.app_views.as_mut()) => Some(Wake::Redraw),
+                Some(commands) = recv_commands(self.app_commands.as_mut()) => {
+                    Some(Wake::ApplicationCommands(commands))
+                }
                 () = self.redraw.notified() => Some(Wake::Redraw),
                 () = sleep_until(self.marks.next_expiry().filter(|_| lit)) => Some(Wake::FeedbackExpired),
                 () = sleep_until(self.notifications.next_step().filter(|_| lit)) => Some(Wake::NotificationStep),
@@ -696,6 +720,23 @@ impl DeviceEngine {
         }
     }
 
+    /// What an instance of the application asked for outside of an input
+    /// (a notification when a step ends), applied as if the instance were
+    /// this device's: it is shown where this device places the module.
+    fn handle_application_commands(&mut self, asked: AppCommands) {
+        let Some(module) = self
+            .config
+            .modules
+            .iter()
+            .find(|instance| instance.kind == asked.kind)
+            .map(|instance| instance.id.clone())
+        else {
+            return;
+        };
+        let surfaces = self.event_surfaces(&module);
+        self.conclude(&module, &surfaces, Outcome::Done(asked.commands));
+    }
+
     async fn handle_event(&mut self, routed: RoutedEvent) {
         let module = routed.module.clone();
         let surfaces = self.event_surfaces(&module);
@@ -915,6 +956,35 @@ async fn apply_brightness(deck: &dyn DeckBackend, percent: u8) -> Option<u8> {
 }
 
 /// Next request, or pending forever once the queue is closed.
+/// Resolves when the application shows something else, never without one.
+async fn views_changed(views: Option<&mut watch::Receiver<ModuleViews>>) {
+    if let Some(views) = views
+        && views.changed().await.is_ok()
+    {
+        return;
+    }
+    std::future::pending::<()>().await;
+}
+
+/// The next batch of commands of the application; a batch missed because this
+/// device was slow is said, never waited for.
+async fn recv_commands(
+    commands: Option<&mut broadcast::Receiver<AppCommands>>,
+) -> Option<AppCommands> {
+    let Some(commands) = commands else {
+        return std::future::pending().await;
+    };
+    loop {
+        match commands.recv().await {
+            Ok(asked) => return Some(asked),
+            Err(RecvError::Lagged(missed)) => {
+                tracing::warn!(missed, "missed commands of the application");
+            }
+            Err(RecvError::Closed) => return std::future::pending().await,
+        }
+    }
+}
+
 async fn recv_request(requests: Option<&mut mpsc::Receiver<Request>>) -> Option<Request> {
     match requests {
         Some(requests) => requests.recv().await,
