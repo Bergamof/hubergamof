@@ -253,6 +253,7 @@ async fn rendered_image(
     State(state): State<AppState>,
     Path((serial, name)): Path<(String, String)>,
 ) -> Result<Response, Failure> {
+    ensure_unlocked(&state)?;
     let store = state.context.store.clone();
     let renderer = Arc::clone(&state.context.renderer);
     let png = blocking(move || {

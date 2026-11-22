@@ -45,9 +45,33 @@ describe('ApplicationPanel', () => {
 	it('shows the step and the time of the pomodoro, whether or not a device is connected', async () => {
 		await renderPanel();
 		await expect.element(page.getByRole('heading', { name: 'Pomodoro', level: 2 })).toBeVisible();
-		await expect.element(page.getByText(/^Focus 2\/4$/)).toBeVisible();
+		await expect.element(page.getByText(/^Focus 2\/4$/).first()).toBeVisible();
 		await expect.element(page.getByText(/^12:34 · pause$/)).toBeVisible();
-		await expect.element(page.getByText(/Ce module tourne dans le gestionnaire/)).toBeVisible();
+		await expect.element(page.getByText(/Tourne dans le gestionnaire/)).toBeVisible();
+	});
+
+	it('announces the step, not the time', async () => {
+		const { connection } = await renderPanel();
+		const step = page.getByRole('status').first();
+		await expect.element(step).toHaveTextContent('Focus 2/4');
+		connection.receive({
+			type: 'applicationModules',
+			modules: [view({ status: 'Focus 2/4\n12:33' })]
+		});
+		await expect.element(step).toHaveTextContent('Focus 2/4');
+		connection.receive({
+			type: 'applicationModules',
+			modules: [view({ status: 'Pause\n05:00' })]
+		});
+		await expect.element(step).toHaveTextContent('Pause');
+	});
+
+	it('says so when an action cannot be sent', async () => {
+		const { connection, deck } = await renderPanel();
+		connection.open = false;
+		await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
+		expect(deck.notices).toHaveLength(1);
+		expect(deck.notices[0].text).toMatch(/Action non envoyée/);
 	});
 
 	it('follows what the module shows as it changes', async () => {

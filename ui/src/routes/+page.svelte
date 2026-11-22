@@ -48,22 +48,28 @@
 					? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
 					: deck?.device !== undefined && deck.config !== undefined
 	);
+	/** The editor can be used: the connection is up and the computer is not locked. */
+	const usable = $derived(isOnline && !locked);
 	/** The page then shows its own alert about the lost connection: the header does not repeat it. */
 	const offlineAlertShown = $derived(!isOnline && editorShown);
 
 	let editor: HTMLDivElement | undefined = $state();
-	/** Focused control of the editor when the connection was lost, focused again once back. */
+	/** Focused control of the editor when it became unusable, focused again once usable. */
 	let focusBeforeOffline: HTMLElement | undefined;
 
 	// Before the DOM update: the editor turns inert, which drops the focus.
 	$effect.pre(() => {
-		if (isOnline || !editor) return;
+		if (usable || !editor) return;
 		const focused = document.activeElement;
-		if (focused instanceof HTMLElement && editor.contains(focused)) focusBeforeOffline = focused;
+		if (focused instanceof HTMLElement && editor.contains(focused)) {
+			focusBeforeOffline = focused;
+			// The page keeps the focus once the editor is inert, instead of dropping it on the body.
+			void tick().then(() => document.getElementById(MAIN_ID)?.focus());
+		}
 	});
 
 	$effect(() => {
-		if (!isOnline || !focusBeforeOffline) return;
+		if (!usable || !focusBeforeOffline) return;
 		const target = focusBeforeOffline;
 		focusBeforeOffline = undefined;
 		void tick().then(() => {
@@ -141,7 +147,7 @@
 					gestionnaire refuse toute action.
 				</p>
 			{/if}
-			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline || locked}>
+			<div bind:this={editor} class="flex flex-col gap-6" inert={!usable}>
 				{#if sections.length > 1}
 					<div role="group" aria-label="Appareils à configurer" class="flex flex-wrap gap-2">
 						{#each sections as choice (choice)}

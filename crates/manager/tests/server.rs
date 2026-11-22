@@ -1426,6 +1426,11 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
             config: RadialMenuConfig::default_menu(),
         },
         ClientMessage::CheckForUpdates,
+        // Following a device shows its configuration: refused too.
+        ClientMessage::SelectDevice {
+            serial: DEMO_SERIAL.into(),
+            live_state: false,
+        },
     ];
     for request in &acting {
         client.send(request).await;
@@ -1442,11 +1447,20 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
         .receive_until(|message| matches!(message, ServerMessage::Pong).then_some(()))
         .await;
 
-    // Back to the desk: the same request goes through.
+    // Back to the desk: what was not told meanwhile is told again, and the
+    // same request goes through.
     locked.send_replace(false);
     client
         .receive_until(|message| {
             matches!(message, ServerMessage::Locked { locked: false }).then_some(())
+        })
+        .await;
+    client
+        .receive_until(|message| matches!(message, ServerMessage::Devices { .. }).then_some(()))
+        .await;
+    client
+        .receive_until(|message| {
+            matches!(message, ServerMessage::ModuleCatalog { .. }).then_some(())
         })
         .await;
     client
@@ -1466,5 +1480,26 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
             _ => None,
         })
         .await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_client_connecting_while_the_computer_is_locked_hears_nothing_but_that() {
+    let (server, locked) = running_with_application().await;
+    locked.send_replace(true);
+    // Not `connect`: it waits for the whole greeting, which a locked computer cuts short.
+    let own_origin = format!("http://127.0.0.1:{}", server.port);
+    let mut client = server.connect_with(Some(&own_origin)).await.unwrap();
+    assert!(matches!(
+        client.receive().await,
+        ServerMessage::Hello { .. }
+    ));
+    assert_eq!(
+        client.receive().await,
+        ServerMessage::Locked { locked: true }
+    );
+    // Nothing else is sent: the next message is the answer to the keep-alive.
+    client.send(&ClientMessage::Ping).await;
+    assert_eq!(client.receive().await, ServerMessage::Pong);
     server.stop().await;
 }

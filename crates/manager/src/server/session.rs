@@ -80,14 +80,22 @@ enum Event {
 /// Why the session ends.
 struct Closed;
 
-/// Whether `request` acts or changes something, as opposed to following what
-/// the manager shows: only those are refused while the computer is locked.
+/// Whether `request` is refused while the computer is locked: everything
+/// but the keep-alive. Following a device or a mouse is refused too, it shows
+/// their configuration: the interface is not to be used then.
 fn acts(request: &ClientMessage) -> bool {
-    !matches!(
-        request,
-        ClientMessage::SelectDevice { .. }
-            | ClientMessage::SelectMouse { .. }
-            | ClientMessage::Ping
+    !matches!(request, ClientMessage::Ping)
+}
+
+/// What a locked computer still lets the client hear: that it is locked, the
+/// answer to its keep-alive, why a request was refused, and the greeting.
+fn heard_while_locked(message: &ServerMessage) -> bool {
+    matches!(
+        message,
+        ServerMessage::Hello { .. }
+            | ServerMessage::Locked { .. }
+            | ServerMessage::Pong
+            | ServerMessage::Error { .. }
     )
 }
 
@@ -181,7 +189,12 @@ impl Session {
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
                 Event::ApplicationChanged => self.send_application_modules().await?,
-                Event::LockChanged => self.send_locked().await?,
+                Event::LockChanged => {
+                    self.send_locked().await?;
+                    if !*self.locked.borrow() {
+                        self.resync().await?;
+                    }
+                }
                 // Unreachable while the context holds its handle (it keeps the
                 // channels open); harmless if it ever happens. A mouse feed with
                 // nothing to say: the mouse followed went away, the list of mice
@@ -413,6 +426,14 @@ impl Session {
             Err(SettingsRefusal::Refused(reason)) => {
                 self.send_error(ErrorCode::InvalidConfig, &reason).await
             }
+            Err(SettingsRefusal::Locked) => {
+                self.send_error(ErrorCode::Locked, "the computer is locked")
+                    .await
+            }
+            Err(SettingsRefusal::NotSaved) => {
+                self.send_error(ErrorCode::Internal, "the settings could not be saved")
+                    .await
+            }
         }
     }
 
@@ -432,6 +453,28 @@ impl Session {
             .collect();
         self.send(&ServerMessage::ApplicationModules { modules })
             .await
+    }
+
+    /// Tells the client what it could not hear while the computer was locked.
+    /// The interface selects its device and mouse again on the lists, like
+    /// after any other change of them.
+    async fn resync(&mut self) -> Result<(), Closed> {
+        let devices = self.state.context.discovery.devices();
+        self.send(&ServerMessage::Devices { devices }).await?;
+        self.send(&ServerMessage::ModuleCatalog {
+            modules: self.state.context.catalog.to_vec(),
+        })
+        .await?;
+        self.send_application_modules().await?;
+        for message in self.mouse.initial() {
+            self.send(&message).await?;
+        }
+        self.send_update_settings().await?;
+        if *self.updates.borrow() != UpdateStatus::Unknown {
+            self.send_update_status().await?;
+        }
+        self.send_config().await?;
+        self.send_live_state().await
     }
 
     async fn send_locked(&mut self) -> Result<(), Closed> {
@@ -646,6 +689,11 @@ impl Session {
     }
 
     async fn send(&mut self, message: &ServerMessage) -> Result<(), Closed> {
+        // Nothing of the configuration or of the state is told while the
+        // computer is locked: what was missed is told again at the unlocking.
+        if *self.locked.borrow() && !heard_while_locked(message) {
+            return Ok(());
+        }
         let text = match serde_json::to_string(message) {
             Ok(text) => text,
             Err(error) => {

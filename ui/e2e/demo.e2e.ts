@@ -848,6 +848,7 @@ test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', 
 	await openModules(page);
 	const start = page.getByRole('button', { name: 'Démarrer ou mettre en pause' });
 	await expect(start).toBeEnabled();
+	await start.focus();
 
 	// What the manager says when the computer locks.
 	sockets[0].send(JSON.stringify({ type: 'locked', locked: true }));
@@ -860,7 +861,11 @@ test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', 
 		() => undefined
 	);
 
+	// The focus did not fall on the page: it is on the main part.
+	await expect(page.locator('main')).toBeFocused();
+
 	sockets[0].send(JSON.stringify({ type: 'locked', locked: false }));
 	await expect(page.getByRole('alert').filter({ hasText: 'verrouillé' })).toHaveCount(0);
+	await expect(start, 'focus given back').toBeFocused();
 	await start.click();
 });

@@ -32,7 +32,7 @@ use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use crate::config_store::ConfigStore;
+use crate::config_store::{ConfigStore, ConfigStoreError};
 use crate::engine::{Call, Instances, MODULE_EVENT_CAPACITY, Outcome, RoutedEvent};
 use crate::haptics::HapticOutput;
 use crate::screen_lock::ScreenLock;
@@ -162,9 +162,15 @@ pub enum SettingsRefusal {
     /// The application holds no such module.
     #[error("the application holds no such module")]
     NotHeld,
-    /// The module refuses them.
+    /// The module, or the file, refuses them.
     #[error("{0}")]
     Refused(String),
+    /// The computer is locked: nothing is changed from the interface.
+    #[error("the computer is locked")]
+    Locked,
+    /// They could not be written: nothing was changed.
+    #[error("the settings could not be saved")]
+    NotSaved,
 }
 
 /// Entry point of the host: cheap to clone.
@@ -525,7 +531,9 @@ impl Hosted {
     }
 
     /// Replaces the settings of `kind`, in the running instance and in the
-    /// file, when the module accepts them. The last device to save wins.
+    /// file, when the module and the file accept them, and only once they are
+    /// written: settings that cannot be kept are not run with. The last device
+    /// to save wins.
     async fn set_settings(
         &mut self,
         kind: ModuleKind,
@@ -548,37 +556,25 @@ impl Hosted {
         if unchanged && self.config.modules.iter().any(|stored| stored.kind == kind) {
             return Ok(());
         }
-        let stored = ModuleInstance {
-            id,
-            kind: kind.clone(),
-            label: None,
-            image: None,
-            settings,
-        };
-        match self
-            .config
+        let mut candidate = self.config.clone();
+        match candidate
             .modules
             .iter_mut()
             .find(|existing| existing.kind == kind)
         {
-            Some(existing) => existing.settings.clone_from(&stored.settings),
-            None => self.config.modules.push(stored),
+            Some(existing) => existing.settings = settings,
+            None => candidate.modules.push(ModuleInstance {
+                id,
+                kind,
+                label: None,
+                image: None,
+                settings,
+            }),
         }
+        self.config = save_config(self.store.clone(), candidate).await?;
         self.configured = instances_for(&self.config, &self.registry);
         self.instances.sync(&self.configured);
-        self.save().await;
         Ok(())
-    }
-
-    /// Writes the file, off the async threads; a refusal is logged.
-    async fn save(&mut self) {
-        let store = self.store.clone();
-        let config = self.config.clone();
-        match tokio::task::spawn_blocking(move || store.save_app_modules(config)).await {
-            Ok(Ok(saved)) => self.config = saved,
-            Ok(Err(error)) => tracing::warn!(%error, "application modules not saved"),
-            Err(error) => tracing::error!(%error, "saving the application modules failed"),
-        }
     }
 
     /// The settings `kind` runs with.
@@ -623,6 +619,29 @@ impl Hosted {
             }
             changed
         });
+    }
+}
+
+/// Writes `config`, off the async threads, and gives back the file as
+/// stored; a file that is too big or invalid is refused, a failure to
+/// write is logged.
+async fn save_config(
+    store: ConfigStore,
+    config: AppModulesConfig,
+) -> Result<AppModulesConfig, SettingsRefusal> {
+    match tokio::task::spawn_blocking(move || store.save_app_modules(config)).await {
+        Ok(Ok(saved)) => Ok(saved),
+        Ok(Err(ConfigStoreError::InvalidAppModules(error))) => {
+            Err(SettingsRefusal::Refused(error.to_string()))
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "application modules not saved");
+            Err(SettingsRefusal::NotSaved)
+        }
+        Err(error) => {
+            tracing::error!(%error, "saving the application modules failed");
+            Err(SettingsRefusal::NotSaved)
+        }
     }
 }
 
@@ -689,7 +708,14 @@ async fn run(mut hosted: Hosted, mut requests: mpsc::Receiver<Request>) {
                     let _ = hosted.set_settings(kind, settings).await;
                 }
                 Some(Request::SetSettings { kind, settings, reply }) => {
-                    let _ = reply.send(hosted.set_settings(kind, settings).await);
+                    // Checked here too, not only by the server: the request may
+                    // have waited while the computer locked.
+                    let answer = if *hosted.locked.borrow() {
+                        Err(SettingsRefusal::Locked)
+                    } else {
+                        hosted.set_settings(kind, settings).await
+                    };
+                    let _ = reply.send(answer);
                 }
                 Some(Request::Shutdown(done)) => {
                     stop_instances(hosted.instances).await;
@@ -964,6 +990,63 @@ mod tests {
         let store = ConfigStore::new(fixture.dir.path(), Arc::clone(&fixture.registry));
         let stored = store.load_app_modules().unwrap().config.modules;
         assert_eq!(stored.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn settings_too_big_for_the_file_are_refused_and_change_nothing() {
+        let fixture = Fixture::new();
+        let (host, _task) = fixture.start();
+        let mut views = host.views();
+        views
+            .wait_for(|views| views.contains_key(&"pomodoro".into()))
+            .await
+            .unwrap();
+        let before = views
+            .borrow()
+            .get(&"pomodoro".into())
+            .unwrap()
+            .settings
+            .clone();
+
+        // A key the module does not know passes its own check, not the file's.
+        let huge = json!({ "note": "x".repeat(32 * 1024) });
+        let refusal = host.set_settings(&"pomodoro".into(), &huge).await;
+        assert!(
+            matches!(refusal, Err(SettingsRefusal::Refused(_))),
+            "{refusal:?}"
+        );
+
+        let after = views
+            .borrow()
+            .get(&"pomodoro".into())
+            .unwrap()
+            .settings
+            .clone();
+        assert_eq!(
+            after, before,
+            "the instance keeps running with its settings"
+        );
+        let store = ConfigStore::new(fixture.dir.path(), Arc::clone(&fixture.registry));
+        assert_eq!(store.load_app_modules().unwrap().config.modules.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn settings_asked_for_by_a_client_are_refused_while_the_computer_is_locked() {
+        let fixture = Fixture::new();
+        let locked = watch::Sender::new(true);
+        let (host, _task) = ModuleHost::start(
+            fixture.services(Arc::new(NoHaptics), Arc::new(FakeLock(locked.clone()))),
+        );
+        let settings = json!({ "workMinutes": 30 });
+        assert_eq!(
+            host.set_settings(&"pomodoro".into(), &settings).await,
+            Err(SettingsRefusal::Locked)
+        );
+        locked.send_replace(false);
+        assert_eq!(
+            host.set_settings(&"pomodoro".into(), &settings).await,
+            Ok(())
+        );
     }
 
     #[tokio::test]

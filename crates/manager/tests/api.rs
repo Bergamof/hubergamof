@@ -819,6 +819,10 @@ async fn nothing_is_transferred_or_chosen_while_the_computer_is_locked() {
         locked
     );
     assert_eq!(api_error(choose_compose_file(&api).await).await, locked);
+    let image = api
+        .get(&format!("/api/devices/{FIRST}/images/any.png"))
+        .await;
+    assert_eq!(api_error(image).await, locked);
     assert_eq!(stored_images(&api, FIRST).len(), 0);
     api.stop().await;
 }

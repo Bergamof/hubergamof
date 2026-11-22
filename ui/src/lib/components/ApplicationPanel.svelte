@@ -32,6 +32,21 @@ Settings are saved as they are edited, like those of a key.
 		};
 	}
 
+	/** Runs an action; the connection being lost, nothing was sent, which is said. */
+	function run(kind: string, action: string) {
+		if (!deck.application.run(kind, action)) {
+			deck.report({
+				text: 'Action non envoyée : la connexion au gestionnaire est perdue.',
+				detail: null
+			});
+		}
+	}
+
+	/** The step, first line of what the module says: it changes rarely, unlike the time. */
+	function stepOf(status: string | null | undefined): string {
+		return status?.split('\n')[0] ?? '';
+	}
+
 	function discarded(name: string, fields: string[]) {
 		deck.report({
 			text: `Réglages de « ${name} » non enregistrés, valeur invalide : ${fields.join(', ')}.`,
@@ -50,14 +65,13 @@ Settings are saved as they are edited, like those of a key.
 				<p class="text-sm text-muted">{module.description}</p>
 			{/if}
 			<p class="text-sm text-muted">
-				Ce module tourne dans le gestionnaire : il continue sans Stream Deck, et la touche, la
-				molette, la bande tactile et le menu circulaire montrent le même.
+				Tourne dans le gestionnaire, avec ou sans Stream Deck : les decks et le menu circulaire
+				montrent le même.
 			</p>
 
 			{#if view.status}
-				<!-- Changes every second: not announced. -->
+				<!-- The time changes every second and is not announced; the step is, below. -->
 				<div
-					aria-live="off"
 					aria-label="État de {name}"
 					role="group"
 					data-testid="module-status-{view.kind}"
@@ -71,6 +85,8 @@ Settings are saved as they are edited, like those of a key.
 				</div>
 			{/if}
 
+			<p role="status" class="sr-only">{stepOf(view.status)}</p>
+
 			{#if module && module.radialActions.length > 0}
 				<ul class="flex flex-wrap gap-3" aria-label="Actions de {name}">
 					{#each module.radialActions as action, index (action.id)}
@@ -79,11 +95,11 @@ Settings are saved as they are edited, like those of a key.
 								type="button"
 								class={['focus-ring', index === 0 ? 'primary-button' : 'secondary-button']}
 								aria-describedby="{uid}-{view.kind}-{action.id}"
-								onclick={() => deck.application.run(view.kind, action.id)}
+								onclick={() => run(view.kind, action.id)}
 							>
 								{action.name}
 							</button>
-							<span id="{uid}-{view.kind}-{action.id}" class="max-w-56 text-xs text-muted">
+							<span id="{uid}-{view.kind}-{action.id}" class="max-w-56 text-sm text-muted">
 								{action.description}
 							</span>
 						</li>
