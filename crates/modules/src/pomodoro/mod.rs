@@ -13,9 +13,12 @@
 //!
 //! The time follows real time, suspends included (see [`crate::time`]): a
 //! step whose end passed while the machine slept is over on waking up. The
-//! state lives in memory only: a restart begins a new cycle.
+//! state outlives the manager, not the machine (see [`persistence`]): after a
+//! restart of the manager the step is where it was, after a reboot a new cycle
+//! begins.
 
 mod menu;
+mod persistence;
 mod settings;
 mod timer;
 
@@ -34,6 +37,9 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 pub use menu::MENU_TIMEOUT;
+pub use persistence::{
+    FileStateStore, MemoryStateStore, PomodoroStateStore, SavedTimer, session_store,
+};
 pub use settings::{PomodoroSettings, StripNotice};
 
 use crate::icons::{asset, svg};
@@ -71,6 +77,7 @@ const VALIDATE_HINT: &str = "Valider";
 pub struct PomodoroFactory {
     notifier: Arc<dyn Notifier>,
     clock: Arc<dyn Clock>,
+    state: Arc<dyn PomodoroStateStore>,
 }
 
 impl PomodoroFactory {
@@ -79,7 +86,19 @@ impl PomodoroFactory {
     /// [`crate::time`]).
     #[must_use]
     pub fn new(notifier: Arc<dyn Notifier>, clock: Arc<dyn Clock>) -> Self {
-        Self { notifier, clock }
+        Self {
+            notifier,
+            clock,
+            state: Arc::new(MemoryStateStore::default()),
+        }
+    }
+
+    /// The same factory keeping the state of its pomodoros in `state` (in
+    /// memory by default).
+    #[must_use]
+    pub fn with_state_store(mut self, state: Arc<dyn PomodoroStateStore>) -> Self {
+        self.state = state;
+        self
     }
 }
 
@@ -88,6 +107,7 @@ impl std::fmt::Debug for PomodoroFactory {
         f.debug_struct("PomodoroFactory")
             .field("notifier", &self.notifier)
             .field("clock", &self.clock)
+            .field("state", &self.state)
             .finish()
     }
 }
@@ -177,15 +197,26 @@ impl ModuleFactory for PomodoroFactory {
 
     fn create(&self, ctx: ModuleContext, settings: &Value) -> Result<Box<dyn Module>, ModuleError> {
         let settings = PomodoroSettings::parse(settings)?;
-        Ok(Box::new(Pomodoro {
-            timer: Timer::new(settings.durations(), settings.auto_start),
+        let now = self.clock.now();
+        let timer = match self.state.load(&ctx.instance_id().0) {
+            Some(saved) => {
+                Timer::restored(settings.durations(), settings.auto_start, saved.into(), now)
+            }
+            None => Timer::new(settings.durations(), settings.auto_start),
+        };
+        let mut pomodoro = Pomodoro {
+            timer,
             menu: None,
             ticker: None,
             notifier: Arc::clone(&self.notifier),
             clock: Arc::clone(&self.clock),
+            state: Arc::clone(&self.state),
             strip_notice: settings.strip_notice(),
             ctx,
-        }))
+        };
+        // A step restored running goes on counting.
+        pomodoro.sync_ticker();
+        Ok(Box::new(pomodoro))
     }
 }
 
@@ -208,6 +239,7 @@ pub struct Pomodoro {
     ticker: Option<Ticker>,
     notifier: Arc<dyn Notifier>,
     clock: Arc<dyn Clock>,
+    state: Arc<dyn PomodoroStateStore>,
     strip_notice: StripNotice,
     ctx: ModuleContext,
 }
@@ -220,6 +252,14 @@ impl Pomodoro {
     fn toggle(&mut self) {
         self.timer.toggle(self.now());
         self.sync_ticker();
+        self.save_state();
+    }
+
+    /// Keeps the state of the timer for the next run of the manager; called
+    /// whenever it changes, never on a tick that changes nothing.
+    fn save_state(&self) {
+        self.state
+            .save(&self.ctx.instance_id().0, self.timer.state().into());
     }
 
     fn run_menu_entry(&mut self, entry: MenuEntry) {
@@ -230,6 +270,7 @@ impl Pomodoro {
         }
         self.menu = None;
         self.sync_ticker();
+        self.save_state();
     }
 
     /// Handles a tick; returns the notification for the touch strip when a
@@ -251,6 +292,7 @@ impl Pomodoro {
             }
             self.notify(notification);
             commands.push(Command::haptic(HAPTIC_STEP_END));
+            self.save_state();
         }
         self.sync_ticker();
         commands
@@ -441,6 +483,7 @@ impl Module for Pomodoro {
         self.timer
             .update(settings.durations(), settings.auto_start, self.now());
         self.sync_ticker();
+        self.save_state();
         Ok(())
     }
 }

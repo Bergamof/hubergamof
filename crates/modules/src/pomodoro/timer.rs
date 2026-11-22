@@ -6,12 +6,15 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::time::ClockInstant;
 
 use super::settings::Durations;
 
 /// Step of the pomodoro cycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Phase {
     /// Work session.
     Work,
@@ -31,7 +34,7 @@ impl Phase {
 
 /// Whether the time of the current step runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Countdown {
+pub enum Countdown {
     /// Stopped with `remaining` left.
     Paused { remaining: Duration },
     /// Running until `deadline`.
@@ -51,6 +54,20 @@ pub struct StepEnd {
     pub next_duration: Duration,
     /// Whether the next step started at once (`autoStart`).
     pub started: bool,
+}
+
+/// What of a [`Timer`] outlives the manager (see [`super::persistence`]): the
+/// lengths and `autoStart` are settings, not state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimerState {
+    /// Current step.
+    pub phase: Phase,
+    /// Number (from 1) of the current pomodoro.
+    pub pomodoro: u32,
+    /// A step ended and the next one waits for a press.
+    pub awaiting_start: bool,
+    /// Whether the time runs.
+    pub countdown: Countdown,
 }
 
 /// State of a pomodoro: current step, number of the pomodoro in the cycle
@@ -80,6 +97,47 @@ impl Timer {
                 remaining: durations.work,
             },
             awaiting_start: false,
+        }
+    }
+
+    /// A timer in the `state` a previous run left, under the current
+    /// settings: what the settings now forbid is brought back to what they
+    /// allow (a pomodoro number past the cycle, more time than a step lasts),
+    /// so that a state saved under other settings cannot make the timer
+    /// inconsistent.
+    #[must_use]
+    pub fn restored(
+        durations: Durations,
+        auto_start: bool,
+        state: TimerState,
+        now: ClockInstant,
+    ) -> Self {
+        let mut timer = Self::new(durations, auto_start);
+        timer.phase = state.phase;
+        timer.pomodoro = state.pomodoro.clamp(1, durations.long_break_every);
+        // A step waiting for a press is stopped: the timer never has both.
+        timer.awaiting_start =
+            state.awaiting_start && matches!(state.countdown, Countdown::Paused { .. });
+        let step = timer.step_duration();
+        timer.countdown = match state.countdown {
+            Countdown::Paused { remaining } => Countdown::Paused {
+                remaining: remaining.min(step),
+            },
+            Countdown::Running { deadline } => Countdown::Running {
+                deadline: deadline.min(now + step),
+            },
+        };
+        timer
+    }
+
+    /// What of the timer outlives the manager.
+    #[must_use]
+    pub fn state(&self) -> TimerState {
+        TimerState {
+            phase: self.phase,
+            pomodoro: self.pomodoro,
+            awaiting_start: self.awaiting_start,
+            countdown: self.countdown,
         }
     }
 
@@ -260,6 +318,76 @@ mod tests {
         }
         *now += timer.remaining(*now);
         timer.tick(*now).unwrap()
+    }
+
+    fn at(seconds: u64) -> ClockInstant {
+        ClockInstant::from_origin(Duration::from_secs(seconds))
+    }
+
+    #[test]
+    fn a_state_survives_a_round_trip_through_a_restored_timer() {
+        let now = at(1000);
+        let mut timer = Timer::new(durations(4), false);
+        timer.toggle(now);
+        timer.skip(now);
+        let restored = Timer::restored(durations(4), false, timer.state(), now);
+        assert_eq!(restored, timer);
+    }
+
+    #[test]
+    fn a_restored_state_is_brought_back_within_the_settings() {
+        let now = at(1000);
+        let state = TimerState {
+            phase: Phase::Work,
+            pomodoro: 9,
+            awaiting_start: false,
+            countdown: Countdown::Running {
+                deadline: now + 90 * MINUTE,
+            },
+        };
+        let timer = Timer::restored(durations(4), false, state, now);
+        assert_eq!(timer.pomodoro(), 4);
+        assert_eq!(timer.remaining(now), 25 * MINUTE);
+
+        let paused = TimerState {
+            pomodoro: 0,
+            countdown: Countdown::Paused {
+                remaining: 90 * MINUTE,
+            },
+            ..state
+        };
+        let timer = Timer::restored(durations(4), false, paused, now);
+        assert_eq!(timer.pomodoro(), 1);
+        assert_eq!(timer.remaining(now), 25 * MINUTE);
+    }
+
+    #[test]
+    fn a_restored_running_step_does_not_await_a_press() {
+        let now = at(1000);
+        let state = TimerState {
+            phase: Phase::ShortBreak,
+            pomodoro: 1,
+            awaiting_start: true,
+            countdown: Countdown::Running {
+                deadline: now + MINUTE,
+            },
+        };
+        let timer = Timer::restored(durations(4), false, state, now);
+        assert!(timer.is_running() && !timer.is_awaiting_start());
+    }
+
+    #[test]
+    fn a_restored_running_step_whose_deadline_passed_ends_at_the_next_tick() {
+        let now = at(5000);
+        let state = TimerState {
+            phase: Phase::Work,
+            pomodoro: 2,
+            awaiting_start: false,
+            countdown: Countdown::Running { deadline: at(1000) },
+        };
+        let mut timer = Timer::restored(durations(4), false, state, now);
+        let end = timer.tick(now).expect("the step is over");
+        assert_eq!((end.finished, end.next), (Phase::Work, Phase::ShortBreak));
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub mod notifications;
 mod paths;
 pub mod pomodoro;
 mod process;
+mod runtime_files;
 pub mod session_bus;
 mod sync;
 pub mod teams;
@@ -172,6 +173,8 @@ pub struct BuiltinServices {
     pub notifier: Arc<dyn notifications::Notifier>,
     /// Monotonic time of the pomodoro, counting suspends.
     pub pomodoro_clock: Arc<dyn time::Clock>,
+    /// Where the pomodoro keeps its state across a restart of the manager.
+    pub pomodoro_state: Arc<dyn pomodoro::PomodoroStateStore>,
     /// Desktop session of the modules following applications.
     pub desktop: Arc<dyn desktop::DesktopBackend>,
     /// Installation and recent projects of IntelliJ.
@@ -193,6 +196,7 @@ impl BuiltinServices {
             docker: Arc::new(docker::DockerEngine::new()),
             notifier: Arc::new(notifications::DesktopNotifier::new(session_bus.clone())),
             pomodoro_clock: Arc::new(time::BootClock),
+            pomodoro_state: pomodoro::session_store(),
             desktop: Arc::new(desktop::SystemDesktop::new(session_bus)),
             intellij: Arc::new(intellij::SystemCatalog::new()),
             teams: Arc::new(teams::SocketBridge::new(teams::socket_path())),
@@ -210,6 +214,7 @@ impl BuiltinServices {
             docker: Arc::new(docker::SimulatedDocker::demo()),
             notifier: Arc::new(notifications::SimulatedNotifier::default()),
             pomodoro_clock: Arc::new(time::BootClock),
+            pomodoro_state: Arc::new(pomodoro::MemoryStateStore::default()),
             desktop: Arc::new(desktop::SimulatedDesktop::demo()),
             intellij: Arc::new(intellij::SimulatedCatalog::demo()),
             teams: Arc::new(teams::SimulatedBridge::demo()),
@@ -241,10 +246,10 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
         services.intellij,
     )));
     registry.register(Arc::new(inbox::InboxFactory));
-    registry.register(Arc::new(pomodoro::PomodoroFactory::new(
-        services.notifier,
-        services.pomodoro_clock,
-    )));
+    registry.register(Arc::new(
+        pomodoro::PomodoroFactory::new(services.notifier, services.pomodoro_clock)
+            .with_state_store(services.pomodoro_state),
+    ));
     registry.register(Arc::new(teams::TeamsFactory::new(
         services.teams,
         Arc::clone(&desktop),
@@ -512,6 +517,7 @@ mod tests {
             docker: Arc::new(docker::SimulatedDocker::empty()),
             notifier: Arc::clone(&notifier) as _,
             pomodoro_clock: Arc::new(SimulatedClock::new()),
+            pomodoro_state: Arc::new(pomodoro::MemoryStateStore::default()),
             desktop: Arc::new(desktop::SimulatedDesktop::empty()),
             intellij: Arc::new(intellij::SimulatedCatalog::default()),
             teams: Arc::new(teams::SimulatedBridge::new()),
