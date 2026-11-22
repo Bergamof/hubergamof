@@ -97,7 +97,11 @@ impl PrivateFolder {
         let aside = format!("{name}.tmp");
         let aside_path = self.file_path(&aside)?;
         remove_if_present(&self.fd, &aside, &aside_path)?;
-        self.create(&aside, bytes, &aside_path)?;
+        if let Err(error) = self.create(&aside, bytes, &aside_path) {
+            // A full disk must not leave a half-written file behind.
+            let _ = remove_if_present(&self.fd, &aside, &aside_path);
+            return Err(error);
+        }
         renameat(&self.fd, aside.as_str(), &self.fd, name).map_err(describe(&file_path))
     }
 
@@ -110,8 +114,12 @@ impl PrivateFolder {
     /// one longer than `limit` bytes.
     pub(crate) fn read(&self, name: &str, limit: u64) -> Result<Option<Vec<u8>>, String> {
         let file_path = self.file_path(name)?;
+        // Without `NONBLOCK`, opening a FIFO put there waits for a writer
+        // before the type is checked below.
         let flags = OFlags::RDONLY
             .union(OFlags::NOFOLLOW)
+            .union(OFlags::NONBLOCK)
+            .union(OFlags::NOCTTY)
             .union(OFlags::CLOEXEC);
         let fd = match openat(&self.fd, name, flags, Mode::empty()) {
             Ok(fd) => fd,
@@ -285,6 +293,23 @@ mod tests {
         fs::create_dir(inside.join("dir")).unwrap();
         assert!(folder.read("dir", LIMIT).is_err());
 
+        let fifo = inside.join("fifo");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            FileType::Fifo,
+            Mode::from_raw_mode(PRIVATE_FILE_MODE),
+            0,
+        )
+        .unwrap();
+        assert!(
+            folder
+                .read("fifo", LIMIT)
+                .unwrap_err()
+                .contains("not a regular file"),
+            "a FIFO is refused, not waited for"
+        );
+
         folder.write_new("big", &[b'x'; 2048]).unwrap();
         assert!(folder.read("big", LIMIT).unwrap_err().contains("too long"));
     }
@@ -317,6 +342,7 @@ mod tests {
         let elsewhere = runtime_dir();
         std::os::unix::fs::symlink(elsewhere.path(), runtime.path().join(FOLDER_NAME)).unwrap();
         assert!(PrivateFolder::open(runtime.path()).is_err());
+        assert!(fs::read_dir(elsewhere.path()).unwrap().next().is_none());
 
         let runtime = runtime_dir();
         fs::write(runtime.path().join(FOLDER_NAME), "").unwrap();

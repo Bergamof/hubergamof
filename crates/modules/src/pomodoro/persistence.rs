@@ -225,7 +225,14 @@ impl PomodoroStateStore for FileStateStore {
             }
         };
         let envelope: Envelope = serde_json::from_slice(&content)
-            .inspect_err(|error| tracing::warn!(%error, "pomodoro state ignored: unreadable"))
+            .inspect_err(|error| {
+                // Only where it is wrong: the message may quote the file.
+                tracing::warn!(
+                    line = error.line(),
+                    column = error.column(),
+                    "pomodoro state ignored: unreadable"
+                );
+            })
             .ok()?;
         (envelope.version == FORMAT_VERSION && envelope.boot_id == self.boot_id)
             .then_some(envelope.timer)

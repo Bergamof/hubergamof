@@ -115,7 +115,9 @@ impl Timer {
         let mut timer = Self::new(durations, auto_start);
         timer.phase = state.phase;
         timer.pomodoro = state.pomodoro.clamp(1, durations.long_break_every);
-        timer.awaiting_start = state.awaiting_start;
+        // A step waiting for a press is stopped: the timer never has both.
+        timer.awaiting_start =
+            state.awaiting_start && matches!(state.countdown, Countdown::Paused { .. });
         let step = timer.step_duration();
         timer.countdown = match state.countdown {
             Countdown::Paused { remaining } => Countdown::Paused {
@@ -357,6 +359,21 @@ mod tests {
         let timer = Timer::restored(durations(4), false, paused, now);
         assert_eq!(timer.pomodoro(), 1);
         assert_eq!(timer.remaining(now), 25 * MINUTE);
+    }
+
+    #[test]
+    fn a_restored_running_step_does_not_await_a_press() {
+        let now = at(1000);
+        let state = TimerState {
+            phase: Phase::ShortBreak,
+            pomodoro: 1,
+            awaiting_start: true,
+            countdown: Countdown::Running {
+                deadline: now + MINUTE,
+            },
+        };
+        let timer = Timer::restored(durations(4), false, state, now);
+        assert!(timer.is_running() && !timer.is_awaiting_start());
     }
 
     #[test]
