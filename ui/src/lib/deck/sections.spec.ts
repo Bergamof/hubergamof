@@ -8,6 +8,11 @@ describe('availableSections', () => {
 		expect(availableSections(false, true)).toEqual(['mouse', 'menu']);
 		expect(availableSections(false, false)).toEqual(['menu']);
 	});
+
+	it('offers the modules of the application, last, when the manager has some', () => {
+		expect(availableSections(false, false, true)).toEqual(['menu', 'modules']);
+		expect(availableSections(true, true, true)).toEqual(['deck', 'mouse', 'menu', 'modules']);
+	});
 });
 
 describe('sectionShown', () => {

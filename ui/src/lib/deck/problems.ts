@@ -31,6 +31,11 @@ export function problemOf(code: ErrorCode, message: string): Problem {
 				text: 'Fichier refusé : ce n’est pas un export HuBergamof valide.',
 				detail: message
 			};
+		case 'locked':
+			return {
+				text: 'L’ordinateur est verrouillé : rien ne se fait depuis l’interface tant qu’il ne l’est pas déverrouillé.',
+				detail: null
+			};
 		case 'busy':
 			return {
 				text: 'Un sélecteur de fichier est déjà ouvert sur le bureau : choisissez-y le fichier ou fermez-le.',

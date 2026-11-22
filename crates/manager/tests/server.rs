@@ -16,8 +16,10 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
+use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::Renderer;
+use hubergamof_manager::screen_lock::ScreenLock;
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, CONTENT_SECURITY_POLICY_BASE, DevOrigin, MAX_WS_MESSAGE_BYTES,
     MISSING_UI_MESSAGE, Server, ServerContext, SimulatedInput, WS_PATH, module_catalog, router,
@@ -50,8 +52,8 @@ const PORT: u16 = 7878;
 const HOST: &str = "127.0.0.1:7878";
 const DEV_ORIGIN: &str = "http://localhost:5173";
 /// Messages a client receives on connection: `hello`, `devices`,
-/// `moduleCatalog`, `mice`, `radialMenu` and `updateSettings`.
-const GREETING_MESSAGES: usize = 6;
+/// `moduleCatalog`, `locked`, `mice`, `radialMenu` and `updateSettings`.
+const GREETING_MESSAGES: usize = 7;
 const WAIT: Duration = Duration::from_secs(5);
 const COUNTER_KIND: &str = "counter";
 
@@ -177,6 +179,8 @@ impl Devices {
             file_picker: Arc::new(NoFilePicker),
             updates: UpdateHandle::inactive(),
             mice: MouseHub::new(store.clone()).unwrap(),
+            application: None,
+            screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
         };
         Self {
             _dir: dir,
@@ -626,6 +630,10 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         }
         other => panic!("expected the catalog, got {other:?}"),
     }
+    assert_eq!(
+        client.receive().await,
+        ServerMessage::Locked { locked: false }
+    );
     assert_eq!(client.receive().await, ServerMessage::Mice { mice: vec![] });
     assert!(matches!(
         client.receive().await,
@@ -719,6 +727,7 @@ async fn a_client_connecting_while_a_mouse_is_there_is_told_about_it() {
         greeting.push(client.receive().await);
     }
     let [
+        _,
         _,
         _,
         _,
@@ -1239,5 +1248,223 @@ async fn clients_install_an_update_and_choose_the_policy() {
         assert_eq!(settings.install_support, InstallSupport::Demo);
     }
     stop.send_replace(true);
+    server.stop().await;
+}
+
+// ------------------------------------------------- Modules of the application
+
+/// A computer that locks and unlocks when told to.
+struct Lock(watch::Sender<bool>);
+
+impl ScreenLock for Lock {
+    fn watch(&self) -> watch::Receiver<bool> {
+        self.0.subscribe()
+    }
+}
+
+/// A server whose modules of the application run, on a computer that can lock.
+async fn running_with_application() -> (Running, watch::Sender<bool>) {
+    let mut devices = Devices::start();
+    let registry = Arc::new(builtin_registry_with(BuiltinServices::simulated()));
+    let locked = watch::Sender::new(false);
+    let lock = Arc::new(Lock(locked.clone()));
+    let (host, _task) = ModuleHost::start(HostServices {
+        registry,
+        store: devices.context.store.clone(),
+        haptics: Arc::new(hubergamof_manager::haptics::NoHaptics),
+        screen_lock: Arc::clone(&lock) as Arc<dyn ScreenLock>,
+    });
+    devices.context.application = Some(host);
+    devices.context.screen_lock = lock;
+    (Running::with_devices(devices).await, locked)
+}
+
+/// The pomodoro as the application last showed it.
+async fn pomodoro_view(client: &mut Client) -> hubergamof_protocol::ApplicationModuleView {
+    client
+        .receive_until(|message| match message {
+            ServerMessage::ApplicationModules { modules } => modules
+                .into_iter()
+                .find(|module| module.kind.0 == "pomodoro"),
+            _ => None,
+        })
+        .await
+}
+
+async fn expect_error(client: &mut Client) -> ErrorCode {
+    client
+        .receive_until(|message| match message {
+            ServerMessage::Error { code, .. } => Some(code),
+            _ => None,
+        })
+        .await
+}
+
+#[tokio::test]
+async fn clients_see_and_drive_the_modules_of_the_application() {
+    let (server, _locked) = running_with_application().await;
+    let mut client = server.connect().await;
+    let view = pomodoro_view(&mut client).await;
+    assert_eq!(view.status.as_deref(), Some("Focus 1/4\n25:00 · prêt"));
+
+    // An action of the module starts the time, and every client is told.
+    let mut other = server.connect().await;
+    client
+        .send(&ClientMessage::ModuleAction {
+            module: "pomodoro".into(),
+            action: "toggle".into(),
+        })
+        .await;
+    for watcher in [&mut client, &mut other] {
+        let running = watcher
+            .receive_until(|message| match message {
+                ServerMessage::ApplicationModules { modules } => modules
+                    .into_iter()
+                    .find(|module| module.kind.0 == "pomodoro")
+                    .filter(|module| {
+                        module
+                            .status
+                            .as_deref()
+                            .is_some_and(|status| !status.contains("prêt"))
+                    }),
+                _ => None,
+            })
+            .await;
+        assert!(running.status.unwrap().starts_with("Focus 1/4\n"));
+    }
+
+    // Settings the module takes become its settings, for everyone.
+    client
+        .send(&ClientMessage::UpdateModuleSettings {
+            module: "pomodoro".into(),
+            settings: serde_json::json!({ "workMinutes": 30 }),
+        })
+        .await;
+    let saved = other
+        .receive_until(|message| match message {
+            ServerMessage::ApplicationModules { modules } => modules
+                .into_iter()
+                .find(|module| module.settings["workMinutes"] == 30),
+            _ => None,
+        })
+        .await;
+    assert_eq!(saved.kind.0, "pomodoro");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn what_the_modules_of_the_application_do_not_offer_is_refused() {
+    let (server, _locked) = running_with_application().await;
+    let mut client = server.connect().await;
+    pomodoro_view(&mut client).await;
+
+    client
+        .send(&ClientMessage::ModuleAction {
+            module: "pomodoro".into(),
+            action: "format-the-disk".into(),
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::InvalidInput);
+
+    client
+        .send(&ClientMessage::ModuleAction {
+            module: "nothing".into(),
+            action: "toggle".into(),
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::Unavailable);
+
+    client
+        .send(&ClientMessage::UpdateModuleSettings {
+            module: "pomodoro".into(),
+            settings: serde_json::json!({ "workMinutes": "long" }),
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::InvalidConfig);
+
+    client
+        .send(&ClientMessage::UpdateModuleSettings {
+            module: "audio".into(),
+            settings: serde_json::json!({}),
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::Unavailable);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
+    let (server, locked) = running_with_application().await;
+    let mut client = server.connect().await;
+    pomodoro_view(&mut client).await;
+
+    locked.send_replace(true);
+    client
+        .receive_until(|message| {
+            matches!(message, ServerMessage::Locked { locked: true }).then_some(())
+        })
+        .await;
+
+    let acting = [
+        ClientMessage::ModuleAction {
+            module: "pomodoro".into(),
+            action: "toggle".into(),
+        },
+        ClientMessage::UpdateModuleSettings {
+            module: "pomodoro".into(),
+            settings: serde_json::json!({ "workMinutes": 30 }),
+        },
+        ClientMessage::PressKey {
+            serial: DEMO_SERIAL.into(),
+            index: 0,
+        },
+        ClientMessage::PressDial {
+            serial: DEMO_SERIAL.into(),
+            index: 1,
+        },
+        ClientMessage::UpdateRadialMenu {
+            config: RadialMenuConfig::default_menu(),
+        },
+        ClientMessage::CheckForUpdates,
+    ];
+    for request in &acting {
+        client.send(request).await;
+        assert_eq!(
+            expect_error(&mut client).await,
+            ErrorCode::Locked,
+            "{request:?}"
+        );
+    }
+
+    // Following what is shown still works.
+    client.send(&ClientMessage::Ping).await;
+    client
+        .receive_until(|message| matches!(message, ServerMessage::Pong).then_some(()))
+        .await;
+
+    // Back to the desk: the same request goes through.
+    locked.send_replace(false);
+    client
+        .receive_until(|message| {
+            matches!(message, ServerMessage::Locked { locked: false }).then_some(())
+        })
+        .await;
+    client
+        .send(&ClientMessage::ModuleAction {
+            module: "pomodoro".into(),
+            action: "toggle".into(),
+        })
+        .await;
+    client
+        .receive_until(|message| match message {
+            ServerMessage::ApplicationModules { modules } => modules.into_iter().find(|module| {
+                module
+                    .status
+                    .as_deref()
+                    .is_some_and(|s| !s.contains("prêt"))
+            }),
+            _ => None,
+        })
+        .await;
     server.stop().await;
 }

@@ -17,6 +17,7 @@ use hubergamof_manager::file_chooser::{
 };
 use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
+use hubergamof_manager::screen_lock::{NoScreenLock, ScreenLock};
 use hubergamof_manager::server::{
     AccessPolicy, AssetSource, ServerContext, SimulatedInput, module_catalog, router,
 };
@@ -71,6 +72,11 @@ impl Api {
     }
 
     async fn start_with(file_picker: Arc<dyn FilePicker>) -> Self {
+        Self::start_on(file_picker, Arc::new(NoScreenLock)).await
+    }
+
+    /// On a computer that `screen_lock` says locked or not.
+    async fn start_on(file_picker: Arc<dyn FilePicker>, screen_lock: Arc<dyn ScreenLock>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let registry = Arc::new(builtin_registry_with(BuiltinServices::simulated()));
         let services = EngineServices {
@@ -98,6 +104,8 @@ impl Api {
             renderer,
             file_picker,
             updates: UpdateHandle::inactive(),
+            application: None,
+            screen_lock,
         };
         let decks = VirtualDevices::new(discovery);
         for serial in [FIRST, SECOND] {
@@ -779,5 +787,38 @@ async fn a_file_chooser_is_only_opened_for_a_setting_that_describes_one() {
     }
     let huge = format!(r#"{{ "module": "{}", "setting": "x" }}"#, "d".repeat(2000));
     assert_eq!(ask(huge).await.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    api.stop().await;
+}
+
+/// A computer that is locked.
+struct Locked;
+
+impl ScreenLock for Locked {
+    fn watch(&self) -> watch::Receiver<bool> {
+        watch::Sender::new(true).subscribe()
+    }
+}
+
+#[tokio::test]
+async fn nothing_is_transferred_or_chosen_while_the_computer_is_locked() {
+    let api = Api::start_on(
+        Arc::new(SimulatedFilePicker::choosing(Some(CHOSEN_FILE.into()))),
+        Arc::new(Locked),
+    )
+    .await;
+    let locked = (StatusCode::LOCKED, ErrorCode::Locked);
+
+    let response = api.get(&format!("/api/devices/{FIRST}/export")).await;
+    assert_eq!(api_error(response).await, locked);
+    assert_eq!(
+        api_error(import(&api, FIRST, vec![0; 16]).await).await,
+        locked
+    );
+    assert_eq!(
+        api_error(api.upload(FIRST, "image/png", png(8, 8)).await).await,
+        locked
+    );
+    assert_eq!(api_error(choose_compose_file(&api).await).await, locked);
+    assert_eq!(stored_images(&api, FIRST).len(), 0);
     api.stop().await;
 }

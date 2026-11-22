@@ -776,3 +776,91 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await expectAccessible(page, 'page du menu circulaire');
 	});
 }
+
+// The pomodoro lives in the application: the page offers it whether or not a device is there, and
+// what it shows is the same as on the dial and in the radial menu.
+
+async function openModules(page: Page) {
+	await open(page);
+	await page.getByRole('button', { name: 'Modules' }).click();
+	await expect(page.getByRole('heading', { name: 'Pomodoro', level: 2 })).toBeVisible();
+}
+
+test('pilote le pomodoro de l’application depuis la page Modules', async ({ page }) => {
+	await openModules(page);
+	const status = page.getByTestId('module-status-pomodoro');
+	await expect(status).toContainText('Focus 1/4');
+	await expect(status).toContainText('prêt');
+
+	await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
+	await expect(status).not.toContainText('prêt');
+	await expect(status).not.toContainText('pause');
+
+	await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
+	await expect(status).toContainText('pause');
+
+	await page.getByRole('button', { name: 'Passer', exact: true }).click();
+	await expect(status).toContainText('Pause');
+	await page.getByRole('button', { name: 'Remettre à zéro', exact: true }).click();
+	await expect(status).toContainText('Focus 1/4');
+});
+
+test('montre la même chose sur la molette du deck et dans un autre onglet', async ({
+	page,
+	context
+}) => {
+	await openModules(page);
+	const other = await context.newPage();
+	await other.goto('/');
+	await other.getByRole('button', { name: 'Modules' }).click();
+
+	await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
+	await expect(other.getByTestId('module-status-pomodoro')).not.toContainText('prêt');
+
+	// The key of the dial of the deck follows too: it is the same timer.
+	await page.getByRole('button', { name: 'Stream Deck' }).click();
+	await expect(dial(page, '2 : Contrôle du pomodoro')).toBeVisible();
+});
+
+test('enregistre les réglages du pomodoro, pour toute l’application', async ({ page, context }) => {
+	await openModules(page);
+	const other = await context.newPage();
+	await other.goto('/');
+	await other.getByRole('button', { name: 'Modules' }).click();
+
+	const work = page.getByLabel('Durée du travail');
+	await work.fill('30');
+	await work.press('Enter');
+	await expect(other.getByLabel('Durée du travail')).toHaveValue('30');
+});
+
+test('la page Modules reste accessible', async ({ page }) => {
+	await openModules(page);
+	await expectAccessible(page, 'page des modules');
+});
+
+test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', async ({ page }) => {
+	const sockets: WebSocketRoute[] = [];
+	await page.routeWebSocket('**/ws', (socket: WebSocketRoute) => {
+		sockets.push(socket);
+		socket.connectToServer();
+	});
+	await openModules(page);
+	const start = page.getByRole('button', { name: 'Démarrer ou mettre en pause' });
+	await expect(start).toBeEnabled();
+
+	// What the manager says when the computer locks.
+	sockets[0].send(JSON.stringify({ type: 'locked', locked: true }));
+	await expect(page.getByRole('alert')).toContainText('L’ordinateur est verrouillé');
+	await expect(page.locator('div[inert]').first()).toContainText('Pomodoro');
+	await start.click({ trial: true, timeout: 1000 }).then(
+		() => {
+			throw new Error('the page can still be used');
+		},
+		() => undefined
+	);
+
+	sockets[0].send(JSON.stringify({ type: 'locked', locked: false }));
+	await expect(page.getByRole('alert').filter({ hasText: 'verrouillé' })).toHaveCount(0);
+	await start.click();
+});

@@ -88,6 +88,13 @@ impl Failure {
         Self::new(ErrorCode::Internal, error.to_string())
     }
 
+    fn locked() -> Self {
+        Self::new(
+            ErrorCode::Locked,
+            "the computer is locked: nothing is done from the interface",
+        )
+    }
+
     fn missing_image(name: &str) -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
@@ -101,6 +108,7 @@ impl Failure {
         }
         match self.code {
             ErrorCode::UnknownDevice => StatusCode::NOT_FOUND,
+            ErrorCode::Locked => StatusCode::LOCKED,
             ErrorCode::StaleRevision | ErrorCode::Busy => StatusCode::CONFLICT,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
@@ -171,6 +179,15 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// Waits for the transfer slot.
+/// Nothing is done from the interface while the computer is locked.
+fn ensure_unlocked(state: &AppState) -> Result<(), Failure> {
+    if *state.context.screen_lock.watch().borrow() {
+        Err(Failure::locked())
+    } else {
+        Ok(())
+    }
+}
+
 async fn transfer_slot(state: &AppState) -> Result<SemaphorePermit<'_>, Failure> {
     state.transfers.acquire().await.map_err(Failure::internal)
 }
@@ -215,6 +232,7 @@ async fn upload_image(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, Failure> {
+    ensure_unlocked(&state)?;
     let declared = declared_kind(&headers)?;
     engine(&state, &serial)?;
     let _slot = transfer_slot(&state).await?;
@@ -260,6 +278,7 @@ async fn export(
     State(state): State<AppState>,
     Path(serial): Path<String>,
 ) -> Result<Response, Failure> {
+    ensure_unlocked(&state)?;
     let config = engine(&state, &serial)?.config().borrow().clone();
     let _slot = transfer_slot(&state).await?;
     let store = state.context.store.clone();
@@ -279,6 +298,7 @@ const MAX_CHOOSER_REQUEST_BYTES: usize = 1024;
 /// (`null` when they closed it). The dialog is the one the setting
 /// describes; needs the user at the screen, and only one dialog at a time.
 async fn choose_file(State(state): State<AppState>, body: Bytes) -> Result<Response, Failure> {
+    ensure_unlocked(&state)?;
     let chooser = chooser_of(&state, &body)?;
     let dialog = Arc::clone(&state.file_dialog)
         .try_acquire_owned()
@@ -328,6 +348,7 @@ async fn import(
     Path(serial): Path<String>,
     body: Bytes,
 ) -> Result<Response, Failure> {
+    ensure_unlocked(&state)?;
     let engine = engine(&state, &serial)?;
     let _slot = transfer_slot(&state).await?;
     let store = state.context.store.clone();

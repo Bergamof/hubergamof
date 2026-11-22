@@ -5,6 +5,7 @@
 	import { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
+	import ApplicationPanel from '#lib/components/ApplicationPanel.svelte';
 	import MouseEditor from '#lib/components/MouseEditor.svelte';
 	import RadialMenuPage from '#lib/components/RadialMenuPage.svelte';
 	import SegmentedControl from '#lib/components/SegmentedControl.svelte';
@@ -30,17 +31,22 @@
 	let wanted = $state<Section>('deck');
 	const hasDecks = $derived((deck?.devices.length ?? 0) > 0);
 	const hasMice = $derived((deck?.mice.mice.length ?? 0) > 0);
-	const sections = $derived(availableSections(hasDecks, hasMice));
+	const hasModules = $derived((deck?.application.modules.length ?? 0) > 0);
+	const sections = $derived(availableSections(hasDecks, hasMice, hasModules));
 	const section = $derived(sectionShown(wanted, sections));
 
 	const isOnline = $derived(connection?.status === 'open');
+	/** The computer is locked: the manager refuses everything, the page is only to be read. */
+	const locked = $derived(deck?.application.locked ?? false);
 	/** The editor shown: the mouse one, or the deck one, once its configuration is known. */
 	const editorShown = $derived(
-		section === 'menu'
-			? deck?.mice.radialMenu !== undefined
-			: section === 'mouse'
-				? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
-				: deck?.device !== undefined && deck.config !== undefined
+		section === 'modules'
+			? hasModules
+			: section === 'menu'
+				? deck?.mice.radialMenu !== undefined
+				: section === 'mouse'
+					? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
+					: deck?.device !== undefined && deck.config !== undefined
 	);
 	/** The page then shows its own alert about the lost connection: the header does not repeat it. */
 	const offlineAlertShown = $derived(!isOnline && editorShown);
@@ -126,7 +132,16 @@
 					mais ne peut pas être modifiée.
 				</p>
 			{/if}
-			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline}>
+			{#if locked}
+				<p
+					role="alert"
+					class="rounded-xl border border-warning bg-warning-soft p-3 text-sm text-warning"
+				>
+					L’ordinateur est verrouillé : l’interface est en lecture seule jusqu’au déverrouillage, le
+					gestionnaire refuse toute action.
+				</p>
+			{/if}
+			<div bind:this={editor} class="flex flex-col gap-6" inert={!isOnline || locked}>
 				{#if sections.length > 1}
 					<div role="group" aria-label="Appareils à configurer" class="flex flex-wrap gap-2">
 						{#each sections as choice (choice)}
@@ -146,7 +161,9 @@
 						{/each}
 					</div>
 				{/if}
-				{#if section !== 'deck' && deck.mice.mouse}
+				{#if section === 'modules'}
+					<!-- The modules of the application belong to no device. -->
+				{:else if section !== 'deck' && deck.mice.mouse}
 					{#if deck.mice.mice.length > 1}
 						<SegmentedControl
 							label="Souris"
@@ -170,7 +187,9 @@
 					fallbackFocusId={MAIN_ID}
 					ondismiss={(id) => deck?.dismiss(id)}
 				/>
-				{#if section === 'menu'}
+				{#if section === 'modules'}
+					<ApplicationPanel {deck} {api} />
+				{:else if section === 'menu'}
 					<RadialMenuPage {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
 				{:else if section === 'mouse' && deck.mice.mouse && deck.mice.config}
 					<MouseEditor {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
@@ -197,7 +216,7 @@
 
 	<!-- Only while connected: the version and the check belong to the manager answering. -->
 	{#if deck && isOnline}
-		<footer>
+		<footer inert={locked}>
 			<UpdatePanel
 				version={deck.managerVersion}
 				status={deck.updateStatus}
