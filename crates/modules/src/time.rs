@@ -23,6 +23,12 @@ impl ClockInstant {
         Self(since_origin)
     }
 
+    /// Time from the origin of the clock to `self`.
+    #[must_use]
+    pub const fn since_origin(self) -> Duration {
+        self.0
+    }
+
     /// Time from `earlier` to `self`, zero if `earlier` is later.
     #[must_use]
     pub fn saturating_duration_since(self, earlier: Self) -> Duration {

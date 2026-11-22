@@ -43,6 +43,9 @@ struct Harness {
     events: mpsc::UnboundedReceiver<ModuleEvent>,
     notifier: Arc<FakeNotifier>,
     clock: Arc<SimulatedClock>,
+    /// What the manager keeps across its restarts.
+    state: Arc<MemoryStateStore>,
+    settings: Value,
     scope: TaskScope,
     /// Commands returned by the events handled so far.
     commands: Vec<Command>,
@@ -50,6 +53,14 @@ struct Harness {
 
 fn factory(notifier: Arc<FakeNotifier>, clock: Arc<SimulatedClock>) -> PomodoroFactory {
     PomodoroFactory::new(notifier, clock)
+}
+
+fn factory_keeping(
+    notifier: Arc<FakeNotifier>,
+    clock: Arc<SimulatedClock>,
+    state: Arc<MemoryStateStore>,
+) -> PomodoroFactory {
+    factory(notifier, clock).with_state_store(state)
 }
 
 fn simple_factory() -> PomodoroFactory {
@@ -64,16 +75,40 @@ impl Harness {
     fn with_notifier(settings: &Value, notifier: FakeNotifier) -> Self {
         let notifier = Arc::new(notifier);
         let clock = Arc::new(SimulatedClock::new());
+        let state = Arc::new(MemoryStateStore::default());
         let TestContext { ctx, events, scope } = TestContext::new(POMODORO_KIND);
-        let factory = factory(Arc::clone(&notifier), Arc::clone(&clock));
+        let factory = factory_keeping(
+            Arc::clone(&notifier),
+            Arc::clone(&clock),
+            Arc::clone(&state),
+        );
         Self {
             module: factory.create(ctx, settings).unwrap(),
             events,
             notifier,
             clock,
+            state,
+            settings: settings.clone(),
             scope,
             commands: Vec::new(),
         }
+    }
+
+    /// The manager stops and starts again `downtime` later (the machine
+    /// keeps running): the instance is created anew, under the same
+    /// identifier, with what the manager kept.
+    fn restart_after(&mut self, downtime: Duration) {
+        let TestContext { ctx, events, scope } = TestContext::new(POMODORO_KIND);
+        // Dropping the old scope ends the tasks of the old instance.
+        drop(std::mem::replace(&mut self.scope, scope));
+        self.events = events;
+        self.clock.sleep_machine(downtime);
+        let factory = factory_keeping(
+            Arc::clone(&self.notifier),
+            Arc::clone(&self.clock),
+            Arc::clone(&self.state),
+        );
+        self.module = factory.create(ctx, &self.settings).unwrap();
     }
 
     /// Lets the background tasks run, then handles the events they sent;
@@ -855,4 +890,82 @@ fn the_module_declares_the_event_it_raises() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].id, "step-end");
     assert_eq!(events[0].waveform, HapticWaveform::Completed);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_paused_step_is_where_it_was_after_a_restart() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(10 * MINUTE).await;
+    pomodoro.module.on_key_press().await;
+    let before = pomodoro.widget();
+    assert_eq!(before.state, PomodoroState::Paused);
+
+    pomodoro.restart_after(3 * MINUTE);
+    assert_eq!(pomodoro.widget(), before);
+    assert_eq!(pomodoro.key().state, KeyState::Normal);
+    assert_eq!(pomodoro.run_for(5 * MINUTE).await, 0, "still paused");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_running_step_goes_on_counting_after_a_restart() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(5 * MINUTE).await;
+
+    // The time the manager was down counts, as a suspend does.
+    pomodoro.restart_after(2 * MINUTE);
+    assert_eq!(label(&pomodoro.key()), "18:00 Travail");
+    assert_eq!(pomodoro.key().state, KeyState::Active);
+    pomodoro.run_for(17 * MINUTE).await;
+    assert_eq!(label(&pomodoro.key()), "01:00 Travail");
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(label(&pomodoro.key()), "05:00 Pause");
+    assert_eq!(pomodoro.notifier.sent().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_step_that_ended_while_the_manager_was_down_ends_when_it_is_back() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_key_press().await;
+    pomodoro.run_for(MINUTE).await;
+
+    pomodoro.restart_after(40 * MINUTE);
+    pomodoro.run_for(TICK_PERIOD).await;
+    assert_eq!(label(&pomodoro.key()), "05:00 Pause");
+    assert_eq!(pomodoro.key().state, KeyState::Attention);
+    assert_eq!(pomodoro.notifier.sent().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_change_of_state_is_kept_for_the_next_run() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_radial_action(RADIAL_TOGGLE).await;
+    pomodoro.module.on_radial_action(RADIAL_SKIP).await;
+    pomodoro.module.on_radial_action(RADIAL_TOGGLE).await;
+    let before = (pomodoro.key(), pomodoro.widget());
+    pomodoro.restart_after(Duration::ZERO);
+    assert_eq!((pomodoro.key(), pomodoro.widget()), before);
+
+    pomodoro.module.on_radial_action(RADIAL_RESET).await;
+    pomodoro.restart_after(Duration::ZERO);
+    assert_ready(&pomodoro.widget(), "Focus 1/4 · prêt", "25:00");
+
+    pomodoro.module.on_key_press().await;
+    pomodoro
+        .module
+        .update_settings(&json!({ "workMinutes": 10 }))
+        .unwrap();
+    pomodoro.settings = json!({ "workMinutes": 10 });
+    pomodoro.restart_after(Duration::ZERO);
+    assert_eq!(label(&pomodoro.key()), "10:00 Travail");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_state_saved_under_longer_steps_is_brought_back_within_the_new_settings() {
+    let mut pomodoro = Harness::new(&json!({ "workMinutes": 50, "longBreakEvery": 8 }));
+    pomodoro.module.on_key_press().await;
+    pomodoro.settings = json!({ "workMinutes": 10, "longBreakEvery": 2 });
+    pomodoro.restart_after(Duration::ZERO);
+    assert_eq!(label(&pomodoro.key()), "10:00 Travail");
 }

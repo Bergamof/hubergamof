@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Ajouté
+
+- Pomodoro : l'étape où l'on en est survit à un redémarrage du gestionnaire (étape, numéro du pomodoro, en marche ou en pause, temps restant), mais pas à un redémarrage de la machine. L'état est gardé dans le répertoire d'exécution de la session (`$XDG_RUNTIME_DIR/hubergamof/`, fichier privé). Un deck débranché puis rebranché retrouve aussi son minuteur. Première étape de la mise des modules au niveau de l'application (`docs/decisions.md`, 2026-11-22).
+
 ### Corrigé
 
 - Revue des spécialistes des souris MX : la force haptique, qui vit dans la mémoire de la souris, n'est plus réécrite à chaque application d'une configuration (un curseur de sensibilité glissé, ou une souris qui revient après un faux silence, l'usaient) : seuls les réglages modifiés sont écrits, et la force est lue puis écrite seulement si elle diffère. Un refus de vibration ou de bascule de molette n'entre plus dans la liste des réglages refusés (elle grossissait à chaque essai tant que la souris ne répondait pas). Une souris éteinte n'est plus sollicitée pour vibrer et sa batterie redevient inconnue, relue dès son retour ; une batterie hors de 1 à 100 % n'est pas crue. Le texte du pétale allumé du menu est sombre (le blanc sur bergamote ne se lisait pas), aperçu et vrai menu ; la page du menu n'a plus de défilement horizontal à 320 px ; la barre d'enregistrement ne masque plus l'élément focalisé ; le mouvement réduit est respecté ; la batterie faible est dite en toutes lettres ; l'aperçu du menu est vérifié contre la géométrie du vrai menu par un fichier de référence.
