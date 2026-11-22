@@ -26,7 +26,7 @@ use serde_json::Value;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, watch};
 
-use crate::module_host::{ModuleHost, ModuleView, ModuleViews};
+use crate::module_host::{APPLICATION_CALL_TIMEOUT, ModuleHost, ModuleView, ModuleViews};
 
 /// A getter taking longer than this is logged: getters run on every redraw.
 const SLOW_GETTER_THRESHOLD: Duration = Duration::from_millis(1);
@@ -50,9 +50,6 @@ impl Module for UnavailableModule {
         Ok(())
     }
 }
-
-/// Longest a device waits for the application to take an input.
-const APPLICATION_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// An instance of the application that a device places: the device keeps its
 /// place (key, dial, strip) and its settings as the user last saved them there.
@@ -205,7 +202,7 @@ impl Instances {
     }
 
     /// What the application shows for the placed instance `id`.
-    fn view(&self, id: &ModuleInstanceId) -> Option<ModuleView> {
+    fn view(&self, id: &ModuleInstanceId) -> Option<Arc<ModuleView>> {
         let kind = &self.shared.get(id)?.kind;
         self.views.as_ref()?.borrow().get(kind).cloned()
     }
@@ -307,7 +304,7 @@ impl Instances {
     /// Key of the home page of instance `id`.
     pub(crate) fn key(&mut self, id: &ModuleInstanceId) -> Option<KeyContent> {
         if self.shared.contains_key(id) {
-            return self.view(id).map(|view| view.key);
+            return self.view(id).map(|view| view.key.clone());
         }
         self.inspect(id, "key", |module| Some(module.key()))
     }
@@ -380,7 +377,7 @@ impl Instances {
     /// What instance `id` shows on the touch strip, if anything.
     pub(crate) fn strip_widget(&mut self, id: &ModuleInstanceId) -> Option<StripWidget> {
         if self.shared.contains_key(id) {
-            return self.view(id)?.strip_widget;
+            return self.view(id)?.strip_widget.clone();
         }
         self.inspect(id, "strip_widget", |module| module.strip_widget())
     }
@@ -388,7 +385,7 @@ impl Instances {
     /// The menu instance `id` has open, if any.
     pub(crate) fn strip_popup(&mut self, id: &ModuleInstanceId) -> Option<StripPopup> {
         if self.shared.contains_key(id) {
-            return self.view(id)?.strip_popup;
+            return self.view(id)?.strip_popup.clone();
         }
         self.inspect(id, "strip_popup", |module| module.strip_popup())
     }

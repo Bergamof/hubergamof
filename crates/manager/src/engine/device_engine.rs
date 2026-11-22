@@ -955,7 +955,6 @@ async fn apply_brightness(deck: &dyn DeckBackend, percent: u8) -> Option<u8> {
     }
 }
 
-/// Next request, or pending forever once the queue is closed.
 /// Resolves when the application shows something else, never without one.
 async fn views_changed(views: Option<&mut watch::Receiver<ModuleViews>>) {
     if let Some(views) = views
@@ -985,6 +984,7 @@ async fn recv_commands(
     }
 }
 
+/// Next request, or pending forever once the queue is closed.
 async fn recv_request(requests: Option<&mut mpsc::Receiver<Request>>) -> Option<Request> {
     match requests {
         Some(requests) => requests.recv().await,
