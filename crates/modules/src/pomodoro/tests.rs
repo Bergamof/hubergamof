@@ -996,3 +996,31 @@ async fn a_clean_stop_of_a_paused_step_changes_nothing() {
 fn the_application_keeps_a_pomodoro() {
     assert_eq!(simple_factory().lifetime(), ModuleLifetime::Application);
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_of_the_menu_says_the_step_and_the_time() {
+    let mut pomodoro = Harness::new(&json!({}));
+    assert_eq!(
+        pomodoro.module.radial_status().as_deref(),
+        Some("Focus 1/4\n25:00 · prêt")
+    );
+
+    pomodoro.module.on_radial_action(RADIAL_TOGGLE).await;
+    pomodoro.run_for(MINUTE).await;
+    assert_eq!(
+        pomodoro.module.radial_status().as_deref(),
+        Some("Focus 1/4\n24:00")
+    );
+
+    pomodoro.module.on_radial_action(RADIAL_TOGGLE).await;
+    assert_eq!(
+        pomodoro.module.radial_status().as_deref(),
+        Some("Focus 1/4\n24:00 · pause")
+    );
+
+    pomodoro.module.on_radial_action(RADIAL_SKIP).await;
+    assert_eq!(
+        pomodoro.module.radial_status().as_deref(),
+        Some("Pause\n05:00 · prêt")
+    );
+}

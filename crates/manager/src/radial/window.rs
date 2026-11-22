@@ -32,6 +32,9 @@ pub struct Petal {
     pub label: String,
     /// Icon, if the entry has one.
     pub icon: Option<RgbaImage>,
+    /// What the module says under the name: up to two lines separated by
+    /// `\n`, changing while the menu is open.
+    pub status: Option<String>,
 }
 
 /// What the window draws while the menu is open.
@@ -58,6 +61,9 @@ pub trait Surface {
     fn place(&self, view: View);
     /// Draws the menu again.
     fn redraw(&self, view: View);
+    /// Gives the petals what their modules say now (one per petal, in order)
+    /// and draws the menu again.
+    fn update_statuses(&self, statuses: Vec<Option<String>>);
     /// Hides the window.
     fn close(&self);
 }
@@ -74,6 +80,19 @@ pub(super) fn opening_progress(content: &Content, placed_at: Option<Instant>) ->
             (at.elapsed().as_secs_f32() / OPENING_DURATION.as_secs_f32()).clamp(0.0, 1.0)
         }
         _ => 1.0,
+    }
+}
+
+/// Puts `statuses` on `petals`, one each in order; a petal without one keeps
+/// none.
+pub(super) fn apply_statuses(petals: &mut [Petal], statuses: Vec<Option<String>>) {
+    debug_assert!(
+        statuses.len() == petals.len(),
+        "one status per petal: the entries do not change while the menu is open"
+    );
+    let mut statuses = statuses.into_iter();
+    for petal in petals {
+        petal.status = statuses.next().flatten();
     }
 }
 
@@ -141,6 +160,10 @@ impl Surface for Box<dyn Surface + Send> {
         (**self).redraw(view);
     }
 
+    fn update_statuses(&self, statuses: Vec<Option<String>>) {
+        (**self).update_statuses(statuses);
+    }
+
     fn close(&self) {
         (**self).close();
     }
@@ -181,6 +204,25 @@ mod tests {
     use super::*;
     use crate::radial::geometry::{DEFAULT_RING, Layout};
     use crate::radial::paint::DEFAULT_PALETTE;
+
+    #[test]
+    fn statuses_are_given_to_the_petals_in_order_and_replace_what_they_said() {
+        let petal = |label: &str| Petal {
+            label: label.to_owned(),
+            icon: None,
+            status: Some("old".to_owned()),
+        };
+        let mut petals = vec![petal("a"), petal("b"), petal("c")];
+        apply_statuses(
+            &mut petals,
+            vec![Some("new".to_owned()), None, Some("last".to_owned())],
+        );
+        let statuses: Vec<_> = petals.iter().map(|petal| petal.status.clone()).collect();
+        assert_eq!(
+            statuses,
+            [Some("new".to_owned()), None, Some("last".to_owned())]
+        );
+    }
 
     fn content(animate: bool) -> Content {
         Content {

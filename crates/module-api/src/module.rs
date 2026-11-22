@@ -262,6 +262,16 @@ pub trait Module: Send {
     /// crash. Quick and synchronous: the manager is leaving.
     fn on_shutdown(&mut self) {}
 
+    /// What the module's petal of the radial menu says under its name while
+    /// the menu is open: up to two lines, separated by `\n`, short (a petal is
+    /// about a hundred pixels wide: a line is cut after 24 characters, without
+    /// a mark). Like the other getters it describes the
+    /// current state, is cheap and side-effect free; the menu reads it again
+    /// while it stays open. Nothing by default: the petal shows the name only.
+    fn radial_status(&self) -> Option<String> {
+        None
+    }
+
     /// Handles an event sent through [`ModuleContext::events`], usually by a
     /// background task of the instance; downcast it to the type sent.
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {

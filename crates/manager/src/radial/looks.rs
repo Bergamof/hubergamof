@@ -2,6 +2,7 @@
 //! on the deck and in the interface.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{ImageSize, ModuleKind};
@@ -60,19 +61,50 @@ impl Looks {
         Self(looks)
     }
 
-    /// The petal of the entry of `module`.
+    /// The petal of the entry of `module`, saying `status` under its name.
     #[must_use]
-    pub fn petal(&self, module: &ModuleKind) -> Petal {
-        self.0.get(module).map_or_else(
-            || Petal {
-                label: title_case(&module.0),
-                icon: None,
-            },
-            |look| Petal {
+    pub fn petal(&self, module: &ModuleKind, status: Option<String>) -> Petal {
+        match self.0.get(module) {
+            Some(look) => Petal {
                 label: look.name.clone(),
                 icon: look.icon.clone(),
+                status,
             },
-        )
+            None => Petal {
+                label: title_case(&module.0),
+                icon: None,
+                status,
+            },
+        }
+    }
+}
+
+/// What each module says under its name in the menu, read when the menu opens
+/// and again while it stays open: what the modules show now, where `Looks` has
+/// what they always look like.
+#[derive(Clone, Default)]
+pub struct Statuses(Option<StatusReader>);
+
+/// Reads what a module says now.
+type StatusReader = Arc<dyn Fn(&ModuleKind) -> Option<String> + Send + Sync>;
+
+impl Statuses {
+    /// The statuses read by `read`.
+    #[must_use]
+    pub fn new(read: impl Fn(&ModuleKind) -> Option<String> + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(read)))
+    }
+
+    /// What `module` says now, if it says anything.
+    #[must_use]
+    pub fn of(&self, module: &ModuleKind) -> Option<String> {
+        self.0.as_ref().and_then(|read| read(module))
+    }
+}
+
+impl std::fmt::Debug for Statuses {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Statuses").field(&self.0.is_some()).finish()
     }
 }
 
@@ -91,7 +123,7 @@ mod tests {
 
     #[test]
     fn a_module_nobody_described_shows_its_identifier() {
-        let petal = Looks::default().petal(&"teams".into());
+        let petal = Looks::default().petal(&"teams".into(), None);
         assert_eq!(petal.label, "Teams");
         assert!(petal.icon.is_none());
     }
@@ -100,13 +132,26 @@ mod tests {
     fn every_builtin_module_is_named_and_most_have_an_icon() {
         let registry = crate::testing::builtin_registry();
         let looks = Looks::of_modules(&registry, &Renderer::new().unwrap());
-        let pomodoro = looks.petal(&"pomodoro".into());
+        let pomodoro = looks.petal(&"pomodoro".into(), Some("Focus".to_owned()));
         assert_eq!(pomodoro.label, "Pomodoro");
         let icon = pomodoro.icon.expect("pomodoro has an icon");
         assert_eq!((icon.width(), icon.height()), (ICON_SIDE, ICON_SIDE));
         for factory in registry.factories() {
             let descriptor = factory.descriptor();
-            assert_eq!(looks.petal(&descriptor.kind).label, descriptor.name);
+            assert_eq!(looks.petal(&descriptor.kind, None).label, descriptor.name);
         }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn statuses_say_what_the_reader_says_and_nothing_by_default() {
+        assert_eq!(Statuses::default().of(&"pomodoro".into()), None);
+        let statuses = Statuses::new(|kind| (kind.0 == "pomodoro").then(|| "Focus".to_owned()));
+        assert_eq!(statuses.of(&"pomodoro".into()).as_deref(), Some("Focus"));
+        assert_eq!(statuses.of(&"audio".into()), None);
     }
 }
