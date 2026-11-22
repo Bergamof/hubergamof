@@ -333,26 +333,7 @@ impl DeviceConfig {
     /// Identifiers, labels and settings of each instance: also written to
     /// the logs and drawn on keys, so bounded and plain.
     fn validate_instances(&self) -> Result<(), ConfigError> {
-        for module in &self.modules {
-            for identifier in [&module.id.0, &module.kind.0] {
-                if !is_identifier(identifier) {
-                    return Err(ConfigError::InvalidIdentifier(identifier.clone()));
-                }
-            }
-            if module
-                .label
-                .as_ref()
-                .is_some_and(|label| label.chars().count() > MAX_LABEL_CHARS)
-            {
-                return Err(ConfigError::LabelTooLong(module.id.clone()));
-            }
-            let settings =
-                serde_json::to_vec(&module.settings).map_or(usize::MAX, |json| json.len());
-            if settings > MAX_SETTINGS_BYTES {
-                return Err(ConfigError::SettingsTooLarge(module.id.clone()));
-            }
-        }
-        Ok(())
+        self.modules.iter().try_for_each(validate_module_instance)
     }
 
     fn validate_module_ids(&self) -> Result<HashSet<&ModuleInstanceId>, ConfigError> {
@@ -427,6 +408,28 @@ impl StripConfig {
         }
         Ok(())
     }
+}
+
+/// Identifiers, label and settings of one instance: also written to the logs
+/// and drawn on keys, so bounded and plain.
+pub(crate) fn validate_module_instance(module: &ModuleInstance) -> Result<(), ConfigError> {
+    for identifier in [&module.id.0, &module.kind.0] {
+        if !is_identifier(identifier) {
+            return Err(ConfigError::InvalidIdentifier(identifier.clone()));
+        }
+    }
+    if module
+        .label
+        .as_ref()
+        .is_some_and(|label| label.chars().count() > MAX_LABEL_CHARS)
+    {
+        return Err(ConfigError::LabelTooLong(module.id.clone()));
+    }
+    let settings = serde_json::to_vec(&module.settings).map_or(usize::MAX, |json| json.len());
+    if settings > MAX_SETTINGS_BYTES {
+        return Err(ConfigError::SettingsTooLarge(module.id.clone()));
+    }
+    Ok(())
 }
 
 /// Whether `identifier` is a valid module instance id or module kind: ASCII

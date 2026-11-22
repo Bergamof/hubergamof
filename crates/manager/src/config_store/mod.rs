@@ -16,6 +16,7 @@
 //! The API is synchronous (small files); async callers run it with
 //! `tokio::task::spawn_blocking`.
 
+mod app_modules;
 mod archive;
 mod defaults;
 mod files;
@@ -32,8 +33,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
-    ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode, ModuleInstance,
-    ModuleInstanceId, MouseConfigError, MouseModel, RadialConfigError, is_safe_image_name,
+    AppModulesConfigError, ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode,
+    ModuleInstance, ModuleInstanceId, MouseConfigError, MouseModel, RadialConfigError,
+    is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -65,6 +67,8 @@ pub const INVALID_BACKUP_PREFIX: &str = "config.json.invalid-";
 pub const MOUSE_FILE: &str = "mouse.json";
 /// File name, at the root, of the radial menu configuration.
 pub const RADIAL_MENU_FILE: &str = "radial-menu.json";
+/// File name, at the root, of the configuration of the application modules.
+pub const APP_MODULES_FILE: &str = "modules.json";
 
 /// Most images a device stores: far more than its keys use, bounding what
 /// uploads may pile up before unused ones are removed at the next load.
@@ -162,6 +166,9 @@ pub enum ConfigStoreError {
     /// The radial menu configuration is inconsistent.
     #[error("invalid radial menu configuration: {0}")]
     InvalidRadialMenu(#[from] RadialConfigError),
+    /// The configuration of the application modules is inconsistent.
+    #[error("invalid application modules configuration: {0}")]
+    InvalidAppModules(#[from] AppModulesConfigError),
     /// The archive cannot be read.
     #[error(transparent)]
     Archive(#[from] ArchiveError),
@@ -181,6 +188,7 @@ impl ConfigStoreError {
             | Self::InvalidMouse(_)
             | Self::ModelMismatch { .. }
             | Self::InvalidRadialMenu(_)
+            | Self::InvalidAppModules(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
             | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,

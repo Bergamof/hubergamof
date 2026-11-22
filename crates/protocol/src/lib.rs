@@ -11,6 +11,7 @@
 //! internally tagged with a `type` field, optional values are `null`.
 
 mod api;
+mod app_modules;
 mod catalog;
 mod config;
 mod device;
@@ -21,6 +22,7 @@ mod radial;
 mod update;
 
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
+pub use app_modules::{APP_MODULES_SCHEMA_VERSION, AppModulesConfig, AppModulesConfigError};
 pub use catalog::CatalogModule;
 pub use config::{
     CURRENT_SCHEMA_VERSION, ConfigError, DeviceConfig, DeviceTheme, DialAssignment,

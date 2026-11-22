@@ -22,6 +22,7 @@ use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
+use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
 use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
@@ -62,6 +63,10 @@ const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Longest wait for a device to blank its screens on shutdown.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Longest wait for the task of the module host to end once it was told to
+/// stop.
+const HOST_TASK_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Longest wait for the web server to close its connections on shutdown.
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
@@ -565,7 +570,14 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let discovery = DeviceDiscovery::new();
     // The menu runs actions on the engines, known before they start.
     let engines = EngineRegistry::default();
-    let (mouse_hub, mice) = start_mouse_service(&cli, &services, &engines, &haptics)?;
+    let (host, host_task) = start_module_host(&services);
+    let (mouse_hub, mice) = match start_mouse_service(&cli, &services, &engines, &haptics, &host) {
+        Ok(started) => started,
+        Err(error) => {
+            stop_host(&host, host_task).await;
+            return Err(error);
+        }
+    };
     let supervisor = Supervisor::start_in(&discovery, services, engines);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -592,6 +604,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         Err(error) => {
             supervisor.shutdown().await;
             stop_mice(mice).await;
+            stop_host(&host, host_task).await;
             return Err(error).context("cannot start the web interface");
         }
     };
@@ -605,6 +618,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
             stop_server(server_task).await;
             supervisor.shutdown().await;
             stop_mice(mice).await;
+            stop_host(&host, host_task).await;
             return Err(error);
         }
     };
@@ -624,18 +638,14 @@ async fn run_manager(cli: Cli) -> Result<()> {
         .await
     };
 
-    let outcome = tokio::select! {
-        signal = tokio::signal::ctrl_c() => signal.context("cannot listen for Ctrl-C"),
-        _ = terminate.recv() => Ok(()),
-        _ = hangup.recv() => Ok(()),
-        () = wait_for_quit(stopping) => Ok(()),
-        result = &mut server_task => server_outcome(result),
-    };
+    let outcome = wait_for_stop(&mut terminate, &mut hangup, stopping, &mut server_task).await;
     tracing::info!("shutting down");
     shutdown.send_replace(true);
     stop_server(server_task).await;
     supervisor.shutdown().await;
     stop_mice(mice).await;
+    // After the menu, which hands it actions: the pomodoro pauses where it is.
+    stop_host(&host, host_task).await;
     shutdown_devices(&discovery, source).await;
     if let Some(tray) = tray {
         tray.stop().await;
@@ -644,16 +654,58 @@ async fn run_manager(cli: Cli) -> Result<()> {
     outcome
 }
 
+/// Waits for whatever ends the manager: a signal, the tray's quit, or the web
+/// server stopping on its own.
+async fn wait_for_stop(
+    terminate: &mut tokio::signal::unix::Signal,
+    hangup: &mut tokio::signal::unix::Signal,
+    stopping: watch::Receiver<bool>,
+    server_task: &mut JoinHandle<std::io::Result<()>>,
+) -> Result<()> {
+    tokio::select! {
+        signal = tokio::signal::ctrl_c() => signal.context("cannot listen for Ctrl-C"),
+        _ = terminate.recv() => Ok(()),
+        _ = hangup.recv() => Ok(()),
+        () = wait_for_quit(stopping) => Ok(()),
+        result = server_task => server_outcome(result),
+    }
+}
+
+/// The modules that live in the application, apart from any device.
+fn start_module_host(services: &EngineServices) -> (ModuleHost, tokio::task::JoinHandle<()>) {
+    ModuleHost::start(HostServices {
+        registry: Arc::clone(&services.registry),
+        store: services.store.clone(),
+        haptics: Arc::clone(&services.haptics),
+        screen_lock: Arc::clone(&services.screen_lock),
+    })
+}
+
+/// Stops the module host, then waits for its task: it is aborted past
+/// [`HOST_TASK_TIMEOUT`], so that a stuck module cannot hold the manager back.
+async fn stop_host(host: &ModuleHost, mut task: tokio::task::JoinHandle<()>) {
+    host.shutdown().await;
+    match tokio::time::timeout(HOST_TASK_TIMEOUT, &mut task).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "module host failed"),
+        Err(_) => {
+            tracing::warn!("module host did not end in time");
+            task.abort();
+        }
+    }
+}
+
 /// The mouse hub, and the mice it lists: the real ones unless `--no-mice`, a simulated one with `--demo`.
 fn start_mouse_service(
     cli: &Cli,
     services: &EngineServices,
     engines: &EngineRegistry,
     haptics: &HapticRelay,
+    host: &ModuleHost,
 ) -> Result<(MouseHub, Mice)> {
     let hub = MouseHub::new(services.store.clone()).context("cannot load the radial menu")?;
     let mice = if serves_mice(cli) {
-        Mice::Served(start_served_mice(&hub, services, engines, haptics))
+        Mice::Served(start_served_mice(&hub, services, engines, haptics, host))
     } else if cli.demo {
         Mice::Simulated {
             _listed: register_simulated_mice(&hub, &services.store)?,
@@ -670,6 +722,7 @@ fn start_served_mice(
     services: &EngineServices,
     engines: &EngineRegistry,
     haptics: &HapticRelay,
+    host: &ModuleHost,
 ) -> MiceService {
     // The events of the modules are played on the mice from now on.
     haptics.connect(Arc::new(hub.clone()));
@@ -686,6 +739,7 @@ fn start_served_mice(
         {
             let module_actions = ModuleActions::new(
                 engines.clone(),
+                host.clone(),
                 &tokio::runtime::Handle::current(),
                 Arc::clone(&services.registry),
             );

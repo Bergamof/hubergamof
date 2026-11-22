@@ -29,8 +29,9 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, ImageData,
     KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
-    ModuleEvent, ModuleFactory, Notification as StripNotification, NotificationId, PomodoroState,
-    PomodoroWidget, PopupEntry, PopupIcon, RadialActionDescriptor, Rgb, StripPopup, StripWidget,
+    ModuleEvent, ModuleFactory, ModuleLifetime, Notification as StripNotification, NotificationId,
+    PomodoroState, PomodoroWidget, PopupEntry, PopupIcon, RadialActionDescriptor, Rgb, StripPopup,
+    StripWidget,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
@@ -160,6 +161,12 @@ impl PomodoroSettings {
 impl ModuleFactory for PomodoroFactory {
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
+    }
+
+    /// The application keeps a pomodoro, so that the radial menu can start one
+    /// on a computer without any deck.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
     }
 
     fn haptic_events(&self) -> Vec<HapticEventDescriptor> {
@@ -447,6 +454,18 @@ impl Module for Pomodoro {
             self.sync_ticker();
         }
         Vec::new()
+    }
+
+    /// A step running when the manager stops clean is paused with its time
+    /// left: the next run finds it where it was, not further for the time the
+    /// manager was away.
+    fn on_shutdown(&mut self) {
+        if self.timer.is_running() {
+            self.timer.toggle(self.now());
+            self.ticker = None;
+        }
+        self.save_state();
+        self.state.flush();
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {

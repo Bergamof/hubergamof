@@ -1,6 +1,7 @@
 //! What an entry chosen in the radial menu does: its action runs on the first
 //! device that has the module (a Stream Deck: that is where the modules, and
-//! their state, live).
+//! their state, live), and otherwise on the instance the application holds
+//! (see [`crate::module_host`]): the menu does not need a deck.
 //!
 //! The actions run one after the other, in the order they were chosen, by one
 //! task: two quick choices (mute the microphone, then hang up) must not swap.
@@ -14,6 +15,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::engine::EngineRegistry;
+use crate::module_host::ModuleHost;
 
 /// Choices waiting to run, at most: a person does not choose faster than the
 /// devices answer, and a full queue means something is stuck.
@@ -47,11 +49,16 @@ impl ModuleActions {
     /// Actions of the modules of `registry`, run on the devices of `engines`
     /// by a task of `runtime`.
     #[must_use]
-    pub fn new(engines: EngineRegistry, runtime: &Handle, registry: Arc<ModuleRegistry>) -> Self {
+    pub fn new(
+        engines: EngineRegistry,
+        host: ModuleHost,
+        runtime: &Handle,
+        registry: Arc<ModuleRegistry>,
+    ) -> Self {
         let (queue, mut received) = mpsc::channel::<(ModuleKind, String)>(QUEUE_CAPACITY);
         runtime.spawn(async move {
             while let Some((module, action)) = received.recv().await {
-                run_on_first_device(&engines, &module, &action).await;
+                run_on_first_holder(&engines, &host, &module, &action).await;
             }
         });
         Self { registry, queue }
@@ -96,8 +103,14 @@ impl ModuleActions {
 
 /// Runs `action` on the first device (in the order of the serial numbers) that
 /// has `module`, giving up on a device that does not take it within
-/// [`ACTION_TIMEOUT`]. Whether a device had the module.
-async fn run_on_first_device(engines: &EngineRegistry, module: &ModuleKind, action: &str) -> bool {
+/// [`ACTION_TIMEOUT`]; when none has it, on the instance of the application,
+/// under the same limit. Returns whether somebody holds the module.
+async fn run_on_first_holder(
+    engines: &EngineRegistry,
+    host: &ModuleHost,
+    module: &ModuleKind,
+    action: &str,
+) -> bool {
     for engine in engines.handles() {
         match tokio::time::timeout(ACTION_TIMEOUT, engine.radial_action(module, action)).await {
             Ok(true) => return true,
@@ -107,13 +120,25 @@ async fn run_on_first_device(engines: &EngineRegistry, module: &ModuleKind, acti
             }
         }
     }
-    tracing::warn!(%module, action, "no device has the module of the radial entry");
+    match tokio::time::timeout(ACTION_TIMEOUT, host.radial_action(module, action)).await {
+        Ok(reply) if reply.is_held() => return true,
+        Ok(_) => {}
+        Err(_) => {
+            tracing::warn!(%module, action, "the application did not take the radial action in time");
+        }
+    }
+    tracing::warn!(%module, action, "nobody has the module of the radial entry");
     false
 }
 
 #[cfg(test)]
 mod tests {
     use hubergamof_modules::{BuiltinServices, builtin_registry_with};
+
+    use crate::config_store::ConfigStore;
+    use crate::haptics::NoHaptics;
+    use crate::module_host::HostServices;
+    use crate::screen_lock::NoScreenLock;
 
     use super::*;
 
@@ -135,8 +160,25 @@ mod tests {
         }
     }
 
+    fn host_of(registry: &Arc<ModuleRegistry>) -> ModuleHost {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _task) = ModuleHost::start(HostServices {
+            registry: Arc::clone(registry),
+            store: ConfigStore::new(dir.path(), Arc::clone(registry)),
+            haptics: Arc::new(NoHaptics),
+            screen_lock: Arc::new(NoScreenLock),
+        });
+        host
+    }
+
     fn actions() -> ModuleActions {
-        ModuleActions::new(EngineRegistry::default(), &Handle::current(), registry())
+        let registry = registry();
+        ModuleActions::new(
+            EngineRegistry::default(),
+            host_of(&registry),
+            &Handle::current(),
+            registry,
+        )
     }
 
     #[tokio::test]
@@ -171,9 +213,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_no_device_that_has_the_module_nothing_runs() {
+    async fn with_no_device_the_application_runs_the_action() {
+        let registry = registry();
+        let host = host_of(&registry);
         let engines = EngineRegistry::default();
-        assert!(!run_on_first_device(&engines, &"pomodoro".into(), "toggle").await);
+        assert!(run_on_first_holder(&engines, &host, &"pomodoro".into(), "toggle").await);
+    }
+
+    #[tokio::test]
+    async fn a_module_nobody_holds_runs_nowhere() {
+        let registry = registry();
+        let host = host_of(&registry);
+        let engines = EngineRegistry::default();
+        assert!(!run_on_first_holder(&engines, &host, &"docker".into(), "start").await);
     }
 
     #[tokio::test]

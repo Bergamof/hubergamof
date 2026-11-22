@@ -45,6 +45,9 @@ pub use handle::EngineHandle;
 pub use live::{LiveKey, LiveSnapshot, LiveStrip, PageSummary};
 pub use supervisor::{EngineRegistry, Supervisor};
 
+pub(crate) use device_engine::MODULE_EVENT_CAPACITY;
+pub(crate) use instances::{Call, Instances, Outcome, RoutedEvent};
+
 use crate::config_store::{ConfigStore, ConfigStoreError};
 use crate::device::DeviceError;
 use crate::render::{RenderError, Renderer};
