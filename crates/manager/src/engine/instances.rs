@@ -678,6 +678,10 @@ mod tests {
 
     #[async_trait]
     impl Module for Counter {
+        fn radial_status(&self) -> Option<String> {
+            Some("counting".to_owned())
+        }
+
         fn on_shutdown(&mut self) {
             self.0.shutdowns.fetch_add(1, Ordering::SeqCst);
         }
@@ -738,6 +742,10 @@ mod tests {
             panic!("fragile on shutdown");
         }
 
+        fn radial_status(&self) -> Option<String> {
+            panic!("fragile status");
+        }
+
         fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
             Ok(())
         }
@@ -777,6 +785,25 @@ mod tests {
             Instances::detached(Arc::new(registry), events, ScreenLockState::never()),
             received,
         )
+    }
+
+    #[tokio::test]
+    async fn what_a_petal_says_is_read_and_a_module_that_panics_says_nothing_and_is_replaced() {
+        let probe = Probe::default();
+        let (mut instances, _received) = instances(&probe);
+        let fragile = ModuleInstance {
+            id: "a".into(),
+            kind: FRAGILE_KIND.into(),
+            ..counter()
+        };
+        instances.sync(&[fragile, counter()]);
+        assert_eq!(
+            instances.radial_status(&"c".into()).as_deref(),
+            Some("counting")
+        );
+        assert_eq!(instances.radial_status(&"a".into()), None);
+        assert_eq!(instances.take_failures(), ["a".into()]);
+        assert_eq!(instances.radial_status(&"nothing".into()), None);
     }
 
     #[tokio::test]

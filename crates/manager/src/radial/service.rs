@@ -36,10 +36,6 @@ pub(super) const NUDGE_TRIES: u32 = 6;
 /// the menu is open.
 pub(super) const REFRESH_PERIOD: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// Readings made at most for one opening: as long as a window may stay open
-/// (30 s).
-pub(super) const REFRESH_TRIES: u32 = 60;
-
 /// The waveforms of the feel of the menu: it opens, the pointer comes onto a
 /// petal, an entry is chosen.
 const OPEN_WAVEFORM: HapticWaveform = HapticWaveform::SubtleCollision;
@@ -146,15 +142,12 @@ impl RadialService {
         runtime: &tokio::runtime::Handle,
         nudge: impl Fn() + Send + Sync + 'static,
         chooser: impl Fn(&RadialEntryConfig) + Send + 'static,
-        feel: Arc<dyn HapticOutput>,
-        (looks, statuses): (Looks, Statuses),
+        presentation: Presentation,
     ) -> Self {
         let parts = Parts {
             nudge: Arc::new(nudge),
             chooser: Box::new(chooser),
-            feel,
-            looks,
-            statuses,
+            presentation,
         };
         Self::start_on(
             |events| {
@@ -190,9 +183,7 @@ impl RadialService {
         let Parts {
             nudge,
             chooser,
-            feel,
-            looks,
-            statuses,
+            presentation,
         } = parts;
         let wake = PointerWake {
             nudge,
@@ -205,7 +196,7 @@ impl RadialService {
             refresh: {
                 let (runtime, events) = (runtime.clone(), events.clone());
                 Box::new(move || {
-                    runtime.spawn(refreshes(events.clone()));
+                    Box::new(StopOnDrop(runtime.spawn(refreshes(events.clone())))) as RefreshTimer
                 })
             },
         };
@@ -213,14 +204,7 @@ impl RadialService {
             .name("radial-menu".to_owned())
             .spawn(move || {
                 let surface = make_surface(window_events);
-                let mut menu = Menu::new(
-                    &first,
-                    locked,
-                    surface,
-                    chooser,
-                    wake,
-                    (feel, looks, statuses),
-                );
+                let mut menu = Menu::new(&first, locked, surface, chooser, wake, presentation);
                 run(&mut menu, received);
             })
             .map_err(|error| tracing::error!(%error, "cannot start the radial menu thread"))
@@ -262,15 +246,37 @@ async fn nudges(events: mpsc::UnboundedSender<Event>) {
     }
 }
 
-/// Asks, while the menu may be open, that what the modules say be read again:
-/// a timer goes on while the menu is shown.
+/// Asks, until it is stopped (the menu closes) or the menu is gone, that what
+/// the modules say be read again.
 async fn refreshes(events: mpsc::UnboundedSender<Event>) {
-    for _ in 0..REFRESH_TRIES {
+    loop {
         tokio::time::sleep(REFRESH_PERIOD).await;
         if events.send(Event::Refresh).is_err() {
             return;
         }
     }
+}
+
+/// What stops the readings when it is dropped.
+type RefreshTimer = Box<dyn Send>;
+
+/// Aborts its task when dropped.
+struct StopOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// What the menu shows and feels, besides its configuration.
+pub struct Presentation {
+    /// Where the feel of the menu is played.
+    pub feel: Arc<dyn HapticOutput>,
+    /// What the modules always look like: names and icons.
+    pub looks: Looks,
+    /// What the modules say now under their names.
+    pub statuses: Statuses,
 }
 
 /// How the menu learns where the pointer is when the desktop does not say.
@@ -279,8 +285,9 @@ struct PointerWake {
     nudge: Arc<dyn Fn() + Send + Sync>,
     /// Asks for [`Event::Nudge`]s to come, after the window is opened.
     schedule: Box<dyn Fn() + Send>,
-    /// Asks for [`Event::Refresh`]es to come, after the window is opened.
-    refresh: Box<dyn Fn() + Send>,
+    /// Asks for [`Event::Refresh`]es to come, after the window is opened,
+    /// until the timer it returns is dropped.
+    refresh: Box<dyn Fn() -> RefreshTimer + Send>,
 }
 
 /// Passes the changes of the configuration and of the lock to the menu, until
@@ -316,9 +323,7 @@ struct Parts {
     /// Moves the pointer a pixel and back.
     nudge: Arc<dyn Fn() + Send + Sync>,
     chooser: Chooser,
-    feel: Arc<dyn HapticOutput>,
-    looks: Looks,
-    statuses: Statuses,
+    presentation: Presentation,
 }
 
 /// The menu and what it is shown on.
@@ -339,6 +344,8 @@ struct Menu<S: Surface> {
     /// What the petals say, as the window shows it: a reading that changes
     /// nothing draws nothing.
     shown_statuses: Vec<Option<String>>,
+    /// The readings that go on while the menu is open.
+    refreshing: Option<RefreshTimer>,
     /// A press that found no window is said once.
     warned: bool,
 }
@@ -350,8 +357,13 @@ impl<S: Surface> Menu<S> {
         surface: Option<S>,
         chooser: Chooser,
         wake: PointerWake,
-        (feel, looks, statuses): (Arc<dyn HapticOutput>, Looks, Statuses),
+        presentation: Presentation,
     ) -> Self {
+        let Presentation {
+            feel,
+            looks,
+            statuses,
+        } = presentation;
         let mut controller = Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN);
         controller.set_looks(looks);
         controller.set_statuses(statuses);
@@ -366,6 +378,7 @@ impl<S: Surface> Menu<S> {
             locked,
             started: Instant::now(),
             shown_statuses: Vec::new(),
+            refreshing: None,
             warned: false,
         }
     }
@@ -448,7 +461,8 @@ impl<S: Surface> Menu<S> {
                             .collect();
                         surface.open(content);
                         (self.wake.schedule)();
-                        (self.wake.refresh)();
+                        // Replacing the timer of an earlier opening stops it.
+                        self.refreshing = Some((self.wake.refresh)());
                         self.feel(OPEN_WAVEFORM);
                     }
                 }
@@ -471,7 +485,10 @@ impl<S: Surface> Menu<S> {
                         self.feel(CHOICE_WAVEFORM);
                     }
                 }
-                Effect::Close => self.with_surface(Surface::close),
+                Effect::Close => {
+                    self.refreshing = None;
+                    self.with_surface(Surface::close);
+                }
             }
         }
     }
@@ -577,13 +594,25 @@ mod tests {
         }
     }
 
+    /// Notes that the readings stopped when it is dropped.
+    struct StoppedNote(Notes);
+
+    impl Drop for StoppedNote {
+        fn drop(&mut self) {
+            self.0.push_wake("refresh stopped");
+        }
+    }
+
     /// A pointer wake that writes `nudge` and `schedule` in `notes`.
     fn quiet_wake(notes: &Notes) -> PointerWake {
         let (for_nudge, for_schedule, for_refresh) = (notes.clone(), notes.clone(), notes.clone());
         PointerWake {
             nudge: Arc::new(move || for_nudge.push_wake("nudge")),
             schedule: Box::new(move || for_schedule.push_wake("schedule")),
-            refresh: Box::new(move || for_refresh.push_wake("refresh")),
+            refresh: Box::new(move || {
+                for_refresh.push_wake("refresh");
+                Box::new(StoppedNote(for_refresh.clone())) as RefreshTimer
+            }),
         }
     }
 
@@ -597,13 +626,17 @@ mod tests {
             Some(notes.clone()),
             Box::new(move |entry| chosen.push(&entry.module.to_string())),
             quiet_wake(notes),
-            (
-                Arc::new(notes.clone()),
-                Looks::default(),
-                Statuses::default(),
-            ),
+            presentation(notes, Statuses::default()),
         );
         (menu, lock)
+    }
+
+    fn presentation(notes: &Notes, statuses: Statuses) -> Presentation {
+        Presentation {
+            feel: Arc::new(notes.clone()),
+            looks: Looks::default(),
+            statuses,
+        }
     }
 
     /// A menu whose pomodoro petal says what `says` holds.
@@ -616,9 +649,8 @@ mod tests {
             Some(notes.clone()),
             Box::new(|_| {}),
             quiet_wake(notes),
-            (
-                Arc::new(notes.clone()),
-                Looks::default(),
+            presentation(
+                notes,
                 Statuses::new(move |module| {
                     (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone())
                 }),
@@ -656,6 +688,29 @@ mod tests {
         );
         menu.handle(Event::Refresh);
         assert_eq!(notes.all().len(), 3, "said once");
+    }
+
+    #[test]
+    fn the_readings_stop_when_the_menu_closes_and_a_new_opening_replaces_them() {
+        let notes = Notes::default();
+        let says = Arc::new(Mutex::new("Focus 1/4".to_owned()));
+        let (mut menu, _lock) = menu_saying(&notes, &says);
+        let stopped = |notes: &Notes| {
+            notes
+                .wakes()
+                .iter()
+                .filter(|note| *note == "refresh stopped")
+                .count()
+        };
+
+        open(&mut menu);
+        assert_eq!(stopped(&notes), 0);
+        menu.handle(Event::Cancel);
+        assert_eq!(stopped(&notes), 1, "the menu closed");
+
+        open(&mut menu);
+        menu.handle(Event::Cancel);
+        assert_eq!(stopped(&notes), 2, "one timer per opening, none left over");
     }
 
     fn at(menu: &Menu<Notes>, milliseconds: u64) -> Instant {
@@ -754,11 +809,11 @@ mod tests {
             None,
             Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
             quiet_wake(&Notes::default()),
-            (
-                Arc::new(Notes::default()),
-                Looks::default(),
-                Statuses::default(),
-            ),
+            Presentation {
+                feel: Arc::new(Notes::default()),
+                looks: Looks::default(),
+                statuses: Statuses::default(),
+            },
         );
         menu.handle(Event::Press(menu.started));
         menu.handle(Event::Press(menu.started));
@@ -942,9 +997,11 @@ mod tests {
             Parts {
                 nudge: Arc::new(|| {}),
                 chooser: Box::new(|_| {}),
-                feel: Arc::new(crate::haptics::NoHaptics),
-                looks: Looks::default(),
-                statuses: Statuses::default(),
+                presentation: Presentation {
+                    feel: Arc::new(crate::haptics::NoHaptics),
+                    looks: Looks::default(),
+                    statuses: Statuses::default(),
+                },
             },
             config,
             locked,

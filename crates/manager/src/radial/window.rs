@@ -86,6 +86,10 @@ pub(super) fn opening_progress(content: &Content, placed_at: Option<Instant>) ->
 /// Puts `statuses` on `petals`, one each in order; a petal without one keeps
 /// none.
 pub(super) fn apply_statuses(petals: &mut [Petal], statuses: Vec<Option<String>>) {
+    debug_assert!(
+        statuses.len() == petals.len(),
+        "one status per petal: the entries do not change while the menu is open"
+    );
     let mut statuses = statuses.into_iter();
     for petal in petals {
         petal.status = statuses.next().flatten();
@@ -202,16 +206,22 @@ mod tests {
     use crate::radial::paint::DEFAULT_PALETTE;
 
     #[test]
-    fn statuses_are_given_to_the_petals_in_order_and_the_rest_keep_none() {
+    fn statuses_are_given_to_the_petals_in_order_and_replace_what_they_said() {
         let petal = |label: &str| Petal {
             label: label.to_owned(),
             icon: None,
             status: Some("old".to_owned()),
         };
         let mut petals = vec![petal("a"), petal("b"), petal("c")];
-        apply_statuses(&mut petals, vec![Some("new".to_owned()), None]);
+        apply_statuses(
+            &mut petals,
+            vec![Some("new".to_owned()), None, Some("last".to_owned())],
+        );
         let statuses: Vec<_> = petals.iter().map(|petal| petal.status.clone()).collect();
-        assert_eq!(statuses, [Some("new".to_owned()), None, None]);
+        assert_eq!(
+            statuses,
+            [Some("new".to_owned()), None, Some("last".to_owned())]
+        );
     }
 
     fn content(animate: bool) -> Content {

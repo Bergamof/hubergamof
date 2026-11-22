@@ -30,7 +30,7 @@ use hubergamof_manager::radial::{
     self,
     actions::ModuleActions,
     looks::{Looks, Statuses},
-    service::RadialService,
+    service::{Presentation, RadialService},
 };
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
@@ -765,11 +765,11 @@ fn start_served_mice(
                 let _ = module_actions.run(entry);
             }
         },
-        Arc::new(hub.clone()),
-        (
-            Looks::of_modules(&services.registry, &services.renderer),
-            petal_statuses(host),
-        ),
+        Presentation {
+            feel: Arc::new(hub.clone()),
+            looks: Looks::of_modules(&services.registry, &services.renderer),
+            statuses: petal_statuses(host),
+        },
     );
     let actions = actions.with_radial(menu.handle());
     let supervisor = MouseSupervisor::start(

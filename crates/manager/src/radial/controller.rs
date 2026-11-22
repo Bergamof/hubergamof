@@ -15,7 +15,7 @@ use super::geometry::{Layout, Point, Ring, Size, fit_on_screen};
 use super::interaction::{Input, Menu, Output};
 use super::looks::{Looks, Statuses};
 use super::paint::Palette;
-use super::window::{Content, Petal};
+use super::window::Content;
 
 /// What the window must show of the menu.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -151,10 +151,8 @@ impl Controller {
         let petals = self
             .entries
             .iter()
-            .map(|entry| Petal {
-                status: self.statuses.of(&entry.module),
-                ..self.looks.petal(&entry.module)
-            })
+            .zip(self.statuses())
+            .map(|(entry, status)| self.looks.petal(&entry.module, status))
             .collect();
         Some(Content {
             petals,
@@ -265,6 +263,8 @@ impl Controller {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     const RING: Ring = Ring {
@@ -344,8 +344,8 @@ mod tests {
     #[test]
     fn the_petals_say_what_their_modules_say_now() {
         let mut controller = controller();
-        let says = std::sync::Arc::new(std::sync::Mutex::new("Focus 1/4".to_owned()));
-        let reader = std::sync::Arc::clone(&says);
+        let says = Arc::new(Mutex::new("Focus 1/4".to_owned()));
+        let reader = Arc::clone(&says);
         controller.set_statuses(Statuses::new(move |module| {
             (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone())
         }));

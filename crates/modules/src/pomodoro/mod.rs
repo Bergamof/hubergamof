@@ -376,7 +376,7 @@ impl Pomodoro {
     fn widget(&self) -> PomodoroWidget {
         let remaining = self.timer.remaining(self.now());
         let (state, name, note) = self.state_and_note();
-        let label = note.map_or_else(|| name.clone(), |note| format!("{name} · {note}"));
+        let label = with_note(&name, note);
         PomodoroWidget::new(
             state,
             label,
@@ -505,8 +505,7 @@ impl Module for Pomodoro {
     fn radial_status(&self) -> Option<String> {
         let (_, name, note) = self.state_and_note();
         let time = format_remaining(self.timer.remaining(self.now()));
-        let detail = note.map_or_else(|| time.clone(), |note| format!("{time} · {note}"));
-        Some(format!("{name}\n{detail}"))
+        Some(format!("{name}\n{}", with_note(&time, note)))
     }
 
     fn strip_popup(&self) -> Option<StripPopup> {
@@ -572,6 +571,11 @@ fn delay_to_whole_second(remaining: Duration) -> Duration {
     } else {
         fraction
     }
+}
+
+/// `text`, followed by ` · ` and `note` when there is one.
+fn with_note(text: &str, note: Option<&str>) -> String {
+    note.map_or_else(|| text.to_owned(), |note| format!("{text} · {note}"))
 }
 
 /// `mm:ss`, rounded up to the second so that a step shows its full length

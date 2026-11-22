@@ -58,6 +58,13 @@ impl PetalView<'_> {
     }
 }
 
+/// An icon to draw on a petal, and how many lines of status share the petal
+/// with it.
+struct Icon<'a> {
+    image: &'a RgbaImage,
+    status_lines: usize,
+}
+
 /// Colours of the menu.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
@@ -121,7 +128,11 @@ pub fn paint(
     for (index, petal) in petals.iter().enumerate() {
         if let Some(icon) = petal.icon {
             let lines = petal.status_lines().len();
-            overlay_icon(&mut canvas, layout, index, (icon, lines), scale, opening);
+            let icon = Icon {
+                image: icon,
+                status_lines: lines,
+            };
+            overlay_icon(&mut canvas, layout, index, &icon, scale, opening);
         }
     }
     Ok(canvas)
@@ -246,16 +257,16 @@ fn overlay_icon(
     canvas: &mut RgbaImage,
     layout: &Layout,
     index: usize,
-    (icon, status_lines): (&RgbaImage, usize),
+    icon: &Icon<'_>,
     scale: f64,
     opening: f64,
 ) {
-    let (centre, top, _) = content_places(layout, index, true, status_lines);
+    let (centre, top, _) = content_places(layout, index, true, icon.status_lines);
     let side = side_in_pixels(ICON_SIZE * scale);
     if side == 0 {
         return;
     }
-    let mut scaled = imageops::resize(icon, side, side, imageops::FilterType::Lanczos3);
+    let mut scaled = imageops::resize(icon.image, side, side, imageops::FilterType::Lanczos3);
     for pixel in scaled.pixels_mut() {
         pixel.0[3] = fade(pixel.0[3], opening);
     }
@@ -500,6 +511,16 @@ mod tests {
         let long = paint_with(Some("Focus 1/4\n25:00 · prêt and a great deal more text"));
         let cut = paint_with(Some("Focus 1/4\n25:00 · prêt and a great"));
         assert_eq!(long, cut, "a line is cut at the width of a petal");
+    }
+
+    #[test]
+    fn the_block_of_a_petal_stays_centred_whatever_the_lines_of_status() {
+        let layout = layout(4);
+        let top = |lines| content_places(&layout, 0, true, lines).1;
+        // Two lines of status move the block up by half of their height.
+        assert!((top(0) - top(2) - STATUS_LINE).abs() < 1e-9);
+        let baseline = |lines| content_places(&layout, 0, false, lines).2;
+        assert!((baseline(0) - baseline(2) - STATUS_LINE).abs() < 1e-9);
     }
 
     #[test]

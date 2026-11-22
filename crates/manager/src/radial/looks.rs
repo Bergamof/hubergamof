@@ -61,21 +61,21 @@ impl Looks {
         Self(looks)
     }
 
-    /// The petal of the entry of `module`.
+    /// The petal of the entry of `module`, saying `status` under its name.
     #[must_use]
-    pub fn petal(&self, module: &ModuleKind) -> Petal {
-        self.0.get(module).map_or_else(
-            || Petal {
-                label: title_case(&module.0),
-                icon: None,
-                status: None,
-            },
-            |look| Petal {
+    pub fn petal(&self, module: &ModuleKind, status: Option<String>) -> Petal {
+        match self.0.get(module) {
+            Some(look) => Petal {
                 label: look.name.clone(),
                 icon: look.icon.clone(),
-                status: None,
+                status,
             },
-        )
+            None => Petal {
+                label: title_case(&module.0),
+                icon: None,
+                status,
+            },
+        }
     }
 }
 
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn a_module_nobody_described_shows_its_identifier() {
-        let petal = Looks::default().petal(&"teams".into());
+        let petal = Looks::default().petal(&"teams".into(), None);
         assert_eq!(petal.label, "Teams");
         assert!(petal.icon.is_none());
     }
@@ -132,13 +132,13 @@ mod tests {
     fn every_builtin_module_is_named_and_most_have_an_icon() {
         let registry = crate::testing::builtin_registry();
         let looks = Looks::of_modules(&registry, &Renderer::new().unwrap());
-        let pomodoro = looks.petal(&"pomodoro".into());
+        let pomodoro = looks.petal(&"pomodoro".into(), Some("Focus".to_owned()));
         assert_eq!(pomodoro.label, "Pomodoro");
         let icon = pomodoro.icon.expect("pomodoro has an icon");
         assert_eq!((icon.width(), icon.height()), (ICON_SIDE, ICON_SIDE));
         for factory in registry.factories() {
             let descriptor = factory.descriptor();
-            assert_eq!(looks.petal(&descriptor.kind).label, descriptor.name);
+            assert_eq!(looks.petal(&descriptor.kind, None).label, descriptor.name);
         }
     }
 }
