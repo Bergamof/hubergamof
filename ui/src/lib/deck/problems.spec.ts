@@ -14,6 +14,7 @@ const KEEPS_DETAILS = {
 	invalidArchive: true,
 	unavailable: false,
 	busy: false,
+	locked: false,
 	internal: true
 } as const satisfies Record<ErrorCode, boolean>;
 

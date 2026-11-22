@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
+use crate::ModuleKind;
 use crate::config::{ConfigError, MAX_MODULES, ModuleInstance, validate_module_instance};
 
 /// Version of [`AppModulesConfig`] this version of HuBergamof reads and writes.
@@ -26,6 +27,24 @@ pub struct AppModulesConfig {
     /// Revision counter, incremented on every accepted update; an update
     /// carrying an outdated revision is rejected.
     pub revision: u64,
+}
+
+/// What the interface shows of a module that lives in the application: its
+/// state, as the module says it for the petal of the radial menu, and its
+/// settings. The name, the settings fields and the actions it offers are in the
+/// module catalog.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ApplicationModuleView {
+    /// The module.
+    pub kind: ModuleKind,
+    /// What the module says of its state: up to two lines separated by `\n`
+    /// (`Focus 2/4` then `12:34 · pause`); absent when it says nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Its settings, as stored in `modules.json`.
+    pub settings: serde_json::Value,
 }
 
 /// Why a configuration of the application modules is refused.

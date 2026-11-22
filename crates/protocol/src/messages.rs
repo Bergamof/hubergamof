@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState, MouseBattery, MouseConfig,
-    MouseInfo, MouseProblem, RadialMenuConfig, UpdateSettings, UpdateStatus,
+    ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState,
+    ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig,
+    UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -98,6 +99,31 @@ pub enum ClientMessage {
         /// New configuration.
         config: RadialMenuConfig,
     },
+    /// Run an action of a module that lives in the application (start or pause
+    /// the pomodoro, skip, reset): one of the `radialActions` its catalog
+    /// entry offers, as the radial menu runs them. The new state arrives as
+    /// `applicationModules`. Refused with [`ErrorCode::Locked`] while the
+    /// computer is locked, [`ErrorCode::InvalidInput`] for an action the module
+    /// does not offer, [`ErrorCode::Unavailable`] when the application holds no
+    /// such module.
+    ModuleAction {
+        /// The module.
+        module: ModuleKind,
+        /// The action, one of its `radialActions`.
+        action: String,
+    },
+    /// Save other settings for a module that lives in the application; the
+    /// last device or client to save wins. Answered by `applicationModules`
+    /// to every client; refused with [`ErrorCode::Locked`] while the computer
+    /// is locked, [`ErrorCode::InvalidConfig`] when the module refuses the
+    /// settings, [`ErrorCode::Unavailable`] when the application holds no such
+    /// module.
+    UpdateModuleSettings {
+        /// The module.
+        module: ModuleKind,
+        /// Its new settings, as described by its catalog entry.
+        settings: serde_json::Value,
+    },
     /// Check for a newer release now, instead of waiting for the next
     /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
     CheckForUpdates,
@@ -164,6 +190,21 @@ pub enum ServerMessage {
     RadialMenu {
         /// Current configuration.
         config: RadialMenuConfig,
+    },
+    /// The modules that live in the application and what they show: sent
+    /// after `moduleCatalog`, then at every change (a second of the pomodoro
+    /// included). Not sent when the manager runs without them.
+    ApplicationModules {
+        /// One entry per module.
+        modules: Vec<ApplicationModuleView>,
+    },
+    /// Whether the computer is locked: sent after `moduleCatalog`, then at
+    /// every change. While it is, the manager refuses everything that acts or
+    /// changes something ([`ErrorCode::Locked`]) and the interface is not to
+    /// be used.
+    Locked {
+        /// `true` while the computer is locked.
+        locked: bool,
     },
     /// Module kinds available for configuration.
     ModuleCatalog {
@@ -237,6 +278,9 @@ pub enum ErrorCode {
     /// The desktop feature asked for is in use: a file chooser is already
     /// open. Asking again later may work.
     Busy,
+    /// The computer is locked: nothing is done from the interface until it
+    /// is unlocked.
+    Locked,
     /// Unexpected failure inside the manager.
     Internal,
 }

@@ -15,6 +15,7 @@ import {
 	type EditOutcome
 } from './edit-queue.svelte.js';
 import { browserDevicePreference, type DevicePreference } from './device-preference.js';
+import { ApplicationState } from './application-state.svelte.js';
 import { MouseState } from './mouse-state.svelte.js';
 import { problemOf, type Problem } from './problems.js';
 
@@ -55,6 +56,8 @@ export class DeckState {
 	updateStatus: UpdateStatus = $state({ type: 'unknown' });
 	/** The connected mice, their configuration and the radial menu. */
 	readonly mice: MouseState;
+	/** The modules that live in the application, and whether the computer is locked. */
+	readonly application: ApplicationState;
 
 	readonly #edits = new EditQueue<DeviceConfig>({
 		send: (config) =>
@@ -80,6 +83,7 @@ export class DeckState {
 		this.#connection = connection;
 		this.#preference = preference;
 		this.mice = new MouseState(connection, (problem) => this.report(problem));
+		this.application = new ApplicationState(connection);
 	}
 
 	/** Starts following the manager messages; returns the function that stops it. */
@@ -129,6 +133,7 @@ export class DeckState {
 				// New connection: whatever was pending died with the previous one.
 				this.#edits.dropPending(CONNECTION_LOST);
 				this.mice.dropPending(CONNECTION_LOST);
+				this.application.dropPending(CONNECTION_LOST);
 				this.managerVersion = message.version;
 				break;
 			case 'devices':
@@ -155,6 +160,10 @@ export class DeckState {
 			case 'mouseStatus':
 			case 'radialMenu':
 				this.mice.handle(message);
+				break;
+			case 'applicationModules':
+			case 'locked':
+				this.application.handle(message);
 				break;
 			case 'liveState':
 			case 'pong':
@@ -197,6 +206,10 @@ export class DeckState {
 	#receiveError(problem: Problem): void {
 		const deckPending = this.#edits.pending;
 		const micePending = this.mice.pending;
+		if (!deckPending && !micePending && this.application.pending) {
+			this.application.dropPending(problem);
+			return;
+		}
 		if (!deckPending && !micePending) {
 			this.report(problem);
 			return;

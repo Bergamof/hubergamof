@@ -1,18 +1,27 @@
-/** The parts of the page: the Stream Deck editor, the mouse editor, and the radial menu shared by the mice. */
-export type Section = 'deck' | 'mouse' | 'menu';
+/** The parts of the page: the Stream Deck editor, the mouse editor, the radial menu shared by the mice, and the modules of the application. */
+export type Section = 'deck' | 'mouse' | 'menu' | 'modules';
 
 export const SECTION_LABELS: Readonly<Record<Section, string>> = {
 	deck: 'Stream Deck',
 	mouse: 'Souris',
-	menu: 'Menu circulaire'
+	menu: 'Menu circulaire',
+	modules: 'Modules'
 };
 
-/** What can be shown: a kind of device when one is connected, the radial menu always. */
-export function availableSections(hasDecks: boolean, hasMice: boolean): Section[] {
+/**
+ * What can be shown: a kind of device when one is connected, the radial menu always, the
+ * modules of the application when the manager has some.
+ */
+export function availableSections(
+	hasDecks: boolean,
+	hasMice: boolean,
+	hasModules = false
+): Section[] {
 	return [
 		...(hasDecks ? (['deck'] as const) : []),
 		...(hasMice ? (['mouse'] as const) : []),
-		'menu'
+		'menu',
+		...(hasModules ? (['modules'] as const) : [])
 	];
 }
 

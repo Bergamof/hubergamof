@@ -573,16 +573,13 @@ async fn run_manager(cli: Cli) -> Result<()> {
     let discovery = DeviceDiscovery::new();
     // The menu runs actions on the engines, known before they start.
     let engines = EngineRegistry::default();
-    let (host, host_task) = start_module_host(&services);
+    let (host, mut host_task) = start_module_host(&services);
     // The devices place the modules of the application instead of making their own.
     services.application = Some(host.clone());
-    let (mouse_hub, mice) = match start_mouse_service(&cli, &services, &engines, &haptics, &host) {
-        Ok(started) => started,
-        Err(error) => {
-            stop_host(&host, host_task).await;
-            return Err(error);
-        }
-    };
+    let (mouse_hub, mice) =
+        start_mice_or_stop_host((&cli, &services, &engines, &haptics), &host, &mut host_task)
+            .await?;
+    let screen_lock = Arc::clone(&services.screen_lock);
     let supervisor = Supervisor::start_in(&discovery, services, engines);
     let updates = start_update_service(&cli, stopping.clone());
     let context = ServerContext {
@@ -595,6 +592,8 @@ async fn run_manager(cli: Cli) -> Result<()> {
         file_picker: file_picker(cli.file_chooser_answer.clone()),
         updates: updates.clone(),
         mice: mouse_hub,
+        application: Some(host.clone()),
+        screen_lock,
     };
     let server = match Server::bind(
         cli.port,
@@ -609,7 +608,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         Err(error) => {
             supervisor.shutdown().await;
             stop_mice(mice).await;
-            stop_host(&host, host_task).await;
+            stop_host(&host, &mut host_task).await;
             return Err(error).context("cannot start the web interface");
         }
     };
@@ -623,7 +622,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
             stop_server(server_task).await;
             supervisor.shutdown().await;
             stop_mice(mice).await;
-            stop_host(&host, host_task).await;
+            stop_host(&host, &mut host_task).await;
             return Err(error);
         }
     };
@@ -650,7 +649,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
     supervisor.shutdown().await;
     stop_mice(mice).await;
     // After the menu, which hands it actions: the pomodoro pauses where it is.
-    stop_host(&host, host_task).await;
+    stop_host(&host, &mut host_task).await;
     shutdown_devices(&discovery, source).await;
     if let Some(tray) = tray {
         tray.stop().await;
@@ -686,11 +685,27 @@ fn start_module_host(services: &EngineServices) -> (ModuleHost, tokio::task::Joi
     })
 }
 
+/// The mice, or, when they cannot start, the end of the module host (so that its modules are told
+/// that the manager stops) and the error.
+async fn start_mice_or_stop_host(
+    (cli, services, engines, haptics): (&Cli, &EngineServices, &EngineRegistry, &HapticRelay),
+    host: &ModuleHost,
+    host_task: &mut tokio::task::JoinHandle<()>,
+) -> Result<(MouseHub, Mice)> {
+    match start_mouse_service(cli, services, engines, haptics, host) {
+        Ok(started) => Ok(started),
+        Err(error) => {
+            stop_host(host, host_task).await;
+            Err(error)
+        }
+    }
+}
+
 /// Stops the module host, then waits for its task: it is aborted past
 /// [`HOST_TASK_TIMEOUT`], so that a stuck module cannot hold the manager back.
-async fn stop_host(host: &ModuleHost, mut task: tokio::task::JoinHandle<()>) {
+async fn stop_host(host: &ModuleHost, task: &mut tokio::task::JoinHandle<()>) {
     host.shutdown().await;
-    match tokio::time::timeout(HOST_TASK_TIMEOUT, &mut task).await {
+    match tokio::time::timeout(HOST_TASK_TIMEOUT, &mut *task).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::warn!(%error, "module host failed"),
         Err(_) => {

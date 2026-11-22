@@ -13,7 +13,8 @@ use super::errors::client_message;
 use super::mouse_feed::{Failure, MouseFeed};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ServerMessage, UpdateSettings, UpdateStatus,
+    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ModuleKind,
+    ServerMessage, UpdateSettings, UpdateStatus,
 };
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -23,6 +24,7 @@ use tokio::time::Instant;
 use super::{AppState, SimulatedInput};
 use crate::device::DiscoveryEvent;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry, LiveSnapshot};
+use crate::module_host::{ModuleHost, ModuleViews, RadialReply, SettingsRefusal};
 
 /// Shortest delay between two `liveState` messages to a client: bursts of
 /// redraws (dial rotation, scrolling) are coalesced into the latest state.
@@ -69,12 +71,43 @@ enum Event {
     LiveDue,
     UpdateChanged(Result<(), watch::error::RecvError>),
     SettingsChanged(Result<(), watch::error::RecvError>),
+    ApplicationChanged,
+    LockChanged,
     Mouse(Option<ServerMessage>),
     Shutdown,
 }
 
 /// Why the session ends.
 struct Closed;
+
+/// Whether `request` is refused while the computer is locked: everything
+/// but the keep-alive. Following a device or a mouse is refused too, it shows
+/// their configuration: the interface is not to be used then.
+fn acts(request: &ClientMessage) -> bool {
+    !matches!(request, ClientMessage::Ping)
+}
+
+/// What a locked computer still lets the client hear: that it is locked, the
+/// answer to its keep-alive, why a request was refused, and the greeting.
+fn heard_while_locked(message: &ServerMessage) -> bool {
+    matches!(
+        message,
+        ServerMessage::Hello { .. }
+            | ServerMessage::Locked { .. }
+            | ServerMessage::Pong
+            | ServerMessage::Error { .. }
+    )
+}
+
+/// Resolves when the application shows something else, never without one.
+async fn application_changed(views: Option<&mut watch::Receiver<ModuleViews>>) {
+    if let Some(views) = views
+        && views.changed().await.is_ok()
+    {
+        return;
+    }
+    std::future::pending::<()>().await;
+}
 
 /// Serves one client until it disconnects or the server shuts down.
 pub(super) async fn run(socket: WebSocket, state: AppState) {
@@ -84,6 +117,8 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let updates = state.context.updates.subscribe();
     let update_settings = state.context.updates.subscribe_settings();
     let mouse = MouseFeed::new(&state.context.mice);
+    let application = state.context.application.as_ref().map(ModuleHost::views);
+    let locked = state.context.screen_lock.watch();
     let mut session = Session {
         socket,
         state,
@@ -92,6 +127,8 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         updates,
         update_settings,
         mouse,
+        application,
+        locked,
         shutdown,
         selection: Selection::None,
     };
@@ -106,6 +143,10 @@ struct Session {
     updates: watch::Receiver<UpdateStatus>,
     update_settings: watch::Receiver<UpdateSettings>,
     mouse: MouseFeed,
+    /// What the modules of the application show, when the manager has them.
+    application: Option<watch::Receiver<ModuleViews>>,
+    /// Whether the computer is locked.
+    locked: watch::Receiver<bool>,
     shutdown: watch::Receiver<bool>,
     selection: Selection,
 }
@@ -121,6 +162,8 @@ impl Session {
             modules: self.state.context.catalog.to_vec(),
         })
         .await?;
+        self.send_locked().await?;
+        self.send_application_modules().await?;
         for message in self.mouse.initial() {
             self.send(&message).await?;
         }
@@ -145,6 +188,13 @@ impl Session {
                 Event::Mouse(Some(message)) => self.send(&message).await?,
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
+                Event::ApplicationChanged => self.send_application_modules().await?,
+                Event::LockChanged => {
+                    self.send_locked().await?;
+                    if !*self.locked.borrow() {
+                        self.resync().await?;
+                    }
+                }
                 // Unreachable while the context holds its handle (it keeps the
                 // channels open); harmless if it ever happens. A mouse feed with
                 // nothing to say: the mouse followed went away, the list of mice
@@ -190,6 +240,8 @@ impl Session {
             result = self.updates.changed() => Event::UpdateChanged(result),
             result = self.update_settings.changed() => Event::SettingsChanged(result),
             message = self.mouse.next_change() => Event::Mouse(message),
+            () = application_changed(self.application.as_mut()) => Event::ApplicationChanged,
+            Ok(()) = self.locked.changed() => Event::LockChanged,
         }
     }
 
@@ -218,6 +270,16 @@ impl Session {
     }
 
     async fn on_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
+        // Nothing is done from the interface while the computer is locked: it
+        // is not to be used then, and must not be a way to act on the computer.
+        if acts(&request) && *self.locked.borrow() {
+            return self
+                .send_error(
+                    ErrorCode::Locked,
+                    "the computer is locked: nothing is done from the interface",
+                )
+                .await;
+        }
         let engines = &self.state.context.engines;
         let outcome = match request {
             ClientMessage::SelectDevice { serial, live_state } => {
@@ -238,6 +300,12 @@ impl Session {
             }
             ClientMessage::UpdateConfig { serial, config } => {
                 return self.update_config(serial, config).await;
+            }
+            ClientMessage::ModuleAction { module, action } => {
+                return self.module_action(&module, &action).await;
+            }
+            ClientMessage::UpdateModuleSettings { module, settings } => {
+                return self.update_module_settings(&module, &settings).await;
             }
             ClientMessage::SelectMouse { serial } => {
                 // The configuration, then what the mouse refused of it.
@@ -294,6 +362,124 @@ impl Session {
             Ok(()) => Ok(()),
             Err(failure) => self.send_error(failure.code, &failure.message).await,
         }
+    }
+
+    /// Runs an action of a module of the application, the same ones the radial
+    /// menu runs: only those the module offers.
+    async fn module_action(&mut self, module: &ModuleKind, action: &str) -> Result<(), Closed> {
+        let Some(host) = self.state.context.application.clone() else {
+            return self
+                .send_error(ErrorCode::Unavailable, "the application holds no modules")
+                .await;
+        };
+        let offered = self
+            .state
+            .context
+            .catalog
+            .iter()
+            .find(|entry| entry.descriptor.kind == *module)
+            .map(|entry| {
+                entry
+                    .radial_actions
+                    .iter()
+                    .any(|offered| offered.id == action)
+            });
+        let (code, message) = match offered {
+            None => (ErrorCode::Unavailable, "no such module"),
+            Some(false) => (ErrorCode::InvalidInput, "the module offers no such action"),
+            Some(true) => match host.radial_action(module, action).await {
+                RadialReply::Done => return Ok(()),
+                RadialReply::NotHeld => (
+                    ErrorCode::Unavailable,
+                    "the application holds no such module",
+                ),
+                RadialReply::Refused => (ErrorCode::Locked, "the computer is locked"),
+            },
+        };
+        self.send_error(code, message).await
+    }
+
+    /// Saves the settings of a module of the application; every client is told
+    /// by the new state of the module.
+    async fn update_module_settings(
+        &mut self,
+        module: &ModuleKind,
+        settings: &serde_json::Value,
+    ) -> Result<(), Closed> {
+        let Some(host) = self.state.context.application.clone() else {
+            return self
+                .send_error(ErrorCode::Unavailable, "the application holds no modules")
+                .await;
+        };
+        match host.set_settings(module, settings).await {
+            // Told to the author even when nothing changed (the other clients
+            // hear it from the change): it is how the interface knows the
+            // settings were taken.
+            Ok(()) => self.send_application_modules().await,
+            Err(SettingsRefusal::NotHeld) => {
+                self.send_error(
+                    ErrorCode::Unavailable,
+                    "the application holds no such module",
+                )
+                .await
+            }
+            Err(SettingsRefusal::Refused(reason)) => {
+                self.send_error(ErrorCode::InvalidConfig, &reason).await
+            }
+            Err(SettingsRefusal::Locked) => {
+                self.send_error(ErrorCode::Locked, "the computer is locked")
+                    .await
+            }
+            Err(SettingsRefusal::NotSaved) => {
+                self.send_error(ErrorCode::Internal, "the settings could not be saved")
+                    .await
+            }
+        }
+    }
+
+    /// What the modules of the application show now, if the manager has any.
+    async fn send_application_modules(&mut self) -> Result<(), Closed> {
+        let Some(views) = self.application.as_mut() else {
+            return Ok(());
+        };
+        let modules = views
+            .borrow_and_update()
+            .iter()
+            .map(|(kind, view)| ApplicationModuleView {
+                kind: kind.clone(),
+                status: view.radial_status.clone(),
+                settings: view.settings.clone(),
+            })
+            .collect();
+        self.send(&ServerMessage::ApplicationModules { modules })
+            .await
+    }
+
+    /// Tells the client what it could not hear while the computer was locked.
+    /// The interface selects its device and mouse again on the lists, like
+    /// after any other change of them.
+    async fn resync(&mut self) -> Result<(), Closed> {
+        let devices = self.state.context.discovery.devices();
+        self.send(&ServerMessage::Devices { devices }).await?;
+        self.send(&ServerMessage::ModuleCatalog {
+            modules: self.state.context.catalog.to_vec(),
+        })
+        .await?;
+        self.send_application_modules().await?;
+        for message in self.mouse.initial() {
+            self.send(&message).await?;
+        }
+        self.send_update_settings().await?;
+        if *self.updates.borrow() != UpdateStatus::Unknown {
+            self.send_update_status().await?;
+        }
+        self.send_config().await?;
+        self.send_live_state().await
+    }
+
+    async fn send_locked(&mut self) -> Result<(), Closed> {
+        let locked = *self.locked.borrow_and_update();
+        self.send(&ServerMessage::Locked { locked }).await
     }
 
     /// Applies a configuration sent by the client and answers with the saved one.
@@ -503,6 +689,11 @@ impl Session {
     }
 
     async fn send(&mut self, message: &ServerMessage) -> Result<(), Closed> {
+        // Nothing of the configuration or of the state is told while the
+        // computer is locked: what was missed is told again at the unlocking.
+        if *self.locked.borrow() && !heard_while_locked(message) {
+            return Ok(());
+        }
         let text = match serde_json::to_string(message) {
             Ok(text) => text,
             Err(error) => {

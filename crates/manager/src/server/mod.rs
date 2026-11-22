@@ -45,8 +45,10 @@ use crate::config_store::ConfigStore;
 use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
 use crate::file_chooser::FilePicker;
+use crate::module_host::ModuleHost;
 use crate::mouse_hub::MouseHub;
 use crate::render::Renderer;
+use crate::screen_lock::ScreenLock;
 use crate::update::UpdateHandle;
 
 /// Size of the images drawn for the UI (module icons, key images): large
@@ -93,6 +95,11 @@ pub struct ServerContext {
     pub updates: UpdateHandle,
     /// The mice connected and the mouse and radial menu configurations.
     pub mice: MouseHub,
+    /// The modules that live in the application, shown and driven from the
+    /// interface. `None`: the manager runs without them.
+    pub application: Option<ModuleHost>,
+    /// Whether the computer is locked: nothing is done from the interface then.
+    pub screen_lock: Arc<dyn ScreenLock>,
 }
 
 /// Shared by every request handler.

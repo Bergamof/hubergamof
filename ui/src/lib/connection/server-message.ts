@@ -12,6 +12,8 @@ const SERVER_MESSAGE_TYPES = {
 	mouseStatus: true,
 	radialMenu: true,
 	moduleCatalog: true,
+	applicationModules: true,
+	locked: true,
 	config: true,
 	liveState: true,
 	updateSettings: true,

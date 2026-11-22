@@ -9,6 +9,10 @@ describe('parseServerMessage', () => {
 		});
 	});
 
+	it.each(['applicationModules', 'locked'])('accepts the message %s', (type) => {
+		expect(parseServerMessage(JSON.stringify({ type }))?.type).toBe(type);
+	});
+
 	it.each(['mice', 'mouseConfig', 'radialMenu'])('accepts the mouse message %s', (type) => {
 		expect(parseServerMessage(JSON.stringify({ type }))?.type).toBe(type);
 	});
