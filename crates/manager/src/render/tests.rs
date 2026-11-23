@@ -112,6 +112,49 @@ fn label_changes_the_image() {
 }
 
 #[test]
+fn a_caption_is_drawn_at_the_top_and_the_image_makes_room_for_it() {
+    let source = png(120, 120, RED);
+    let subject = renderer();
+    let plain = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), None))
+        .unwrap();
+    let captioned = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), None).captioned(Some("12:34")))
+        .unwrap();
+    assert_ne!(plain.image(), captioned.image());
+    let image = captioned.image();
+    let is_text = |pixel: &Rgba<u8>| pixel.0[1] > 200;
+    // Text is white: some in the top strip, none below it, and the image
+    // keeps its centre whole under the caption.
+    assert!(
+        image
+            .enumerate_pixels()
+            .any(|(_, y, pixel)| y < 24 && is_text(pixel))
+    );
+    assert!(
+        image
+            .enumerate_pixels()
+            .filter(|(_, y, _)| *y >= 30)
+            .all(|(_, _, pixel)| !is_text(pixel))
+    );
+    assert_eq!(*image.get_pixel(60, 70), RED);
+    assert!(image.pixels().all(|pixel| pixel.0[3] == 255));
+}
+
+#[test]
+fn a_blank_caption_changes_nothing() {
+    let source = png(120, 120, RED);
+    let subject = renderer();
+    let plain = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), None))
+        .unwrap();
+    let blank = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), None).captioned(Some("  ")))
+        .unwrap();
+    assert_eq!(plain.image(), blank.image());
+}
+
+#[test]
 fn a_long_label_stays_on_one_line_below_the_image() {
     let source = png(120, 120, RED);
     let rendered = renderer()

@@ -3,6 +3,7 @@
 // section of docs/integrations-desktop.md for the survey and the way to
 // check it again when Teams changes).
 
+import { secondsFromDuration } from './duration.js';
 import { cameraOnFromLabel, mutedFromLabel } from './labels.js';
 import { meetingFromLabel } from './meetings.js';
 import { unreadCountFromTitle } from './title.js';
@@ -85,18 +86,19 @@ const labelOf = (root, selector) => root.querySelector(selector)?.getAttribute('
  * never observed).
  * @param {Document} doc
  * @returns {{ type: 'call', phase: 'idle' | 'prejoin' | 'inCall', muted: boolean | null,
- *   cameraOn: boolean | null, caller: null }}
+ *   cameraOn: boolean | null, caller: null, elapsedSeconds: number | null }}
  */
 export function readCall(doc) {
 	const idle = { type: /** @type {const} */ ('call'), phase: /** @type {const} */ ('idle') };
-	const base = { ...idle, muted: null, cameraOn: null, caller: null };
+	const base = { ...idle, muted: null, cameraOn: null, caller: null, elapsedSeconds: null };
 	if (doc.querySelector(PREJOIN)) return { ...base, phase: 'prejoin' };
 	if (!doc.querySelector(HANGUP) && !doc.querySelector(CALL_DURATION)) return base;
 	return {
 		...base,
 		phase: 'inCall',
 		muted: mutedFromLabel(labelOf(doc, MICROPHONE)),
-		cameraOn: cameraOnFromLabel(labelOf(doc, CAMERA))
+		cameraOn: cameraOnFromLabel(labelOf(doc, CAMERA)),
+		elapsedSeconds: secondsFromDuration(doc.querySelector(CALL_DURATION)?.textContent)
 	};
 }
 

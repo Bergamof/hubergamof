@@ -9,6 +9,7 @@
 //! lit while its page is displayed.
 
 mod bridge;
+mod elapsed;
 mod icons;
 pub mod native_host;
 mod reminders;
@@ -29,9 +30,10 @@ use serde_json::Value;
 use tokio::sync::watch;
 
 pub use bridge::{
-    CallState, RailBadges, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState,
-    is_same_user, socket_path,
+    CallClock, CallState, RailBadges, RequestError, SimulatedBridge, SocketBridge, TeamsBridge,
+    TeamsState, is_same_user, socket_path,
 };
+use elapsed::ElapsedChanged;
 use icons::{
     ACCEPT, ACTIVITY, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED,
     RETURN,
@@ -266,6 +268,8 @@ impl ModuleFactory for TeamsFactory {
                 events.send(TeamsChanged);
             }
         });
+        ctx.tasks()
+            .spawn(elapsed::run(changes.clone(), ctx.events().clone()));
         ctx.tasks().spawn(reminders::run(
             changes.clone(),
             lead_changes,
@@ -366,6 +370,15 @@ impl CallItem {
     }
 }
 
+/// The Hang up key, with the duration of the call over its icon.
+fn hang_up_key(state: &TeamsState) -> KeyContent {
+    let key = KeyContent::with_icon(&HANG_UP, "Raccrocher");
+    match elapsed::shown(state) {
+        Some(duration) => key.with_caption(duration),
+        None => key,
+    }
+}
+
 impl Teams {
     /// The unread conversations; no page once nothing is unread, which takes
     /// the host back to the page below (the home page).
@@ -395,7 +408,7 @@ impl Teams {
         let actions = [
             CallItem::Mute.item(mute_key(call.muted)),
             CallItem::Camera.item(camera_key(call.camera_on)),
-            CallItem::HangUp.item(KeyContent::with_icon(&HANG_UP, "Raccrocher")),
+            CallItem::HangUp.item(hang_up_key(&state)),
             CallItem::ReturnToCall.item(KeyContent::with_icon(&RETURN, "Revenir à l'appel")),
         ];
         let pinned = actions.len();
@@ -699,6 +712,10 @@ impl Module for Teams {
                 Command::Notify(notification),
                 Command::haptic(HAPTIC_MEETING_SOON),
             ];
+        }
+        if event.is::<ElapsedChanged>() {
+            // Nothing to do but draw the keys again with the new duration.
+            return Vec::new();
         }
         if !event.is::<TeamsChanged>() {
             return Vec::new();

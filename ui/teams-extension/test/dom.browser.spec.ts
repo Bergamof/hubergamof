@@ -49,6 +49,22 @@ describe('readCall', () => {
 		const call = readCall(page('<span data-tid="call-duration">00:10</span>'));
 		expect(call).toMatchObject({ phase: 'inCall', muted: null, cameraOn: null });
 	});
+	it('reads the duration Teams shows', () => {
+		const call = readCall(
+			page(
+				'<button data-tid="hangup-main-btn"></button><span data-tid="call-duration">12:34</span>'
+			)
+		);
+		expect(call).toMatchObject({ phase: 'inCall', elapsedSeconds: 754 });
+	});
+	it('has no duration when Teams shows none or something else', () => {
+		expect(
+			readCall(page('<button data-tid="hangup-main-btn"></button>')).elapsedSeconds
+		).toBeNull();
+		expect(
+			readCall(page('<span data-tid="call-duration">en cours</span>')).elapsedSeconds
+		).toBeNull();
+	});
 	it('sees the pre-join screen', () => {
 		expect(readCall(page('<div data-tid="calling-prejoin-screen"></div>')).phase).toBe('prejoin');
 	});
