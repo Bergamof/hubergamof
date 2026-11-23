@@ -9,6 +9,9 @@ use super::{
     Project, TITLE_SEPARATOR, UP_ITEM, UP_LABEL, container_id, icons, project_id, service_id,
 };
 
+/// Keys opening the `up` and `down` pages, after the actions of a project page.
+const VARIANT_ITEMS: usize = 2;
+
 /// An entry of a project page: a container, or a service that has none.
 pub(super) struct Entry {
     /// What the entries are sorted by.
@@ -50,7 +53,9 @@ impl Docker {
             .into_iter()
             .map(|entry| self.mark_selection(&project.name, entry));
         let items = actions.chain(variants).chain(entries).collect();
-        PageContent::new(project.shown_name(), items).with_context_dial(context_dial)
+        PageContent::new(project.shown_name(), items)
+            .with_context_dial(context_dial)
+            .with_pinned_items(PROJECT_ACTIONS.len() + VARIANT_ITEMS)
     }
 
     /// The containers of `project` and its services without container, sorted
