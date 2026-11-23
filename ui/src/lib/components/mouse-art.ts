@@ -74,13 +74,6 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 						attrs: { d: 'M435 12L560 42L650 90L670 130V462L500 405V100H435Z' }
 					},
 					{
-						id: 'hapticPanel',
-						tag: 'path',
-						attrs: {
-							d: 'M30 480L70 445L150 410L165 600L215 720L235 770L185 830L120 800L50 740L15 620Z'
-						}
-					},
-					{
 						id: 'wheelClick',
 						tag: 'rect',
 						attrs: { x: '400', y: '138', width: '72', height: '150', rx: '8' }
@@ -103,16 +96,16 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 						id: 'thumbWheel',
 						tag: 'rect',
 						attrs: {
-							x: '172',
-							y: '122',
-							width: '128',
-							height: '90',
-							rx: '40',
-							transform: 'rotate(-20 236 167)'
+							x: '522',
+							y: '98',
+							width: '190',
+							height: '84',
+							rx: '24',
+							transform: 'rotate(-17 617 140)'
 						}
 					},
 					{
-						id: 'forward',
+						id: 'gesture',
 						tag: 'rect',
 						attrs: {
 							x: '425',
@@ -124,7 +117,7 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 						}
 					},
 					{
-						id: 'back',
+						id: 'forward',
 						tag: 'rect',
 						attrs: {
 							x: '545',
@@ -135,7 +128,19 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 							transform: 'rotate(-17 609 242)'
 						}
 					},
-					{ id: 'gesture', tag: 'circle', attrs: { cx: '596', cy: '366', r: '44' } }
+					{
+						id: 'back',
+						tag: 'rect',
+						attrs: {
+							x: '653',
+							y: '178',
+							width: '126',
+							height: '36',
+							rx: '18',
+							transform: 'rotate(-17 716 196)'
+						}
+					},
+					{ id: 'hapticPanel', tag: 'circle', attrs: { cx: '596', cy: '366', r: '44' } }
 				]
 			}
 		],
@@ -182,8 +187,8 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 				label: 'Précédent',
 				where: 'Côté pouce, bouton arrière',
 				view: 'side',
-				x: 609,
-				y: 242
+				x: 716,
+				y: 196
 			},
 			{
 				id: 'forward',
@@ -191,17 +196,17 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 				label: 'Suivant',
 				where: 'Côté pouce, bouton avant',
 				view: 'side',
-				x: 481,
-				y: 284
+				x: 609,
+				y: 242
 			},
 			{
 				id: 'gesture',
 				number: 7,
 				label: 'Bouton de geste',
-				where: 'Côté pouce, sur le repose-pouce',
+				where: 'Côté pouce, devant Précédent et Suivant',
 				view: 'side',
-				x: 596,
-				y: 366
+				x: 481,
+				y: 284
 			},
 			{
 				id: 'thumbWheel',
@@ -209,17 +214,17 @@ export const MOUSE_ART: Record<MouseModel, MouseArt> = {
 				label: 'Molette du pouce',
 				where: 'Au-dessus de Précédent et Suivant, rotation',
 				view: 'side',
-				x: 236,
-				y: 167
+				x: 617,
+				y: 140
 			},
 			{
 				id: 'hapticPanel',
 				number: 9,
 				label: 'Panneau haptique',
-				where: 'Repose-pouce, zone tactile',
-				view: 'top',
-				x: 95,
-				y: 620
+				where: 'Repose-pouce, zone tactile (rond pointillé)',
+				view: 'side',
+				x: 596,
+				y: 366
 			}
 		]
 	},
