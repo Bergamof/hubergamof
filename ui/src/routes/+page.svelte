@@ -36,6 +36,15 @@
 	const sections = $derived(availableSections(hasDecks, hasMice, hasModules));
 	const section = $derived(sectionShown(wanted, sections));
 
+	/** Machine and modules belong to no device: they are named, not the device or the mouse. */
+	const pageTitle = $derived.by(() => {
+		if (section === 'machine' || section === 'modules') {
+			return `${SECTION_LABELS[section]} · HuBergamof`;
+		}
+		const shown = section === 'deck' ? deck?.device : deck?.mice.mouse;
+		return shown ? `${shown.displayName} · HuBergamof` : 'HuBergamof';
+	});
+
 	const isOnline = $derived(connection?.status === 'open');
 	/** The computer is locked: the manager refuses everything, the page is only to be read. */
 	const locked = $derived(deck?.application.locked ?? false);
@@ -97,11 +106,7 @@
 </script>
 
 <svelte:head>
-	<title>
-		{(section !== 'deck' ? deck?.mice.mouse : deck?.device)
-			? `${(section !== 'deck' ? deck?.mice.mouse : deck?.device)?.displayName} · HuBergamof`
-			: 'HuBergamof'}
-	</title>
+	<title>{pageTitle}</title>
 </svelte:head>
 
 {#snippet hero(message: string, detail?: string)}

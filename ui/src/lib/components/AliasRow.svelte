@@ -1,7 +1,7 @@
 <!--
 @component
 One alias managed by HuBergamof: what it runs, whether it is on the computer, and the buttons to
-change it or remove it. Changing it opens the alias form in its place.
+change it or remove it. Changing it opens the alias form in its place; the list says when (it also moves the focus).
 -->
 <script lang="ts">
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
@@ -11,23 +11,20 @@ change it or remove it. Changing it opens the alias form in its place.
 
 	interface Props {
 		alias: ShellAlias;
+		/** The alias form is open in place of the row. */
+		editing: boolean;
 		/** Names of the other aliases. */
 		takenNames: readonly string[];
+		onedit: () => void;
+		/** The form was given up. */
+		oncancel: () => void;
 		onreplace: (alias: ShellAlias) => Promise<EditOutcome>;
 		ontoggle: (enabled: boolean) => void;
 		onremove: () => void;
 	}
 
-	let { alias, takenNames, onreplace, ontoggle, onremove }: Props = $props();
-
-	let editing = $state(false);
-	let editButton: HTMLButtonElement | undefined = $state();
-
-	function closeEditor() {
-		editing = false;
-		// The form held the focus: the button that opened it takes it back, once displayed.
-		queueMicrotask(() => editButton?.focus());
-	}
+	let { alias, editing, takenNames, onedit, oncancel, onreplace, ontoggle, onremove }: Props =
+		$props();
 </script>
 
 {#if editing}
@@ -37,8 +34,7 @@ change it or remove it. Changing it opens the alias form in its place.
 			{takenNames}
 			submitLabel="Enregistrer"
 			onsubmit={onreplace}
-			ondone={closeEditor}
-			oncancel={closeEditor}
+			{oncancel}
 		/>
 	</div>
 {:else}
@@ -50,19 +46,20 @@ change it or remove it. Changing it opens the alias form in its place.
 		{#if !alias.enabled}
 			<span class="rounded-full border border-line px-2 py-0.5 text-sm text-muted">Désactivé</span>
 		{/if}
-		<Switch checked={alias.enabled} label="Activer l’alias {alias.name}" onchange={ontoggle} />
+		<Switch checked={alias.enabled} label="Alias {alias.name}" onchange={ontoggle} />
 		<div class="flex gap-2">
 			<button
-				bind:this={editButton}
+				data-edit
 				type="button"
 				class="secondary-button"
 				aria-label="Modifier l’alias {alias.name}"
-				onclick={() => (editing = true)}
+				onclick={onedit}
 			>
 				Modifier
 			</button>
 			<button
 				type="button"
+				data-remove
 				class="secondary-button"
 				aria-label="Supprimer l’alias {alias.name}"
 				onclick={onremove}

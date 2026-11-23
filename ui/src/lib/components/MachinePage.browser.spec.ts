@@ -82,7 +82,7 @@ describe('MachinePage', () => {
 
 	it('sends a switch and a removal', async () => {
 		const { connection } = await renderPage();
-		await page.getByRole('switch', { name: 'Activer l’alias ll' }).click();
+		await page.getByRole('switch', { name: 'Alias ll' }).click();
 		expect(connection.lastSent()).toMatchObject({
 			type: 'updateMachine',
 			config: { aliases: [{ name: 'll', enabled: false }] }
@@ -113,5 +113,28 @@ describe('MachinePage', () => {
 		);
 		await expect.element(page.getByText(/nombre maximal d’alias/)).toBeVisible();
 		expect(document.querySelector('form')).toBeNull();
+	});
+
+	it('focuses the section title when the last system alias is taken in', async () => {
+		await renderPage();
+		await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Alias présents sur le système, non gérés' }))
+			.toHaveFocus();
+	});
+
+	it('focuses the name of the form to add one when the last managed alias is removed', async () => {
+		await renderPage();
+		await page.getByRole('button', { name: 'Supprimer l’alias ll' }).click();
+		await page
+			.getByRole('dialog', { name: 'Supprimer l’alias ?' })
+			.getByRole('button', { name: 'Supprimer' })
+			.click();
+		await expect.element(page.getByRole('textbox', { name: 'Nom', exact: true })).toHaveFocus();
+	});
+
+	it('names the form to add an alias by its title', async () => {
+		await renderPage();
+		await expect.element(page.getByRole('form', { name: 'Ajouter un alias' })).toBeVisible();
 	});
 });

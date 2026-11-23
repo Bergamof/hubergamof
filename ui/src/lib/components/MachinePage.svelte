@@ -32,6 +32,9 @@ whether the manager has saved it.
 	let { deck }: Props = $props();
 
 	const uid = $props.id();
+	let addForm: ReturnType<typeof AliasForm> | undefined = $state();
+	let addHeading: HTMLHeadingElement | undefined = $state();
+	let systemHeading: HTMLHeadingElement | undefined = $state();
 	const saves = new SaveTracker();
 	const config = $derived(deck.machine.config);
 	/** Aliases of the system that are not in the configuration yet: taken in, one leaves the list at once. */
@@ -72,8 +75,16 @@ whether the manager has saved it.
 				onreplace={(name, alias) => edit(replaceAlias(name, alias))}
 				ontoggle={(name, enabled) => void edit(setAliasEnabled(name, enabled))}
 				onremove={(name) => void edit(removeAlias(name))}
+				fallbackFocus={() => (addForm ? addForm.focusName() : addHeading?.focus())}
 			/>
-			<h3 class="font-display text-lg font-semibold">Ajouter un alias</h3>
+			<h3
+				bind:this={addHeading}
+				tabindex="-1"
+				id="{uid}-add"
+				class="font-display text-lg font-semibold"
+			>
+				Ajouter un alias
+			</h3>
 			{#if isFull(config)}
 				<p class="text-sm text-muted">
 					La configuration contient déjà le nombre maximal d’alias : supprimez-en un pour en
@@ -81,6 +92,8 @@ whether the manager has saved it.
 				</p>
 			{:else}
 				<AliasForm
+					bind:this={addForm}
+					labelledby="{uid}-add"
 					takenNames={config.aliases.map(({ name }) => name)}
 					submitLabel="Ajouter"
 					onsubmit={(alias) => edit(addAlias(alias))}
@@ -92,7 +105,12 @@ whether the manager has saved it.
 	</section>
 
 	<section aria-labelledby="{uid}-system" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-system" class="font-display text-xl font-semibold">
+		<h2
+			bind:this={systemHeading}
+			tabindex="-1"
+			id="{uid}-system"
+			class="font-display text-xl font-semibold"
+		>
 			Alias présents sur le système, non gérés
 		</h2>
 		<p class="text-sm text-muted">
@@ -102,7 +120,12 @@ whether the manager has saved it.
 			sont lus, au moment où cette page s’ouvre. « Intégrer » ajoute l’alias à la configuration, activé.
 		</p>
 		{#if config}
-			<SystemAliasList aliases={unmanaged} full={isFull(config)} onadopt={adopt} />
+			<SystemAliasList
+				aliases={unmanaged}
+				full={isFull(config)}
+				onadopt={adopt}
+				fallbackFocus={() => systemHeading?.focus()}
+			/>
 		{/if}
 	</section>
 </div>

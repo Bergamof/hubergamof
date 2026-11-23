@@ -144,10 +144,34 @@
   },
   {
    "value": "\ufeffls",
-   "valid": true
+   "valid": false
   },
   {
    "value": "ls\u00a0-l",
+   "valid": true
+  },
+  {
+   "value": "ls\u202e",
+   "valid": false
+  },
+  {
+   "value": "a\u2028b",
+   "valid": false
+  },
+  {
+   "value": "a\u200bb",
+   "valid": false
+  },
+  {
+   "value": "a\u2066b",
+   "valid": false
+  },
+  {
+   "value": "a\u2060b",
+   "valid": false
+  },
+  {
+   "value": "echo \u00e9 \u2713",
    "valid": true
   }
  ]

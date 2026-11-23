@@ -107,4 +107,46 @@ describe('AliasForm', () => {
 		await page.getByRole('button', { name: 'Annuler' }).click();
 		expect(oncancel).toHaveBeenCalledOnce();
 	});
+
+	it('does not take the focus when it opens to add an alias', async () => {
+		await renderForm();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('opens on the name field when it changes an alias', async () => {
+		await renderForm({
+			initial: { name: 'gs', command: 'git status', enabled: true },
+			takenNames: [],
+			submitLabel: 'Enregistrer'
+		});
+		await expect.element(page.getByRole('textbox', { name: 'Nom', exact: true })).toHaveFocus();
+	});
+
+	it('leaves the focus to its owner once a change is saved', async () => {
+		await renderForm({
+			initial: { name: 'gs', command: 'git status', enabled: true },
+			takenNames: [],
+			submitLabel: 'Enregistrer'
+		});
+		await page.getByRole('button', { name: 'Enregistrer' }).click();
+		expect(document.activeElement).toBe(
+			page.getByRole('button', { name: 'Enregistrer' }).element()
+		);
+	});
+
+	it('is named by what labels it', async () => {
+		await renderForm({ labelledby: 'title' });
+		expect(document.querySelector('form')?.getAttribute('aria-labelledby')).toBe('title');
+	});
+
+	it('trims the white space at the edges of the command, and refuses one that is blank', async () => {
+		const { onsubmit } = await renderForm();
+		await page.getByRole('textbox', { name: 'Nom', exact: true }).fill('ll');
+		await page.getByRole('textbox', { name: 'Commande', exact: true }).fill('\uFEFF\u00A0');
+		await page.getByRole('button', { name: 'Ajouter' }).click();
+		expect(onsubmit).not.toHaveBeenCalled();
+		await page.getByRole('textbox', { name: 'Commande', exact: true }).fill('\u2003ls  -l\u00A0');
+		await page.getByRole('button', { name: 'Ajouter' }).click();
+		expect(onsubmit).toHaveBeenCalledWith({ name: 'll', command: 'ls  -l', enabled: true });
+	});
 });

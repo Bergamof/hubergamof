@@ -5,11 +5,12 @@ on the computer. The fields are checked as the manager checks them; what is wron
 the field once the form was sent, and the focus goes to the first one.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import {
 		ALIAS_COMMAND_MAX,
 		ALIAS_NAME_MAX,
 		hasErrors,
+		trimCommand,
 		validateAlias
 	} from '#lib/deck/alias-validation.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
@@ -28,9 +29,12 @@ the field once the form was sent, and the focus goes to the first one.
 		ondone?: () => void;
 		/** The change is given up (only when changing an alias). */
 		oncancel?: () => void;
+		/** Id of what names the form (a heading). */
+		labelledby?: string;
 	}
 
-	let { initial, takenNames, submitLabel, onsubmit, ondone, oncancel }: Props = $props();
+	let { initial, takenNames, submitLabel, onsubmit, ondone, oncancel, labelledby }: Props =
+		$props();
 
 	const uid = $props.id();
 	// The form starts from the alias it was opened for and keeps what is typed.
@@ -45,13 +49,13 @@ the field once the form was sent, and the focus goes to the first one.
 	let commandField: HTMLInputElement | undefined = $state();
 
 	const errors = $derived(
-		submitted ? validateAlias({ name, command: command.trim() }, takenNames) : {}
+		submitted ? validateAlias({ name, command: trimCommand(command) }, takenNames) : {}
 	);
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		submitted = true;
-		const alias = { name, command: command.trim(), enabled };
+		const alias = { name, command: trimCommand(command), enabled };
 		const found = validateAlias(alias, takenNames);
 		if (hasErrors(found)) {
 			await tick();
@@ -65,11 +69,27 @@ the field once the form was sent, and the focus goes to the first one.
 		enabled = initial?.enabled ?? true;
 		submitted = false;
 		ondone?.();
+		// Adding: ready for the next alias. Changing: the owner of the form decides where the focus goes.
+		if (!initial) focusName();
+	}
+
+	/** Puts the focus in the name field. */
+	export function focusName() {
 		nameField?.focus();
 	}
+
+	// Changing an alias: the form opens on its first field.
+	onMount(() => {
+		if (initial) focusName();
+	});
 </script>
 
-<form novalidate class="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]" onsubmit={submit}>
+<form
+	novalidate
+	aria-labelledby={labelledby}
+	class="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]"
+	onsubmit={submit}
+>
 	<div class="flex flex-col gap-1">
 		<label for="{uid}-name" class="text-sm font-medium">Nom</label>
 		<input

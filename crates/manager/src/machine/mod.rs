@@ -340,4 +340,39 @@ mod tests {
         assert_eq!(snapshot.config.revision, 1);
         assert_eq!(snapshot.system_aliases, []);
     }
+
+    #[tokio::test]
+    async fn two_updates_of_the_same_revision_let_only_one_through() {
+        let fixture = fixture();
+        let config = with_alias(MachineConfig::empty(), "ll", true);
+        let (first, second) = tokio::join!(
+            fixture.hub.update(config.clone()),
+            fixture.hub.update(config)
+        );
+        let outcomes = [first, second];
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        let refused = outcomes.into_iter().find_map(Result::err).unwrap();
+        assert_eq!(refused.error_code(), ErrorCode::StaleRevision);
+    }
+
+    #[tokio::test]
+    async fn a_slow_subscriber_still_gets_the_last_configuration() {
+        let fixture = fixture();
+        let mut changes = fixture.hub.subscribe();
+        let mut config = MachineConfig::empty();
+        for round in 0..=CHANGE_BACKLOG {
+            config = with_alias(config, &format!("a{round}"), true);
+            fixture.hub.update(config.clone()).await.unwrap();
+            config = fixture.hub.refresh().await.unwrap().config;
+        }
+        let mut last = None;
+        loop {
+            match changes.try_recv() {
+                Ok(snapshot) => last = Some(snapshot),
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        assert_eq!(last.unwrap().config, config);
+    }
 }

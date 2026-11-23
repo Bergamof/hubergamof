@@ -105,7 +105,7 @@ test('ajoute un alias, désactivé puis réactivé, modifié et supprimé', asyn
 	await expect(managed(page).getByText('ls -l')).toBeVisible();
 	expect(manager.aliases).toEqual([{ name: 'll', command: 'ls -l', enabled: true }]);
 
-	await page.getByRole('switch', { name: 'Activer l’alias ll' }).uncheck();
+	await page.getByRole('switch', { name: 'Alias ll' }).uncheck();
 	await expect(managed(page).getByText('Désactivé')).toBeVisible();
 	expect(manager.aliases[0].enabled).toBe(false);
 
@@ -180,7 +180,8 @@ test('rend la page inutilisable quand l’ordinateur est verrouillé', async ({ 
 	await openMachine(page);
 	manager.sockets[0].send(JSON.stringify({ type: 'locked', locked: true }));
 	await expect(page.getByRole('alert')).toContainText('L’ordinateur est verrouillé');
-	await expect(page.locator('div[inert]').first()).toContainText('Alias du shell');
+	// The page stays readable, but what is in it is inert.
+	await expect(page.getByRole('main').locator('[inert]')).toContainText('Alias du shell');
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {

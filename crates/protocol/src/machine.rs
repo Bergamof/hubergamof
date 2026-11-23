@@ -293,3 +293,46 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod parity {
+    use serde::Deserialize;
+
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct Case {
+        value: String,
+        valid: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct Cases {
+        names: Vec<Case>,
+        commands: Vec<Case>,
+    }
+
+    /// The interface checks the same cases (`alias-validation.spec.ts`): the
+    /// two validations must not drift apart.
+    #[test]
+    fn the_shared_cases_give_the_same_verdicts_as_the_interface() {
+        let cases: Cases =
+            serde_json::from_str(include_str!("../tests/fixtures/alias-validation.json")).unwrap();
+        for case in &cases.names {
+            assert_eq!(
+                is_valid_alias_name(&case.value),
+                case.valid,
+                "name {:?}",
+                case.value
+            );
+        }
+        for case in &cases.commands {
+            assert_eq!(
+                is_valid_alias_command(&case.value),
+                case.valid,
+                "command {:?}",
+                case.value.chars().take(40).collect::<String>()
+            );
+        }
+    }
+}

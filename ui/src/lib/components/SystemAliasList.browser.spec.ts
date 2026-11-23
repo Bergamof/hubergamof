@@ -43,4 +43,26 @@ describe('SystemAliasList', () => {
 			.element(page.getByRole('button', { name: 'Intégrer l’alias gs' }))
 			.toHaveAccessibleDescription('La configuration est pleine.');
 	});
+
+	it('moves the focus to the next « Intégrer », else to the fallback', async () => {
+		const onadopt = vi.fn();
+		const fallbackFocus = vi.fn();
+		const aliases = [
+			{ name: 'gs', command: 'git status', source: '.bashrc' },
+			{ name: 'gl', command: 'git log', source: '.bashrc' }
+		];
+		await render(SystemAliasList, { aliases, full: false, onadopt, fallbackFocus });
+		await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
+		await expect.element(page.getByRole('button', { name: 'Intégrer l’alias gl' })).toHaveFocus();
+		expect(fallbackFocus).not.toHaveBeenCalled();
+
+		await render(SystemAliasList, {
+			aliases: aliases.slice(0, 1),
+			full: false,
+			onadopt,
+			fallbackFocus
+		});
+		await page.getByRole('button', { name: 'Intégrer l’alias gs' }).last().click();
+		expect(fallbackFocus).toHaveBeenCalledOnce();
+	});
 });
