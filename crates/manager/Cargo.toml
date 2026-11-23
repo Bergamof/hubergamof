@@ -56,7 +56,7 @@ image.workspace = true
 input-linux.workspace = true
 # Local time in the system time zone (`/etc/localtime`, system tzdb), for the
 # clock of the touch strip.
-jiff = "0.2.38"
+jiff = "1.0.0"
 libc.workspace = true
 lru = "0.19.0"
 mime_guess = "2.0.5"
