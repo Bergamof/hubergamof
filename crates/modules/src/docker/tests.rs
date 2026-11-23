@@ -1019,7 +1019,7 @@ async fn services_without_container_show_beside_the_containers_and_apart_from_st
             "service/boutique/db",
             "service/boutique/web"
         ],
-        "after the actions, sorted by name like containers"
+        "after the actions, sorted by name"
     );
     let planned = harness.item(SHOP, WEB_PLANNED);
     assert_eq!(planned.image, Some(icons::SERVICE_PLANNED.clone()));

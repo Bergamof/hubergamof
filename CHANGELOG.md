@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
+- Docker : les conteneurs sont triés par état puis par nom, dans chaque projet compose comme parmi les conteneurs isolés : en erreur (health check en échec, redémarrage en boucle, mort), en attente (health check en cours, en pause, en arrêt ou suppression), lancé, stoppé (ou créé), puis les services sans conteneur ; les projets restent en premier, par ordre alphabétique. Une touche change de place quand l'état de son conteneur change.
 - Interface : une page « Modules » pilote le Pomodoro de l'application : étape, compteur et temps restant en direct (les mêmes que sur la molette du deck et dans le menu circulaire), boutons démarrer ou mettre en pause, passer, remettre à zéro, et réglages enregistrés au fil de la saisie, partagés par tous les onglets et tous les decks.
 - Verrouillage : tant que l'ordinateur est verrouillé, le gestionnaire refuse tout ce qui agit ou change quelque chose depuis l'interface (actions, réglages, configuration, mises à jour, téléversements, export et import) et la page passe en lecture seule avec un bandeau.
 - Menu circulaire : la pétale de Pomodoro montre l'étape et son rang (`Focus 2/4`) et le temps restant (`12:34`, avec `pause` ou `prêt` quand le minuteur ne tourne pas), mis à jour pendant que le menu reste ouvert. Un module peut dire ce que sa pétale montre sous son nom (`Module::radial_status`).

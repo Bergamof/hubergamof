@@ -1,6 +1,7 @@
 //! What the pages and keys of the module show.
 
 use super::actions::{Action, CONTAINER_ACTIONS, PROJECT_ACTIONS};
+use super::model::StatusRank;
 use super::pages::{Page, compose_service};
 use super::selection::{selectables, with_count};
 use super::{
@@ -11,7 +12,8 @@ use super::{
 
 /// An entry of a project page: a container, or a service that has none.
 pub(super) struct Entry {
-    /// What the entries are sorted by.
+    /// What the entries are sorted by: first the rank, then the name.
+    rank: StatusRank,
     name: String,
     /// The service it stands for, `None` for a container that records none.
     pub(super) service: Option<String>,
@@ -70,6 +72,7 @@ impl Docker {
                 .working(project, service, container_id(&container.name), short)
                 .unwrap_or_else(|| self.container_entry(container, short));
             Entry {
+                rank: container.status_rank(),
                 name: short.to_owned(),
                 service: service.map(str::to_owned),
                 item,
@@ -83,13 +86,14 @@ impl Docker {
                 service,
             );
             Entry {
+                rank: StatusRank::NotBuilt,
                 name: service.clone(),
                 service: Some(service.clone()),
                 item: item.unwrap_or_else(|| planned_item(&project.name, service)),
             }
         });
         let mut entries: Vec<Entry> = built.chain(planned).collect();
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.sort_by(|a, b| a.rank.cmp(&b.rank).then_with(|| a.name.cmp(&b.name)));
         entries
     }
 
