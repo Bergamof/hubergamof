@@ -7,13 +7,14 @@ use std::io::Write;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use hubergamof_protocol::RadialMenuConfig;
+use hubergamof_module_api::{RadialGlyph, RadialItem, RadialItemState};
+use hubergamof_protocol::{ModuleKind, RadialMenuConfig};
 use thiserror::Error;
 
 use super::backend::{self, NoWindow};
 use super::controller::{Controller, Effect};
 use super::geometry::{DEFAULT_RING, Size};
-use super::looks::Looks;
+use super::looks::{Items, Looks};
 use super::paint::DEFAULT_PALETTE;
 use super::service::{NUDGE_PERIOD, NUDGE_TRIES};
 use super::window::Surface;
@@ -23,6 +24,32 @@ const UNKNOWN_SCREEN: Size = Size {
     width: 1920.0,
     height: 1080.0,
 };
+
+/// The actions the preview shows around the petals, so that the arc can be
+/// seen without a call or a timer running: Teams in a call, Pomodoro.
+fn demo_items(module: &ModuleKind) -> Vec<RadialItem> {
+    match module.0.as_str() {
+        "teams" => vec![
+            RadialItem::new("chat", "Conversations", RadialGlyph::Chat).with_badge("3"),
+            RadialItem::new("activity", "Activités", RadialGlyph::Bell).with_badge("1"),
+            RadialItem::new("mute", "Micro", RadialGlyph::Microphone)
+                .with_state(RadialItemState::Off),
+            RadialItem::new("camera", "Caméra", RadialGlyph::Camera),
+            RadialItem::new("hang-up", "Raccrocher", RadialGlyph::HangUp),
+            RadialItem::new(
+                "return-to-call",
+                "Retour à l'appel",
+                RadialGlyph::ReturnToCall,
+            ),
+        ],
+        "pomodoro" => vec![
+            RadialItem::new("toggle", "Pause", RadialGlyph::Pause),
+            RadialItem::new("skip", "Passer", RadialGlyph::Skip),
+            RadialItem::new("reset", "Remettre à zéro", RadialGlyph::Reset),
+        ],
+        _ => Vec::new(),
+    }
+}
 
 /// Why the preview does not run.
 #[derive(Debug, Error)]
@@ -63,13 +90,15 @@ pub fn run(
         UNKNOWN_SCREEN,
     );
     controller.set_looks(looks);
-    let content = controller
-        .content(DEFAULT_PALETTE, true)
-        .ok_or(PreviewError::NoEntry)?;
+    controller.set_items(Items::new(demo_items));
     let started = Instant::now();
     // A press then a release at once: the menu stays open, clicks choose.
     let mut effects = controller.press(started.elapsed());
     effects.extend(controller.release(started.elapsed()));
+    // The actions around the petals are read when the menu opens, by the press.
+    let content = controller
+        .content(DEFAULT_PALETTE, true)
+        .ok_or(PreviewError::NoEntry)?;
     writeln!(
         out,
         "Move the pointer over a petal and click it; Escape closes."
@@ -86,7 +115,11 @@ pub fn run(
                 }
                 Effect::Place(view) => overlay.place(view),
                 Effect::Redraw(view) => overlay.redraw(view),
-                Effect::Choose(entry) => writeln!(out, "Chosen: {}", entry.module)?,
+                Effect::UpdateItems(_) => {}
+                Effect::Choose { entry, action } => match action {
+                    Some(action) => writeln!(out, "Chosen: {} {action}", entry.module)?,
+                    None => writeln!(out, "Chosen: {}", entry.module)?,
+                },
                 Effect::Close => {
                     overlay.close();
                     return Ok(());

@@ -6,6 +6,7 @@ pub mod actions;
 pub mod backend;
 pub mod controller;
 pub mod geometry;
+pub mod glyphs;
 pub mod interaction;
 pub mod looks;
 pub mod overlay;

@@ -30,8 +30,8 @@ use hubergamof_module_api::{
     Command, ContextDial, DialFunctionDescriptor, DialFunctionId, DialHint, EventSender, ImageData,
     KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, ModuleLifetime, Notification as StripNotification, NotificationId,
-    PomodoroState, PomodoroWidget, PopupEntry, PopupIcon, RadialActionDescriptor, Rgb, StripPopup,
-    StripWidget,
+    PomodoroState, PomodoroWidget, PopupEntry, PopupIcon, RadialActionDescriptor, RadialGlyph,
+    RadialItem, Rgb, StripPopup, StripWidget,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
@@ -506,6 +506,22 @@ impl Module for Pomodoro {
         let (_, name, note) = self.state_and_note();
         let time = format_remaining(self.timer.remaining(self.now()));
         Some(format!("{name}\n{}", with_note(&time, note)))
+    }
+
+    fn radial_items(&self) -> Vec<RadialItem> {
+        let timer = &self.timer;
+        let untouched = self.is_untouched();
+        let label = |entry| entry_label(entry, timer, untouched);
+        let toggle_glyph = if timer.is_running() {
+            RadialGlyph::Pause
+        } else {
+            RadialGlyph::Play
+        };
+        vec![
+            RadialItem::new(RADIAL_TOGGLE, label(MenuEntry::Toggle), toggle_glyph),
+            RadialItem::new(RADIAL_SKIP, label(MenuEntry::Skip), RadialGlyph::Skip),
+            RadialItem::new(RADIAL_RESET, label(MenuEntry::Reset), RadialGlyph::Reset),
+        ]
     }
 
     fn strip_popup(&self) -> Option<StripPopup> {
