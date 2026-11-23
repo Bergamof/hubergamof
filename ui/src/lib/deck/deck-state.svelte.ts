@@ -16,6 +16,7 @@ import {
 } from './edit-queue.svelte.js';
 import { browserDevicePreference, type DevicePreference } from './device-preference.js';
 import { ApplicationState } from './application-state.svelte.js';
+import { MachineState } from './machine-state.svelte.js';
 import { MouseState } from './mouse-state.svelte.js';
 import { problemOf, type Problem } from './problems.js';
 
@@ -58,6 +59,8 @@ export class DeckState {
 	readonly mice: MouseState;
 	/** The modules that live in the application, and whether the computer is locked. */
 	readonly application: ApplicationState;
+	/** The shell aliases of the machine, managed and found. */
+	readonly machine: MachineState;
 
 	readonly #edits = new EditQueue<DeviceConfig>({
 		send: (config) =>
@@ -84,6 +87,7 @@ export class DeckState {
 		this.#preference = preference;
 		this.mice = new MouseState(connection, (problem) => this.report(problem));
 		this.application = new ApplicationState(connection);
+		this.machine = new MachineState(connection, (problem) => this.report(problem));
 	}
 
 	/** Starts following the manager messages; returns the function that stops it. */
@@ -134,6 +138,8 @@ export class DeckState {
 				this.#edits.dropPending(CONNECTION_LOST);
 				this.mice.dropPending(CONNECTION_LOST);
 				this.application.dropPending(CONNECTION_LOST);
+				this.machine.dropPending(CONNECTION_LOST);
+				this.machine.reconnected();
 				this.managerVersion = message.version;
 				break;
 			case 'devices':
@@ -160,6 +166,9 @@ export class DeckState {
 			case 'mouseStatus':
 			case 'radialMenu':
 				this.mice.handle(message);
+				break;
+			case 'machine':
+				this.machine.handle(message);
 				break;
 			case 'applicationModules':
 			case 'locked':
@@ -201,28 +210,19 @@ export class DeckState {
 
 	/**
 	 * Errors are not tied to requests: one arriving while an update is in flight answers it
-	 * (the deck's and the mice's alike), else it is only shown.
+	 * (of the deck, the mice or the machine alike), else it is only shown.
 	 */
 	#receiveError(problem: Problem): void {
-		const deckPending = this.#edits.pending;
-		const micePending = this.mice.pending;
-		if (!deckPending && !micePending && this.application.pending) {
-			this.application.dropPending(problem);
-			return;
-		}
-		if (!deckPending && !micePending) {
-			this.report(problem);
-			return;
-		}
-		if (deckPending && micePending) {
-			// Shown once, whichever of the two wanted it.
-			this.#edits.dropPending(problem, { silent: true });
-			this.mice.dropPending(problem, { silent: true });
-			this.report(problem);
-		} else if (deckPending) {
-			this.#edits.dropPending(problem);
+		const waiting = [this.#edits, this.mice, this.machine].filter((edits) => edits.pending);
+		if (waiting.length === 0) {
+			if (this.application.pending) this.application.dropPending(problem);
+			else this.report(problem);
+		} else if (waiting.length === 1) {
+			waiting[0].dropPending(problem);
 		} else {
-			this.mice.dropPending(problem);
+			// Shown once, whichever of them wanted it.
+			for (const edits of waiting) edits.dropPending(problem, { silent: true });
+			this.report(problem);
 		}
 	}
 

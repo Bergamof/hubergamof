@@ -13,6 +13,7 @@ const SERVER_MESSAGE_TYPES = {
 	radialMenu: true,
 	moduleCatalog: true,
 	applicationModules: true,
+	machine: true,
 	locked: true,
 	config: true,
 	liveState: true,
