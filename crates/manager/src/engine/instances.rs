@@ -16,9 +16,9 @@ use futures_util::FutureExt as _;
 use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, EventSender, HANDLER_BUDGET, ImageLibrary, ItemId,
-    KeyContent, Module, ModuleContext, ModuleError, ModuleEvent, ModuleInstanceId, ModuleKind,
-    NotificationId, PageContent, PageId, RedrawHandle, ScreenLockState, StripPopup, StripWidget,
-    TaskScope, UnreadNotifications,
+    KeyContent, MAX_RADIAL_ITEMS, Module, ModuleContext, ModuleError, ModuleEvent,
+    ModuleInstanceId, ModuleKind, NotificationId, PageContent, PageId, RadialItem, RedrawHandle,
+    ScreenLockState, StripPopup, StripWidget, TaskScope, UnreadNotifications,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::ModuleInstance;
@@ -388,6 +388,24 @@ impl Instances {
             return self.view(id)?.radial_status.clone();
         }
         self.inspect(id, "radial_status", |module| module.radial_status())
+    }
+
+    /// The actions shown around the petal of instance `id` now, at most
+    /// [`MAX_RADIAL_ITEMS`]. `None` for what the menu never asks: a module of
+    /// the application (the host reads those), a module that declares no
+    /// radial action, a placeholder or an unknown instance.
+    pub(crate) fn radial_items(&mut self, id: &ModuleInstanceId) -> Option<Vec<RadialItem>> {
+        let instance = self.live.get(id).filter(|instance| instance.available)?;
+        let factory = self.registry.get(&instance.kind)?;
+        if factory.radial_actions().is_empty() {
+            return None;
+        }
+        // A module that panics is replaced by `inspect`: it has no item.
+        let mut items = self
+            .inspect(id, "radial_items", |module| Some(module.radial_items()))
+            .unwrap_or_default();
+        items.truncate(MAX_RADIAL_ITEMS);
+        Some(items)
     }
 
     /// The menu instance `id` has open, if any.

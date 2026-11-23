@@ -28,6 +28,7 @@ use super::navigation::Navigation;
 use super::notifications::NotificationCenter;
 use super::painter::Painter;
 use super::placement_notice;
+use super::radial_items::RadialItemsByKind;
 use super::validation::check_modules;
 use super::{EngineError, EngineHandle, EngineServices, HOME_PAGE_ID, HOME_PAGE_TITLE};
 use crate::config_store::{LoadOutcome, check_config};
@@ -220,6 +221,7 @@ pub struct DeviceEngine {
     redraw: Arc<Notify>,
     live: watch::Sender<LiveSnapshot>,
     config_tx: watch::Sender<DeviceConfig>,
+    radial_items: watch::Sender<RadialItemsByKind>,
 }
 
 impl DeviceEngine {
@@ -281,7 +283,14 @@ impl DeviceEngine {
         let (requests_tx, requests) = mpsc::channel(REQUEST_CAPACITY);
         let (live, live_rx) = watch::channel(LiveSnapshot::empty(&deck.info().serial));
         let (config_tx, config_rx) = watch::channel(loaded.config.clone());
-        let handle = EngineHandle::new(deck.info().clone(), requests_tx, live_rx, config_rx);
+        let (radial_items, radial_items_rx) = watch::channel(RadialItemsByKind::new());
+        let handle = EngineHandle::new(
+            deck.info().clone(),
+            requests_tx,
+            live_rx,
+            config_rx,
+            radial_items_rx,
+        );
         let mut engine = Self {
             grid: KeyGrid::new(&deck.info().capabilities),
             has_strip,
@@ -310,6 +319,7 @@ impl DeviceEngine {
             redraw,
             live,
             config_tx,
+            radial_items,
         };
         if let LoadOutcome::Normalized { changes } = &loaded.outcome {
             engine.notifications.notify(
@@ -850,6 +860,7 @@ impl DeviceEngine {
 
     /// Draws what changed and publishes the live state if anything did.
     async fn refresh(&mut self) -> Result<(), EngineError> {
+        self.publish_radial_items();
         self.close_refused_page();
         if self.lock.is_asleep() && !self.page_now_keeps_lit().await {
             return Ok(());
@@ -887,6 +898,34 @@ impl DeviceEngine {
             .send_replace(self.painter.snapshot(self.serial(), &frame));
         self.last_frame = Some(frame);
         Ok(())
+    }
+
+    /// Publishes the items of the radial menu of the modules of the device,
+    /// if they changed: the first instance of each kind that declares radial
+    /// actions, read like any getter (isolated, no handler budget needed as
+    /// getters are cheap and synchronous). Called on every refresh, which
+    /// follows every input, event and tick that can change a module; the
+    /// modules without radial action are never called, and nothing is
+    /// published (so no reader is woken) when nothing changed.
+    fn publish_radial_items(&mut self) {
+        let mut items = RadialItemsByKind::new();
+        for instance in &self.config.modules {
+            if items.contains_key(&instance.kind) {
+                continue;
+            }
+            // A kind that declares no radial action stays out, which tells it
+            // apart from a module that has no item right now.
+            if let Some(current) = self.instances.radial_items(&instance.id) {
+                items.insert(instance.kind.clone(), current);
+            }
+        }
+        self.radial_items.send_if_modified(|published| {
+            let changed = *published != items;
+            if changed {
+                *published = items;
+            }
+            changed
+        });
     }
 
     /// Frame to draw now. A module panicking in a getter is replaced by a
