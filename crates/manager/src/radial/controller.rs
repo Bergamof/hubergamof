@@ -9,13 +9,14 @@
 
 use std::time::Duration;
 
+use hubergamof_module_api::RadialItem;
 use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 
-use super::geometry::{Layout, Point, Ring, Size, fit_on_screen};
+use super::geometry::{FIT_RADIUS, Hit, Layout, Point, Ring, Size, fit_on_screen};
 use super::interaction::{Input, Menu, Output};
-use super::looks::{Looks, Statuses};
+use super::looks::{Items, Looks, Statuses};
 use super::paint::Palette;
-use super::window::Content;
+use super::window::{Content, Petal};
 
 /// What the window must show of the menu.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -24,6 +25,8 @@ pub struct View {
     pub centre: Point,
     /// The petal under the pointer, if any.
     pub lit: Option<usize>,
+    /// The action of the arc of the lit petal under the pointer, if any.
+    pub lit_item: Option<usize>,
 }
 
 /// What the window and the host must do.
@@ -35,9 +38,18 @@ pub enum Effect {
     Place(View),
     /// The petal under the pointer changed: draw again.
     Redraw(View),
-    /// An entry is chosen: carry out its primary action. The window is hidden
-    /// by the [`Effect::Close`] that follows.
-    Choose(RadialEntryConfig),
+    /// The actions the modules offer around the petals changed while the menu
+    /// is open (one list per petal): give them to the window.
+    UpdateItems(Vec<Vec<RadialItem>>),
+    /// An entry is chosen: carry out one of its actions, `action` (the `id` of
+    /// the slice of the arc that was chosen), or its primary action when there
+    /// is none. The window is hidden by the [`Effect::Close`] that follows.
+    Choose {
+        /// The entry whose petal it is.
+        entry: RadialEntryConfig,
+        /// The action of the arc, `None` for a click on the body of the petal.
+        action: Option<String>,
+    },
     /// Hide the window.
     Close,
 }
@@ -71,6 +83,14 @@ pub struct Controller {
     centre: Option<Point>,
     looks: Looks,
     statuses: Statuses,
+    /// Where the actions of the modules are read from.
+    item_reader: Items,
+    /// The actions around each petal while the menu is open, read when it
+    /// opens and again by [`Controller::refresh_items`].
+    items: Vec<Vec<RadialItem>>,
+    /// The last place the pointer was reported, from the middle of the menu,
+    /// to find what it is on again when the actions change under it.
+    pointer_offset: Option<Point>,
 }
 
 impl Controller {
@@ -90,6 +110,9 @@ impl Controller {
             centre: None,
             looks: Looks::default(),
             statuses: Statuses::default(),
+            item_reader: Items::default(),
+            items: Vec::new(),
+            pointer_offset: None,
         };
         controller.apply_wanted();
         controller
@@ -133,6 +156,45 @@ impl Controller {
         self.statuses = statuses;
     }
 
+    /// What the modules offer around their petals, read when the menu opens.
+    pub fn set_items(&mut self, items: Items) {
+        self.item_reader = items;
+    }
+
+    /// The actions around each petal of the open menu, in the order of the
+    /// petals.
+    #[must_use]
+    pub fn items(&self) -> &[Vec<RadialItem>] {
+        &self.items
+    }
+
+    fn read_items(&self) -> Vec<Vec<RadialItem>> {
+        self.entries
+            .iter()
+            .map(|entry| self.item_reader.of(&entry.module))
+            .collect()
+    }
+
+    /// Reads again what the modules offer around their petals. The actions
+    /// come and go while the menu is open; when they changed, the window is
+    /// given them, and what the pointer is on is found again (an action that
+    /// went away under it leaves it on its petal).
+    pub fn refresh_items(&mut self) -> Vec<Effect> {
+        if !self.menu.is_open() {
+            return Vec::new();
+        }
+        let items = self.read_items();
+        if items == self.items {
+            return Vec::new();
+        }
+        self.items.clone_from(&items);
+        let mut effects = vec![Effect::UpdateItems(items)];
+        if let Some(offset) = self.pointer_offset {
+            effects.extend(self.over(offset));
+        }
+        effects
+    }
+
     /// What the modules of the shown entries say now, in the order of the
     /// petals.
     #[must_use]
@@ -152,7 +214,11 @@ impl Controller {
             .entries
             .iter()
             .zip(self.statuses())
-            .map(|(entry, status)| self.looks.petal(&entry.module, status))
+            .enumerate()
+            .map(|(index, (entry, status))| Petal {
+                items: self.items.get(index).cloned().unwrap_or_default(),
+                ..self.looks.petal(&entry.module, status)
+            })
             .collect();
         Some(Content {
             petals,
@@ -173,7 +239,8 @@ impl Controller {
     pub fn view(&self) -> Option<View> {
         self.centre.map(|centre| View {
             centre,
-            lit: self.menu.hovered(),
+            lit: self.menu.hovered().map(Hit::petal),
+            lit_item: self.menu.hovered().and_then(Hit::item),
         })
     }
 
@@ -208,18 +275,32 @@ impl Controller {
         if !self.menu.is_open() {
             return Vec::new();
         }
-        let (Some(layout), Some(centre)) = (self.layout, self.centre) else {
+        let Some(centre) = self.centre else {
             return self.place(position);
         };
-        let offset = Point::new(position.x - centre.x, position.y - centre.y);
-        self.feed(Input::Over(layout.petal_at(offset)))
+        self.over(Point::new(position.x - centre.x, position.y - centre.y))
+    }
+
+    /// The pointer is at `offset` from the middle of the menu.
+    fn over(&mut self, offset: Point) -> Vec<Effect> {
+        self.pointer_offset = Some(offset);
+        let Some(layout) = self.layout else {
+            return Vec::new();
+        };
+        let counts: Vec<usize> = self.items.iter().map(Vec::len).collect();
+        let active = self.menu.hovered().map(Hit::petal);
+        self.feed(Input::Over(layout.hit_at(offset, &counts, active)))
     }
 
     /// Puts the menu where the pointer is first seen, kept on the screen.
     fn place(&mut self, pointer: Point) -> Vec<Effect> {
-        let centre = fit_on_screen(pointer, self.ring.outer, self.screen);
+        let centre = fit_on_screen(pointer, self.ring.outer.max(FIT_RADIUS), self.screen);
         self.centre = Some(centre);
-        let view = View { centre, lit: None };
+        let view = View {
+            centre,
+            lit: None,
+            lit_item: None,
+        };
         // The pointer may already be on a petal when the menu is pushed back
         // from an edge.
         let mut effects = vec![Effect::Place(view)];
@@ -234,17 +315,14 @@ impl Controller {
         match output {
             Output::Opened => {
                 self.centre = None;
+                self.items = self.read_items();
                 vec![Effect::Open]
             }
             Output::Hovered(_) => self.view().map(Effect::Redraw).into_iter().collect(),
-            Output::Chosen(petal) => {
-                let chosen = self.entries.get(petal).cloned();
+            Output::Chosen(hit) => {
+                let chosen = self.choice(hit);
                 self.finish();
-                chosen
-                    .map(Effect::Choose)
-                    .into_iter()
-                    .chain([Effect::Close])
-                    .collect()
+                chosen.into_iter().chain([Effect::Close]).collect()
             }
             Output::Closed => {
                 self.finish();
@@ -253,10 +331,23 @@ impl Controller {
         }
     }
 
+    /// What choosing `hit` does: the primary action of its entry, or the
+    /// action of its arc. Nothing for an action that is no longer there.
+    fn choice(&self, hit: Hit) -> Option<Effect> {
+        let entry = self.entries.get(hit.petal())?.clone();
+        let action = match hit {
+            Hit::Petal(_) => None,
+            Hit::Item { petal, item } => Some(self.items.get(petal)?.get(item)?.id.clone()),
+        };
+        Some(Effect::Choose { entry, action })
+    }
+
     /// The menu is closed: forgets its place and takes the configuration that
     /// came while it was open.
     fn finish(&mut self) {
         self.centre = None;
+        self.pointer_offset = None;
+        self.items.clear();
         self.apply_wanted();
     }
 }
@@ -306,8 +397,11 @@ mod tests {
 
     fn entry_module(effect: &Effect) -> String {
         match effect {
-            Effect::Choose(entry) => entry.module.to_string(),
-            other => panic!("not a choice: {other:?}"),
+            Effect::Choose {
+                entry,
+                action: None,
+            } => entry.module.to_string(),
+            other => panic!("not a choice of a petal: {other:?}"),
         }
     }
 
@@ -323,8 +417,9 @@ mod tests {
         assert_eq!(
             effects.first(),
             Some(&Effect::Place(View {
-                centre: Point::new(650.0, 150.0),
+                centre: Point::new(570.0, 230.0),
                 lit: None,
+                lit_item: None,
             }))
         );
     }
@@ -375,6 +470,7 @@ mod tests {
         let view = View {
             centre: Point::new(900.0, 500.0),
             lit: None,
+            lit_item: None,
         };
         assert_eq!(effects, [Effect::Place(view)]);
         assert_eq!(controller.view(), Some(view));
@@ -388,8 +484,9 @@ mod tests {
         assert_eq!(
             effects.first(),
             Some(&Effect::Place(View {
-                centre: Point::new(150.0, 930.0),
+                centre: Point::new(230.0, 850.0),
                 lit: None,
+                lit_item: None,
             }))
         );
     }
@@ -398,13 +495,12 @@ mod tests {
     fn a_pointer_that_starts_on_a_petal_after_the_push_back_lights_it() {
         let mut controller = controller();
         controller.press(at(0));
-        // Pushed to (150, 930): the pointer, at (10, 1075), is outside the ring.
+        // Pushed to (230, 850): the pointer, at (10, 1075), is outside the ring.
         let effects = controller.window(WindowEvent::Pointer(Point::new(10.0, 1075.0)));
         assert_eq!(effects.len(), 1, "no petal under it");
-        // Pushed to (1770, 930) from (1915, 1075): outside as well; the pointer
-        // inside the ring is reported as a change.
+        // The pointer, once inside the ring, is reported as a change.
         let mut controller = controller_for_edge();
-        let effects = controller.window(WindowEvent::Pointer(Point::new(150.0, 840.0)));
+        let effects = controller.window(WindowEvent::Pointer(Point::new(230.0, 760.0)));
         assert!(matches!(effects.as_slice(), [Effect::Redraw(view)] if view.lit == Some(0)));
     }
 
@@ -521,5 +617,219 @@ mod tests {
         over(&mut controller, 0);
         assert_eq!(controller.release(at(400)), [], "400 is a short press");
         assert!(controller.is_open());
+    }
+
+    use hubergamof_module_api::RadialGlyph;
+
+    fn item(id: &str) -> RadialItem {
+        RadialItem::new(id, id, RadialGlyph::Play)
+    }
+
+    /// A controller whose Teams petal (the second) offers what `offered` holds.
+    fn controller_offering(offered: &Arc<Mutex<Vec<RadialItem>>>) -> Controller {
+        let mut controller = controller();
+        let reader = Arc::clone(offered);
+        controller.set_items(Items::new(move |module| {
+            if module.0 == "teams" {
+                reader.lock().unwrap().clone()
+            } else {
+                Vec::new()
+            }
+        }));
+        controller
+    }
+
+    fn offering(ids: &[&str]) -> Arc<Mutex<Vec<RadialItem>>> {
+        Arc::new(Mutex::new(ids.iter().map(|id| item(id)).collect()))
+    }
+
+    /// Opens `controller` with the pointer at (900, 500), the middle of the menu.
+    fn open(controller: &mut Controller) {
+        controller.press(at(0));
+        controller.window(WindowEvent::Pointer(Point::new(900.0, 500.0)));
+    }
+
+    /// The pointer at `radius` from the middle of the menu, to the right: on
+    /// the axis of the second petal.
+    fn right(controller: &mut Controller, radius: f64) -> Vec<Effect> {
+        controller.window(WindowEvent::Pointer(Point::new(900.0 + radius, 500.0)))
+    }
+
+    #[test]
+    fn the_actions_are_read_when_the_menu_opens_and_given_to_the_window() {
+        let offered = offering(&["mute", "camera", "hang-up"]);
+        let mut controller = controller_offering(&offered);
+        assert!(controller.items().is_empty(), "nothing before it opens");
+        open(&mut controller);
+        let lists: Vec<usize> = controller.items().iter().map(Vec::len).collect();
+        assert_eq!(lists, [0, 3, 0, 0]);
+        let content = controller
+            .content(crate::radial::paint::DEFAULT_PALETTE, false)
+            .unwrap();
+        let ids: Vec<Vec<&str>> = content
+            .petals
+            .iter()
+            .map(|petal| petal.items.iter().map(|item| item.id.as_str()).collect())
+            .collect();
+        assert_eq!(
+            ids,
+            [vec![], vec!["mute", "camera", "hang-up"], vec![], vec![]]
+        );
+    }
+
+    #[test]
+    fn the_pointer_goes_from_the_petal_across_the_corridor_to_an_action() {
+        let offered = offering(&["mute", "camera", "hang-up"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        let lit = |effects: &[Effect]| match effects {
+            [Effect::Redraw(view)] => Some((view.lit, view.lit_item)),
+            _ => None,
+        };
+        assert_eq!(lit(&right(&mut controller, 100.0)), Some((Some(1), None)));
+        // Between the body (150) and the arc (160): still on the petal.
+        assert_eq!(right(&mut controller, 155.0), []);
+        // On the middle slice of three.
+        assert_eq!(
+            lit(&right(&mut controller, 187.0)),
+            Some((Some(1), Some(1)))
+        );
+        // Past the arc: nothing.
+        assert_eq!(lit(&right(&mut controller, 230.0)), Some((None, None)));
+    }
+
+    #[test]
+    fn the_corridor_belongs_to_the_petal_the_pointer_came_from() {
+        let offered = offering(&["mute"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        // On the arc of the second petal without having been on it: nothing.
+        assert_eq!(right(&mut controller, 187.0), []);
+        assert_eq!(controller.view().unwrap().lit, None);
+    }
+
+    #[test]
+    fn held_long_enough_releasing_on_an_action_chooses_it_and_closes() {
+        let offered = offering(&["mute", "camera", "hang-up"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        right(&mut controller, 100.0);
+        right(&mut controller, 187.0);
+        let effects = controller.release(at(400));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Choose { entry, action: Some(action) }, Effect::Close]
+                    if entry.module.0 == "teams" && action == "camera"
+            ),
+            "{effects:?}"
+        );
+        assert!(!controller.is_open());
+        assert!(controller.items().is_empty(), "forgotten with the menu");
+    }
+
+    #[test]
+    fn released_early_a_click_on_an_action_chooses_it_and_on_the_petal_its_primary_action() {
+        let offered = offering(&["mute", "camera", "hang-up"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        right(&mut controller, 100.0);
+        controller.release(at(100));
+        right(&mut controller, 187.0);
+        let effects = controller.window(WindowEvent::Click);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Choose { action: Some(action), .. }, Effect::Close] if action == "camera"
+        ));
+
+        open(&mut controller);
+        right(&mut controller, 100.0);
+        controller.release(at(100));
+        let effects = controller.window(WindowEvent::Click);
+        assert_eq!(entry_module(&effects[0]), "teams");
+    }
+
+    #[test]
+    fn an_action_that_goes_away_under_the_pointer_leaves_it_on_its_petal() {
+        let offered = offering(&["mute", "camera", "hang-up"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        right(&mut controller, 100.0);
+        // The last slice of three, 15 degrees below the axis of the petal.
+        let angle = controller.layout().unwrap().slice_angle(1, 2, 3);
+        let spot = Point::new(900.0 + 187.0 * angle.sin(), 500.0 - 187.0 * angle.cos());
+        controller.window(WindowEvent::Pointer(spot));
+        assert_eq!(controller.view().unwrap().lit_item, Some(2));
+
+        *offered.lock().unwrap() = vec![item("mute")];
+        let effects = controller.refresh_items();
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::UpdateItems(lists), Effect::Redraw(view)]
+                    if lists[1].len() == 1 && view.lit == Some(1) && view.lit_item.is_none()
+            ),
+            "{effects:?}"
+        );
+        // Released now, it is the primary action that is chosen, not a ghost.
+        let chosen = controller.release(at(400));
+        assert_eq!(entry_module(&chosen[0]), "teams");
+    }
+
+    #[test]
+    fn when_every_action_goes_away_the_arc_is_void_and_the_petal_stays_lit_on_its_body() {
+        let offered = offering(&["mute", "camera", "hang-up"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        right(&mut controller, 100.0);
+        right(&mut controller, 187.0);
+        offered.lock().unwrap().clear();
+        let effects = controller.refresh_items();
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::UpdateItems(_), Effect::Redraw(view)] if view.lit.is_none()
+            ),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_reading_that_changes_nothing_says_nothing_and_a_closed_menu_reads_nothing() {
+        let offered = offering(&["mute"]);
+        let mut controller = controller_offering(&offered);
+        assert_eq!(controller.refresh_items(), [], "closed");
+        open(&mut controller);
+        assert_eq!(controller.refresh_items(), [], "nothing changed");
+        offered.lock().unwrap().push(item("camera"));
+        let effects = controller.refresh_items();
+        assert!(matches!(effects.as_slice(), [Effect::UpdateItems(lists)] if lists[1].len() == 2));
+        assert_eq!(controller.refresh_items(), [], "said once");
+    }
+
+    #[test]
+    fn actions_that_appear_under_a_pointer_in_the_corridor_do_not_move_it() {
+        let offered = offering(&[]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        right(&mut controller, 100.0);
+        offered
+            .lock()
+            .unwrap()
+            .extend([item("mute"), item("camera"), item("hang-up")]);
+        let effects = controller.refresh_items();
+        assert!(
+            matches!(effects.as_slice(), [Effect::UpdateItems(_)]),
+            "{effects:?}"
+        );
+        assert_eq!(controller.view().unwrap().lit, Some(1));
+    }
+
+    #[test]
+    fn a_module_that_offers_too_many_actions_gets_the_room_of_the_arc() {
+        let offered = offering(&["a", "b", "c", "d", "e", "f", "g", "h"]);
+        let mut controller = controller_offering(&offered);
+        open(&mut controller);
+        assert_eq!(controller.items()[1].len(), 6);
     }
 }
