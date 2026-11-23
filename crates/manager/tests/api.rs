@@ -15,6 +15,7 @@ use hubergamof_manager::engine::{EngineHandle, EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::{
     FilePicker, FilePickerError, NoFilePicker, SimulatedFilePicker,
 };
+use hubergamof_manager::machine::MachineHub;
 use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
 use hubergamof_manager::screen_lock::{NoScreenLock, ScreenLock};
@@ -100,6 +101,7 @@ impl Api {
             catalog,
             simulated_input: SimulatedInput::Refused,
             mice: MouseHub::new(store.clone()).unwrap(),
+            machine: MachineHub::new(store.clone(), None),
             store,
             renderer,
             file_picker,

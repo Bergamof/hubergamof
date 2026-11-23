@@ -7,6 +7,7 @@
 //! devices/<serial>/images/       content-addressed images (<sha256>.<ext>)
 //! devices/<serial>/mouse.json    MouseConfig of a mouse (`mouse.rs`)
 //! radial-menu.json               RadialMenuConfig (`mouse.rs`)
+//! machine.json                   MachineConfig, the shell aliases (`machine.rs`)
 //! ```
 //!
 //! Writes are atomic (temporary file + `rename`) and guarded by the
@@ -20,6 +21,7 @@ mod app_modules;
 mod archive;
 mod defaults;
 mod files;
+mod machine;
 mod mouse;
 pub(crate) use files::write_bytes_atomically;
 mod migration;
@@ -34,8 +36,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     AppModulesConfigError, ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode,
-    ModuleInstance, ModuleInstanceId, MouseConfigError, MouseModel, RadialConfigError,
-    is_safe_image_name,
+    MachineConfigError, ModuleInstance, ModuleInstanceId, MouseConfigError, MouseModel,
+    RadialConfigError, is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -69,6 +71,8 @@ pub const MOUSE_FILE: &str = "mouse.json";
 pub const RADIAL_MENU_FILE: &str = "radial-menu.json";
 /// File name, at the root, of the configuration of the application modules.
 pub const APP_MODULES_FILE: &str = "modules.json";
+/// File name, at the root, of the configuration of the machine (shell aliases).
+pub const MACHINE_FILE: &str = "machine.json";
 
 /// Most images a device stores: far more than its keys use, bounding what
 /// uploads may pile up before unused ones are removed at the next load.
@@ -169,6 +173,9 @@ pub enum ConfigStoreError {
     /// The configuration of the application modules is inconsistent.
     #[error("invalid application modules configuration: {0}")]
     InvalidAppModules(#[from] AppModulesConfigError),
+    /// The configuration of the machine is inconsistent.
+    #[error("invalid machine configuration: {0}")]
+    InvalidMachine(#[from] MachineConfigError),
     /// The archive cannot be read.
     #[error(transparent)]
     Archive(#[from] ArchiveError),
@@ -189,6 +196,7 @@ impl ConfigStoreError {
             | Self::ModelMismatch { .. }
             | Self::InvalidRadialMenu(_)
             | Self::InvalidAppModules(_)
+            | Self::InvalidMachine(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
             | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,

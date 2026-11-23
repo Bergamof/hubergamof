@@ -21,6 +21,11 @@ export default defineConfig({
 			use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${PREVIEW_PORT}` }
 		},
 		{
+			name: 'machine',
+			testMatch: '**/machine.e2e.ts',
+			use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${PREVIEW_PORT}` }
+		},
+		{
 			name: 'demo',
 			testMatch: '**/demo.e2e.ts',
 			use: { ...devices['Desktop Chrome'] }

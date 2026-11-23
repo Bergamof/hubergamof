@@ -13,9 +13,11 @@ cancels and focus returns to the opener). « Annuler », first, has the initial 
 		children: Snippet;
 		onconfirm: () => void | Promise<void>;
 		oncancel: () => void;
+		/** The dialog is closed, however it was: the focus is back on its opener, if it can take it. */
+		onclosed?: () => void;
 	}
 
-	let { open, title, confirmLabel, children, onconfirm, oncancel }: Props = $props();
+	let { open, title, confirmLabel, children, onconfirm, oncancel, onclosed }: Props = $props();
 
 	const uid = $props.id();
 	let dialog: HTMLDialogElement | undefined = $state();
@@ -30,6 +32,7 @@ cancels and focus returns to the opener). « Annuler », first, has the initial 
 	function closed() {
 		if (!confirmed) oncancel();
 		confirmed = false;
+		onclosed?.();
 	}
 
 	$effect(() => {

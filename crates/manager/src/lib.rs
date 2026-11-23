@@ -22,6 +22,8 @@
 //!   configurations, as the web interface follows them.
 //! - [`input`]: the keys and buttons pressed on behalf of a mouse button,
 //!   through a virtual input device.
+//! - [`machine`]: the shell aliases of the computer, read from the startup
+//!   files and kept in a file of its own.
 //! - [`launcher`]: `hubergamof open`, starting the service and opening the UI
 //!   from the desktop launcher.
 
@@ -33,6 +35,7 @@ pub mod file_chooser;
 pub mod haptics;
 pub mod input;
 pub mod launcher;
+pub mod machine;
 pub mod module_host;
 pub mod mouse_actions;
 pub mod mouse_engine;
