@@ -5,11 +5,13 @@ import type { DeviceConfig } from "./DeviceConfig";
 import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
 import type { LiveState } from "./LiveState";
+import type { MachineConfig } from "./MachineConfig";
 import type { MouseBattery } from "./MouseBattery";
 import type { MouseConfig } from "./MouseConfig";
 import type { MouseInfo } from "./MouseInfo";
 import type { MouseProblem } from "./MouseProblem";
 import type { RadialMenuConfig } from "./RadialMenuConfig";
+import type { SystemAlias } from "./SystemAlias";
 import type { UpdateSettings } from "./UpdateSettings";
 import type { UpdateStatus } from "./UpdateStatus";
 
@@ -56,7 +58,15 @@ config: RadialMenuConfig, } | { "type": "applicationModules",
 /**
  * One entry per module.
  */
-modules: Array<ApplicationModuleView>, } | { "type": "locked", 
+modules: Array<ApplicationModuleView>, } | { "type": "machine", 
+/**
+ * Current configuration.
+ */
+config: MachineConfig, 
+/**
+ * Aliases of the shell startup files, not managed by HuBergamof.
+ */
+systemAliases: Array<SystemAlias>, } | { "type": "locked", 
 /**
  * `true` while the computer is locked.
  */

@@ -9,7 +9,7 @@ describe('parseServerMessage', () => {
 		});
 	});
 
-	it.each(['applicationModules', 'locked'])('accepts the message %s', (type) => {
+	it.each(['applicationModules', 'locked', 'machine'])('accepts the message %s', (type) => {
 		expect(parseServerMessage(JSON.stringify({ type }))?.type).toBe(type);
 	});
 

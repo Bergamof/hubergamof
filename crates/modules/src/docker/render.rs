@@ -1,6 +1,7 @@
 //! What the pages and keys of the module show.
 
 use super::actions::{Action, CONTAINER_ACTIONS, PROJECT_ACTIONS};
+use super::model::StatusRank;
 use super::pages::{Page, compose_service};
 use super::selection::{selectables, with_count};
 use super::{
@@ -9,9 +10,13 @@ use super::{
     Project, TITLE_SEPARATOR, UP_ITEM, UP_LABEL, container_id, icons, project_id, service_id,
 };
 
+/// Keys opening the `up` and `down` pages, after the actions of a project page.
+const VARIANT_ITEMS: usize = 2;
+
 /// An entry of a project page: a container, or a service that has none.
 pub(super) struct Entry {
-    /// What the entries are sorted by.
+    /// What the entries are sorted by: first the rank, then the name.
+    rank: StatusRank,
     name: String,
     /// The service it stands for, `None` for a container that records none.
     pub(super) service: Option<String>,
@@ -50,7 +55,9 @@ impl Docker {
             .into_iter()
             .map(|entry| self.mark_selection(&project.name, entry));
         let items = actions.chain(variants).chain(entries).collect();
-        PageContent::new(project.shown_name(), items).with_context_dial(context_dial)
+        PageContent::new(project.shown_name(), items)
+            .with_context_dial(context_dial)
+            .with_pinned_items(PROJECT_ACTIONS.len() + VARIANT_ITEMS)
     }
 
     /// The containers of `project` and its services without container, sorted
@@ -70,6 +77,7 @@ impl Docker {
                 .working(project, service, container_id(&container.name), short)
                 .unwrap_or_else(|| self.container_entry(container, short));
             Entry {
+                rank: container.status_rank(),
                 name: short.to_owned(),
                 service: service.map(str::to_owned),
                 item,
@@ -83,13 +91,14 @@ impl Docker {
                 service,
             );
             Entry {
+                rank: StatusRank::NotBuilt,
                 name: service.clone(),
                 service: Some(service.clone()),
                 item: item.unwrap_or_else(|| planned_item(&project.name, service)),
             }
         });
         let mut entries: Vec<Entry> = built.chain(planned).collect();
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.sort_by(|a, b| a.rank.cmp(&b.rank).then_with(|| a.name.cmp(&b.name)));
         entries
     }
 

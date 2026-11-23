@@ -16,6 +16,7 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
+use hubergamof_manager::machine::{MachineHub, MachineShell};
 use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::Renderer;
@@ -35,9 +36,9 @@ use hubergamof_module_api::{
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, ModuleInstance, MouseConfig,
-    MouseInfo, MouseModel, MouseProblem, RadialMenuConfig, ServerMessage, UpdateSettings,
-    UpdateStatus,
+    ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, MachineConfig,
+    ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem, RadialMenuConfig,
+    ServerMessage, ShellAlias, SystemAlias, UpdateSettings, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -140,6 +141,8 @@ impl ModuleFactory for CounterFactory {
 /// Engines for virtual devices, the demo device attached.
 struct Devices {
     _dir: TempDir,
+    /// The home folder whose shell files the machine reads and writes.
+    home: TempDir,
     discovery: DeviceDiscovery,
     supervisor: Supervisor,
     decks: VirtualDevices,
@@ -169,6 +172,11 @@ impl Devices {
         let supervisor = Supervisor::start(&discovery, services);
         let decks = VirtualDevices::new(discovery.clone());
         let _deck = decks.attach(virtual_plus_info(DEMO_SERIAL));
+        let home = tempfile::tempdir().unwrap();
+        let machine = MachineHub::new(
+            store.clone(),
+            Some(MachineShell::new(home.path().to_owned())),
+        );
         let context = ServerContext {
             discovery: discovery.clone(),
             engines: supervisor.engines(),
@@ -180,10 +188,12 @@ impl Devices {
             updates: UpdateHandle::inactive(),
             mice: MouseHub::new(store.clone()).unwrap(),
             application: None,
+            machine,
             screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
         };
         Self {
             _dir: dir,
+            home,
             discovery,
             supervisor,
             decks,
@@ -1291,6 +1301,88 @@ async fn pomodoro_view(client: &mut Client) -> hubergamof_protocol::ApplicationM
         .await
 }
 
+/// The next `machine` message: its configuration and system aliases.
+async fn next_machine(client: &mut Client) -> (MachineConfig, Vec<SystemAlias>) {
+    client
+        .receive_until(|message| match message {
+            ServerMessage::Machine {
+                config,
+                system_aliases,
+            } => Some((config, system_aliases)),
+            _ => None,
+        })
+        .await
+}
+
+fn shell_alias(name: &str, command: &str) -> ShellAlias {
+    ShellAlias {
+        name: name.into(),
+        command: command.into(),
+        enabled: true,
+    }
+}
+
+#[tokio::test]
+async fn the_machine_is_read_on_request_and_updates_reach_every_client() {
+    let server = Running::start().await;
+    let home = server.devices.home.path().to_owned();
+    std::fs::write(home.join(".bashrc"), "alias gs='git status'\n").unwrap();
+    let mut author = server.connect().await;
+    let mut other = server.connect().await;
+
+    author.send(&ClientMessage::RefreshMachine).await;
+    let (config, system) = next_machine(&mut author).await;
+    assert_eq!(config, MachineConfig::empty());
+    assert_eq!(system.len(), 1);
+    assert_eq!(
+        (system[0].name.as_str(), system[0].source.as_str()),
+        ("gs", ".bashrc")
+    );
+
+    let mut wanted = config.clone();
+    wanted.aliases.push(shell_alias("ll", "ls -la"));
+    author
+        .send(&ClientMessage::UpdateMachine {
+            config: wanted.clone(),
+        })
+        .await;
+    for client in [&mut author, &mut other] {
+        let (saved, system) = next_machine(client).await;
+        assert_eq!(saved.revision, 1);
+        assert_eq!(saved.aliases, wanted.aliases);
+        assert_eq!(system.len(), 1, "the managed alias is not a system one");
+    }
+    let managed = std::fs::read_to_string(home.join(".config/hubergamof/aliases.sh")).unwrap();
+    assert!(managed.contains("alias ll='ls -la'"));
+    assert!(
+        std::fs::read_to_string(home.join(".bashrc"))
+            .unwrap()
+            .contains("hubergamof")
+    );
+    assert!(!home.join(".zshrc").exists());
+
+    // Based on the old revision: refused, nothing told.
+    author
+        .send(&ClientMessage::UpdateMachine { config: wanted })
+        .await;
+    assert_eq!(expect_error(&mut author).await, ErrorCode::StaleRevision);
+
+    // Invalid: refused.
+    let mut invalid = next_revision(&mut author).await;
+    invalid.aliases.push(shell_alias("bad name", "ls"));
+    author
+        .send(&ClientMessage::UpdateMachine { config: invalid })
+        .await;
+    assert_eq!(expect_error(&mut author).await, ErrorCode::InvalidConfig);
+    server.stop().await;
+}
+
+/// The saved configuration, read back by a refresh.
+async fn next_revision(client: &mut Client) -> MachineConfig {
+    client.send(&ClientMessage::RefreshMachine).await;
+    next_machine(client).await.0
+}
+
 async fn expect_error(client: &mut Client) -> ErrorCode {
     client
         .receive_until(|message| match message {
@@ -1424,6 +1516,10 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
         },
         ClientMessage::UpdateRadialMenu {
             config: RadialMenuConfig::default_menu(),
+        },
+        ClientMessage::RefreshMachine,
+        ClientMessage::UpdateMachine {
+            config: MachineConfig::empty(),
         },
         ClientMessage::CheckForUpdates,
         // Following a device shows its configuration: refused too.

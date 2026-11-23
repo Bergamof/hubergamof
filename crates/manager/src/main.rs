@@ -22,6 +22,7 @@ use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor, fir
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
+use hubergamof_manager::machine::{MachineHub, MachineShell};
 use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_actions::ButtonActions;
 use hubergamof_manager::mouse_engine::{HidrawSource, MouseSupervisor, SCAN_INTERVAL};
@@ -587,12 +588,13 @@ async fn run_manager(cli: Cli) -> Result<()> {
         engines: supervisor.engines(),
         catalog,
         simulated_input: simulated_input(cli.demo),
-        store,
+        store: store.clone(),
         renderer,
         file_picker: file_picker(cli.file_chooser_answer.clone()),
         updates: updates.clone(),
         mice: mouse_hub,
         application: Some(host.clone()),
+        machine: start_machine(cli.demo, store.clone())?,
         screen_lock,
     };
     let server = match Server::bind(
@@ -807,6 +809,16 @@ fn start_served_mice(
         SCAN_INTERVAL,
     );
     MiceService { supervisor, menu }
+}
+
+/// The machine: the shell files of the user, or with `--demo` those of a
+/// temporary home folder, so that the real startup files are never touched.
+fn start_machine(demo: bool, store: ConfigStore) -> Result<MachineHub> {
+    if demo {
+        MachineHub::demo(store).context("cannot create the demo home folder")
+    } else {
+        Ok(MachineHub::new(store, MachineShell::of_current_user()))
+    }
 }
 
 /// The mice `--demo` lists, with the serial of each.

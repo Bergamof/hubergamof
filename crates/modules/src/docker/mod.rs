@@ -26,8 +26,9 @@
 //! (module `hub`), which also runs the actions. Handlers never wait for
 //! Docker: actions run in the background (several at once), the key shows
 //! the action in progress, then ✓ or ⚠; their effect comes back as changes
-//! of the containers. Everything is sorted by name, so that keys keep
-//! their place.
+//! of the containers. Projects come first, by name; containers are
+//! sorted by state (failing, pending, running, stopped, then the services
+//! without container), then by name: a key moves when its state changes.
 
 mod actions;
 mod backend;
