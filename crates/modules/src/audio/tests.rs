@@ -721,3 +721,71 @@ fn the_module_declares_the_event_it_raises() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].id, "mute-changed");
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_items_follow_the_mute_of_the_default_devices() {
+    let mut harness = Harness::start(&json!({})).await;
+    let summary = |harness: &Harness| -> Vec<(String, String, RadialGlyph, RadialItemState)> {
+        harness
+            .module
+            .radial_items()
+            .into_iter()
+            .map(|item| (item.id, item.label, item.glyph, item.state))
+            .collect()
+    };
+    let item =
+        |id: &str, label: &str, glyph, state| (id.to_owned(), label.to_owned(), glyph, state);
+    let normal = RadialItemState::Normal;
+    let off = RadialItemState::Off;
+    let microphone = RadialGlyph::Microphone;
+    let speaker = RadialGlyph::Speaker;
+    assert_eq!(
+        summary(&harness),
+        [
+            item("mute-microphone", "Couper le micro", microphone, normal),
+            item("mute-speakers", "Couper le son", speaker, normal),
+        ]
+    );
+
+    harness.module.on_radial_action("mute-microphone").await;
+    harness.settle().await;
+    assert_eq!(
+        summary(&harness),
+        [
+            item("mute-microphone", "Rétablir le micro", microphone, off),
+            item("mute-speakers", "Couper le son", speaker, normal),
+        ]
+    );
+
+    harness.module.on_radial_action("mute-speakers").await;
+    harness.settle().await;
+    assert_eq!(
+        summary(&harness),
+        [
+            item("mute-microphone", "Rétablir le micro", microphone, off),
+            item("mute-speakers", "Rétablir le son", speaker, off),
+        ]
+    );
+
+    harness.module.on_radial_action("mute-microphone").await;
+    harness.settle().await;
+    assert_eq!(harness.module.radial_items()[0].state, normal);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_items_are_actions_of_the_catalogue() {
+    let harness = Harness::start(&json!({})).await;
+    let catalogue: Vec<String> = harness
+        .factory
+        .radial_actions()
+        .into_iter()
+        .map(|action| action.id)
+        .collect();
+    for item in harness.module.radial_items() {
+        assert!(
+            catalogue.contains(&item.id),
+            "{} is not in the catalogue",
+            item.id
+        );
+    }
+}
