@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, KeyContent, ModuleInstanceId, ModuleKind, ModuleLifetime,
-    ScreenLockState, StripPopup, StripWidget,
+    RadialItem, ScreenLockState, StripPopup, StripWidget,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{AppModulesConfig, ModuleInstance};
@@ -87,6 +87,8 @@ pub struct ModuleView {
     pub dial_hints: HashMap<DialFunctionId, DialHint>,
     /// What its petal says in the radial menu.
     pub radial_status: Option<String>,
+    /// The actions shown around its petal in the radial menu.
+    pub radial_items: Vec<RadialItem>,
     /// Its settings as the instance runs with them.
     pub settings: Value,
 }
@@ -212,6 +214,19 @@ impl ModuleHost {
     #[must_use]
     pub fn views(&self) -> watch::Receiver<ModuleViews> {
         self.views.clone()
+    }
+
+    /// The actions shown around the petal of the instance of `kind` now,
+    /// as of the last time it changed: empty when the application has no such
+    /// instance or it has no item. Synchronous and cheap (it reads the
+    /// published views, no module is called).
+    #[must_use]
+    pub fn radial_items(&self, kind: &ModuleKind) -> Vec<RadialItem> {
+        self.views
+            .borrow()
+            .get(kind)
+            .map(|view| view.radial_items.clone())
+            .unwrap_or_default()
     }
 
     /// What the instances ask for outside of an input, as it happens: a
@@ -608,6 +623,7 @@ impl Hosted {
                     strip_popup: self.instances.strip_popup(id),
                     dial_hints,
                     radial_status: self.instances.radial_status(id),
+                    radial_items: self.instances.radial_items(id).unwrap_or_default(),
                     settings: self.settings_of(kind),
                 }),
             );
@@ -1165,5 +1181,130 @@ mod tests {
         let kept =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
         assert_eq!(kept.len(), 1);
+    }
+
+    const TICKER_KIND: &str = "ticker";
+
+    /// A module of the application whose radial items follow what it was
+    /// asked to do: "Start" first, "Stop" once toggled.
+    struct Ticker {
+        running: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl hubergamof_module_api::Module for Ticker {
+        fn radial_items(&self) -> Vec<RadialItem> {
+            let label = if self.running { "Stop" } else { "Start" };
+            vec![RadialItem::new(
+                "toggle",
+                label,
+                hubergamof_module_api::RadialGlyph::Play,
+            )]
+        }
+
+        async fn on_radial_action(&mut self, _action: &str) -> Vec<Command> {
+            self.running = !self.running;
+            Vec::new()
+        }
+
+        fn update_settings(
+            &mut self,
+            _settings: &Value,
+        ) -> Result<(), hubergamof_module_api::ModuleError> {
+            Ok(())
+        }
+    }
+
+    struct TickerFactory;
+
+    impl hubergamof_module_api::ModuleFactory for TickerFactory {
+        fn descriptor(&self) -> hubergamof_module_api::ModuleDescriptor {
+            hubergamof_module_api::ModuleDescriptor {
+                kind: TICKER_KIND.into(),
+                name: String::new(),
+                description: String::new(),
+                capabilities: hubergamof_module_api::ModuleCapabilities::default(),
+                dial_functions: Vec::new(),
+                settings: Vec::new(),
+            }
+        }
+
+        fn lifetime(&self) -> ModuleLifetime {
+            ModuleLifetime::Application
+        }
+
+        fn radial_actions(&self) -> Vec<hubergamof_module_api::RadialActionDescriptor> {
+            vec![hubergamof_module_api::RadialActionDescriptor::new(
+                "toggle", "Toggle", "",
+            )]
+        }
+
+        fn create(
+            &self,
+            _ctx: hubergamof_module_api::ModuleContext,
+            _settings: &Value,
+        ) -> Result<Box<dyn hubergamof_module_api::Module>, hubergamof_module_api::ModuleError>
+        {
+            Ok(Box::new(Ticker { running: false }))
+        }
+    }
+
+    fn start_ticker() -> (ModuleHost, JoinHandle<()>, tempfile::TempDir) {
+        let mut registry = ModuleRegistry::new();
+        registry.register(Arc::new(TickerFactory));
+        let registry = Arc::new(registry);
+        let dir = tempfile::tempdir().unwrap();
+        let (host, task) = ModuleHost::start(HostServices {
+            store: ConfigStore::new(dir.path(), Arc::clone(&registry)),
+            registry,
+            haptics: Arc::new(NoHaptics),
+            screen_lock: Arc::new(NoScreenLock),
+        });
+        (host, task, dir)
+    }
+
+    #[tokio::test]
+    async fn the_radial_items_of_a_module_of_the_application_follow_its_state() {
+        let (host, _task, _dir) = start_ticker();
+        let kind = ModuleKind::from(TICKER_KIND);
+        let mut views = host.views();
+        views
+            .wait_for(|views| views.contains_key(&kind))
+            .await
+            .unwrap();
+        let labels = |host: &ModuleHost| -> Vec<String> {
+            host.radial_items(&kind)
+                .into_iter()
+                .map(|item| item.label)
+                .collect()
+        };
+        assert_eq!(labels(&host), ["Start"]);
+
+        host.call(&kind, Call::RadialAction("toggle".into())).await;
+        views
+            .wait_for(|views| views[&kind].radial_items[0].label == "Stop")
+            .await
+            .unwrap();
+        assert_eq!(labels(&host), ["Stop"]);
+    }
+
+    #[tokio::test]
+    async fn the_combined_read_falls_back_to_the_application_when_no_device_holds_the_module() {
+        let (host, _task, _dir) = start_ticker();
+        let kind = ModuleKind::from(TICKER_KIND);
+        host.views()
+            .wait_for(|views| views.contains_key(&kind))
+            .await
+            .unwrap();
+        let engines = crate::engine::EngineRegistry::default();
+        let items = crate::engine::first_radial_items(&engines, &host, &kind);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Start");
+    }
+
+    #[tokio::test]
+    async fn a_module_the_application_does_not_hold_has_no_radial_item() {
+        let (host, _task, _dir) = start_ticker();
+        assert_eq!(host.radial_items(&"nothing".into()), Vec::new());
     }
 }

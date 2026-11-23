@@ -66,22 +66,36 @@ impl ModuleActions {
 
     /// Does what a click on the petal of `entry` does. Never waits: the choice
     /// is queued and the menu thread goes on.
+    #[must_use]
     pub fn run(&self, entry: &RadialEntryConfig) -> Queued {
         let RadialPrimary::Action { action } = &entry.primary else {
             return Queued::Nothing;
         };
-        if !self.declares(&entry.module, action) {
+        self.enqueue(&entry.module, action)
+    }
+
+    /// Does `action` of `module`, an action of the arc around its petal. Goes
+    /// through the same queue as [`Self::run`], so the two keep the order they
+    /// were chosen in, and is refused the same way when the module does not
+    /// declare the action.
+    #[must_use]
+    pub fn run_action(&self, module: &ModuleKind, action: &str) -> Queued {
+        self.enqueue(module, action)
+    }
+
+    fn enqueue(&self, module: &ModuleKind, action: &str) -> Queued {
+        if !self.declares(module, action) {
             tracing::warn!(
-                module = %entry.module,
+                %module,
                 action,
-                "the radial entry names an action its module does not declare: ignored"
+                "the radial menu names an action its module does not declare: ignored"
             );
             return Queued::Unknown;
         }
-        match self.queue.try_send((entry.module.clone(), action.clone())) {
+        match self.queue.try_send((module.clone(), action.to_owned())) {
             Ok(()) => Queued::Accepted,
             Err(TrySendError::Full(_)) => {
-                tracing::warn!(module = %entry.module, "radial actions pile up: a choice is dropped");
+                tracing::warn!(%module, "radial actions pile up: a choice is dropped");
                 Queued::Dropped
             }
             // The task ends with the runtime, at shutdown.
@@ -210,6 +224,50 @@ mod tests {
             actions.run(&entry("nothing", action("toggle"))),
             Queued::Unknown
         );
+    }
+
+    #[tokio::test]
+    async fn an_action_of_the_arc_goes_through_the_same_guard() {
+        let actions = actions();
+        let pomodoro = ModuleKind::from("pomodoro");
+        assert_eq!(actions.run_action(&pomodoro, "toggle"), Queued::Accepted);
+        assert_eq!(actions.run_action(&pomodoro, "mic"), Queued::Unknown);
+        assert_eq!(
+            actions.run_action(&"nothing".into(), "toggle"),
+            Queued::Unknown
+        );
+    }
+
+    #[tokio::test]
+    async fn actions_of_the_arc_and_primary_actions_share_one_queue() {
+        let (queue, mut unread) = mpsc::channel(QUEUE_CAPACITY);
+        let actions = ModuleActions {
+            registry: registry(),
+            queue,
+        };
+        let pomodoro = ModuleKind::from("pomodoro");
+        assert_eq!(
+            actions.run(&entry("pomodoro", action("toggle"))),
+            Queued::Accepted
+        );
+        assert_eq!(actions.run_action(&pomodoro, "reset"), Queued::Accepted);
+        assert_eq!(
+            unread.recv().await,
+            Some((pomodoro.clone(), "toggle".to_owned()))
+        );
+        assert_eq!(unread.recv().await, Some((pomodoro, "reset".to_owned())));
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_drops_an_action_of_the_arc_too() {
+        let (queue, _unread) = mpsc::channel(1);
+        let actions = ModuleActions {
+            registry: registry(),
+            queue,
+        };
+        let pomodoro = ModuleKind::from("pomodoro");
+        assert_eq!(actions.run_action(&pomodoro, "toggle"), Queued::Accepted);
+        assert_eq!(actions.run_action(&pomodoro, "toggle"), Queued::Dropped);
     }
 
     #[tokio::test]

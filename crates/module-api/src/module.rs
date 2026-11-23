@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     Command, DialFunctionId, DialHint, HapticEventDescriptor, ImageData, ItemId, KeyContent,
     ModuleContext, ModuleDescriptor, ModuleEvent, NotificationId, PageContent, PageId,
-    RadialActionDescriptor, StripPopup, StripWidget,
+    RadialActionDescriptor, RadialItem, StripPopup, StripWidget,
 };
 
 /// Longest time the host lets a handler run (see [`Module`]) before
@@ -270,6 +270,16 @@ pub trait Module: Send {
     /// while it stays open. Nothing by default: the petal shows the name only.
     fn radial_status(&self) -> Option<String> {
         None
+    }
+
+    /// The actions shown around the module's petal while the pointer is on it,
+    /// in the order they are drawn (at most [`MAX_RADIAL_ITEMS`](crate::MAX_RADIAL_ITEMS), the rest is
+    /// ignored). They describe the current state: the call controls only
+    /// exist during a call, a count follows the unread conversations. Like
+    /// the other getters it is cheap and side-effect free; the menu reads it
+    /// again while it stays open. Nothing by default.
+    fn radial_items(&self) -> Vec<RadialItem> {
+        Vec::new()
     }
 
     /// Handles an event sent through [`ModuleContext::events`], usually by a
