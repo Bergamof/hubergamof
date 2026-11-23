@@ -30,8 +30,8 @@ use serde_json::Value;
 use tokio::sync::watch;
 
 pub use bridge::{
-    CallClock, CallState, RailBadges, RequestError, SimulatedBridge, SocketBridge, TeamsBridge,
-    TeamsState, is_same_user, socket_path,
+    CallState, RailBadges, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState,
+    is_same_user, socket_path,
 };
 use elapsed::ElapsedChanged;
 use icons::{

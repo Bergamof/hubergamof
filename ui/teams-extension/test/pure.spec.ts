@@ -189,9 +189,23 @@ describe('secondsFromDuration', () => {
 		expect(secondsFromDuration(' 12:34 ')).toBe(754);
 		expect(secondsFromDuration('1:02:03')).toBe(3723);
 		expect(secondsFromDuration('01:00:00')).toBe(3600);
+		expect(secondsFromDuration('0:00:00')).toBe(0);
 	});
 	it('gives nothing for anything else', () => {
-		for (const text of [null, undefined, '', 'en cours', '12', '12:60', '1:75:00', '-1:00']) {
+		for (const text of [
+			null,
+			undefined,
+			'',
+			'en cours',
+			'12',
+			'12:60',
+			'75:00',
+			'1000:00:00',
+			'12:3',
+			'1\n2:34',
+			'1:75:00',
+			'-1:00'
+		]) {
 			expect(secondsFromDuration(text)).toBeNull();
 		}
 	});

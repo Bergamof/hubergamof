@@ -39,21 +39,32 @@ fn format_duration(total_seconds: u64) -> String {
 pub(super) struct ElapsedChanged;
 
 /// Tells the instance each time the text of the duration of the call changes,
-/// until the instance is gone.
-pub(super) async fn run(state: watch::Receiver<TeamsState>, events: EventSender) {
-    let mut last = None;
-    let mut tick = tokio::time::interval(CHECK_EVERY);
+/// until the instance is gone. Asleep (no clock to read) outside a call.
+pub(super) async fn run(mut state: watch::Receiver<TeamsState>, events: EventSender) {
     loop {
-        tick.tick().await;
-        let text = shown(&state.borrow());
-        if text == last {
-            continue;
+        while shown(&state.borrow_and_update()).is_none() {
+            if state.changed().await.is_err() {
+                return;
+            }
         }
-        last = text;
-        // A refusal is a full queue as much as a dead instance: the next
-        // second tries again, and the tasks of a dead instance are stopped
-        // with it.
-        events.send(ElapsedChanged);
+        let mut last = None;
+        let mut tick = tokio::time::interval(CHECK_EVERY);
+        // After a suspend, one look is enough: no burst of missed ones.
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {}
+                changed = state.changed() => if changed.is_err() { return },
+            }
+            let text = shown(&state.borrow_and_update());
+            if text.is_none() {
+                break;
+            }
+            if text != last {
+                last = text;
+                events.send(ElapsedChanged);
+            }
+        }
     }
 }
 

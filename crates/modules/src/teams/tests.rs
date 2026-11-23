@@ -1228,6 +1228,10 @@ async fn the_hang_up_key_shows_the_duration_teams_shows_and_counts_on() {
 async fn the_instance_is_woken_when_a_new_second_shows() {
     let mut harness = Harness::new(SimulatedBridge::new());
     harness.report(call_report(Some(0))).await;
+    // The first sight of the duration wakes the instance once; that wake-up
+    // must not stand for the one of the next second.
+    tokio::time::advance(Duration::from_millis(300)).await;
+    while harness.events.try_recv().is_ok() {}
     tokio::time::advance(Duration::from_secs(2)).await;
     // Without the wake-up the page would keep the second it was drawn with.
     let event = tokio::time::timeout(Duration::from_secs(2), harness.events.recv())
@@ -1262,6 +1266,32 @@ async fn only_a_call_in_progress_has_a_duration() {
         camera_on: None,
         caller: Some("Camille".into()),
         elapsed_seconds: Some(30),
+    });
+    assert!(state.call.elapsed.is_none());
+    state.apply(call_report(None));
+    assert_eq!(state.call.elapsed.map(|clock| clock.seconds()), Some(0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_report_that_agrees_with_the_count_is_not_a_change() {
+    let mut state = TeamsState::default();
+    assert!(state.apply(call_report(Some(30))));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(!state.apply(call_report(Some(32))));
+    assert!(state.apply(call_report(Some(90))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_duration_ends_with_the_call_and_a_new_call_starts_again() {
+    let mut state = TeamsState::default();
+    state.apply(call_report(None));
+    tokio::time::advance(Duration::from_secs(40)).await;
+    state.apply(BrowserReport::Call {
+        phase: CallPhase::Idle,
+        muted: None,
+        camera_on: None,
+        caller: None,
+        elapsed_seconds: None,
     });
     assert!(state.call.elapsed.is_none());
     state.apply(call_report(None));

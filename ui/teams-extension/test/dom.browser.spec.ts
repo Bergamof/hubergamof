@@ -378,6 +378,35 @@ describe('start', () => {
 		expect(rt.sendMessage).toHaveBeenCalledTimes(4);
 	});
 
+	it('does not report again each second the duration of a call moves', () => {
+		const doc = page(
+			'<button data-tid="hangup-main-btn"></button><span data-tid="call-duration">0:10</span>'
+		);
+		const duration = doc.querySelector('[data-tid="call-duration"]')!;
+		let time = 0;
+		let tick = () => {};
+		const rt = runtime();
+		start(doc, rt, {
+			hostname: 'teams.cloud.microsoft',
+			context: TOP,
+			now: () => time,
+			setInterval: ((f: () => void) => (tick = f)) as never
+		});
+		const calls = () =>
+			rt.sendMessage.mock.calls.filter(([message]) => message.report.type === 'call');
+		expect(calls()).toHaveLength(1);
+		duration.textContent = '0:12';
+		time = 2000;
+		tick();
+		expect(calls()).toHaveLength(1);
+		// Past the resend delay the report goes again, with the duration to set the count right.
+		duration.textContent = '0:40';
+		time = RESEND_AFTER_MS;
+		tick();
+		expect(calls()).toHaveLength(2);
+		expect(calls()[1][0].report.elapsedSeconds).toBe(40);
+	});
+
 	it('does not click in a sub-frame', () => {
 		const doc = page('<button data-tid="hangup-main-btn"></button>');
 		const click = vi.fn();

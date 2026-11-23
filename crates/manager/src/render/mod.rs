@@ -459,13 +459,8 @@ impl Renderer {
                 .caption
                 .map(str::trim)
                 .filter(|caption| !caption.is_empty());
-            let (icon_top, icon_area) = icon_area(request.size, label.is_some(), caption.is_some());
-            let mut canvas = self.compose(
-                bytes.as_deref(),
-                request.size,
-                (icon_top, icon_area),
-                background,
-            )?;
+            let slot = icon_area(request.size, label.is_some(), caption.is_some());
+            let mut canvas = self.compose(bytes.as_deref(), request.size, slot, background)?;
             if let Some(label) = label {
                 self.draw_label(&mut canvas, label, text_color)?;
             }
@@ -512,7 +507,7 @@ impl Renderer {
         check_size(size)?;
         check_source_length(bytes.len())?;
         let kind = ImageKind::sniff(bytes).ok_or(RenderError::UnsupportedFormat)?;
-        self.compose(Some(bytes), size, (0, size), DEFAULT_BACKGROUND)?;
+        self.compose(Some(bytes), size, IconSlot::whole(size), DEFAULT_BACKGROUND)?;
         Ok(kind)
     }
 
@@ -578,13 +573,13 @@ impl Renderer {
         Ok(rendered)
     }
 
-    /// Draws `bytes` scaled to fit `icon_area`, centred in it, on a canvas of
+    /// Draws `bytes` scaled to fit `slot`, centred in it, on a canvas of
     /// `size`.
     fn compose(
         &self,
         bytes: Option<&[u8]>,
         size: ImageSize,
-        (icon_top, icon_area): (u32, ImageSize),
+        slot: IconSlot,
         background: Rgba<u8>,
     ) -> Result<RgbaImage, RenderError> {
         let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
@@ -592,13 +587,13 @@ impl Renderer {
             return Ok(canvas);
         };
         let foreground = match source::decode(bytes, self.text.source_svg_options())? {
-            Decoded::Raster(image) => contain(&image, icon_area),
+            Decoded::Raster(image) => contain(&image, slot.size),
             Decoded::Vector(tree) => {
-                source::rasterize_svg(&tree, icon_area.width, icon_area.height)?
+                source::rasterize_svg(&tree, slot.size.width, slot.size.height)?
             }
         };
         let x = i64::from((size.width - foreground.width()) / 2);
-        let y = i64::from(icon_top + (icon_area.height - foreground.height()) / 2);
+        let y = i64::from(slot.top + (slot.size.height - foreground.height()) / 2);
         imageops::overlay(&mut canvas, &foreground, x, y);
         Ok(canvas)
     }
@@ -638,48 +633,53 @@ impl Renderer {
         Ok(())
     }
 
-    /// Draws `label` on one line, shortened with an ellipsis if needed, at the
-    /// bottom of `canvas`.
+    /// Draws `label` on one line at the bottom of `canvas`.
     fn draw_label(
         &self,
         canvas: &mut RgbaImage,
         label: &str,
         color: Rgba<u8>,
     ) -> Result<(), RenderError> {
-        let width = f32_from(canvas.width());
         let height = f32_from(canvas.height());
         let size = height * LABEL_FONT_RATIO;
-        let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
-        let text_top =
-            height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
-        let line = self.text.fitted_line(
-            label,
-            semibold(size, color),
-            width / 2.0,
-            text_top + TextRenderer::ascent(size),
-            max_width,
-        )?;
-        self.text.draw(canvas, &[line])
+        let top = height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
+        self.draw_line(canvas, label, size, top, color)
     }
 
-    /// Draws `caption` on one line, shortened with an ellipsis if needed, at
-    /// the top of `canvas`.
+    /// Draws `caption` on one line at the top of `canvas`.
     fn draw_caption(
         &self,
         canvas: &mut RgbaImage,
         caption: &str,
         color: Rgba<u8>,
     ) -> Result<(), RenderError> {
-        let width = f32_from(canvas.width());
         let height = f32_from(canvas.height());
-        let size = height * CAPTION_FONT_RATIO;
-        let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
-        let text_top = height * LABEL_VERTICAL_PADDING_RATIO;
-        let line = self.text.fitted_line(
+        self.draw_line(
+            canvas,
             caption,
+            height * CAPTION_FONT_RATIO,
+            height * LABEL_VERTICAL_PADDING_RATIO,
+            color,
+        )
+    }
+
+    /// Draws `text` centred on one line of `size` pixels whose top is at
+    /// `top`, shortened with an ellipsis if needed.
+    fn draw_line(
+        &self,
+        canvas: &mut RgbaImage,
+        text: &str,
+        size: f32,
+        top: f32,
+        color: Rgba<u8>,
+    ) -> Result<(), RenderError> {
+        let width = f32_from(canvas.width());
+        let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
+        let line = self.text.fitted_line(
+            text,
             semibold(size, color),
             width / 2.0,
-            text_top + TextRenderer::ascent(size),
+            top + TextRenderer::ascent(size),
             max_width,
         )?;
         self.text.draw(canvas, &[line])
@@ -781,10 +781,26 @@ fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
     canvas
 }
 
+/// Where the image of a key goes.
+#[derive(Debug, Clone, Copy)]
+struct IconSlot {
+    /// Distance from the top of the key.
+    top: u32,
+    /// Room left to the image.
+    size: ImageSize,
+}
+
+impl IconSlot {
+    /// The whole key.
+    fn whole(size: ImageSize) -> Self {
+        Self { top: 0, size }
+    }
+}
+
 /// Part of a key of `size` left to its image, as its distance from the top
 /// and its size: all of it, or what lies between the caption line and the
 /// label line, so that the image is never covered.
-fn icon_area(size: ImageSize, labelled: bool, captioned: bool) -> (u32, ImageSize) {
+fn icon_area(size: ImageSize, labelled: bool, captioned: bool) -> IconSlot {
     let height = f32_from(size.height);
     let padding = height * 2.0 * LABEL_VERTICAL_PADDING_RATIO;
     let strip = |ratio: f32, shown: bool| {
@@ -796,13 +812,13 @@ fn icon_area(size: ImageSize, labelled: bool, captioned: bool) -> (u32, ImageSiz
     };
     let top = strip(CAPTION_FONT_RATIO, captioned);
     let bottom = strip(LABEL_FONT_RATIO, labelled);
-    (
-        scaled_dimension(size.height, top / height, size.height),
-        ImageSize {
+    IconSlot {
+        top: scaled_dimension(size.height, top / height, size.height),
+        size: ImageSize {
             width: size.width,
             height: scaled_dimension(size.height, 1.0 - (top + bottom) / height, size.height),
         },
-    )
+    }
 }
 
 fn check_size(size: ImageSize) -> Result<(), RenderError> {

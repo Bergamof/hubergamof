@@ -851,5 +851,7 @@ mod tests {
         assert_eq!(elapsed(read(&call(r#","elapsedSeconds":754"#))), Some(754));
         let too_long = format!(r#","elapsedSeconds":{}"#, MAX_CALL_SECONDS + 1);
         assert_eq!(elapsed(read(&call(&too_long))), None);
+        let longest = format!(r#","elapsedSeconds":{MAX_CALL_SECONDS}"#);
+        assert_eq!(elapsed(read(&call(&longest))), Some(MAX_CALL_SECONDS));
     }
 }

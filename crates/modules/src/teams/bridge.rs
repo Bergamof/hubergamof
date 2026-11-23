@@ -56,13 +56,23 @@ pub struct CallState {
 
 /// The duration of a call, kept as a moment and a number of seconds so that
 /// it can be read at any time without a report from Teams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct CallClock {
     /// Seconds of the call at `since`.
     seconds: u64,
     /// When `seconds` was read.
     since: tokio::time::Instant,
 }
+
+/// Two clocks are equal when they read the same second now: a report that
+/// agrees with the count is not a change of state.
+impl PartialEq for CallClock {
+    fn eq(&self, other: &Self) -> bool {
+        self.seconds() == other.seconds()
+    }
+}
+
+impl Eq for CallClock {}
 
 impl CallClock {
     /// A call that lasted `seconds` just now.
@@ -73,10 +83,11 @@ impl CallClock {
         }
     }
 
-    /// Whole seconds of the call now.
+    /// Whole seconds of the call now. Each report of Teams sets the clock
+    /// again, so the count may jump by a second when Teams and it disagree.
     #[must_use]
     pub fn seconds(&self) -> u64 {
-        self.seconds + self.since.elapsed().as_secs()
+        self.seconds.saturating_add(self.since.elapsed().as_secs())
     }
 }
 
