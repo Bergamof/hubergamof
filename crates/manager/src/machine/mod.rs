@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use hubergamof_protocol::{ErrorCode, MachineConfig, SystemAlias};
 use thiserror::Error;
-use tokio::sync::broadcast;
+use tokio::sync::{Semaphore, broadcast};
 
 pub use aliases::UnwritableAlias;
 pub use shell::{
@@ -80,6 +80,9 @@ struct Inner {
     /// One update at a time, so that what reaches the clients follows the
     /// order of the revisions.
     turn: Mutex<()>,
+    /// One request at a time reaches the blocking threads, that the renderer
+    /// and the store share: a client sending them in a burst waits its turn.
+    requests: Semaphore,
 }
 
 /// The one place that reads and changes the machine.
@@ -108,6 +111,7 @@ impl MachineHub {
                 shell,
                 changes,
                 turn: Mutex::new(()),
+                requests: Semaphore::new(1),
             }),
         }
     }
@@ -136,6 +140,7 @@ impl MachineHub {
     /// # Errors
     /// [`MachineError::Store`] when the configuration cannot be read.
     pub async fn refresh(&self) -> Result<MachineSnapshot, MachineError> {
+        let _request = self.request_slot().await;
         let inner = Arc::clone(&self.inner);
         run_blocking(move || {
             let config = inner.store.load_machine()?.config;
@@ -155,8 +160,18 @@ impl MachineHub {
     /// changed), or [`MachineError::Shell`] / [`MachineError::NoHome`]
     /// (saved, not applied).
     pub async fn update(&self, config: MachineConfig) -> Result<(), MachineError> {
+        let _request = self.request_slot().await;
         let inner = Arc::clone(&self.inner);
         run_blocking(move || inner.update(config)).await
+    }
+
+    async fn request_slot(&self) -> tokio::sync::SemaphorePermit<'_> {
+        // The semaphore lives as long as the hub and is never closed.
+        self.inner
+            .requests
+            .acquire()
+            .await
+            .unwrap_or_else(|_| unreachable!("the request semaphore is never closed"))
     }
 }
 

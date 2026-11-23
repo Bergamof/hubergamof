@@ -10,7 +10,7 @@
 
 use std::fs::{self, OpenOptions, Permissions};
 use std::io::{self, Read as _, Write as _};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use hubergamof_protocol::{ShellAlias, SystemAlias};
@@ -42,8 +42,9 @@ const MANAGED_FILE_MODE: u32 = 0o600;
 /// Permissions of the folder holding it.
 const MANAGED_DIR_MODE: u32 = 0o700;
 
-/// Permission bits kept when a file is rewritten (setuid and friends included).
-const MODE_MASK: u32 = 0o7777;
+/// Permission bits kept when a file is rewritten: setuid, setgid and sticky
+/// are not copied onto the new file.
+const MODE_MASK: u32 = 0o777;
 
 /// Why the shell files could not be read or written.
 #[derive(Debug, Error)]
@@ -59,6 +60,10 @@ pub enum ShellError {
     /// The path is not a regular file (or, for the managed folder, a folder).
     #[error("{0} is not a regular file")]
     NotRegular(PathBuf),
+    /// Another name links to the same file: replacing it would only change
+    /// one of them.
+    #[error("{0} has other hard links")]
+    HardLinked(PathBuf),
     /// The file is larger than [`MAX_STARTUP_FILE_BYTES`].
     #[error("{0} is larger than {MAX_STARTUP_FILE_BYTES} bytes")]
     TooLarge(PathBuf),
@@ -143,8 +148,10 @@ impl MachineShell {
     pub fn apply(&self, aliases: &[ShellAlias]) -> Result<(), ShellError> {
         let enabled: Vec<&ShellAlias> = aliases.iter().filter(|alias| alias.enabled).collect();
         if enabled.is_empty() {
-            self.update_blocks(without_block)?;
-            return self.remove_managed_file();
+            // The file first: a startup file that cannot be rewritten must not
+            // leave the removed aliases loaded by the other one.
+            self.remove_managed_file()?;
+            return self.update_blocks(without_block);
         }
         let content = render_managed_file(&enabled)?;
         self.write_managed_file(&content)?;
@@ -214,7 +221,13 @@ fn update_startup_file(
     path: &Path,
     change: fn(&str) -> Result<String, UnterminatedBlock>,
 ) -> Result<(), ShellError> {
-    let Some(bytes) = read_startup_file(path)? else {
+    // Resolved once: what is read is what is written, even if the link moves.
+    let target = match fs::canonicalize(path) {
+        Ok(target) => target,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(io_error(path, error)),
+    };
+    let Some(bytes) = read_startup_file(&target)? else {
         return Ok(());
     };
     let content = String::from_utf8(bytes).map_err(|_| ShellError::NotUtf8(path.to_owned()))?;
@@ -223,12 +236,11 @@ fn update_startup_file(
     if updated == content {
         return Ok(());
     }
-    let target = fs::canonicalize(path).map_err(|error| io_error(path, error))?;
-    let mode = fs::metadata(&target)
-        .map_err(|error| io_error(&target, error))?
-        .permissions()
-        .mode()
-        & MODE_MASK;
+    let metadata = fs::metadata(&target).map_err(|error| io_error(&target, error))?;
+    if metadata.nlink() > 1 {
+        return Err(ShellError::HardLinked(target));
+    }
+    let mode = metadata.permissions().mode() & MODE_MASK;
     write_replacing(&target, updated.as_bytes(), mode)
 }
 
@@ -443,6 +455,44 @@ mod tests {
         let error = shell.apply(&[alias("a", "ls", true)]).unwrap_err();
         assert!(matches!(error, ShellError::BrokenBlock(_)), "{error}");
         assert_eq!(read(&dir, ".bashrc"), damaged);
+    }
+
+    #[test]
+    fn disabling_everything_removes_the_file_even_when_a_startup_file_is_damaged() {
+        let (dir, shell) = home();
+        shell.apply(&[alias("a", "ls", true)]).unwrap();
+        fs::write(
+            dir.path().join(".bashrc"),
+            "# >>> hubergamof aliases >>>\nno end\n",
+        )
+        .unwrap();
+        let error = shell.apply(&[alias("a", "ls", false)]).unwrap_err();
+        assert!(matches!(error, ShellError::BrokenBlock(_)), "{error}");
+        assert!(!dir.path().join(MANAGED_FILE).exists());
+    }
+
+    #[test]
+    fn a_startup_file_with_other_hard_links_is_left_untouched() {
+        let (dir, shell) = home();
+        let original = dir.path().join("elsewhere");
+        fs::write(&original, "export A=1\n").unwrap();
+        fs::hard_link(&original, dir.path().join(".bashrc")).unwrap();
+        let error = shell.apply(&[alias("a", "ls", true)]).unwrap_err();
+        assert!(matches!(error, ShellError::HardLinked(_)), "{error}");
+        assert_eq!(read(&dir, ".bashrc"), "export A=1\n");
+    }
+
+    #[test]
+    fn special_mode_bits_are_not_copied_onto_a_rewritten_file() {
+        let (dir, shell) = home();
+        let path = dir.path().join(".bashrc");
+        fs::write(&path, "export A=1\n").unwrap();
+        fs::set_permissions(&path, Permissions::from_mode(0o4755)).unwrap();
+        shell.apply(&[alias("a", "ls", true)]).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
     }
 
     #[test]

@@ -106,6 +106,17 @@ pub fn is_valid_alias_name(name: &str) -> bool {
 /// which the interface runs on; both must agree on what a blank command is.
 const BYTE_ORDER_MARK: char = '\u{FEFF}';
 
+/// Characters that show nothing or reorder the text around them: a command
+/// containing one reads as something other than what it runs (the same set as
+/// the interface, `alias-validation.ts`).
+fn is_invisible(c: char) -> bool {
+    matches!(c,
+        '\u{200B}'..='\u{200F}'
+        | '\u{2028}'..='\u{202E}'
+        | '\u{2060}'..='\u{206F}'
+        | BYTE_ORDER_MARK)
+}
+
 fn is_blank(command: &str) -> bool {
     command
         .chars()
@@ -117,7 +128,7 @@ fn is_blank(command: &str) -> bool {
 pub fn is_valid_alias_command(command: &str) -> bool {
     !is_blank(command)
         && command.chars().count() <= MAX_ALIAS_COMMAND_CHARS
-        && !command.chars().any(char::is_control)
+        && !command.chars().any(|c| c.is_control() || is_invisible(c))
 }
 
 impl MachineConfig {
@@ -235,6 +246,20 @@ mod tests {
             assert!(!is_valid_alias_command(blank), "{blank:?}");
         }
         assert!(is_valid_alias_command(" ls "));
+    }
+
+    #[test]
+    fn invisible_and_bidirectional_characters_are_refused_in_commands() {
+        for bad in [
+            "ls\u{202E}",
+            "a\u{2028}b",
+            "a\u{200B}b",
+            "a\u{2066}b",
+            "a\u{FEFF}b",
+        ] {
+            assert!(!is_valid_alias_command(bad), "{bad:?}");
+        }
+        assert!(is_valid_alias_command("echo é ✓"));
     }
 
     #[test]
