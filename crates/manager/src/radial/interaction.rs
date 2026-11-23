@@ -10,6 +10,8 @@
 
 use std::time::Duration;
 
+use super::geometry::Hit;
+
 /// What reaches the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
@@ -24,8 +26,9 @@ pub enum Input {
         /// When, on the same clock as the presses.
         at: Duration,
     },
-    /// The pointer is on this petal, or on none (`None`: in the void).
-    Over(Option<usize>),
+    /// The pointer is on this petal or on one of its actions, or on none
+    /// (`None`: in the void).
+    Over(Option<Hit>),
     /// Another button is clicked while the menu is open.
     Click,
     /// The person gives up.
@@ -37,10 +40,11 @@ pub enum Input {
 pub enum Output {
     /// Show the menu.
     Opened,
-    /// Highlight this petal, or none.
-    Hovered(Option<usize>),
-    /// This petal is chosen: carry out its entry and hide the menu.
-    Chosen(usize),
+    /// Highlight this petal or action, or none.
+    Hovered(Option<Hit>),
+    /// This petal is chosen (its primary action), or one of its actions: carry
+    /// it out and hide the menu.
+    Chosen(Hit),
     /// Hide the menu, nothing chosen.
     Closed,
 }
@@ -61,7 +65,7 @@ enum Phase {
 pub struct Menu {
     hold: Duration,
     phase: Phase,
-    hovered: Option<usize>,
+    hovered: Option<Hit>,
 }
 
 impl Menu {
@@ -81,9 +85,9 @@ impl Menu {
         self.phase != Phase::Closed
     }
 
-    /// The petal under the pointer, if any.
+    /// What is under the pointer, if anything.
     #[must_use]
-    pub const fn hovered(&self) -> Option<usize> {
+    pub const fn hovered(&self) -> Option<Hit> {
         self.hovered
     }
 
@@ -110,7 +114,7 @@ impl Menu {
                 }
             }
             (Phase::Staying, Input::Press { .. }) | (_, Input::Click) => Some(self.finish()),
-            (_, Input::Over(petal)) => self.hover(petal),
+            (_, Input::Over(hit)) => self.hover(hit),
             (_, Input::Escape) => Some(self.close()),
             // A second press while the button is down, a release of a button
             // that stays open: nothing to do.
@@ -121,14 +125,14 @@ impl Menu {
         }
     }
 
-    fn hover(&mut self, petal: Option<usize>) -> Option<Output> {
-        (self.hovered != petal).then(|| {
-            self.hovered = petal;
-            Output::Hovered(petal)
+    fn hover(&mut self, hit: Option<Hit>) -> Option<Output> {
+        (self.hovered != hit).then(|| {
+            self.hovered = hit;
+            Output::Hovered(hit)
         })
     }
 
-    /// Chooses the petal under the pointer, or closes in the void.
+    /// Chooses what is under the pointer, or closes in the void.
     fn finish(&mut self) -> Output {
         let chosen = self.hovered;
         self.close();
@@ -178,7 +182,7 @@ mod tests {
         let mut menu = Menu::new(HOLD);
         for input in [
             release(10),
-            Input::Over(Some(1)),
+            Input::Over(Some(Hit::Petal(1))),
             Input::Click,
             Input::Escape,
         ] {
@@ -191,10 +195,10 @@ mod tests {
     fn the_pointer_is_reported_only_when_it_changes_petal() {
         let mut menu = open_menu();
         assert_eq!(
-            menu.handle(Input::Over(Some(2))),
-            Some(Output::Hovered(Some(2)))
+            menu.handle(Input::Over(Some(Hit::Petal(2)))),
+            Some(Output::Hovered(Some(Hit::Petal(2))))
         );
-        assert_eq!(menu.handle(Input::Over(Some(2))), None);
+        assert_eq!(menu.handle(Input::Over(Some(Hit::Petal(2)))), None);
         assert_eq!(menu.handle(Input::Over(None)), Some(Output::Hovered(None)));
         assert_eq!(menu.handle(Input::Over(None)), None);
     }
@@ -202,15 +206,18 @@ mod tests {
     #[test]
     fn held_long_enough_releasing_on_a_petal_chooses_it() {
         let mut menu = open_menu();
-        menu.handle(Input::Over(Some(1)));
-        assert_eq!(menu.handle(release(280)), Some(Output::Chosen(1)));
+        menu.handle(Input::Over(Some(Hit::Petal(1))));
+        assert_eq!(
+            menu.handle(release(280)),
+            Some(Output::Chosen(Hit::Petal(1)))
+        );
         assert!(!menu.is_open());
     }
 
     #[test]
     fn held_long_enough_releasing_in_the_void_closes_the_menu() {
         let mut menu = open_menu();
-        menu.handle(Input::Over(Some(1)));
+        menu.handle(Input::Over(Some(Hit::Petal(1))));
         menu.handle(Input::Over(None));
         assert_eq!(menu.handle(release(900)), Some(Output::Closed));
         assert!(!menu.is_open());
@@ -219,7 +226,7 @@ mod tests {
     #[test]
     fn released_early_the_menu_stays_open_even_on_a_petal() {
         let mut menu = open_menu();
-        menu.handle(Input::Over(Some(1)));
+        menu.handle(Input::Over(Some(Hit::Petal(1))));
         assert_eq!(menu.handle(release(279)), None);
         assert!(menu.is_open());
     }
@@ -228,8 +235,11 @@ mod tests {
     fn a_menu_that_stays_open_chooses_on_a_click_on_a_petal() {
         let mut menu = open_menu();
         menu.handle(release(100));
-        menu.handle(Input::Over(Some(3)));
-        assert_eq!(menu.handle(Input::Click), Some(Output::Chosen(3)));
+        menu.handle(Input::Over(Some(Hit::Petal(3))));
+        assert_eq!(
+            menu.handle(Input::Click),
+            Some(Output::Chosen(Hit::Petal(3)))
+        );
         assert!(!menu.is_open());
     }
 
@@ -237,7 +247,7 @@ mod tests {
     fn a_menu_that_stays_open_closes_on_a_click_in_the_void() {
         let mut menu = open_menu();
         menu.handle(release(100));
-        menu.handle(Input::Over(Some(3)));
+        menu.handle(Input::Over(Some(Hit::Petal(3))));
         menu.handle(Input::Over(None));
         assert_eq!(menu.handle(Input::Click), Some(Output::Closed));
     }
@@ -246,8 +256,8 @@ mod tests {
     fn pressing_the_opening_button_again_counts_as_a_click() {
         let mut menu = open_menu();
         menu.handle(release(100));
-        menu.handle(Input::Over(Some(0)));
-        assert_eq!(menu.handle(press(500)), Some(Output::Chosen(0)));
+        menu.handle(Input::Over(Some(Hit::Petal(0))));
+        assert_eq!(menu.handle(press(500)), Some(Output::Chosen(Hit::Petal(0))));
         assert!(!menu.is_open());
     }
 
@@ -258,7 +268,7 @@ mod tests {
             if released_early {
                 menu.handle(release(100));
             }
-            menu.handle(Input::Over(Some(2)));
+            menu.handle(Input::Over(Some(Hit::Petal(2))));
             assert_eq!(menu.handle(Input::Escape), Some(Output::Closed));
             assert!(!menu.is_open());
             assert_eq!(menu.hovered(), None);
@@ -268,14 +278,17 @@ mod tests {
     #[test]
     fn a_click_while_the_button_is_still_down_chooses_too() {
         let mut menu = open_menu();
-        menu.handle(Input::Over(Some(1)));
-        assert_eq!(menu.handle(Input::Click), Some(Output::Chosen(1)));
+        menu.handle(Input::Over(Some(Hit::Petal(1))));
+        assert_eq!(
+            menu.handle(Input::Click),
+            Some(Output::Chosen(Hit::Petal(1)))
+        );
     }
 
     #[test]
     fn the_menu_opens_again_after_it_closed_with_nothing_kept() {
         let mut menu = open_menu();
-        menu.handle(Input::Over(Some(1)));
+        menu.handle(Input::Over(Some(Hit::Petal(1))));
         menu.handle(release(400));
         assert_eq!(menu.handle(press(1000)), Some(Output::Opened));
         assert_eq!(menu.hovered(), None);
@@ -286,12 +299,57 @@ mod tests {
         let mut menu = Menu::new(HOLD);
         menu.set_hold(at(500));
         menu.handle(press(0));
-        menu.handle(Input::Over(Some(0)));
+        menu.handle(Input::Over(Some(Hit::Petal(0))));
         assert_eq!(
             menu.handle(release(400)),
             None,
             "shorter than 500: it stays"
         );
+    }
+
+    const ACTION: Hit = Hit::Item { petal: 1, item: 2 };
+
+    #[test]
+    fn moving_from_the_petal_to_one_of_its_actions_is_a_change() {
+        let mut menu = open_menu();
+        menu.handle(Input::Over(Some(Hit::Petal(1))));
+        assert_eq!(
+            menu.handle(Input::Over(Some(ACTION))),
+            Some(Output::Hovered(Some(ACTION)))
+        );
+        assert_eq!(menu.handle(Input::Over(Some(ACTION))), None);
+        assert_eq!(menu.hovered(), Some(ACTION));
+        let next = Hit::Item { petal: 1, item: 3 };
+        assert_eq!(
+            menu.handle(Input::Over(Some(next))),
+            Some(Output::Hovered(Some(next)))
+        );
+    }
+
+    #[test]
+    fn held_long_enough_releasing_on_an_action_chooses_it() {
+        let mut menu = open_menu();
+        menu.handle(Input::Over(Some(ACTION)));
+        assert_eq!(menu.handle(release(400)), Some(Output::Chosen(ACTION)));
+        assert!(!menu.is_open());
+    }
+
+    #[test]
+    fn a_menu_that_stays_open_chooses_an_action_on_a_click() {
+        let mut menu = open_menu();
+        menu.handle(release(100));
+        menu.handle(Input::Over(Some(ACTION)));
+        assert_eq!(menu.handle(Input::Click), Some(Output::Chosen(ACTION)));
+        assert_eq!(menu.hovered(), None);
+    }
+
+    #[test]
+    fn leaving_an_action_for_the_void_then_clicking_closes() {
+        let mut menu = open_menu();
+        menu.handle(release(100));
+        menu.handle(Input::Over(Some(ACTION)));
+        menu.handle(Input::Over(None));
+        assert_eq!(menu.handle(Input::Click), Some(Output::Closed));
     }
 
     #[test]
