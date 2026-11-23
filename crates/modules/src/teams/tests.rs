@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use hubergamof_module_api::testing::TestContext;
-use hubergamof_module_api::{Command, Feedback, KeyState, Notification, NotificationId, TaskScope};
+use hubergamof_module_api::{
+    Command, Feedback, KeyState, MAX_RADIAL_ITEMS, Notification, NotificationId, TaskScope,
+};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -1169,4 +1171,184 @@ async fn the_unread_count_growing_raises_the_haptic_event_and_shrinking_does_not
     assert!(!read.contains(&Command::haptic("new-message")));
     let none = harness.report(BrowserReport::Unread { count: 0 }).await;
     assert!(!none.contains(&Command::haptic("new-message")));
+}
+
+fn radial_summary(harness: &Harness) -> Vec<(String, String, Option<String>, RadialItemState)> {
+    harness
+        .module
+        .radial_items()
+        .into_iter()
+        .map(|item| (item.id, item.label, item.badge, item.state))
+        .collect()
+}
+
+fn radial_ids(harness: &Harness) -> Vec<String> {
+    harness
+        .module
+        .radial_items()
+        .into_iter()
+        .map(|item| item.id)
+        .collect()
+}
+
+#[tokio::test]
+async fn the_petal_offers_the_panels_with_their_counts_out_of_a_call() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    assert_eq!(radial_ids(&harness), ["conversations", "activity"]);
+    assert!(
+        harness
+            .module
+            .radial_items()
+            .iter()
+            .all(|item| item.badge.is_none())
+    );
+
+    harness
+        .report(BrowserReport::Badges {
+            activity: 4,
+            chats: 120,
+        })
+        .await;
+    let items = harness.module.radial_items();
+    assert_eq!(items[0].glyph, RadialGlyph::Chat);
+    assert_eq!(items[0].badge.as_deref(), Some("99+"));
+    assert_eq!(items[1].glyph, RadialGlyph::Bell);
+    assert_eq!(items[1].badge.as_deref(), Some("4"));
+    assert!(items.iter().all(|i| i.state == RadialItemState::Normal));
+}
+
+#[tokio::test]
+async fn the_petal_adds_the_call_controls_during_a_call_only() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    let ringing = BrowserReport::Call {
+        phase: CallPhase::Ringing,
+        muted: None,
+        camera_on: None,
+        caller: Some("Camille".into()),
+    };
+    harness.report(ringing).await;
+    assert_eq!(radial_ids(&harness), ["conversations", "activity"]);
+
+    harness.in_call().await;
+    let plain = |id: &str, label: &str, state| (id.to_owned(), label.to_owned(), None, state);
+    assert_eq!(
+        radial_summary(&harness)[2..],
+        [
+            plain("mute", "Couper le micro", RadialItemState::Normal),
+            plain("camera", "Activer la caméra", RadialItemState::Off),
+            plain("hang-up", "Raccrocher", RadialItemState::Normal),
+            plain(
+                "return-to-call",
+                "Retour à l'appel",
+                RadialItemState::Normal
+            ),
+        ]
+    );
+    assert_eq!(radial_ids(&harness).len(), 6);
+}
+
+#[tokio::test]
+async fn the_petal_shows_a_muted_microphone_then_loses_the_call_controls() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::InCall,
+            muted: Some(true),
+            camera_on: Some(true),
+            caller: None,
+        })
+        .await;
+    let items = harness.module.radial_items();
+    assert_eq!(items[2].label, "Rétablir le micro");
+    assert_eq!(items[2].state, RadialItemState::Off);
+    assert_eq!(items[3].label, "Couper la caméra");
+    assert_eq!(items[3].state, RadialItemState::Normal);
+
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Idle,
+            muted: None,
+            camera_on: None,
+            caller: None,
+        })
+        .await;
+    assert_eq!(radial_ids(&harness), ["conversations", "activity"]);
+}
+
+#[tokio::test]
+async fn the_petal_offers_nothing_without_an_extension() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.in_call().await;
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    assert_eq!(harness.module.radial_items(), []);
+}
+
+#[test]
+fn every_item_of_the_petal_is_an_action_of_the_catalogue() {
+    let catalogue: Vec<String> = TeamsFactory::new(Arc::new(SimulatedBridge::new()), hub())
+        .radial_actions()
+        .into_iter()
+        .map(|action| action.id)
+        .collect();
+    let mut in_call = TeamsState::fresh(true);
+    in_call.call.phase = CallPhase::InCall;
+    let items = radial_items(&in_call);
+    assert!(items.len() <= MAX_RADIAL_ITEMS);
+    for item in items {
+        assert!(catalogue.contains(&item.id), "{}", item.id);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_panel_actions_of_the_menu_show_the_panel_and_bring_teams_forward() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.module.on_radial_action("conversations").await, []);
+    assert_eq!(harness.module.on_radial_action("activity").await, []);
+    assert_eq!(
+        harness.bridge.opened_panels(),
+        [Panel::Chat, Panel::Activity]
+    );
+    harness.settle_desktop().await;
+    assert_eq!(
+        harness.desktop.activations(),
+        [WindowId("teams".into()), WindowId("teams".into())]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_return_to_call_action_of_the_menu_asks_teams_and_brings_it_forward() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.in_call().await;
+    harness.desktop.set_windows(vec![teams_window()]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.module.on_radial_action("return-to-call").await, []);
+    assert_eq!(harness.bridge.requests(), [CallAction::ReturnToCall]);
+    harness.settle_desktop().await;
+    assert_eq!(harness.desktop.activations(), [WindowId("teams".into())]);
+}
+
+#[tokio::test]
+async fn the_navigation_actions_of_the_menu_do_nothing_when_locked_and_alert_without_extension() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.locked.store(true, Ordering::SeqCst);
+    for action in ["conversations", "activity", "return-to-call"] {
+        assert_eq!(
+            harness.module.on_radial_action(action).await,
+            [],
+            "{action}"
+        );
+    }
+    assert_eq!(harness.bridge.opened_panels(), []);
+    assert_eq!(harness.bridge.requests(), []);
+
+    harness.locked.store(false, Ordering::SeqCst);
+    harness.bridge.set_connected(false);
+    harness.next_event().await;
+    assert_eq!(
+        harness.module.on_radial_action("activity").await,
+        Command::alert()
+    );
 }
