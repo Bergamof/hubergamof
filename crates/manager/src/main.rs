@@ -18,7 +18,7 @@ use hubergamof_manager::config_store::ConfigStore;
 use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::device::{self, DeviceDiscovery};
-use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor};
+use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor, first_radial_items};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
@@ -29,7 +29,7 @@ use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
 use hubergamof_manager::radial::{
     self,
     actions::ModuleActions,
-    looks::{Looks, Statuses},
+    looks::{Items, Looks, Statuses},
     service::{Presentation, RadialService},
 };
 use hubergamof_manager::render::Renderer;
@@ -727,6 +727,14 @@ fn petal_statuses(host: &ModuleHost) -> Statuses {
     })
 }
 
+/// What the modules offer around their petals in the menu: a device that
+/// holds the module first, the application otherwise, like the actions.
+fn petal_items(engines: &EngineRegistry, host: &ModuleHost) -> Items {
+    let engines = engines.clone();
+    let host = host.clone();
+    Items::new(move |kind| first_radial_items(&engines, &host, kind))
+}
+
 /// The mouse hub, and the mice it lists: the real ones unless `--no-mice`, a simulated one with `--demo`.
 fn start_mouse_service(
     cli: &Cli,
@@ -775,15 +783,19 @@ fn start_served_mice(
                 &tokio::runtime::Handle::current(),
                 Arc::clone(&services.registry),
             );
-            move |entry| {
+            move |entry, action| {
                 // The action runs on its own: the menu does not wait for it.
-                let _ = module_actions.run(entry);
+                let _ = match action {
+                    Some(action) => module_actions.run_action(&entry.module, action),
+                    None => module_actions.run(entry),
+                };
             }
         },
         Presentation {
             feel: Arc::new(hub.clone()),
             looks: Looks::of_modules(&services.registry, &services.renderer),
             statuses: petal_statuses(host),
+            items: petal_items(engines, host),
         },
     );
     let actions = actions.with_radial(menu.handle());
