@@ -99,22 +99,6 @@ pub(super) fn without_block(content: &str) -> Result<String, UnterminatedBlock> 
     Ok(kept)
 }
 
-/// Lines of `content` outside every block, for reading what the user wrote.
-pub(super) fn outside_blocks(content: &str) -> impl Iterator<Item = &str> {
-    let mut inside = false;
-    content.lines().filter(move |line| {
-        match (line.trim_end(), inside) {
-            (BLOCK_START, _) => inside = true,
-            (BLOCK_END, true) => {
-                inside = false;
-                return false;
-            }
-            _ => {}
-        }
-        !inside
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,11 +161,5 @@ mod tests {
     fn windows_line_endings_are_recognised() {
         let content = format!("a\r\n{BLOCK_START}\r\nx\r\n{BLOCK_END}\r\n");
         assert_eq!(without_block(&content).unwrap(), "a\r\n");
-    }
-
-    #[test]
-    fn lines_outside_the_block_are_listed() {
-        let content = format!("a\n{}b\n", block());
-        assert_eq!(outside_blocks(&content).collect::<Vec<_>>(), ["a", "b"]);
     }
 }

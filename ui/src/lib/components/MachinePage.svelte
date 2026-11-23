@@ -118,8 +118,9 @@ whether the manager has saved it.
 			<code class="font-mono">~/.bash_aliases</code> et
 			<code class="font-mono">~/.zsh_aliases</code>
 			sont lus, au moment où cette page s’ouvre. « Intégrer » ajoute l’alias à la configuration, activé,
-			et commente sa ligne d’origine (préfixe <code class="font-mono">#hubergamof-off#</code>) ;
-			supprimer l’alias de la configuration la rétablit.
+			et commente sa ligne d’origine (préfixe <code class="font-mono">: #hubergamof-off#</code>) ;
+			supprimer l’alias de la configuration la rétablit. Un alias de ce formulaire fait de même pour
+			un alias de même nom déjà présent.
 		</p>
 		{#if config}
 			<SystemAliasList

@@ -167,12 +167,19 @@ impl MachineShell {
 
     fn claim_originals(&self, aliases: &[ShellAlias]) -> Result<(), ShellError> {
         let names: HashSet<&str> = aliases.iter().map(|alias| alias.name.as_str()).collect();
+        // Every file is tried: one that cannot be rewritten must not keep the
+        // others from being; the first failure is reported at the end.
+        let mut first_failure = None;
         for relative in STARTUP_FILES {
-            update_startup_file(&self.home.join(relative), |content| {
+            let outcome = update_startup_file(&self.home.join(relative), |content| {
                 Ok(claim_originals(content, &names))
-            })?;
+            });
+            if let Err(error) = outcome {
+                tracing::warn!(%error, "startup file not updated");
+                first_failure.get_or_insert(error);
+            }
         }
-        Ok(())
+        first_failure.map_or(Ok(()), Err)
     }
 
     fn update_blocks(
@@ -586,10 +593,10 @@ mod tests {
         fs::write(dir.path().join(".bash_aliases"), "alias ll=other\n").unwrap();
         shell.apply(&[alias("ll", "ls -la", true)]).unwrap();
         let bashrc = read(&dir, ".bashrc");
-        assert!(bashrc.starts_with("#hubergamof-off# alias ll='ls -la'\nexport A=1\n"));
+        assert!(bashrc.starts_with(": #hubergamof-off# alias ll='ls -la'\nexport A=1\n"));
         assert_eq!(
             read(&dir, ".bash_aliases"),
-            "#hubergamof-off# alias ll=other\n"
+            ": #hubergamof-off# alias ll=other\n"
         );
         assert!(read(&dir, ".config/hubergamof/aliases.sh").contains("alias ll='ls -la'"));
         assert_eq!(shell.read_system_aliases(), []);
@@ -600,7 +607,7 @@ mod tests {
         let (dir, shell) = home();
         fs::write(dir.path().join(".bashrc"), "alias ll=ls\n").unwrap();
         shell.apply(&[alias("ll", "ls", false)]).unwrap();
-        assert!(read(&dir, ".bashrc").starts_with("#hubergamof-off# alias ll=ls\n"));
+        assert!(read(&dir, ".bashrc").starts_with(": #hubergamof-off# alias ll=ls\n"));
         assert!(!dir.path().join(MANAGED_FILE).exists());
         shell.apply(&[alias("ll", "ls", true)]).unwrap();
         assert!(read(&dir, ".config/hubergamof/aliases.sh").contains("alias ll='ls'"));
@@ -624,5 +631,42 @@ mod tests {
         let before = fs::metadata(&path).unwrap().modified().unwrap();
         shell.apply(&[alias("ll", "ls", true)]).unwrap();
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_rewritten_does_not_keep_the_others_from_being() {
+        let (dir, shell) = home();
+        fs::write(dir.path().join(".bash_aliases"), [0xff, b'\n']).unwrap();
+        fs::write(dir.path().join(".zsh_aliases"), "alias ll=ls\n").unwrap();
+        let error = shell.apply(&[alias("ll", "ls", true)]).unwrap_err();
+        assert!(matches!(error, ShellError::NotUtf8(_)), "{error}");
+        assert_eq!(
+            read(&dir, ".zsh_aliases"),
+            ": #hubergamof-off# alias ll=ls\n"
+        );
+    }
+
+    #[test]
+    fn a_startup_file_stays_valid_for_a_real_shell_after_claiming_a_definition_in_a_body() {
+        let (dir, shell) = home();
+        let content = "if true; then\n  alias ll=ls\nfi\nf() {\n  alias g=git\n}\nfor i in 1; do\n  alias h=ls\ndone\n";
+        fs::write(dir.path().join(".bashrc"), content).unwrap();
+        let aliases = [
+            alias("ll", "ls", true),
+            alias("g", "git", true),
+            alias("h", "ls", false),
+        ];
+        shell.apply(&aliases).unwrap();
+        assert!(read(&dir, ".bashrc").contains(": #hubergamof-off#"));
+        let checked = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(dir.path().join(".bashrc"))
+            .output()
+            .unwrap();
+        assert!(
+            checked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&checked.stderr)
+        );
     }
 }
