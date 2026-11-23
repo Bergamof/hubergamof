@@ -295,6 +295,8 @@ async fn the_project_page_shows_its_actions_then_its_containers() {
     let harness = Harness::start(&json!({})).await;
     let page = harness.page(SHOP).unwrap();
     assert_eq!(page.title, "boutique");
+    // The four action keys stay in place while the containers scroll.
+    assert_eq!(page.pinned_items, 4);
     let items: Vec<_> = harness
         .items(SHOP)
         .into_iter()
