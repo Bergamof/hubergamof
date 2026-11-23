@@ -237,21 +237,6 @@ impl ModuleFactory for TeamsFactory {
     fn radial_actions(&self) -> Vec<RadialActionDescriptor> {
         vec![
             RadialActionDescriptor::new(
-                RADIAL_CONVERSATIONS,
-                "Conversations Teams",
-                "Affiche les conversations dans Teams et le met au premier plan.",
-            ),
-            RadialActionDescriptor::new(
-                RADIAL_ACTIVITY,
-                "Activité Teams",
-                "Affiche l'activité dans Teams et le met au premier plan.",
-            ),
-            RadialActionDescriptor::new(
-                RADIAL_RETURN_TO_CALL,
-                "Revenir à l'appel Teams",
-                "Ramène l'appel Teams en cours au premier plan.",
-            ),
-            RadialActionDescriptor::new(
                 RADIAL_MUTE,
                 "Micro de l'appel Teams : couper ou rétablir",
                 "Bascule le micro de l'appel Teams en cours.",
@@ -265,6 +250,21 @@ impl ModuleFactory for TeamsFactory {
                 RADIAL_HANG_UP,
                 "Raccrocher",
                 "Met fin à l'appel Teams en cours.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_CONVERSATIONS,
+                "Conversations Teams",
+                "Affiche les conversations dans Teams et le met au premier plan.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_ACTIVITY,
+                "Activité Teams",
+                "Affiche l'activité dans Teams et le met au premier plan.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_RETURN_TO_CALL,
+                "Revenir à l'appel Teams",
+                "Ramène l'appel Teams en cours au premier plan.",
             ),
         ]
     }
