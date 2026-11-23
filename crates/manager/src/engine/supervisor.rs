@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use hubergamof_module_api::RadialItem;
+use hubergamof_protocol::ModuleKind;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{oneshot, watch};
 use tokio::task::{JoinError, JoinHandle, JoinSet};
@@ -54,6 +56,24 @@ impl EngineRegistry {
     fn insert(&self, handle: EngineHandle) {
         self.lock().insert(handle.info().serial.clone(), handle);
         self.changes.send_replace(());
+    }
+
+    /// Items of the petal of `kind` according to the first device, in serial
+    /// order, that holds the module; `None` when no device does. See
+    /// [`first_radial_items`](super::first_radial_items) for the combined
+    /// read the menu uses.
+    #[must_use]
+    pub fn radial_items_of_holder(&self, kind: &ModuleKind) -> Option<Vec<RadialItem>> {
+        self.lock()
+            .values()
+            .find_map(|handle| handle.radial_items(kind))
+    }
+
+    /// Items of the petal of `kind` on the first device that holds the
+    /// module, empty when none does.
+    #[must_use]
+    pub fn radial_items(&self, kind: &ModuleKind) -> Vec<RadialItem> {
+        self.radial_items_of_holder(kind).unwrap_or_default()
     }
 
     /// Removes the engine `id` of `serial`, unless a newer engine replaced it.
@@ -243,6 +263,7 @@ mod tests {
     use crate::config_store::default_config;
     use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
     use crate::engine::LiveSnapshot;
+    use crate::engine::radial_items::RadialItemsByKind;
 
     fn handle() -> EngineHandle {
         let info = virtual_plus_info(DEMO_SERIAL);
@@ -250,7 +271,8 @@ mod tests {
         let (requests, _) = mpsc::channel(1);
         let (_, live) = watch::channel(LiveSnapshot::empty(DEMO_SERIAL));
         let (_, config) = watch::channel(config);
-        EngineHandle::new(info, requests, live, config)
+        let (_, radial_items) = watch::channel(RadialItemsByKind::new());
+        EngineHandle::new(info, requests, live, config, radial_items)
     }
 
     #[test]

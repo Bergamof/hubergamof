@@ -6,6 +6,7 @@ mod modules;
 mod notifications;
 mod pages;
 mod radial;
+mod radial_items;
 mod strip;
 mod supervisor;
 mod support;
