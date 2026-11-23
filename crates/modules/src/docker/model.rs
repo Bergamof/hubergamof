@@ -582,6 +582,21 @@ mod tests {
     }
 
     #[test]
+    fn a_failing_health_check_outranks_the_transitional_states() {
+        use ContainerStatus::*;
+        for status in [Paused, Stopping, Removing, Restarting] {
+            let unhealthy = with_health(container("c", status, None), Health::Unhealthy);
+            assert_eq!(unhealthy.status_rank(), StatusRank::Attention, "{status:?}");
+        }
+        let restarting = with_health(container("c", Restarting, None), Health::Starting);
+        assert_eq!(restarting.status_rank(), StatusRank::Attention);
+        let created = with_health(container("c", Created, None), Health::Starting);
+        assert_eq!(created.status_rank(), StatusRank::Stopped);
+        let unknown = with_health(container("c", Unknown, None), Health::Healthy);
+        assert_eq!(unknown.status_rank(), StatusRank::Unknown);
+    }
+
+    #[test]
     fn ranks_are_in_listing_order() {
         assert!(StatusRank::Attention < StatusRank::Pending);
         assert!(StatusRank::Pending < StatusRank::Running);

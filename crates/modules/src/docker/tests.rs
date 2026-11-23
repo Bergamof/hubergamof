@@ -1034,6 +1034,24 @@ async fn services_without_container_show_beside_the_containers_and_apart_from_st
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_built_service_comes_before_the_services_without_container() {
+    let mut harness = shop_taken_down().await;
+    harness.press(WEB_PLANNED, "up").await;
+    harness.press(WEB_UP, "up-build").await;
+    harness.settle().await;
+    let ids: Vec<_> = harness
+        .items(SHOP)
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+    assert_eq!(
+        ids[4..],
+        [WEB, "service/boutique/api", "service/boutique/db"],
+        "by state first: `web` sorts after the others by name"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_service_without_container_can_only_be_brought_up() {
     let mut harness = shop_taken_down().await;
     let page = harness.page(WEB_PLANNED).unwrap();
