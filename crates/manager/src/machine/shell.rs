@@ -8,6 +8,7 @@
 //! nothing is written to a file that is not valid text or whose block is
 //! damaged.
 
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions, Permissions};
 use std::io::{self, Read as _, Write as _};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -17,7 +18,7 @@ use hubergamof_protocol::{ShellAlias, SystemAlias};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-use super::aliases::{UnwritableAlias, parse_aliases, render_managed_file};
+use super::aliases::{UnwritableAlias, claim_originals, parse_aliases, render_managed_file};
 use super::rc_block::{UnterminatedBlock, with_block, without_block};
 
 /// Files, relative to the home folder, that the aliases are read from.
@@ -140,7 +141,10 @@ impl MachineShell {
 
     /// Puts the enabled `aliases` on the machine: the managed file holds
     /// them, and the startup files that exist source it. With none enabled
-    /// the managed file and the blocks are removed.
+    /// the managed file and the blocks are removed. Then the original
+    /// definitions of every alias of the configuration, enabled or not, are
+    /// commented out in the startup files (so that a disabled one is really
+    /// gone), and those of an alias that left the configuration are given back.
     ///
     /// # Errors
     /// [`ShellError`] for the first file that cannot be written; each write
@@ -151,11 +155,24 @@ impl MachineShell {
             // The file first: a startup file that cannot be rewritten must not
             // leave the removed aliases loaded by the other one.
             self.remove_managed_file()?;
-            return self.update_blocks(without_block);
+            self.update_blocks(without_block)?;
+        } else {
+            let content = render_managed_file(&enabled)?;
+            self.write_managed_file(&content)?;
+            self.update_blocks(with_block)?;
         }
-        let content = render_managed_file(&enabled)?;
-        self.write_managed_file(&content)?;
-        self.update_blocks(with_block)
+        // After the managed file, so that an enabled alias is never missing.
+        self.claim_originals(aliases)
+    }
+
+    fn claim_originals(&self, aliases: &[ShellAlias]) -> Result<(), ShellError> {
+        let names: HashSet<&str> = aliases.iter().map(|alias| alias.name.as_str()).collect();
+        for relative in STARTUP_FILES {
+            update_startup_file(&self.home.join(relative), |content| {
+                Ok(claim_originals(content, &names))
+            })?;
+        }
+        Ok(())
     }
 
     fn update_blocks(
@@ -219,7 +236,7 @@ fn read_startup_file(path: &Path) -> Result<Option<Vec<u8>>, ShellError> {
 /// to it. A missing file is not created; an unchanged one is not written.
 fn update_startup_file(
     path: &Path,
-    change: fn(&str) -> Result<String, UnterminatedBlock>,
+    change: impl FnOnce(&str) -> Result<String, UnterminatedBlock>,
 ) -> Result<(), ShellError> {
     // Resolved once: what is read is what is written, even if the link moves.
     let target = match fs::canonicalize(path) {
@@ -556,5 +573,56 @@ mod tests {
         fs::set_permissions(&managed_dir, Permissions::from_mode(0o755)).unwrap();
         shell.apply(&[alias("a", "ls", true)]).unwrap();
         assert_eq!(mode(&dir, ".config/hubergamof"), MANAGED_DIR_MODE);
+    }
+
+    #[test]
+    fn an_integrated_alias_is_commented_out_in_its_file_and_defined_by_ours() {
+        let (dir, shell) = home();
+        fs::write(
+            dir.path().join(".bashrc"),
+            "alias ll='ls -la'\nexport A=1\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join(".bash_aliases"), "alias ll=other\n").unwrap();
+        shell.apply(&[alias("ll", "ls -la", true)]).unwrap();
+        let bashrc = read(&dir, ".bashrc");
+        assert!(bashrc.starts_with("#hubergamof-off# alias ll='ls -la'\nexport A=1\n"));
+        assert_eq!(
+            read(&dir, ".bash_aliases"),
+            "#hubergamof-off# alias ll=other\n"
+        );
+        assert!(read(&dir, ".config/hubergamof/aliases.sh").contains("alias ll='ls -la'"));
+        assert_eq!(shell.read_system_aliases(), []);
+    }
+
+    #[test]
+    fn a_disabled_alias_is_gone_from_the_machine_and_comes_back_enabled() {
+        let (dir, shell) = home();
+        fs::write(dir.path().join(".bashrc"), "alias ll=ls\n").unwrap();
+        shell.apply(&[alias("ll", "ls", false)]).unwrap();
+        assert!(read(&dir, ".bashrc").starts_with("#hubergamof-off# alias ll=ls\n"));
+        assert!(!dir.path().join(MANAGED_FILE).exists());
+        shell.apply(&[alias("ll", "ls", true)]).unwrap();
+        assert!(read(&dir, ".config/hubergamof/aliases.sh").contains("alias ll='ls'"));
+    }
+
+    #[test]
+    fn a_deleted_alias_gives_its_original_line_back() {
+        let (dir, shell) = home();
+        fs::write(dir.path().join(".bashrc"), "alias ll=ls\n").unwrap();
+        shell.apply(&[alias("ll", "ls", true)]).unwrap();
+        shell.apply(&[]).unwrap();
+        assert_eq!(read(&dir, ".bashrc"), "alias ll=ls\n");
+        assert_eq!(shell.read_system_aliases().len(), 1);
+    }
+
+    #[test]
+    fn startup_files_without_a_claimed_alias_are_not_rewritten() {
+        let (dir, shell) = home();
+        let path = dir.path().join(".zsh_aliases");
+        fs::write(&path, "alias g=git\n").unwrap();
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        shell.apply(&[alias("ll", "ls", true)]).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
     }
 }

@@ -1,12 +1,12 @@
 //! Reading aliases from shell startup files, without running a shell, and
 //! writing them as a file a shell can source.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use hubergamof_protocol::{ShellAlias, is_valid_alias_command, is_valid_alias_name};
 use thiserror::Error;
 
-use super::rc_block::outside_blocks;
+use super::rc_block::{BLOCK_END, BLOCK_START, outside_blocks};
 
 /// The word that starts an alias definition.
 const ALIAS_KEYWORD: &str = "alias";
@@ -16,6 +16,11 @@ const WORD_TERMINATORS: [char; 6] = [';', '&', '|', '<', '>', '('];
 
 /// First line of the managed file.
 const MANAGED_HEADER: &str = "# Managed by HuBergamof, do not edit: changes are overwritten.\n";
+
+/// What starts a line of a startup file that HuBergamof has commented out
+/// because its managed file now defines the alias: the marker tells the line
+/// apart from a comment of the user, so that it can be given back.
+const CLAIMED_MARKER: &str = "#hubergamof-off# ";
 
 /// An alias that cannot be written to a shell file safely.
 #[derive(Debug, Error)]
@@ -107,6 +112,38 @@ fn parse_word(input: &str) -> Option<(String, &str)> {
     Some((word, ""))
 }
 
+/// `content` with the plain alias definitions of `names` commented out
+/// (marked with [`CLAIMED_MARKER`]), and the lines commented out earlier whose
+/// name is no longer in `names` given back. Only a line that
+/// [`parse_aliases`] reads as a definition is touched, and nothing inside the
+/// block HuBergamof keeps in the file.
+pub(super) fn claim_originals(content: &str, names: &HashSet<&str>) -> String {
+    let mut inside_block = false;
+    let mut claimed = String::with_capacity(content.len());
+    for line in content.split_inclusive('\n') {
+        let marker_line = line.trim_end();
+        let in_block = inside_block || marker_line == BLOCK_START;
+        match marker_line {
+            BLOCK_START => inside_block = true,
+            BLOCK_END => inside_block = false,
+            _ => {}
+        }
+        let rewritten = if in_block {
+            None
+        } else if let Some(original) = line.strip_prefix(CLAIMED_MARKER) {
+            parse_line(original)
+                .filter(|(name, _)| !names.contains(name.as_str()))
+                .map(|_| original.to_owned())
+        } else {
+            parse_line(line)
+                .filter(|(name, _)| names.contains(name.as_str()))
+                .map(|_| format!("{CLAIMED_MARKER}{line}"))
+        };
+        claimed.push_str(rewritten.as_deref().unwrap_or(line));
+    }
+    claimed
+}
+
 /// `command` as a single-quoted shell word: nothing inside is expanded, a
 /// quote is closed, escaped and reopened.
 fn single_quoted(command: &str) -> String {
@@ -139,6 +176,60 @@ mod tests {
 
     fn pair(name: &str, command: &str) -> (String, String) {
         (name.to_owned(), command.to_owned())
+    }
+
+    fn names<'a>(list: &[&'a str]) -> HashSet<&'a str> {
+        list.iter().copied().collect()
+    }
+
+    #[test]
+    fn a_claimed_definition_is_commented_out_and_the_rest_is_left_alone() {
+        let content = "export A=1\nalias ll='ls -la'\n  alias g=git # short\nalias keep=cat\n# alias ll=mine\n";
+        assert_eq!(
+            claim_originals(content, &names(&["ll", "g"])),
+            "export A=1\n#hubergamof-off# alias ll='ls -la'\n#hubergamof-off#   alias g=git # short\nalias keep=cat\n# alias ll=mine\n"
+        );
+    }
+
+    #[test]
+    fn claiming_twice_changes_nothing_more() {
+        let once = claim_originals("alias ll=ls\n", &names(&["ll"]));
+        assert_eq!(claim_originals(&once, &names(&["ll"])), once);
+    }
+
+    #[test]
+    fn a_definition_that_left_the_configuration_is_given_back() {
+        let claimed = "#hubergamof-off# alias ll='ls -la'\n#hubergamof-off# alias g=git\n";
+        assert_eq!(
+            claim_originals(claimed, &names(&["g"])),
+            "alias ll='ls -la'\n#hubergamof-off# alias g=git\n"
+        );
+    }
+
+    #[test]
+    fn what_is_not_a_plain_definition_is_never_touched() {
+        let content = "alias a=ls; alias b=ls\nalias c='unterminated\nunalias ll\n#hubergamof-off# not an alias\n";
+        assert_eq!(
+            claim_originals(content, &names(&["a", "b", "c", "ll"])),
+            content
+        );
+    }
+
+    #[test]
+    fn the_block_of_hubergamof_is_never_touched() {
+        let content = format!("{BLOCK_START}\nalias ll=ls\n{BLOCK_END}\nalias ll=ls\n");
+        assert_eq!(
+            claim_originals(&content, &names(&["ll"])),
+            format!("{BLOCK_START}\nalias ll=ls\n{BLOCK_END}\n#hubergamof-off# alias ll=ls\n")
+        );
+    }
+
+    #[test]
+    fn a_missing_final_newline_is_kept() {
+        assert_eq!(
+            claim_originals("alias ll=ls", &names(&["ll"])),
+            "#hubergamof-off# alias ll=ls"
+        );
     }
 
     #[test]
