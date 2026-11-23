@@ -102,10 +102,20 @@ pub fn is_valid_alias_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
+/// Zero width no-break space: not white space for Rust, but for JavaScript,
+/// which the interface runs on; both must agree on what a blank command is.
+const BYTE_ORDER_MARK: char = '\u{FEFF}';
+
+fn is_blank(command: &str) -> bool {
+    command
+        .chars()
+        .all(|c| c.is_whitespace() || c == BYTE_ORDER_MARK)
+}
+
 /// Whether `command` can be the command of an alias.
 #[must_use]
 pub fn is_valid_alias_command(command: &str) -> bool {
-    !command.trim().is_empty()
+    !is_blank(command)
         && command.chars().count() <= MAX_ALIAS_COMMAND_CHARS
         && !command.chars().any(char::is_control)
 }
@@ -216,6 +226,22 @@ mod tests {
         assert_eq!(
             config(vec![alias("ll", "ls"), alias("ll", "dir")]).validate(),
             Err(MachineConfigError::DuplicateName("ll".into()))
+        );
+    }
+
+    #[test]
+    fn a_command_of_white_space_only_is_blank() {
+        for blank in ["\u{FEFF}", "\u{A0}", "\u{2003}", " \u{FEFF} "] {
+            assert!(!is_valid_alias_command(blank), "{blank:?}");
+        }
+        assert!(is_valid_alias_command(" ls "));
+    }
+
+    #[test]
+    fn an_invalid_command_is_reported_before_a_duplicate_name() {
+        assert_eq!(
+            config(vec![alias("ll", "ls"), alias("ll", "")]).validate(),
+            Err(MachineConfigError::InvalidCommand("ll".into()))
         );
     }
 
