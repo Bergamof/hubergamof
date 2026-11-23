@@ -396,14 +396,16 @@ impl Instances {
     /// radial action, a placeholder or an unknown instance.
     pub(crate) fn radial_items(&mut self, id: &ModuleInstanceId) -> Option<Vec<RadialItem>> {
         let instance = self.live.get(id).filter(|instance| instance.available)?;
-        let factory = self.registry.get(&instance.kind)?;
-        if factory.radial_actions().is_empty() {
+        let declared = self.registry.get(&instance.kind)?.radial_actions();
+        if declared.is_empty() {
             return None;
         }
         // A module that panics is replaced by `inspect`: it has no item.
         let mut items = self
             .inspect(id, "radial_items", |module| Some(module.radial_items()))
             .unwrap_or_default();
+        // An item that runs no declared action would be drawn and do nothing.
+        items.retain(|item| declared.iter().any(|action| action.id == item.id));
         items.truncate(MAX_RADIAL_ITEMS);
         Some(items)
     }

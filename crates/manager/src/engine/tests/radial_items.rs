@@ -72,6 +72,20 @@ async fn the_items_follow_the_state_of_the_module() {
 }
 
 #[tokio::test]
+async fn an_item_that_runs_no_declared_action_is_not_shown() {
+    let fixture = start(no_dial_info()).await;
+    *fixture.probe.radial_items.lock().unwrap() = vec![
+        item("Declared"),
+        RadialItem::new("undeclared", "Stray", RadialGlyph::Play),
+    ];
+    fixture.configure(vec![list(0)], &["list"], &[]).await;
+    assert_eq!(
+        labels(fixture.engine.radial_items(&kind())),
+        Some(owned(&["Declared"]))
+    );
+}
+
+#[tokio::test]
 async fn the_items_are_cut_after_the_most_a_petal_shows() {
     let fixture = start(no_dial_info()).await;
     *fixture.probe.radial_items.lock().unwrap() =

@@ -56,6 +56,11 @@ pub const DEFAULT_RING: Ring = Ring {
 /// Radius of the inner edge of the arc of actions that opens in front of a petal.
 pub const ARC_INNER: f64 = 160.0;
 
+const _: () = assert!(
+    ARC_INNER > DEFAULT_RING.outer,
+    "the arc opens beyond the petals"
+);
+
 /// Radius of the outer edge of the arc of actions.
 pub const ARC_OUTER: f64 = 214.0;
 
@@ -508,7 +513,7 @@ mod tests {
 
     #[test]
     fn without_actions_the_hit_is_the_petal_of_before_everywhere() {
-        for count in [1, 2, 4, 8] {
+        for count in 1..=8 {
             let menu = menu(count);
             for step in 0..720 {
                 let angle = f64::from(step) * TAU / 720.0;
@@ -599,7 +604,7 @@ mod tests {
 
     #[test]
     fn every_slice_is_hit_in_its_middle_for_one_to_six_actions_on_every_menu() {
-        for petals in [1, 2, 4, 8] {
+        for petals in 1..=8 {
             let menu = menu(petals);
             for items in 1..=6 {
                 for petal in 0..petals {
