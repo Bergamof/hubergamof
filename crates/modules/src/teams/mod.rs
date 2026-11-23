@@ -93,6 +93,9 @@ const IN_CALL_LABEL: &str = "En appel";
 const RINGING_LABEL: &str = "Appel";
 const OFFLINE_LABEL: &str = "Hors ligne";
 const CLOSED_LABEL: &str = "Teams fermé";
+/// What the petal of the radial menu says during a call, and while it rings.
+const IN_CALL_STATUS: &str = "En appel";
+const RINGING_STATUS: &str = "Appel entrant";
 const ANSWER_LABEL: &str = "Répondre";
 
 /// Background of the notifications of a meeting and of an incoming call.
@@ -688,6 +691,18 @@ impl Module for Teams {
             Some(CallItem::ReturnToCall) => self.return_to_call(surface),
             Some(item) => self.ask(item.action()),
             None => Vec::new(),
+        }
+    }
+
+    fn radial_status(&self) -> Option<String> {
+        let state = self.changes.borrow();
+        match state.call.phase {
+            CallPhase::InCall => Some(match elapsed::shown(&state) {
+                Some(duration) => format!("{IN_CALL_STATUS}\n{duration}"),
+                None => IN_CALL_STATUS.to_owned(),
+            }),
+            CallPhase::Ringing => Some(RINGING_STATUS.to_owned()),
+            CallPhase::Idle | CallPhase::Prejoin => None,
         }
     }
 

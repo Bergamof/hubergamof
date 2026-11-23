@@ -1297,3 +1297,48 @@ async fn the_duration_ends_with_the_call_and_a_new_call_starts_again() {
     state.apply(call_report(None));
     assert_eq!(state.call.elapsed.map(|clock| clock.seconds()), Some(0));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_says_a_call_is_going_on_with_its_duration() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    assert_eq!(harness.module.radial_status(), None);
+    harness.report(call_report(Some(65))).await;
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("En appel\n1:05")
+    );
+    tokio::time::advance(Duration::from_secs(5)).await;
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("En appel\n1:10")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_says_when_a_call_rings_and_forgets_it_after() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: Some("Camille".into()),
+            elapsed_seconds: None,
+        })
+        .await;
+    // The caller is a name: it stays off the petal, which is read aloud and logged.
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("Appel entrant")
+    );
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Idle,
+            muted: None,
+            camera_on: None,
+            caller: None,
+            elapsed_seconds: None,
+        })
+        .await;
+    assert_eq!(harness.module.radial_status(), None);
+}
