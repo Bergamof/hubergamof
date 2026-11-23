@@ -33,9 +33,10 @@ const MAX_STATUS_LINES: usize = 2;
 const MAX_STATUS_CHARS: usize = 24;
 /// Height of the badge on an icon (a count), in pixels.
 const BADGE_HEIGHT: f64 = 16.0;
-/// Width of a character of a badge, and the room left around its characters,
-/// in pixels: the badge widens with the count it shows.
+/// Width of a character of a badge, in pixels: the badge widens with the
+/// count it shows.
 const BADGE_CHARACTER_WIDTH: f64 = 7.0;
+/// Room left around the characters of a badge, in pixels.
 const BADGE_PADDING: f64 = 7.0;
 /// Font size of the count of a badge, in pixels.
 const BADGE_FONT_SIZE: f64 = 11.0;
@@ -47,6 +48,11 @@ const BADGE_OVERHANG: f64 = 4.0;
 /// Red of a badge, whether or not its petal is lit; its white text reads
 /// at about 5:1 on it.
 const BADGE_FILL: &str = "#c8452d";
+/// White of the count of a badge.
+const BADGE_TEXT_FILL: &str = "#ffffff";
+/// Where the baseline of the count sits under the middle of the badge, as a
+/// fraction of the font size.
+const BADGE_BASELINE_RATIO: f64 = 1.0 / 3.0;
 /// Smallest the menu is while it opens, as a fraction of its size.
 const OPENING_SCALE: f64 = 0.85;
 
@@ -305,9 +311,9 @@ fn push_badge(body: &mut String, layout: &Layout, index: usize, petal: &PetalVie
     let radius = BADGE_HEIGHT / 2.0;
     let _ = write!(
         body,
-        r##"<rect x="{left}" y="{up}" width="{width}" height="{BADGE_HEIGHT}" rx="{radius}" fill="{BADGE_FILL}"/><text x="{}" y="{}" font-family="{}" font-size="{BADGE_FONT_SIZE}" font-weight="700" text-anchor="middle" fill="#ffffff">{text}</text>"##,
+        r#"<rect x="{left}" y="{up}" width="{width}" height="{BADGE_HEIGHT}" rx="{radius}" fill="{BADGE_FILL}"/><text x="{}" y="{}" font-family="{}" font-size="{BADGE_FONT_SIZE}" font-weight="700" text-anchor="middle" fill="{BADGE_TEXT_FILL}">{text}</text>"#,
         left + width / 2.0,
-        up + radius + BADGE_FONT_SIZE / 3.0,
+        up + radius + BADGE_FONT_SIZE * BADGE_BASELINE_RATIO,
         crate::render::FONT_FAMILY,
     );
 }
@@ -654,9 +660,66 @@ mod tests {
                 ..*view
             })
             .collect();
-        let opening = paint(&renderer, &layout(4), &with_icon, None, 0.0, PALETTE).unwrap();
-        let open = paint(&renderer, &layout(4), &with_icon, None, 1.0, PALETTE).unwrap();
-        assert_ne!(opening, open);
+        let unbadged: Vec<_> = with_icon
+            .iter()
+            .map(|view| PetalView {
+                badge: None,
+                ..*view
+            })
+            .collect();
+        // How many pixels the badges change at `opening`.
+        let drawn = |opening: f32| {
+            let with = paint(&renderer, &layout(4), &with_icon, None, opening, PALETTE).unwrap();
+            let without = paint(&renderer, &layout(4), &unbadged, None, opening, PALETTE).unwrap();
+            with.pixels()
+                .zip(without.pixels())
+                .filter(|(a, b)| a != b)
+                .count()
+        };
+        assert_eq!(drawn(0.0), 0, "invisible as the menu starts to open");
+        assert!(
+            drawn(0.5) > 0 && drawn(0.5) < drawn(1.0),
+            "it grows with the opening"
+        );
+    }
+
+    /// The box around the pixels of the badge of a single petal.
+    fn badge_box(status: Option<&'static str>) -> (f64, f64, f64, f64) {
+        let renderer = TextRenderer::new().unwrap();
+        let icon = icon_image();
+        let petals = [PetalView {
+            icon: Some(&icon),
+            badge: Some(5),
+            status,
+            ..views(1).remove(0)
+        }];
+        let image = paint(&renderer, &layout(1), &petals, None, 1.0, PALETTE).unwrap();
+        let (mut left, mut top, mut right, mut bottom) = (f64::MAX, f64::MAX, 0.0_f64, 0.0_f64);
+        for (x, y, pixel) in image.enumerate_pixels() {
+            if pixel.0[..3] == [0xc8, 0x45, 0x2d] && pixel.0[3] > 200 {
+                let (x, y) = (f64::from(x), f64::from(y));
+                (left, top) = (left.min(x), top.min(y));
+                (right, bottom) = (right.max(x), bottom.max(y));
+            }
+        }
+        let middle = f64::from(image.width()) / 2.0;
+        (left - middle, top - middle, right - middle, bottom - middle)
+    }
+
+    #[test]
+    fn the_badge_sits_on_the_top_right_corner_of_the_icon_whatever_the_status() {
+        for (status, lines) in [(None, 0), (Some("a\nb"), 2)] {
+            let (_, top, right, bottom) = badge_box(status);
+            let (centre, icon_top, _) = content_places(&layout(1), 0, true, lines);
+            let corner = centre.x + ICON_SIZE / 2.0 + BADGE_OVERHANG;
+            assert!((right - corner).abs() <= 1.5, "right {right} vs {corner}");
+            let up = icon_top - BADGE_OVERHANG;
+            assert!((top - up).abs() <= 1.5, "top {top} vs {up}");
+            assert!(
+                (bottom - (up + BADGE_HEIGHT)).abs() <= 1.5,
+                "bottom {bottom}"
+            );
+        }
     }
 
     #[test]

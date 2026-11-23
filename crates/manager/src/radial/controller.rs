@@ -129,7 +129,7 @@ impl Controller {
         self.looks = looks;
     }
 
-    /// What the modules say under their names while the menu is open.
+    /// What the modules say on their petals while the menu is open.
     pub fn set_notes(&mut self, notes: PetalNotes) {
         self.notes = notes;
     }
@@ -153,7 +153,7 @@ impl Controller {
             .entries
             .iter()
             .zip(self.notes())
-            .map(|(entry, status)| self.looks.petal(&entry.module, status))
+            .map(|(entry, note)| self.looks.petal(&entry.module, note))
             .collect();
         Some(Content {
             petals,
@@ -359,7 +359,7 @@ mod tests {
         };
         let statuses: Vec<_> = petals(&controller)
             .iter()
-            .map(|petal| petal.status.clone())
+            .map(|petal| petal.note.status.clone())
             .collect();
         assert_eq!(statuses, [Some("Focus 1/4".to_owned()), None, None, None]);
         let said: Vec<_> = controller

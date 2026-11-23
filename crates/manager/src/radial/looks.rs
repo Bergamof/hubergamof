@@ -68,27 +68,25 @@ impl Looks {
             Some(look) => Petal {
                 label: look.name.clone(),
                 icon: look.icon.clone(),
-                status: note.status,
-                badge: note.badge,
+                note,
             },
             None => Petal {
                 label: title_case(&module.0),
                 icon: None,
-                status: note.status,
-                badge: note.badge,
+                note,
             },
         }
     }
 }
 
-/// What each module says under its name in the menu, read when the menu opens
-/// and again while it stays open: what the modules show now, where `Looks` has
+/// What each module says on its petal in the menu (a status under its name, a
+/// badge on its icon), read when the menu opens and again while it stays open: what the modules show now, where `Looks` has
 /// what they always look like.
 #[derive(Clone, Default)]
-pub struct PetalNotes(Option<StatusReader>);
+pub struct PetalNotes(Option<NoteReader>);
 
 /// Reads what a module says now.
-type StatusReader = Arc<dyn Fn(&ModuleKind) -> PetalNote + Send + Sync>;
+type NoteReader = Arc<dyn Fn(&ModuleKind) -> PetalNote + Send + Sync>;
 
 impl PetalNotes {
     /// The notes read by `read`.
@@ -143,8 +141,8 @@ mod tests {
                 badge: Some(3),
             },
         );
-        assert_eq!(pomodoro.status.as_deref(), Some("Focus"));
-        assert_eq!(pomodoro.badge, Some(3));
+        assert_eq!(pomodoro.note.status.as_deref(), Some("Focus"));
+        assert_eq!(pomodoro.note.badge, Some(3));
         assert_eq!(pomodoro.label, "Pomodoro");
         let icon = pomodoro.icon.expect("pomodoro has an icon");
         assert_eq!((icon.width(), icon.height()), (ICON_SIDE, ICON_SIDE));
@@ -159,11 +157,11 @@ mod tests {
 }
 
 #[cfg(test)]
-mod status_tests {
+mod note_tests {
     use super::*;
 
     #[test]
-    fn statuses_say_what_the_reader_says_and_nothing_by_default() {
+    fn notes_say_what_the_reader_says_and_nothing_by_default() {
         assert_eq!(
             PetalNotes::default().of(&"pomodoro".into()),
             PetalNote::default()

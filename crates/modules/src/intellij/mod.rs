@@ -27,11 +27,10 @@ mod watch;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
-    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId,
-    PageItem, RadialActionDescriptor, SettingField, SettingKind,
+    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime, ModuleSurface,
+    PageContent, PageId, PageItem, RadialActionDescriptor, SettingField, SettingKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -163,8 +162,7 @@ impl IntellijSettings {
 }
 
 impl ModuleFactory for IntellijFactory {
-    /// The application keeps the instance: every device, mouse and the
-    /// interface show and drive the same one.
+    /// One instance for the whole application.
     fn lifetime(&self) -> ModuleLifetime {
         ModuleLifetime::Application
     }

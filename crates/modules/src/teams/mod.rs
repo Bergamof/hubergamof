@@ -19,12 +19,11 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
-    Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor, Rgb,
-    ScreenLockState,
+    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime,
+    ModuleSurface, Notification, NotificationId, PageContent, PageId, PageItem,
+    RadialActionDescriptor, Rgb, ScreenLockState,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
@@ -207,8 +206,7 @@ fn descriptor() -> ModuleDescriptor {
 }
 
 impl ModuleFactory for TeamsFactory {
-    /// The application keeps the instance: every device, mouse and the
-    /// interface show and drive the same one.
+    /// One instance for the whole application.
     fn lifetime(&self) -> ModuleLifetime {
         ModuleLifetime::Application
     }

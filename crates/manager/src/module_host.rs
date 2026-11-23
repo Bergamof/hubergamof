@@ -456,11 +456,12 @@ impl Hosted {
             tracing::debug!(%id, "input dropped: the device gave up on it");
             return None;
         }
-        let may_run_locked =
-            self.usable_when_locked(kind) || (declared && self.lock_safe_pages(kind));
-        if *self.locked.borrow() && !may_run_locked {
-            tracing::debug!(%id, "input dropped: the computer is locked");
-            return None;
+        if *self.locked.borrow() && !self.usable_when_locked(kind) {
+            if !(declared && self.lock_safe_pages(kind) && self.page_declares(&id, &call)) {
+                tracing::debug!(%id, "input dropped: the computer is locked");
+                return None;
+            }
+            tracing::info!(%id, "input run on a locked computer: its page declares it usable");
         }
         let outcome = self.instances.call(&id, call, declared).await?;
         Some(match outcome {
@@ -483,20 +484,9 @@ impl Hosted {
         let Some(kind) = self.kind_of(source) else {
             return;
         };
-        // A module of the application has no pages and no device of its own to
-        // navigate: only what can be shown on any device is passed on.
-        let (rest, navigation): (Vec<_>, Vec<_>) = rest.into_iter().partition(|command| {
-            matches!(
-                command,
-                Command::Notify(_)
-                    | Command::ShowNotification(_)
-                    | Command::Feedback(_)
-                    | Command::FeedbackOn(..)
-            )
-        });
-        if !navigation.is_empty() {
-            tracing::warn!(module = %source, dropped = navigation.len(), "navigation commands of a module of the application ignored");
-        }
+        // The devices apply them as if the instance were theirs, so a page
+        // the module opens (a call that rings) opens on every device that
+        // places it.
         if !rest.is_empty() {
             // Nobody listening is fine: no device, nobody to show it to.
             let _ = self.commands.send(AppCommands {
@@ -539,6 +529,26 @@ impl Hosted {
             .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
     }
 
+    /// Whether the key or the item `call` presses declares itself usable while
+    /// the computer is locked, as the instance shows it now: what a device
+    /// declared is only a hint, the instance has the last word. Anything that
+    /// is not a press of a key or of an item of a page declares nothing.
+    fn page_declares(&mut self, id: &ModuleInstanceId, call: &Call) -> bool {
+        match call {
+            Call::KeyPress => self
+                .instances
+                .key(id)
+                .is_some_and(|key| key.usable_when_locked),
+            Call::ItemPress(page, item) => self.instances.page(id, page).is_some_and(|content| {
+                content
+                    .items
+                    .iter()
+                    .any(|shown| shown.id == *item && shown.key.usable_when_locked)
+            }),
+            _ => false,
+        }
+    }
+
     /// Whether the pages of the module of `kind` may declare what stays
     /// usable while the computer is locked.
     fn lock_safe_pages(&self, kind: &ModuleKind) -> bool {
@@ -551,7 +561,17 @@ impl Hosted {
     /// for it, so that what was configured on a deck before the module moved
     /// to the application is not lost. The first device to say wins.
     async fn adopt(&mut self, kind: ModuleKind, settings: Value) {
-        if self.config.modules.iter().any(|stored| stored.kind == kind) {
+        if let Some(stored) = self
+            .config
+            .modules
+            .iter()
+            .find(|stored| stored.kind == kind)
+        {
+            if stored.settings != settings {
+                // One set of settings for the whole application: a device
+                // that had others (before the module moved) loses them.
+                tracing::warn!(%kind, "a device has other settings than the application's: the application's are kept");
+            }
             return;
         }
         // Refused settings are logged by `set_settings`; a device has no use of
@@ -629,19 +649,23 @@ impl Hosted {
                     Some((function.clone(), hint))
                 })
                 .collect();
-            views.insert(
-                kind.clone(),
-                Arc::new(ModuleView {
-                    key: self.instances.key(id).unwrap_or_default(),
-                    strip_widget: self.instances.strip_widget(id),
-                    strip_popup: self.instances.strip_popup(id),
-                    dial_hints,
-                    radial_status: self.instances.radial_status(id),
-                    radial_badge: self.instances.radial_badge(id),
-                    pages: self.instances.pages(id),
-                    settings: self.settings_of(kind),
-                }),
-            );
+            let view = ModuleView {
+                key: self.instances.key(id).unwrap_or_default(),
+                strip_widget: self.instances.strip_widget(id),
+                strip_popup: self.instances.strip_popup(id),
+                dial_hints,
+                radial_status: self.instances.radial_status(id),
+                radial_badge: self.instances.radial_badge(id),
+                pages: self.instances.pages(id),
+                settings: self.settings_of(kind),
+            };
+            // A module that shows what it showed keeps its `Arc`: a device
+            // can tell by the pointer that there is nothing to read again.
+            let view = match self.views.borrow().get(kind) {
+                Some(shown) if **shown == view => Arc::clone(shown),
+                _ => Arc::new(view),
+            };
+            views.insert(kind.clone(), view);
         }
         self.views.send_if_modified(|current| {
             let changed = *current != views;
@@ -780,7 +804,11 @@ async fn stop_instances(mut instances: Instances) {
 mod tests {
     use std::sync::Mutex;
 
-    use hubergamof_module_api::Feedback;
+    use async_trait::async_trait;
+    use hubergamof_module_api::{
+        Feedback, ItemId, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+        ModuleFactory, PageItem,
+    };
     use hubergamof_modules::pomodoro::{MemoryStateStore, PomodoroStateStore};
     use hubergamof_modules::{BuiltinServices, builtin_registry_with};
     use serde_json::json;
@@ -806,6 +834,75 @@ mod tests {
         }
     }
 
+    /// A module of the application with a page where one item declares itself
+    /// usable while the computer is locked and another does not.
+    struct LockProbeFactory;
+
+    struct LockProbe;
+
+    const PROBE_PAGE: &str = "probe";
+    const SAFE_ITEM: &str = "safe";
+    const UNSAFE_ITEM: &str = "unsafe";
+
+    #[async_trait]
+    impl Module for LockProbe {
+        fn page_ids(&self) -> Vec<PageId> {
+            vec![PageId(PROBE_PAGE.into())]
+        }
+
+        fn page(&self, page: &PageId) -> Option<PageContent> {
+            (page.0 == PROBE_PAGE).then(|| {
+                PageContent::new(
+                    "Probe",
+                    vec![
+                        PageItem::new(
+                            ItemId(SAFE_ITEM.into()),
+                            KeyContent::with_label("safe").usable_when_locked(true),
+                        ),
+                        PageItem::new(ItemId(UNSAFE_ITEM.into()), KeyContent::with_label("unsafe")),
+                    ],
+                )
+            })
+        }
+
+        async fn on_item_press(&mut self, _page: &PageId, _item: &ItemId) -> Vec<Command> {
+            Vec::new()
+        }
+
+        fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
+            Ok(())
+        }
+    }
+
+    impl ModuleFactory for LockProbeFactory {
+        fn descriptor(&self) -> ModuleDescriptor {
+            let capabilities = ModuleCapabilities {
+                lock_safe_pages: true,
+                ..ModuleCapabilities::default()
+            };
+            ModuleDescriptor {
+                kind: "lockprobe".into(),
+                name: "Probe".into(),
+                description: String::new(),
+                capabilities,
+                dial_functions: Vec::new(),
+                settings: Vec::new(),
+            }
+        }
+
+        fn lifetime(&self) -> ModuleLifetime {
+            ModuleLifetime::Application
+        }
+
+        fn create(
+            &self,
+            _ctx: ModuleContext,
+            _settings: &Value,
+        ) -> Result<Box<dyn Module>, ModuleError> {
+            Ok(Box::new(LockProbe))
+        }
+    }
+
     struct FakeLock(watch::Sender<bool>);
 
     impl ScreenLock for FakeLock {
@@ -823,10 +920,12 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let state = Arc::new(MemoryStateStore::default());
-            let registry = Arc::new(builtin_registry_with(BuiltinServices {
+            let mut registry = builtin_registry_with(BuiltinServices {
                 pomodoro_state: Arc::clone(&state) as _,
                 ..BuiltinServices::simulated()
-            }));
+            });
+            registry.register(Arc::new(LockProbeFactory));
+            let registry = Arc::new(registry);
             Self {
                 dir: tempfile::tempdir().unwrap(),
                 state,
@@ -974,9 +1073,13 @@ mod tests {
         );
         assert!(heard.try_recv().is_err());
 
-        // Navigation means nothing without pages: it is not passed on.
-        hosted.run(&id, vec![Command::GoHome, Command::Back]);
-        assert!(heard.try_recv().is_err());
+        // Navigation (a page that opens) is passed on: devices that place the
+        // module apply it as their own.
+        hosted.run(&id, vec![Command::OpenPage("call".into()), Command::Back]);
+        assert_eq!(
+            heard.try_recv().unwrap().commands,
+            vec![Command::OpenPage("call".into()), Command::Back]
+        );
     }
 
     #[tokio::test]
@@ -1109,6 +1212,35 @@ mod tests {
             .await;
         assert!(matches!(done, Some(Outcome::Done(_))));
         assert!(fixture.saved().is_some_and(|saved| saved.is_running()));
+    }
+
+    #[tokio::test]
+    async fn a_locked_computer_only_runs_what_the_page_declares_and_the_instance_confirms() {
+        let fixture = Fixture::new();
+        let locked = watch::Sender::new(true);
+        let services = fixture.services(Arc::new(NoHaptics), Arc::new(FakeLock(locked.clone())));
+        let (host, _task) = ModuleHost::start(services);
+        let press = |item: &str| Call::ItemPress(PageId(PROBE_PAGE.into()), ItemId(item.into()));
+        let probe: ModuleKind = "lockprobe".into();
+
+        // Declared by the page, and the instance agrees: it runs.
+        let done = host.call(&probe, press(SAFE_ITEM), true).await;
+        assert!(matches!(done, Some(Outcome::Done(_))));
+        // The device did not find it declared: dropped.
+        assert!(host.call(&probe, press(SAFE_ITEM), false).await.is_none());
+        // The device says declared but the instance does not: its word wins.
+        assert!(host.call(&probe, press(UNSAFE_ITEM), true).await.is_none());
+        // A page that is not there declares nothing.
+        let elsewhere = Call::ItemPress(PageId("gone".into()), ItemId(SAFE_ITEM.into()));
+        assert!(host.call(&probe, elsewhere, true).await.is_none());
+        // A module whose pages may not declare anything runs nothing locked.
+        let audio = Call::ItemPress(PageId("audio".into()), ItemId("microphone".into()));
+        assert!(host.call(&"audio".into(), audio, true).await.is_none());
+
+        // Unlocked, everything runs.
+        locked.send_replace(false);
+        let later = host.call(&probe, press(UNSAFE_ITEM), false).await;
+        assert!(matches!(later, Some(Outcome::Done(_))));
     }
 
     #[tokio::test]

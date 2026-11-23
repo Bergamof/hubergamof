@@ -453,10 +453,7 @@ impl<S: Surface> Menu<S> {
                         self.shown_notes = content
                             .petals
                             .iter()
-                            .map(|petal| PetalNote {
-                                status: petal.status.clone(),
-                                badge: petal.badge,
-                            })
+                            .map(|petal| petal.note.clone())
                             .collect();
                         surface.open(content);
                         (self.wake.schedule)();

@@ -54,7 +54,8 @@ pub enum ModuleLifetime {
     /// The application holds an instance that works whether or not a device
     /// is connected; devices, mice and the interface only show and drive it.
     ///
-    /// Such an instance shares its pages (see [`Module::page_ids`]). Nothing of a
+    /// Such an instance shares its pages (see [`Module::page_ids`]; a module
+    /// that does not list its pages offers none to the devices). Nothing of a
     /// device reaches it: no unread notifications,
     /// no image library, no redraw to request. The commands it returns that
     /// have no surface to show on are dropped (haptic events still reach the
@@ -283,7 +284,7 @@ pub trait Module: Send {
     }
 
     /// A count drawn as a badge on the icon of the module's petal of the
-    /// radial menu (unread messages): nothing, or zero, draws no badge. Like
+    /// radial menu (unread messages): `None`, preferably, or zero draws no badge. Like
     /// the other getters it describes the current state, is cheap and
     /// side-effect free; the menu reads it again while it stays open.
     fn radial_badge(&self) -> Option<u32> {

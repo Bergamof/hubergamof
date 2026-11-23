@@ -172,4 +172,9 @@ async fn a_device_shows_the_pages_of_a_module_of_the_application() {
         fixture.labels().iter().flatten().count() > 0,
         "the page of the application has keys"
     );
+
+    // A press on an item goes to the application, which opens its other page
+    // (the outputs), and the device shows that one.
+    fixture.engine.press_key(1).await.unwrap();
+    fixture.wait_for(|f| f.page().id == "audio/outputs").await;
 }

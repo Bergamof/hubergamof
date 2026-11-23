@@ -362,8 +362,8 @@ impl State {
                 .map(|petal| PetalView {
                     label: &petal.label,
                     icon: petal.icon.as_ref(),
-                    status: petal.status.as_deref(),
-                    badge: petal.badge,
+                    status: petal.note.status.as_deref(),
+                    badge: petal.note.badge,
                 })
                 .collect();
             match paint(

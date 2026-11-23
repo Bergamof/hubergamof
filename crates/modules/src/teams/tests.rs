@@ -1362,6 +1362,22 @@ async fn the_petal_counts_what_teams_counts_and_lists_its_pages() {
         .await;
     assert_eq!(harness.module.radial_badge(), None, "zero draws no badge");
 
+    // One counter alone counts.
+    harness
+        .report(BrowserReport::Badges {
+            activity: 0,
+            chats: 4,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(4));
+    harness
+        .report(BrowserReport::Badges {
+            activity: 6,
+            chats: 0,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(6));
+
     let pages: Vec<_> = harness
         .module
         .page_ids()

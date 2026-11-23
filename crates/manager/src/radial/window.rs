@@ -32,12 +32,8 @@ pub struct Petal {
     pub label: String,
     /// Icon, if the entry has one.
     pub icon: Option<RgbaImage>,
-    /// What the module says under the name: up to two lines separated by
-    /// `\n`, changing while the menu is open.
-    pub status: Option<String>,
-    /// The count drawn as a badge on the icon, changing while the menu is
-    /// open; none or zero draws no badge.
-    pub badge: Option<u32>,
+    /// What the module says on the petal, changing while the menu is open.
+    pub note: PetalNote,
 }
 
 /// What a module says on its petal while the menu is open.
@@ -45,7 +41,8 @@ pub struct Petal {
 pub struct PetalNote {
     /// Up to two lines under the name, separated by `\n`.
     pub status: Option<String>,
-    /// A count on the icon.
+    /// The count drawn as a badge on the icon; none (preferred) or zero
+    /// draws no badge.
     pub badge: Option<u32>,
 }
 
@@ -100,13 +97,11 @@ pub(super) fn opening_progress(content: &Content, placed_at: Option<Instant>) ->
 pub(super) fn apply_notes(petals: &mut [Petal], notes: Vec<PetalNote>) {
     debug_assert!(
         notes.len() == petals.len(),
-        "one status per petal: the entries do not change while the menu is open"
+        "one note per petal: the entries do not change while the menu is open"
     );
     let mut notes = notes.into_iter();
     for petal in petals {
-        let note = notes.next().unwrap_or_default();
-        petal.status = note.status;
-        petal.badge = note.badge;
+        petal.note = notes.next().unwrap_or_default();
     }
 }
 
@@ -220,12 +215,26 @@ mod tests {
     use crate::radial::paint::DEFAULT_PALETTE;
 
     #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "one note per petal")]
+    fn notes_that_do_not_match_the_petals_are_refused_in_debug() {
+        let mut petals = vec![Petal {
+            label: "a".to_owned(),
+            icon: None,
+            note: PetalNote::default(),
+        }];
+        apply_notes(&mut petals, Vec::new());
+    }
+
+    #[test]
     fn statuses_are_given_to_the_petals_in_order_and_replace_what_they_said() {
         let petal = |label: &str| Petal {
             label: label.to_owned(),
             icon: None,
-            status: Some("old".to_owned()),
-            badge: Some(9),
+            note: PetalNote {
+                status: Some("old".to_owned()),
+                badge: Some(9),
+            },
         };
         let mut petals = vec![petal("a"), petal("b"), petal("c")];
         apply_notes(
@@ -242,9 +251,12 @@ mod tests {
                 },
             ],
         );
-        let badges: Vec<_> = petals.iter().map(|petal| petal.badge).collect();
+        let badges: Vec<_> = petals.iter().map(|petal| petal.note.badge).collect();
         assert_eq!(badges, [Some(2), None, None]);
-        let notes: Vec<_> = petals.iter().map(|petal| petal.status.clone()).collect();
+        let notes: Vec<_> = petals
+            .iter()
+            .map(|petal| petal.note.status.clone())
+            .collect();
         assert_eq!(
             notes,
             [Some("new".to_owned()), None, Some("last".to_owned())]

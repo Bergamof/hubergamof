@@ -17,10 +17,9 @@
 //! from the configuration; one launch at a time, whatever the instance.
 
 use async_trait::async_trait;
-use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, ImageData, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
-    ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
+    ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime, ModuleSurface,
 };
 use serde_json::Value;
 use std::sync::{Arc, LazyLock};
@@ -124,8 +123,7 @@ impl ClaudeFactory {
 }
 
 impl ModuleFactory for ClaudeFactory {
-    /// The application keeps the instance: every device, mouse and the
-    /// interface show and drive the same one.
+    /// One instance for the whole application.
     fn lifetime(&self) -> ModuleLifetime {
         ModuleLifetime::Application
     }
