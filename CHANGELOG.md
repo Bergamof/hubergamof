@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Modifié
+
+- Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
+
 ### Ajouté
 
 - Docker : les conteneurs sont triés par état puis par nom, dans chaque projet compose comme parmi les conteneurs isolés : en erreur (health check en échec, redémarrage en boucle, mort), en attente (health check en cours, en pause, en arrêt ou suppression), lancé, stoppé (ou créé), puis les services sans conteneur ; les projets restent en premier, par ordre alphabétique. Une touche change de place quand l'état de son conteneur change.

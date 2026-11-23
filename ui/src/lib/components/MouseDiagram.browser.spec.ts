@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import type { MouseControlId, MouseModel } from '#lib/generated/index.js';
-import { MOUSE_ART } from './mouse-art.js';
+import { MOUSE_ART, markerScale } from './mouse-art.js';
 import MouseDiagram from './MouseDiagram.svelte';
 
 const SUMMARIES = { back: 'Raccourci Ctrl + Maj + M', left: 'Clic gauche' };
@@ -43,6 +43,26 @@ describe('MouseDiagram', () => {
 		expect(zone('hapticPanel')).not.toBeNull();
 		await renderDiagram('mxAnywhere3S');
 		expect(MOUSE_ART.mxAnywhere3S.spots).toHaveLength(6);
+	});
+
+	it('keeps every marker inside its drawing, and shows each drawing as a file of the size announced', async () => {
+		for (const art of Object.values(MOUSE_ART)) {
+			for (const spot of art.spots) {
+				const view = art.views.find((candidate) => candidate.id === spot.view)!;
+				expect(spot.x).toBeGreaterThan(0);
+				expect(spot.x).toBeLessThan(view.size.width);
+				expect(spot.y).toBeGreaterThan(0);
+				expect(spot.y).toBeLessThan(view.size.height);
+			}
+			for (const view of art.views) {
+				const text = await (await fetch(view.src)).text();
+				expect(text).toContain(`viewBox="0 0 ${view.size.width} ${view.size.height}"`);
+			}
+		}
+		await renderDiagram();
+		const images = document.querySelectorAll('svg image');
+		expect(images).toHaveLength(2);
+		expect(markerScale(MOUSE_ART.mxMaster4.views[0]!)).toBeCloseTo(738 / 280);
 	});
 
 	it('reads each marker with its number, its control and what it does', async () => {
