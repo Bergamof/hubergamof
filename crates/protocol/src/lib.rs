@@ -16,6 +16,7 @@ mod catalog;
 mod config;
 mod device;
 mod live;
+mod machine;
 mod messages;
 mod mouse;
 mod radial;
@@ -34,6 +35,11 @@ pub use config::{
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use live::{KeyView, LiveState, PageView};
+pub use machine::{
+    MACHINE_SCHEMA_VERSION, MAX_ALIAS_COMMAND_CHARS, MAX_ALIAS_NAME_CHARS, MAX_ALIASES,
+    MachineConfig, MachineConfigError, ShellAlias, SystemAlias, is_valid_alias_command,
+    is_valid_alias_name,
+};
 pub use messages::{ClientMessage, ErrorCode, ServerMessage};
 pub use mouse::{
     ButtonAction, ControlKind, DEFAULT_DPI, DEFAULT_THUMB_SPEED, DEFAULT_WHEEL_THRESHOLD,

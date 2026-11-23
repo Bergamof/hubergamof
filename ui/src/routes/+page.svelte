@@ -6,6 +6,7 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import ApplicationPanel from '#lib/components/ApplicationPanel.svelte';
+	import MachinePage from '#lib/components/MachinePage.svelte';
 	import MouseEditor from '#lib/components/MouseEditor.svelte';
 	import RadialMenuPage from '#lib/components/RadialMenuPage.svelte';
 	import SegmentedControl from '#lib/components/SegmentedControl.svelte';
@@ -35,18 +36,29 @@
 	const sections = $derived(availableSections(hasDecks, hasMice, hasModules));
 	const section = $derived(sectionShown(wanted, sections));
 
+	/** Machine and modules belong to no device: they are named, not the device or the mouse. */
+	const pageTitle = $derived.by(() => {
+		if (section === 'machine' || section === 'modules') {
+			return `${SECTION_LABELS[section]} · HuBergamof`;
+		}
+		const shown = section === 'deck' ? deck?.device : deck?.mice.mouse;
+		return shown ? `${shown.displayName} · HuBergamof` : 'HuBergamof';
+	});
+
 	const isOnline = $derived(connection?.status === 'open');
 	/** The computer is locked: the manager refuses everything, the page is only to be read. */
 	const locked = $derived(deck?.application.locked ?? false);
 	/** The editor shown: the mouse one, or the deck one, once its configuration is known. */
 	const editorShown = $derived(
-		section === 'modules'
-			? hasModules
-			: section === 'menu'
-				? deck?.mice.radialMenu !== undefined
-				: section === 'mouse'
-					? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
-					: deck?.device !== undefined && deck.config !== undefined
+		section === 'machine'
+			? true
+			: section === 'modules'
+				? hasModules
+				: section === 'menu'
+					? deck?.mice.radialMenu !== undefined
+					: section === 'mouse'
+						? deck?.mice.mouse !== undefined && deck.mice.config !== undefined
+						: deck?.device !== undefined && deck.config !== undefined
 	);
 	/** The editor can be used: the connection is up and the computer is not locked. */
 	const usable = $derived(isOnline && !locked);
@@ -94,11 +106,7 @@
 </script>
 
 <svelte:head>
-	<title>
-		{(section !== 'deck' ? deck?.mice.mouse : deck?.device)
-			? `${(section !== 'deck' ? deck?.mice.mouse : deck?.device)?.displayName} · HuBergamof`
-			: 'HuBergamof'}
-	</title>
+	<title>{pageTitle}</title>
 </svelte:head>
 
 {#snippet hero(message: string, detail?: string)}
@@ -149,7 +157,7 @@
 			{/if}
 			<div bind:this={editor} class="flex flex-col gap-6" inert={!usable}>
 				{#if sections.length > 1}
-					<div role="group" aria-label="Appareils à configurer" class="flex flex-wrap gap-2">
+					<div role="group" aria-label="Rubriques de la configuration" class="flex flex-wrap gap-2">
 						{#each sections as choice (choice)}
 							<button
 								type="button"
@@ -167,8 +175,8 @@
 						{/each}
 					</div>
 				{/if}
-				{#if section === 'modules'}
-					<!-- The modules of the application belong to no device. -->
+				{#if section === 'modules' || section === 'machine'}
+					<!-- The modules of the application and the machine belong to no device. -->
 				{:else if section !== 'deck' && deck.mice.mouse}
 					{#if deck.mice.mice.length > 1}
 						<SegmentedControl
@@ -193,7 +201,9 @@
 					fallbackFocusId={MAIN_ID}
 					ondismiss={(id) => deck?.dismiss(id)}
 				/>
-				{#if section === 'modules'}
+				{#if section === 'machine'}
+					<MachinePage {deck} />
+				{:else if section === 'modules'}
 					<ApplicationPanel {deck} {api} />
 				{:else if section === 'menu'}
 					<RadialMenuPage {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
