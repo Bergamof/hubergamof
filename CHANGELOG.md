@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Modifié
+
+- Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
+
 ### Ajouté
 
 - Menu circulaire : actions de pétale. En survolant le pétale d'un module, un arc s'ouvre devant lui avec ses actions du moment (glyphe, libellé de l'action visée, compteur en pastille, glyphe barré quand le micro ou la caméra est coupé) ; relâcher le bouton ou cliquer sur une tranche la lance, le clic sur le corps du pétale garde l'action principale. Un module les décrit par `Module::radial_items` (`RadialItem`, `RadialGlyph`, `RadialItemState`) ; elles changent pendant que le menu est ouvert. Pomodoro : démarrer, pause ou reprendre, étape suivante, remise à zéro. Audio : couper ou rétablir le micro et le son. Teams : conversations et activités (avec le nombre de non lus), et pendant un appel micro, caméra, raccrocher et retour à l'appel (nouvelles actions `conversations`, `activity`, `return-to-call`).

@@ -1,12 +1,13 @@
 <!--
 @component
-Drawings of a mouse (seen from above, and from the thumb side) with a numbered marker on each control. The drawings are data (`mouse-art.ts`) drawn element by element, never injected as markup. Pressing
+Drawings of a mouse (seen from above, and from the thumb side) with a numbered marker on each control. The drawings are
+SVG files with no background, shown as images (`mouse-art.ts` places the zones and markers), the same in both themes. Pressing
 a marker, or the control itself on the drawing, chooses it. The markers are what assistive technologies and the
 keyboard use; the zones on the drawing are only a shortcut for the pointer.
 -->
 <script lang="ts">
 	import type { MouseControlId, MouseModel } from '#lib/generated/index.js';
-	import { MOUSE_ART, SVG_DEFS, type HitShape, type MouseView, type SvgNode } from './mouse-art.js';
+	import { MOUSE_ART, markerScale, type HitShape, type MouseView } from './mouse-art.js';
 
 	interface Props {
 		model: MouseModel;
@@ -39,20 +40,6 @@ keyboard use; the zones on the drawing are only a shortcut for the pointer.
 	}
 </script>
 
-{#snippet drawing(node: SvgNode)}
-	<svelte:element this={node.tag} xmlns={SVG_NAMESPACE} {...node.attrs}>
-		{#each node.children as child, index (index)}
-			{@render drawing(child)}
-		{/each}
-	</svelte:element>
-{/snippet}
-
-<svg width="0" height="0" class="absolute" aria-hidden="true" focusable="false">
-	{#each SVG_DEFS as node, index (index)}
-		{@render drawing(node)}
-	{/each}
-</svg>
-
 {#snippet zone(hit: HitShape)}
 	<!-- The markers are the keyboard and screen reader way to the same choice. -->
 	<svelte:element
@@ -72,19 +59,13 @@ keyboard use; the zones on the drawing are only a shortcut for the pointer.
 			<svg
 				class="h-auto max-w-full overflow-visible drop-shadow-[0_10px_14px_rgb(0_0_0/0.28)]"
 				style="width:{view.width}px"
-				viewBox={view.viewBox}
+				viewBox="0 0 {view.size.width} {view.size.height}"
 				role="group"
 				aria-label="{name}, {view.caption.toLowerCase()}"
 			>
-				{#each view.body as node, index (index)}
-					{@render drawing(node)}
-				{/each}
+				<image href={view.src} width={view.size.width} height={view.size.height} />
 				{#each view.hits as hit (hit.id)}
-					{#if hit.clip}
-						<g clip-path="url(#{hit.clip})">{@render zone(hit)}</g>
-					{:else}
-						{@render zone(hit)}
-					{/if}
+					{@render zone(hit)}
 				{/each}
 				{#each spotsOf(view) as spot (spot.id)}
 					<g
@@ -94,7 +75,7 @@ keyboard use; the zones on the drawing are only a shortcut for the pointer.
 						tabindex="0"
 						aria-label="{spot.number}, {spot.label} : {summaries[spot.id] ?? ''}"
 						aria-current={selected === spot.id ? 'true' : undefined}
-						transform="translate({spot.x} {spot.y}) scale({view.scale})"
+						transform="translate({spot.x} {spot.y}) scale({markerScale(view)})"
 						onclick={() => onselect(spot.id)}
 						onkeydown={(event) => markerKey(event, spot.id)}
 					>
@@ -124,7 +105,7 @@ keyboard use; the zones on the drawing are only a shortcut for the pointer.
 	.part.sel {
 		fill: color-mix(in srgb, var(--accent) 40%, transparent);
 		stroke: var(--accent);
-		stroke-width: 7;
+		stroke-width: 4;
 	}
 	.part.locked {
 		cursor: default;
