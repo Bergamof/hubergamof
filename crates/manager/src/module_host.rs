@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, KeyContent, ModuleInstanceId, ModuleKind, ModuleLifetime,
-    ScreenLockState, StripPopup, StripWidget,
+    PageContent, PageId, ScreenLockState, StripPopup, StripWidget,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{AppModulesConfig, ModuleInstance};
@@ -87,6 +87,11 @@ pub struct ModuleView {
     pub dial_hints: HashMap<DialFunctionId, DialHint>,
     /// What its petal says in the radial menu.
     pub radial_status: Option<String>,
+    /// The badge on the icon of its petal in the radial menu.
+    pub radial_badge: Option<u32>,
+    /// The pages it offers (see [`hubergamof_module_api::Module::page_ids`]),
+    /// as they are now.
+    pub pages: BTreeMap<PageId, PageContent>,
     /// Its settings as the instance runs with them.
     pub settings: Value,
 }
@@ -113,6 +118,8 @@ enum Request {
     Call {
         kind: ModuleKind,
         call: Call,
+        /// The page it comes from declares it usable while locked.
+        declared: bool,
         /// After this the device has given up: the input is dropped.
         deadline: tokio::time::Instant,
         reply: oneshot::Sender<Option<Outcome>>,
@@ -223,12 +230,21 @@ impl ModuleHost {
 
     /// Hands `call`, an input of a device, to the instance of `kind`. `None`
     /// when the host holds none or is gone. The host plays the haptic events
-    /// itself: they are not in the commands of the outcome.
-    pub(crate) async fn call(&self, kind: &ModuleKind, call: Call) -> Option<Outcome> {
+    /// itself: they are not in the commands of the outcome. `declared`: the
+    /// page the input comes from declares it usable while the computer is
+    /// locked, which the device checked (see [`Module::page`]'s
+    /// `lock_safe_pages`).
+    pub(crate) async fn call(
+        &self,
+        kind: &ModuleKind,
+        call: Call,
+        declared: bool,
+    ) -> Option<Outcome> {
         let (reply, answer) = oneshot::channel();
         let request = Request::Call {
             kind: kind.clone(),
             call,
+            declared,
             deadline: tokio::time::Instant::now() + APPLICATION_CALL_TIMEOUT,
             reply,
         };
@@ -414,8 +430,10 @@ impl Hosted {
             tracing::debug!(%id, "radial action refused: the computer is locked");
             return RadialReply::Refused;
         }
-        if let Some(Outcome::Done(commands)) =
-            self.instances.call(&id, Call::RadialAction(action)).await
+        if let Some(Outcome::Done(commands)) = self
+            .instances
+            .call(&id, Call::RadialAction(action), false)
+            .await
         {
             self.run(&id, commands);
         }
@@ -428,6 +446,7 @@ impl Hosted {
         &mut self,
         kind: &ModuleKind,
         call: Call,
+        declared: bool,
         deadline: tokio::time::Instant,
     ) -> Option<Outcome> {
         let id = self.by_kind.get(kind).cloned()?;
@@ -437,11 +456,13 @@ impl Hosted {
             tracing::debug!(%id, "input dropped: the device gave up on it");
             return None;
         }
-        if *self.locked.borrow() && !self.usable_when_locked(kind) {
+        let may_run_locked =
+            self.usable_when_locked(kind) || (declared && self.lock_safe_pages(kind));
+        if *self.locked.borrow() && !may_run_locked {
             tracing::debug!(%id, "input dropped: the computer is locked");
             return None;
         }
-        let outcome = self.instances.call(&id, call).await?;
+        let outcome = self.instances.call(&id, call, declared).await?;
         Some(match outcome {
             Outcome::Done(commands) => Outcome::Done(self.play_haptics(&id, commands)),
             Outcome::Failed => Outcome::Failed,
@@ -516,6 +537,14 @@ impl Hosted {
         self.registry
             .get(kind)
             .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
+    }
+
+    /// Whether the pages of the module of `kind` may declare what stays
+    /// usable while the computer is locked.
+    fn lock_safe_pages(&self, kind: &ModuleKind) -> bool {
+        self.registry
+            .get(kind)
+            .is_some_and(|factory| factory.descriptor().capabilities.lock_safe_pages)
     }
 
     /// A device found `settings` for `kind`: kept when the file has nothing
@@ -608,6 +637,8 @@ impl Hosted {
                     strip_popup: self.instances.strip_popup(id),
                     dial_hints,
                     radial_status: self.instances.radial_status(id),
+                    radial_badge: self.instances.radial_badge(id),
+                    pages: self.instances.pages(id),
                     settings: self.settings_of(kind),
                 }),
             );
@@ -699,8 +730,8 @@ async fn run(mut hosted: Hosted, mut requests: mpsc::Receiver<Request>) {
                     let answer = hosted.radial_action(&module, action).await;
                     let _ = reply.send(answer);
                 }
-                Some(Request::Call { kind, call, deadline, reply }) => {
-                    let outcome = hosted.call(&kind, call, deadline).await;
+                Some(Request::Call { kind, call, declared, deadline, reply }) => {
+                    let outcome = hosted.call(&kind, call, declared, deadline).await;
                     let _ = reply.send(outcome);
                 }
                 Some(Request::Adopt { kind, settings }) => hosted.adopt(kind, settings).await,
@@ -859,7 +890,7 @@ mod tests {
     async fn a_module_the_application_does_not_hold_is_not_found() {
         let fixture = Fixture::new();
         let (host, _task) = fixture.start();
-        for module in ["audio", "nothing"] {
+        for module in ["docker", "nothing"] {
             assert_eq!(
                 host.radial_action(&module.into(), "toggle").await,
                 RadialReply::NotHeld
@@ -971,7 +1002,7 @@ mod tests {
         let (host, _task) = fixture.start();
         host.adopt(&"pomodoro".into(), &json!({ "workMinutes": 30 }));
         host.update_settings(&"pomodoro".into(), &json!({ "workMinutes": 45 }));
-        host.update_settings(&"audio".into(), &json!({}));
+        host.update_settings(&"docker".into(), &json!({}));
         host.radial_action(&"nothing".into(), "x").await;
         let store = ConfigStore::new(fixture.dir.path(), Arc::clone(&fixture.registry));
         let stored = store.load_app_modules().unwrap().config;
@@ -1064,7 +1095,7 @@ mod tests {
 
         // The device gave up on it.
         let late = hosted
-            .call(&kind, Call::RadialAction("toggle".into()), now)
+            .call(&kind, Call::RadialAction("toggle".into()), false, now)
             .await;
         assert!(late.is_none());
         assert_eq!(fixture.saved(), None);
@@ -1074,7 +1105,7 @@ mod tests {
         locked.send_replace(true);
         let later = now + Duration::from_secs(60);
         let done = hosted
-            .call(&kind, Call::RadialAction("toggle".into()), later)
+            .call(&kind, Call::RadialAction("toggle".into()), false, later)
             .await;
         assert!(matches!(done, Some(Outcome::Done(_))));
         assert!(fixture.saved().is_some_and(|saved| saved.is_running()));
@@ -1101,14 +1132,43 @@ mod tests {
         );
 
         let outcome = host
-            .call(&"pomodoro".into(), Call::RadialAction("toggle".into()))
+            .call(
+                &"pomodoro".into(),
+                Call::RadialAction("toggle".into()),
+                false,
+            )
             .await;
         assert!(matches!(outcome, Some(Outcome::Done(_))));
         views
             .wait_for(|views| views.get(&"pomodoro".into()).unwrap().key != before)
             .await
             .unwrap();
-        assert!(host.call(&"audio".into(), Call::KeyPress).await.is_none());
+        assert!(
+            host.call(&"docker".into(), Call::KeyPress, false)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pages_a_module_lists_are_shared_in_its_view() {
+        let fixture = Fixture::new();
+        let (host, _task) = fixture.start();
+        let mut views = host.views();
+        views
+            .wait_for(|views| views.contains_key(&"audio".into()))
+            .await
+            .unwrap();
+        let view = views.borrow().get(&"audio".into()).cloned().unwrap();
+        assert!(
+            view.pages.contains_key(&PageId("audio".into())),
+            "{:?}",
+            view.pages.keys()
+        );
+        // The module that lists none shares none.
+        let pomodoro = views.borrow().get(&"pomodoro".into()).cloned().unwrap();
+        assert!(pomodoro.pages.is_empty());
+        assert_eq!(pomodoro.radial_badge, None);
     }
 
     #[test]
@@ -1116,11 +1176,11 @@ mod tests {
         let fixture = Fixture::new();
         let none =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
-        assert_eq!(none.len(), 1);
-        assert_eq!(
-            (none[0].id.0.as_str(), none[0].kind.0.as_str()),
-            (POMODORO_ID, "pomodoro")
-        );
+        let default = none
+            .iter()
+            .find(|instance| instance.kind.0 == "pomodoro")
+            .expect("a default pomodoro");
+        assert_eq!(default.id.0, POMODORO_ID);
 
         stored(
             &fixture,
@@ -1128,9 +1188,13 @@ mod tests {
         );
         let mine =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
-        assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0].id.0, "mine");
-        assert_eq!(mine[0].settings["workMinutes"], 30);
+        let pomodoros: Vec<_> = mine
+            .iter()
+            .filter(|instance| instance.kind.0 == "pomodoro")
+            .collect();
+        assert_eq!(pomodoros.len(), 1);
+        assert_eq!(pomodoros[0].id.0, "mine");
+        assert_eq!(pomodoros[0].settings["workMinutes"], 30);
     }
 
     #[test]
@@ -1139,7 +1203,7 @@ mod tests {
         stored(
             &fixture,
             vec![
-                instance("a", "audio", json!({})),
+                instance("a", "docker", json!({})),
                 instance("first", "pomodoro", json!({})),
                 instance("second", "pomodoro", json!({})),
                 instance("ghost", "nothing", json!({})),
@@ -1148,7 +1212,10 @@ mod tests {
         let kept =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
         let ids: Vec<_> = kept.iter().map(|instance| instance.id.0.as_str()).collect();
-        assert_eq!(ids, ["first"]);
+        assert!(ids.contains(&"first"), "{ids:?}");
+        for ignored in ["a", "second", "ghost"] {
+            assert!(!ids.contains(&ignored), "{ignored} is ignored: {ids:?}");
+        }
     }
 
     #[test]
@@ -1164,6 +1231,15 @@ mod tests {
         .unwrap();
         let kept =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
-        assert_eq!(kept.len(), 1);
+        let application_kinds = fixture
+            .registry
+            .factories()
+            .filter(|factory| factory.lifetime() == ModuleLifetime::Application)
+            .count();
+        assert_eq!(kept.len(), application_kinds);
+        assert!(
+            kept.iter()
+                .all(|instance| instance.id.0.starts_with("app-"))
+        );
     }
 }

@@ -19,6 +19,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
     ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
@@ -206,6 +207,12 @@ fn descriptor() -> ModuleDescriptor {
 }
 
 impl ModuleFactory for TeamsFactory {
+    /// The application keeps the instance: every device, mouse and the
+    /// interface show and drive the same one.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
     }
@@ -663,6 +670,10 @@ impl Module for Teams {
         }
     }
 
+    fn page_ids(&self) -> Vec<PageId> {
+        vec![PageId(CALL_PAGE.into()), PageId(UNREAD_PAGE.into())]
+    }
+
     fn page(&self, page: &PageId) -> Option<PageContent> {
         match page.0.as_str() {
             UNREAD_PAGE => self.unread_page(),
@@ -692,6 +703,11 @@ impl Module for Teams {
             Some(item) => self.ask(item.action()),
             None => Vec::new(),
         }
+    }
+
+    fn radial_badge(&self) -> Option<u32> {
+        let unread = self.changes.borrow().total_unread();
+        (unread > 0).then_some(unread)
     }
 
     fn radial_status(&self) -> Option<String> {

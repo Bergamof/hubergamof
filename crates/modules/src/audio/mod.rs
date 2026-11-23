@@ -20,6 +20,7 @@ mod state;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, DialFunctionDescriptor, DialFunctionId, DialHint, ImageData, ItemId, KeyContent,
     KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
@@ -154,6 +155,12 @@ fn descriptor() -> ModuleDescriptor {
 }
 
 impl ModuleFactory for AudioFactory {
+    /// The application keeps the instance: every device, mouse and the
+    /// interface show and drive the same one.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
     }
@@ -458,6 +465,14 @@ impl Module for Audio {
 
     async fn on_key_press(&mut self) -> Vec<Command> {
         vec![Command::OpenPage(MAIN_PAGE.into())]
+    }
+
+    fn page_ids(&self) -> Vec<PageId> {
+        vec![
+            PageId(MAIN_PAGE.into()),
+            PageId(OUTPUTS_PAGE.into()),
+            PageId(INPUTS_PAGE.into()),
+        ]
     }
 
     fn page(&self, page: &PageId) -> Option<PageContent> {

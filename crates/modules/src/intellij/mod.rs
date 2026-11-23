@@ -27,6 +27,7 @@ mod watch;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
     ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId,
@@ -162,6 +163,12 @@ impl IntellijSettings {
 }
 
 impl ModuleFactory for IntellijFactory {
+    /// The application keeps the instance: every device, mouse and the
+    /// interface show and drive the same one.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
     }
@@ -400,6 +407,10 @@ impl Module for Intellij {
         }
         self.app.acknowledge();
         self.launch(Opening::Application, ModuleSurface::HomeKey, Vec::new())
+    }
+
+    fn page_ids(&self) -> Vec<PageId> {
+        vec![PageId(MAIN_PAGE.into())]
     }
 
     fn page(&self, page: &PageId) -> Option<PageContent> {

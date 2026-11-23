@@ -17,6 +17,7 @@
 //! from the configuration; one launch at a time, whatever the instance.
 
 use async_trait::async_trait;
+use hubergamof_module_api::ModuleLifetime;
 use hubergamof_module_api::{
     Command, ImageData, KeyContent, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor,
     ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
@@ -123,6 +124,12 @@ impl ClaudeFactory {
 }
 
 impl ModuleFactory for ClaudeFactory {
+    /// The application keeps the instance: every device, mouse and the
+    /// interface show and drive the same one.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor {
             kind: CLAUDE_KIND.into(),

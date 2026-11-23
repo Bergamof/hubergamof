@@ -29,8 +29,9 @@ use hubergamof_manager::mouse_hub::{MouseHub, MouseRegistration};
 use hubergamof_manager::radial::{
     self,
     actions::ModuleActions,
-    looks::{Looks, Statuses},
+    looks::{Looks, PetalNotes},
     service::{Presentation, RadialService},
+    window::PetalNote,
 };
 use hubergamof_manager::render::Renderer;
 use hubergamof_manager::screen_lock::{LogindScreenLock, NoScreenLock, ScreenLock};
@@ -715,15 +716,19 @@ async fn stop_host(host: &ModuleHost, task: &mut tokio::task::JoinHandle<()>) {
     }
 }
 
-/// What the modules of the application say under their names in the menu,
-/// read from what the application shows.
-fn petal_statuses(host: &ModuleHost) -> Statuses {
+/// What the modules of the application say on their petals in the menu (a status under the
+/// name, a badge on the icon), read from what the application shows.
+fn petal_notes(host: &ModuleHost) -> PetalNotes {
     let views = host.views();
-    Statuses::new(move |kind| {
+    PetalNotes::new(move |kind| {
         views
             .borrow()
             .get(kind)
-            .and_then(|view| view.radial_status.clone())
+            .map(|view| PetalNote {
+                status: view.radial_status.clone(),
+                badge: view.radial_badge,
+            })
+            .unwrap_or_default()
     })
 }
 
@@ -783,7 +788,7 @@ fn start_served_mice(
         Presentation {
             feel: Arc::new(hub.clone()),
             looks: Looks::of_modules(&services.registry, &services.renderer),
-            statuses: petal_statuses(host),
+            notes: petal_notes(host),
         },
     );
     let actions = actions.with_radial(menu.handle());

@@ -354,11 +354,26 @@ impl Instances {
 
     /// Page `page` of instance `id`, if it exists.
     pub(crate) fn page(&mut self, id: &ModuleInstanceId, page: &PageId) -> Option<PageContent> {
-        // A module of the application offers no pages (see `ModuleLifetime`).
+        // A module of the application shares the pages it listed.
         if self.shared.contains_key(id) {
-            return None;
+            return self.view(id)?.pages.get(page).cloned();
         }
         self.inspect(id, "page", |module| module.page(page))
+    }
+
+    /// The pages instance `id` lists (see [`Module::page_ids`]), as they are
+    /// now: what the application shares of an instance it holds.
+    pub(crate) fn pages(&mut self, id: &ModuleInstanceId) -> BTreeMap<PageId, PageContent> {
+        self.inspect(id, "pages", |module| {
+            Some(
+                module
+                    .page_ids()
+                    .into_iter()
+                    .filter_map(|page| Some((page.clone(), module.page(&page)?)))
+                    .collect(),
+            )
+        })
+        .unwrap_or_default()
     }
 
     /// Reminder of what the dials assigned `function` of instance `id` do.
@@ -388,6 +403,14 @@ impl Instances {
             return self.view(id)?.radial_status.clone();
         }
         self.inspect(id, "radial_status", |module| module.radial_status())
+    }
+
+    /// The badge on the petal of instance `id` in the radial menu, if any.
+    pub(crate) fn radial_badge(&mut self, id: &ModuleInstanceId) -> Option<u32> {
+        if self.shared.contains_key(id) {
+            return self.view(id)?.radial_badge;
+        }
+        self.inspect(id, "radial_badge", |module| module.radial_badge())
     }
 
     /// The menu instance `id` has open, if any.
@@ -420,10 +443,18 @@ impl Instances {
 
     /// Runs a handler of instance `id`; `None` when there is no such
     /// instance.
-    pub(crate) async fn call(&mut self, id: &ModuleInstanceId, call: Call) -> Option<Outcome> {
+    /// `declared`: the page of the input declares it usable while the
+    /// computer is locked (the device checked), which a module of the
+    /// application has to be told: it checks the lock itself.
+    pub(crate) async fn call(
+        &mut self,
+        id: &ModuleInstanceId,
+        call: Call,
+        declared: bool,
+    ) -> Option<Outcome> {
         if let Some(shared) = self.shared.get(id) {
             let (host, kind) = (self.application.clone()?, shared.kind.clone());
-            return call_application(host, kind, call).await;
+            return call_application(host, kind, call, declared).await;
         }
         let instance = self.live.get_mut(id)?;
         let result = run_handler(instance.module.as_mut(), call).await;
@@ -451,7 +482,8 @@ impl Instances {
             tracing::debug!(module = %routed.module, "dropping event of a replaced instance");
             return None;
         }
-        self.call(&routed.module, Call::Event(routed.event)).await
+        self.call(&routed.module, Call::Event(routed.event), false)
+            .await
     }
 
     fn inspect<T>(
@@ -595,9 +627,14 @@ impl Instances {
 
 /// An input for a module of the application, taken by the application within
 /// [`APPLICATION_CALL_TIMEOUT`].
-async fn call_application(host: ModuleHost, kind: ModuleKind, call: Call) -> Option<Outcome> {
+async fn call_application(
+    host: ModuleHost,
+    kind: ModuleKind,
+    call: Call,
+    declared: bool,
+) -> Option<Outcome> {
     if let Ok(outcome) =
-        tokio::time::timeout(APPLICATION_CALL_TIMEOUT, host.call(&kind, call)).await
+        tokio::time::timeout(APPLICATION_CALL_TIMEOUT, host.call(&kind, call, declared)).await
     {
         return outcome;
     }
@@ -680,6 +717,18 @@ mod tests {
     impl Module for Counter {
         fn radial_status(&self) -> Option<String> {
             Some("counting".to_owned())
+        }
+
+        fn radial_badge(&self) -> Option<u32> {
+            Some(3)
+        }
+
+        fn page_ids(&self) -> Vec<PageId> {
+            vec![PageId("main".into()), PageId("gone".into())]
+        }
+
+        fn page(&self, page: &PageId) -> Option<PageContent> {
+            (page.0 == "main").then(|| PageContent::new("Counter", Vec::new()))
         }
 
         fn on_shutdown(&mut self) {
@@ -804,6 +853,23 @@ mod tests {
         assert_eq!(instances.radial_status(&"a".into()), None);
         assert_eq!(instances.take_failures(), ["a".into()]);
         assert_eq!(instances.radial_status(&"nothing".into()), None);
+    }
+
+    #[tokio::test]
+    async fn the_badge_and_the_listed_pages_of_an_instance_are_read() {
+        let probe = Probe::default();
+        let (mut instances, _received) = instances(&probe);
+        instances.sync(&[counter()]);
+        assert_eq!(instances.radial_badge(&"c".into()), Some(3));
+        assert_eq!(instances.radial_badge(&"nothing".into()), None);
+        // A page that is listed but does not exist now is left out.
+        let pages = instances.pages(&"c".into());
+        assert_eq!(
+            pages.keys().map(|page| page.0.as_str()).collect::<Vec<_>>(),
+            ["main"]
+        );
+        assert_eq!(pages[&PageId("main".into())].title, "Counter");
+        assert!(instances.pages(&"nothing".into()).is_empty());
     }
 
     #[tokio::test]

@@ -54,7 +54,8 @@ pub enum ModuleLifetime {
     /// The application holds an instance that works whether or not a device
     /// is connected; devices, mice and the interface only show and drive it.
     ///
-    /// Nothing of a device reaches such an instance: no unread notifications,
+    /// Such an instance shares its pages (see [`Module::page_ids`]). Nothing of a
+    /// device reaches it: no unread notifications,
     /// no image library, no redraw to request. The commands it returns that
     /// have no surface to show on are dropped (haptic events still reach the
     /// mice).
@@ -193,6 +194,15 @@ pub trait Module: Send {
         None
     }
 
+    /// The pages the module offers now, so that a module living in the
+    /// application can share their content: the host reads each of them with
+    /// [`Module::page`] whenever the instance changes, and the devices show
+    /// what it read. Nothing by default; a module of a device alone needs not
+    /// list its pages (the device asks [`Module::page`] itself).
+    fn page_ids(&self) -> Vec<PageId> {
+        Vec::new()
+    }
+
     /// Handles a press of item `item` of page `page`, as it was displayed
     /// when the key was pressed.
     async fn on_item_press(&mut self, page: &PageId, item: &ItemId) -> Vec<Command> {
@@ -269,6 +279,14 @@ pub trait Module: Send {
     /// current state, is cheap and side-effect free; the menu reads it again
     /// while it stays open. Nothing by default: the petal shows the name only.
     fn radial_status(&self) -> Option<String> {
+        None
+    }
+
+    /// A count drawn as a badge on the icon of the module's petal of the
+    /// radial menu (unread messages): nothing, or zero, draws no badge. Like
+    /// the other getters it describes the current state, is cheap and
+    /// side-effect free; the menu reads it again while it stays open.
+    fn radial_badge(&self) -> Option<u32> {
         None
     }
 
