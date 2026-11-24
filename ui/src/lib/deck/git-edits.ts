@@ -5,6 +5,7 @@ import type {
 	GitSettings,
 	GitSigning
 } from '#lib/generated/index.js';
+import type { SettingsEdit } from './advanced-edits.js';
 import { GIT_FOLDER_IDENTITIES_MAX } from './git-validation.js';
 
 /** A change of the Git configuration. */
@@ -59,4 +60,9 @@ export function removeFolderIdentity(folder: string): GitEdit {
 		...config,
 		folderIdentities: config.folderIdentities.filter((rule) => rule.folder !== folder)
 	});
+}
+
+/** Changes the settings written by the person. */
+export function editExtraSettings(change: SettingsEdit): GitEdit {
+	return (config) => ({ ...config, extraSettings: change(config.extraSettings) });
 }

@@ -4,10 +4,10 @@
 //! Only that file is read: the files it includes are not followed, so their
 //! hosts are not listed.
 
-use hubergamof_protocol::SshSystemHost;
+use hubergamof_protocol::{MAX_ADVANCED_SETTINGS, SshSystemHost};
 
 use super::apply::SshFiles;
-use super::sections::{Header, lines_of, option_of, sections, unmanaged_options};
+use super::sections::{Header, lines_of, option_of, sections, split_options};
 use crate::machine::files::{FileError, read_text_file};
 
 /// Most hosts listed.
@@ -44,14 +44,28 @@ fn parse_hosts(content: &str) -> Vec<SshSystemHost> {
             identity_file: String::new(),
             proxy_jump: String::new(),
             forward_agent: false,
-            other_options: Vec::new(),
+            options: Vec::new(),
+            lost_options: Vec::new(),
         };
-        if patterns.len() != 1 || patterns.iter().any(|name| name.contains(['*', '?', '!'])) {
-            host.other_options.push(SEVERAL_PATTERNS.to_owned());
+        let takeable =
+            patterns.len() == 1 && !patterns.iter().any(|name| name.contains(['*', '?', '!']));
+        if !takeable {
+            host.lost_options.push(SEVERAL_PATTERNS.to_owned());
         }
         let body = &lines[section.lines.clone()];
-        host.other_options
-            .extend(unmanaged_options(body.iter().copied()));
+        let split = split_options(body.iter().copied());
+        // The values of a section that cannot be taken are not sent: nobody takes them, and
+        // they may hold a secret.
+        if takeable && split.lost.is_empty() {
+            host.options = split.free;
+        }
+        host.lost_options.extend(
+            split
+                .lost
+                .into_iter()
+                .take(MAX_ADVANCED_SETTINGS)
+                .map(|name| shown(&name)),
+        );
         let mut seen: Vec<String> = Vec::new();
         for line in &body[1..] {
             let Some((keyword, value)) = option_of(line) else {
@@ -120,35 +134,78 @@ mod tests {
         assert_eq!(host.identity_file, "~/.ssh/id");
         assert_eq!(host.proxy_jump, "bastion");
         assert!(host.forward_agent);
-        assert_eq!(host.other_options, Vec::<String>::new());
+        assert_eq!(host.lost_options, Vec::<String>::new());
     }
 
     #[test]
-    fn other_options_are_named_and_keep_the_host_from_being_taken() {
-        let hosts = parse_hosts("Host a\n\tUser u\n\tProxyCommand nc %h %p\n\tCompression yes\n");
-        assert_eq!(hosts[0].other_options, ["proxycommand", "compression"]);
+    fn the_other_options_are_carried_as_they_are_written() {
+        let hosts = parse_hosts(
+            "Host a\n\tUser u\n\tProxyCommand nc %h %p\n\tcompression=yes\n\tSendEnv \"A B\"\n\tSetEnv ==x\n",
+        );
+        let found: Vec<_> = hosts[0]
+            .options
+            .iter()
+            .map(|option| (option.key.as_str(), option.value.as_str(), option.enabled))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("ProxyCommand", "nc %h %p", true),
+                ("compression", "yes", true),
+                ("SendEnv", "\"A B\"", true),
+                ("SetEnv", "=x", true),
+            ]
+        );
+        assert_eq!(hosts[0].lost_options, Vec::<String>::new());
+    }
+
+    #[test]
+    fn what_cannot_be_carried_is_named_and_keeps_the_host_from_being_taken() {
+        let hosts = parse_hosts(
+            "Host a\n\tCompression yes\n\tcompression no\n\tServerAliveInterval 5\n\tSendEnv \"A\n\tBad@Key 1\n",
+        );
+        assert_eq!(hosts[0].lost_options, ["compression", "sendenv", "bad@key"]);
+        // Nobody takes it: no value is sent.
+        assert_eq!(hosts[0].options, []);
+    }
+
+    #[test]
+    fn as_many_options_as_a_list_holds_are_carried_and_one_more_keeps_the_host_from_being_taken() {
+        let max = hubergamof_protocol::MAX_ADVANCED_SETTINGS;
+        let mut content = String::from("Host a\n");
+        for i in 0..max {
+            writeln!(content, "\tKey{i} v").unwrap();
+        }
+        let hosts = parse_hosts(&content);
+        assert_eq!(hosts[0].options.len(), max);
+        assert_eq!(hosts[0].lost_options, Vec::<String>::new());
+
+        writeln!(content, "\tKey{max} v").unwrap();
+        let hosts = parse_hosts(&content);
+        assert_eq!(hosts[0].lost_options.len(), 1);
+        assert_eq!(hosts[0].options, []);
     }
 
     #[test]
     fn several_names_and_jokers_cannot_be_taken() {
         let hosts = parse_hosts("Host a b\n\tUser u\nHost web-*\n\tUser w\n");
         assert_eq!(hosts[0].alias, "a b");
-        assert_eq!(hosts[0].other_options, [SEVERAL_PATTERNS]);
-        assert_eq!(hosts[1].other_options, [SEVERAL_PATTERNS]);
+        assert_eq!(hosts[0].lost_options, [SEVERAL_PATTERNS]);
+        assert_eq!(hosts[1].lost_options, [SEVERAL_PATTERNS]);
     }
 
     #[test]
     fn the_first_value_of_an_option_is_the_one_ssh_uses() {
         let hosts = parse_hosts("Host a\n\tUser first\n\tUser second\n");
         assert_eq!(hosts[0].user, "first");
-        assert_eq!(hosts[0].other_options, Vec::<String>::new());
+        assert_eq!(hosts[0].lost_options, Vec::<String>::new());
     }
 
     #[test]
     fn a_port_that_is_not_a_number_is_an_option_to_leave_alone() {
         let hosts = parse_hosts("Host a\n\tPort ssh\n");
         assert_eq!(hosts[0].port, None);
-        assert_eq!(hosts[0].other_options, ["port"]);
+        assert_eq!(hosts[0].lost_options, ["port"]);
     }
 
     #[test]
@@ -163,12 +220,12 @@ mod tests {
     #[test]
     fn what_ssh_adds_up_or_reads_otherwise_than_yes_or_no_cannot_be_taken_without_loss() {
         let hosts = parse_hosts("Host a\n\tIdentityFile k1\n\tIdentityFile k2\n");
-        assert_eq!(hosts[0].other_options, ["identityfile"]);
+        assert_eq!(hosts[0].lost_options, ["identityfile"]);
         assert_eq!(hosts[0].identity_file, "k1");
 
         for value in ["/tmp/agent.sock", "${SSH_AUTH_SOCK}", "maybe"] {
             let hosts = parse_hosts(&format!("Host a\n\tForwardAgent {value}\n"));
-            assert_eq!(hosts[0].other_options, ["forwardagent"], "{value}");
+            assert_eq!(hosts[0].lost_options, ["forwardagent"], "{value}");
             assert!(!hosts[0].forward_agent);
         }
         for (value, on) in [
@@ -178,7 +235,7 @@ mod tests {
             ("no", false),
         ] {
             let hosts = parse_hosts(&format!("Host a\n\tForwardAgent {value}\n"));
-            assert_eq!(hosts[0].other_options, Vec::<String>::new(), "{value}");
+            assert_eq!(hosts[0].lost_options, Vec::<String>::new(), "{value}");
             assert_eq!(hosts[0].forward_agent, on, "{value}");
         }
     }
@@ -189,14 +246,14 @@ mod tests {
         assert_eq!(hosts[0].alias, "a");
         assert_eq!(hosts[0].port, Some(22));
         assert_eq!(hosts[0].user, "ada");
-        assert_eq!(hosts[0].other_options, Vec::<String>::new());
+        assert_eq!(hosts[0].lost_options, Vec::<String>::new());
     }
 
     #[test]
     fn a_host_with_a_comment_after_its_name_is_one_host() {
         let hosts = parse_hosts("Host a # note\n\tUser u\n");
         assert_eq!(hosts[0].alias, "a");
-        assert_eq!(hosts[0].other_options, Vec::<String>::new());
+        assert_eq!(hosts[0].lost_options, Vec::<String>::new());
     }
 
     #[test]
@@ -229,5 +286,23 @@ mod tests {
         std::fs::create_dir(home.path().join(".ssh")).unwrap();
         std::fs::create_dir(home.path().join(".ssh/config")).unwrap();
         assert_eq!(files.read_system_hosts(), []);
+    }
+
+    #[test]
+    fn the_values_of_a_section_that_cannot_be_taken_are_not_sent() {
+        let hosts = parse_hosts(
+            "Host a b\n\tProxyCommand sshpass -p secret nc %h %p\nHost web-*\n\tSetEnv TOKEN=x\nHost c\n\tCompression yes\n\tCompression no\n\tProxyCommand sshpass -p s nc\n",
+        );
+        for host in &hosts {
+            assert_eq!(host.options, [], "{}", host.alias);
+        }
+    }
+
+    #[test]
+    fn the_names_of_what_would_be_lost_are_cut_like_the_other_values() {
+        let long = "x".repeat(MAX_OPTION_CHARS + 50);
+        let hosts = parse_hosts(&format!("Host a\n\t{long}\n"));
+        assert_eq!(hosts[0].lost_options.len(), 1);
+        assert_eq!(hosts[0].lost_options[0].chars().count(), MAX_OPTION_CHARS);
     }
 }

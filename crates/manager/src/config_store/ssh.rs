@@ -68,6 +68,7 @@ mod tests {
             proxy_jump: proxy_jump.into(),
             forward_agent: false,
             enabled: true,
+            options: Vec::new(),
         }
     }
 

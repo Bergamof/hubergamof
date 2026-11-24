@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { SshConfig, SshHost } from '#lib/generated/index.js';
-import { addHost, isHostListFull, removeHost, replaceHost, setHostEnabled } from './ssh-edits.js';
+import {
+	addHost,
+	editCommonOptions,
+	editHostOptions,
+	isHostListFull,
+	removeHost,
+	replaceHost,
+	setHostEnabled
+} from './ssh-edits.js';
+import { addSetting } from './advanced-edits.js';
 import { SSH_HOSTS_MAX } from './ssh-validation.js';
 
 function host(alias: string): SshHost {
@@ -12,12 +21,13 @@ function host(alias: string): SshHost {
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
-		enabled: true
+		enabled: true,
+		options: []
 	};
 }
 
 function hosts(...aliases: string[]): SshConfig {
-	return { schemaVersion: 1, hosts: aliases.map(host), revision: 3 };
+	return { schemaVersion: 1, hosts: aliases.map(host), commonOptions: [], revision: 3 };
 }
 
 describe('ssh edits', () => {
@@ -45,5 +55,19 @@ describe('ssh edits', () => {
 		expect(config.hosts.map(({ enabled }) => enabled)).toEqual([false, true]);
 		config = removeHost('a')(config);
 		expect(config.hosts.map(({ alias }) => alias)).toEqual(['renamed']);
+	});
+
+	it('changes the options of one host and leaves the others alone', () => {
+		const option = { key: 'Compression', value: 'yes', enabled: true };
+		const config = editHostOptions('b', addSetting(option))(hosts('a', 'b'));
+		expect(config.hosts.map(({ options }) => options.length)).toEqual([0, 1]);
+		expect(config.hosts[1]?.options[0]).toEqual(option);
+	});
+
+	it('changes the options common to every host', () => {
+		const option = { key: 'ServerAliveInterval', value: '30', enabled: true };
+		const config = editCommonOptions(addSetting(option))(hosts('a'));
+		expect(config.commonOptions).toEqual([option]);
+		expect(config.hosts).toHaveLength(1);
 	});
 });

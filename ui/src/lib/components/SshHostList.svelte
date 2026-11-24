@@ -6,8 +6,12 @@ person works: back to « Modifier » after a change, on the neighbour (or `fallb
 one) after a removal.
 -->
 <script lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
+	import type { SettingsEdit } from '#lib/deck/advanced-edits.js';
+	import { SSH_OPTION_ALIAS_RULES } from '#lib/deck/alias-rules.js';
 	import type { SshHost } from '#lib/generated/index.js';
+	import AdvancedSettings from './AdvancedSettings.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import SshHostForm from './SshHostForm.svelte';
 	import Switch from './Switch.svelte';
@@ -17,17 +21,27 @@ one) after a removal.
 		onreplace: (alias: string, host: SshHost) => Promise<EditOutcome>;
 		ontoggle: (alias: string, enabled: boolean) => void;
 		onremove: (alias: string) => void;
+		/** Changes the options of the host called `alias`. */
+		onoptions: (alias: string, change: SettingsEdit) => Promise<EditOutcome>;
 		/** Where the focus goes once a host is removed. */
 		fallbackFocus?: () => void;
 	}
 
-	let { hosts, onreplace, ontoggle, onremove, fallbackFocus }: Props = $props();
+	let { hosts, onreplace, ontoggle, onremove, onoptions, fallbackFocus }: Props = $props();
 
 	let list: HTMLUListElement | undefined = $state();
 	/** The host whose form is open. */
 	let editingAlias: string | undefined = $state();
 	/** The host whose « Modifier » button takes the focus as soon as it is displayed. */
 	let editFocusAlias: string | undefined = $state();
+	/** The hosts whose options are shown: the row is rebuilt when its form closes, the choice stays. */
+	const optionsOpen = new SvelteSet<string>();
+
+	function setOptionsOpen(alias: string, open: boolean) {
+		if (open) optionsOpen.add(alias);
+		else optionsOpen.delete(alias);
+	}
+
 	/** The host waiting for the person to confirm its removal. */
 	let removing: SshHost | undefined = $state();
 
@@ -59,7 +73,7 @@ one) after a removal.
 	let afterRemoval: { neighbour: string | undefined } | undefined;
 
 	function rowOf(alias: string): HTMLLIElement | undefined {
-		return [...(list?.querySelectorAll<HTMLLIElement>('li[data-alias]') ?? [])].find(
+		return [...(list?.querySelectorAll<HTMLLIElement>(':scope > li[data-alias]') ?? [])].find(
 			(item) => item.dataset.alias === alias
 		);
 	}
@@ -68,6 +82,7 @@ one) after a removal.
 		if (removing) {
 			const index = hosts.findIndex(({ alias }) => alias === removing?.alias);
 			afterRemoval = { neighbour: (hosts[index + 1] ?? hosts[index - 1])?.alias };
+			optionsOpen.delete(removing.alias);
 			onremove(removing.alias);
 		}
 		removing = undefined;
@@ -157,6 +172,28 @@ one) after a removal.
 								Supprimer
 							</button>
 						</div>
+						<details
+							class="basis-full"
+							data-options
+							open={optionsOpen.has(host.alias)}
+							ontoggle={(event) => setOptionsOpen(host.alias, event.currentTarget.open)}
+						>
+							<summary class="cursor-pointer py-1 text-sm font-medium">
+								Options avancées{host.options.length > 0 ? ` (${host.options.length})` : ''}
+								<span class="sr-only">du serveur {host.alias}</span>
+							</summary>
+							<div class="mt-3">
+								<AdvancedSettings
+									settings={host.options}
+									rules={SSH_OPTION_ALIAS_RULES}
+									tool="ssh"
+									label="Options du serveur {host.alias}"
+									suffix=" du serveur {host.alias}"
+									addLabel="Ajouter une option à {host.alias}"
+									onchange={(change) => onoptions(host.alias, change)}
+								/>
+							</div>
+						</details>
 					</div>
 				{/if}
 			</li>

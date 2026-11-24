@@ -1,4 +1,5 @@
 import type { SshConfig, SshHost } from '#lib/generated/index.js';
+import type { SettingsEdit } from './advanced-edits.js';
 import { SSH_HOSTS_MAX } from './ssh-validation.js';
 
 /** A change of the SSH configuration. */
@@ -34,4 +35,19 @@ export function setHostEnabled(alias: string, enabled: boolean): SshEdit {
 
 export function removeHost(alias: string): SshEdit {
 	return (config) => ({ ...config, hosts: config.hosts.filter((host) => host.alias !== alias) });
+}
+
+/** Changes the options of the host called `alias`. */
+export function editHostOptions(alias: string, change: SettingsEdit): SshEdit {
+	return (config) => ({
+		...config,
+		hosts: config.hosts.map((host) =>
+			host.alias === alias ? { ...host, options: change(host.options) } : host
+		)
+	});
+}
+
+/** Changes the options common to every host. */
+export function editCommonOptions(change: SettingsEdit): SshEdit {
+	return (config) => ({ ...config, commonOptions: change(config.commonOptions) });
 }

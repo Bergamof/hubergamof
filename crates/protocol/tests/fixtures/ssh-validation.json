@@ -344,5 +344,177 @@
    "value": "a:22:3",
    "valid": false
   }
+ ],
+ "optionKeys": [
+  {
+   "value": "Compression",
+   "valid": true
+  },
+  {
+   "value": "ServerAliveInterval",
+   "valid": true
+  },
+  {
+   "value": "compression",
+   "valid": true
+  },
+  {
+   "value": "A1",
+   "valid": true
+  },
+  {
+   "value": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+   "valid": true
+  },
+  {
+   "value": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "1a",
+   "valid": false
+  },
+  {
+   "value": "Compres-sion",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "a=b",
+   "valid": false
+  },
+  {
+   "value": "Host",
+   "valid": false
+  },
+  {
+   "value": "host",
+   "valid": false
+  },
+  {
+   "value": "MATCH",
+   "valid": false
+  },
+  {
+   "value": "HostName",
+   "valid": false
+  },
+  {
+   "value": "hostname",
+   "valid": false
+  },
+  {
+   "value": "User",
+   "valid": false
+  },
+  {
+   "value": "PORT",
+   "valid": false
+  },
+  {
+   "value": "IdentityFile",
+   "valid": false
+  },
+  {
+   "value": "ProxyJump",
+   "valid": false
+  },
+  {
+   "value": "ForwardAgent",
+   "valid": false
+  },
+  {
+   "value": "\u00e9",
+   "valid": false
+  },
+  {
+   "value": "a\n",
+   "valid": false
+  },
+  {
+   "value": "ProxyCommand",
+   "valid": true
+  },
+  {
+   "value": "Include",
+   "valid": true
+  }
+ ],
+ "optionValues": [
+  {
+   "value": "yes",
+   "valid": true
+  },
+  {
+   "value": "30",
+   "valid": true
+  },
+  {
+   "value": "ssh -W %h:%p bastion",
+   "valid": true
+  },
+  {
+   "value": "\"a b\"",
+   "valid": true
+  },
+  {
+   "value": "'a b'",
+   "valid": true
+  },
+  {
+   "value": "a \"b\" c",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": " yes",
+   "valid": false
+  },
+  {
+   "value": "yes ",
+   "valid": false
+  },
+  {
+   "value": "a\nb",
+   "valid": false
+  },
+  {
+   "value": "a\tb",
+   "valid": false
+  },
+  {
+   "value": "a\u202eb",
+   "valid": false
+  },
+  {
+   "value": "\"a",
+   "valid": false
+  },
+  {
+   "value": "a'",
+   "valid": false
+  },
+  {
+   "value": "it's",
+   "valid": false
+  },
+  {
+   "value": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+   "valid": true
+  },
+  {
+   "value": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+   "valid": false
+  }
  ]
 }

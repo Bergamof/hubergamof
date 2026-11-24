@@ -1,5 +1,14 @@
-import type { SshHost, SshSystemHost } from '#lib/generated/index.js';
+import type { AdvancedSetting, SshHost, SshSystemHost } from '#lib/generated/index.js';
 import { lengthOf } from './alias-validation.js';
+import {
+	ADVANCED_KEY_MAX,
+	ADVANCED_MAX,
+	hasPairedQuotes,
+	isOneLineValue,
+	validateSetting,
+	valueError,
+	type SettingRules
+} from './advanced-validation.js';
 
 /** Limits of the manager (`MAX_SSH_*`, `SSH_FOLDER` in `ssh.rs`). */
 export const SSH_HOSTS_MAX = 128;
@@ -123,10 +132,19 @@ export interface HostDraft {
 	proxyJump: string;
 	forwardAgent: boolean;
 	enabled: boolean;
+	/** Kept as they are: the list of the options has its own form. */
+	options: AdvancedSetting[];
 }
 
-export function draftOf(host: SshHost): HostDraft {
-	return { ...host, port: host.port === null ? '' : String(host.port) };
+/** A host as the form starts from it; a host found elsewhere has no options of its own yet. */
+export function draftOf(
+	host: Omit<SshHost, 'options'> & Partial<Pick<SshHost, 'options'>>
+): HostDraft {
+	return {
+		...host,
+		options: host.options ?? [],
+		port: host.port === null ? '' : String(host.port)
+	};
 }
 
 export const BLANK_HOST: HostDraft = {
@@ -137,7 +155,8 @@ export const BLANK_HOST: HostDraft = {
 	identityFile: '',
 	proxyJump: '',
 	forwardAgent: false,
-	enabled: true
+	enabled: true,
+	options: []
 };
 
 /** The host a draft stands for, once it has no error (see {@link validateHost}). */
@@ -171,22 +190,31 @@ export function hasHostErrors(errors: HostErrors): boolean {
 	return Object.keys(errors).length > 0;
 }
 
-/** The name `ssh` documents for an option, from the lowercase one the manager gives. */
-const OPTION_NAMES: Record<string, string> = {
-	proxycommand: 'ProxyCommand',
-	localcommand: 'LocalCommand',
-	identityfile: 'IdentityFile (plusieurs clés)',
-	forwardagent: 'ForwardAgent (une valeur autre que yes ou no)',
-	port: 'Port (une valeur qui n’est pas un nombre)',
-	compression: 'Compression',
-	serveraliveinterval: 'ServerAliveInterval',
-	identitiesonly: 'IdentitiesOnly',
-	include: 'Include',
-	match: 'Match'
+/** The name `ssh` documents for an option the manager could not carry, from the lowercase one it gives. */
+const OPTION_REASONS: Record<string, string> = {
+	identityfile: 'plusieurs clés',
+	forwardagent: 'une valeur autre que yes ou no',
+	port: 'une valeur qui n’est pas un nombre'
 };
 
-function optionName(option: string): string {
-	return OPTION_NAMES[option] ?? option;
+/** What is said of an option that cannot be taken: its name, and why when it is a known case. */
+function lostOption(option: string): string {
+	const reason = OPTION_REASONS[option] ?? 'écrite deux fois, ou hors des règles de HuBergamof';
+	return `${option} (${reason})`;
+}
+
+/** What is wrong with the first option of a list, in French; `undefined` when the list is fine. */
+function optionListError(options: readonly AdvancedSetting[]): string | undefined {
+	const taken: string[] = [];
+	if (options.length > ADVANCED_MAX) return `${ADVANCED_MAX} options au plus.`;
+	for (const option of options) {
+		const problem = Object.values(
+			validateSetting({ key: option.key, value: option.value }, taken, SSH_OPTION_RULES)
+		)[0];
+		if (problem) return `L’option « ${option.key} » : ${problem}`;
+		taken.push(option.key);
+	}
+	return undefined;
 }
 
 /** Why a host found in `~/.ssh/config` cannot be taken over, if it cannot. */
@@ -194,11 +222,64 @@ export function takeOverObstacle(
 	host: SshSystemHost,
 	takenAliases: readonly string[]
 ): string | undefined {
-	if (host.otherOptions.length > 0) {
-		const names = host.otherOptions.map(optionName).join(', ');
-		return `Utilise ${names}, que HuBergamof ne gère pas ou ne sait pas reprendre tel quel : le reprendre ferait perdre ce réglage.`;
+	if (host.lostOptions.length > 0) {
+		const names = host.lostOptions.map(lostOption).join(' ; ');
+		return `Ne peut pas être repris sans perte : ${names}. Corrigez-le dans ~/.ssh/config.`;
 	}
 	const draft = draftOf({ ...host, enabled: true });
 	const [problem] = Object.values(validateHost(draft, takenAliases));
-	return problem ? `Ne respecte pas les règles de HuBergamof : ${problem}` : undefined;
+	const optionsProblem = optionListError(host.options);
+	const found = problem ?? optionsProblem;
+	return found ? `Ne respecte pas les règles de HuBergamof : ${found}` : undefined;
 }
+
+/** The options the form of a host manages (`MANAGED_OPTIONS` in `ssh.rs`), in lower case. */
+const MANAGED_OPTIONS: readonly string[] = [
+	'hostname',
+	'user',
+	'port',
+	'identityfile',
+	'proxyjump',
+	'forwardagent'
+];
+
+const OPTION_KEY = /^[A-Za-z][A-Za-z0-9]*$/;
+
+/** Mirrors `is_valid_ssh_option_key`: a keyword of `ssh_config`, neither `Host`, `Match` nor a managed one. */
+export function isValidOptionKey(key: string): boolean {
+	const lower = key.toLowerCase();
+	return (
+		OPTION_KEY.test(key) &&
+		lengthOf(key) <= ADVANCED_KEY_MAX &&
+		lower !== 'host' &&
+		lower !== 'match' &&
+		!MANAGED_OPTIONS.includes(lower)
+	);
+}
+
+/** Mirrors `is_valid_ssh_option_value`: one line, quotes in pairs. */
+export function isValidOptionValue(value: string): boolean {
+	return isOneLineValue(value) && hasPairedQuotes(value);
+}
+
+function optionKeyError(key: string): string | undefined {
+	if (key === '') return 'Saisissez le nom de l’option.';
+	const lower = key.toLowerCase();
+	if (lower === 'host' || lower === 'match') {
+		return '« Host » et « Match » ouvrent une autre section : ils ne sont pas acceptés ici.';
+	}
+	if (MANAGED_OPTIONS.includes(lower)) {
+		return 'Cette option a son propre champ dans le formulaire du serveur.';
+	}
+	if (!isValidOptionKey(key)) {
+		return `Une option commence par une lettre, puis lettres et chiffres (${ADVANCED_KEY_MAX} au plus) : ServerAliveInterval.`;
+	}
+	return undefined;
+}
+
+/** What the options written by the person must follow: those of `ssh_config`, compared without regard to case. */
+export const SSH_OPTION_RULES: SettingRules = {
+	keyError: optionKeyError,
+	valueError: (value) => valueError(value, true),
+	fold: (key) => key.toLowerCase()
+};

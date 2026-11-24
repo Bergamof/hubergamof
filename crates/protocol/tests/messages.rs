@@ -3,13 +3,13 @@
 #![cfg(test)]
 
 use hubergamof_protocol::{
-    AmbientMode, AmbientSound, CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities,
-    DeviceConfig, DeviceInfo, DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor,
-    Equalizer, EqualizerChange, EqualizerPreset, ErrorCode, GitConfig, GitCredentialHelper,
-    GitSystemEntry, HapticEventDescriptor, HapticWaveform, HeadsetBattery, HeadsetInfo,
-    HeadsetLink, HeadsetState, ImageSize, InstallSupport, KeyState, KeyView, LiveState,
-    ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem, PageView,
-    RadialActionDescriptor, ServerMessage, SettingField, SettingKind, SshConfig, SshHost,
+    AdvancedSetting, AmbientMode, AmbientSound, CatalogModule, ChoiceOption, ClientMessage,
+    DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DeviceTheme, DialAssignment,
+    DialFunctionDescriptor, Equalizer, EqualizerChange, EqualizerPreset, ErrorCode, GitConfig,
+    GitCredentialHelper, GitSystemEntry, HapticEventDescriptor, HapticWaveform, HeadsetBattery,
+    HeadsetInfo, HeadsetLink, HeadsetState, ImageSize, InstallSupport, KeyState, KeyView,
+    LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem,
+    PageView, RadialActionDescriptor, ServerMessage, SettingField, SettingKind, SshConfig, SshHost,
     SshSystemHost, StripConfig, UpdateSettings, UpdateStatus,
 };
 use serde::Serialize;
@@ -636,6 +636,11 @@ fn git_messages_and_configuration() {
     config.settings.credential_helper = GitCredentialHelper::Cache {
         timeout_seconds: 900,
     };
+    config.extra_settings.push(AdvancedSetting {
+        key: "push.default".into(),
+        value: "current".into(),
+        enabled: true,
+    });
     let expected_config = json!({
         "schemaVersion": 1,
         "identity": { "name": "", "email": "" },
@@ -648,6 +653,7 @@ fn git_messages_and_configuration() {
         },
         "aliases": [],
         "folderIdentities": [],
+        "extraSettings": [{ "key": "push.default", "value": "current", "enabled": true }],
         "revision": 0
     });
     assert_wire_format(
@@ -861,13 +867,25 @@ fn ssh_messages_and_configuration() {
         proxy_jump: String::new(),
         forward_agent: true,
         enabled: true,
+        options: vec![AdvancedSetting {
+            key: "Compression".into(),
+            value: "yes".into(),
+            enabled: true,
+        }],
+    });
+    config.common_options.push(AdvancedSetting {
+        key: "ServerAliveInterval".into(),
+        value: "30".into(),
+        enabled: false,
     });
     let expected = json!({
         "schemaVersion": 1,
         "hosts": [{
             "alias": "prod", "hostName": "10.0.0.1", "user": "deploy", "port": 2222,
-            "identityFile": "~/.ssh/id", "proxyJump": "", "forwardAgent": true, "enabled": true
+            "identityFile": "~/.ssh/id", "proxyJump": "", "forwardAgent": true, "enabled": true,
+            "options": [{ "key": "Compression", "value": "yes", "enabled": true }]
         }],
+        "commonOptions": [{ "key": "ServerAliveInterval", "value": "30", "enabled": false }],
         "revision": 0
     });
     assert_wire_format(
@@ -887,7 +905,12 @@ fn ssh_messages_and_configuration() {
                 identity_file: String::new(),
                 proxy_jump: String::new(),
                 forward_agent: false,
-                other_options: vec!["proxycommand".into()],
+                options: vec![AdvancedSetting {
+                    key: "ProxyCommand".into(),
+                    value: "nc %h %p".into(),
+                    enabled: true,
+                }],
+                lost_options: vec!["identityfile".into()],
             }],
         },
         &json!({
@@ -896,7 +919,8 @@ fn ssh_messages_and_configuration() {
             "systemHosts": [{
                 "alias": "web", "hostName": "", "user": "", "port": null,
                 "identityFile": "", "proxyJump": "", "forwardAgent": false,
-                "otherOptions": ["proxycommand"]
+                "options": [{ "key": "ProxyCommand", "value": "nc %h %p", "enabled": true }],
+                "lostOptions": ["identityfile"]
             }]
         }),
     );

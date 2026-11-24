@@ -3,7 +3,8 @@
 use std::fmt::Write as _;
 
 use hubergamof_protocol::{
-    SshConfig, SshHost, is_valid_ssh_alias, is_valid_ssh_host_name, is_valid_ssh_identity_file,
+    AdvancedSetting, SshConfig, SshHost, is_valid_ssh_alias, is_valid_ssh_host_name,
+    is_valid_ssh_identity_file, is_valid_ssh_option_key, is_valid_ssh_option_value,
     is_valid_ssh_proxy_jump, is_valid_ssh_user,
 };
 use thiserror::Error;
@@ -13,6 +14,10 @@ pub(super) const MANAGED_DIR: &str = ".config/hubergamof";
 
 /// The file holding the hosts, in [`MANAGED_DIR`].
 pub(super) const MANAGED_FILE: &str = "ssh_config";
+
+/// What stands for the hosts in the section of the common options, and in the
+/// error about them.
+pub(super) const COMMON_PATTERN: &str = "*";
 
 const MANAGED_HEADER: &str = "# Managed by HuBergamof, do not edit: changes are overwritten.\n";
 
@@ -53,7 +58,29 @@ fn checked(host: &SshHost) -> Result<(), UnwritableHost> {
     if !host.proxy_jump.is_empty() && !is_valid_ssh_proxy_jump(&host.proxy_jump) {
         return wrong("proxyJump");
     }
-    Ok(())
+    checked_options(&host.alias, &host.options)
+}
+
+/// The options written by the person are written as they are: they are
+/// checked again here, the file being read by `ssh`.
+fn checked_options(scope: &str, options: &[AdvancedSetting]) -> Result<(), UnwritableHost> {
+    let writable = |option: &AdvancedSetting| {
+        is_valid_ssh_option_key(&option.key) && is_valid_ssh_option_value(&option.value)
+    };
+    if options.iter().all(writable) {
+        Ok(())
+    } else {
+        Err(UnwritableHost {
+            alias: scope.to_owned(),
+            field: "options",
+        })
+    }
+}
+
+fn write_options(text: &mut String, options: &[AdvancedSetting]) {
+    for option in options.iter().filter(|option| option.enabled) {
+        let _ = writeln!(text, "\t{} {}", option.key, option.value);
+    }
 }
 
 fn section(host: &SshHost) -> String {
@@ -79,18 +106,31 @@ fn section(host: &SshHost) -> String {
     if host.forward_agent {
         option("ForwardAgent", "yes");
     }
+    write_options(&mut text, &host.options);
     text
 }
 
-/// The content of the managed file for the enabled hosts; `None` when there is
-/// none (the file and the include go away).
+/// The section of the options common to every host, last of the file: the
+/// hosts above keep what they set, as `ssh` takes the first value.
+fn common_section(options: &[AdvancedSetting]) -> Option<String> {
+    options.iter().any(|option| option.enabled).then(|| {
+        let mut text = format!("Host {COMMON_PATTERN}\n");
+        write_options(&mut text, options);
+        text
+    })
+}
+
+/// The content of the managed file for the enabled hosts and the common
+/// options; `None` when there is none (the file and the include go away).
 ///
 /// # Errors
 /// [`UnwritableHost`] for a host the contract would refuse: a validated
 /// configuration never has one.
 pub(super) fn render(config: &SshConfig) -> Result<Option<String>, UnwritableHost> {
     let hosts: Vec<&SshHost> = config.hosts.iter().filter(|host| host.enabled).collect();
-    if hosts.is_empty() {
+    checked_options(COMMON_PATTERN, &config.common_options)?;
+    let common = common_section(&config.common_options);
+    if hosts.is_empty() && common.is_none() {
         return Ok(None);
     }
     let mut sections = vec![MANAGED_HEADER.to_owned()];
@@ -98,6 +138,7 @@ pub(super) fn render(config: &SshConfig) -> Result<Option<String>, UnwritableHos
         checked(host)?;
         sections.push(section(host));
     }
+    sections.extend(common);
     Ok(Some(sections.join("\n")))
 }
 
@@ -115,6 +156,15 @@ mod tests {
             proxy_jump: String::new(),
             forward_agent: false,
             enabled: true,
+            options: Vec::new(),
+        }
+    }
+
+    fn option(key: &str, value: &str, enabled: bool) -> AdvancedSetting {
+        AdvancedSetting {
+            key: key.into(),
+            value: value.into(),
+            enabled,
         }
     }
 
@@ -151,6 +201,62 @@ mod tests {
                  \tForwardAgent yes\n\nHost bare\n"
             )
         );
+    }
+
+    #[test]
+    fn the_options_of_a_host_follow_its_own_and_only_enabled_ones_are_written() {
+        let mut with_options = host("prod");
+        with_options.user = "deploy".into();
+        with_options.options = vec![
+            option("Compression", "yes", true),
+            option("LogLevel", "ERROR", false),
+            option("ProxyCommand", "ssh -W %h:%p bastion", true),
+        ];
+        let rendered = render(&config(vec![with_options])).unwrap().unwrap();
+        assert_eq!(
+            rendered,
+            format!(
+                "{MANAGED_HEADER}\nHost prod\n\tUser deploy\n\tCompression yes\n\
+                 \tProxyCommand ssh -W %h:%p bastion\n"
+            )
+        );
+    }
+
+    #[test]
+    fn the_common_options_make_a_last_section_even_without_a_host() {
+        let mut common = config(vec![host("a")]);
+        common.common_options = vec![
+            option("ServerAliveInterval", "30", true),
+            option("Compression", "yes", false),
+        ];
+        assert_eq!(
+            render(&common).unwrap().unwrap(),
+            format!("{MANAGED_HEADER}\nHost a\n\nHost *\n\tServerAliveInterval 30\n")
+        );
+        common.hosts.clear();
+        assert_eq!(
+            render(&common).unwrap().unwrap(),
+            format!("{MANAGED_HEADER}\nHost *\n\tServerAliveInterval 30\n")
+        );
+        common.common_options = vec![option("Compression", "yes", false)];
+        assert_eq!(render(&common), Ok(None));
+    }
+
+    #[test]
+    fn options_the_contract_would_refuse_are_refused_even_when_off_the_file() {
+        let mut bad = host("a");
+        bad.options = vec![option("Host", "evil", true)];
+        assert_eq!(render(&config(vec![bad])).unwrap_err().field, "options");
+        let mut off = host("c");
+        off.options = vec![AdvancedSetting {
+            enabled: false,
+            ..option("Host", "evil", true)
+        }];
+        assert_eq!(render(&config(vec![off])).unwrap_err().field, "options");
+        let mut newline = config(vec![]);
+        newline.common_options = vec![option("A", "x\nProxyCommand evil", true)];
+        let error = render(&newline).unwrap_err();
+        assert_eq!((error.alias.as_str(), error.field), ("*", "options"));
     }
 
     #[test]

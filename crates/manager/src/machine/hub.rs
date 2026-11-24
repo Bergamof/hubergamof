@@ -84,7 +84,8 @@ impl<E: std::error::Error> HubError<E> {
     pub fn error_code(&self) -> ErrorCode {
         match self {
             Self::Store(error) => error.error_code(),
-            Self::Apply(_) | Self::NoHome | Self::Task(_) => ErrorCode::Internal,
+            Self::Apply(_) | Self::NoHome => ErrorCode::NotApplied,
+            Self::Task(_) => ErrorCode::Internal,
         }
     }
 }
@@ -386,7 +387,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, HubError::Apply(_)));
-        assert_eq!(error.error_code(), ErrorCode::Internal);
+        assert_eq!(error.error_code(), ErrorCode::NotApplied);
         assert_eq!(changes.recv().await.unwrap().revision, 1);
         assert_eq!(fixture.hub.refresh().await.unwrap().revision, 1);
     }

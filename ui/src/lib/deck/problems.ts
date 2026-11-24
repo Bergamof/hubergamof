@@ -19,6 +19,11 @@ export function problemOf(code: ErrorCode, message: string): Problem {
 				text: 'Le gestionnaire a refusé la modification : vérifiez les réglages.',
 				detail: message
 			};
+		case 'notApplied':
+			return {
+				text: 'Enregistré, mais pas appliqué à l’ordinateur : corrigez ce qui est refusé ou supprimez-le, sinon rien de ce que vous modifiez ici n’est appliqué.',
+				detail: message
+			};
 		case 'unknownDevice':
 			return { text: 'Cet appareil n’est plus connecté.', detail: null };
 		case 'invalidImage':
