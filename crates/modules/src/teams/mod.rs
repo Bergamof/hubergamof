@@ -20,9 +20,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hubergamof_module_api::{
-    Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime,
-    ModuleSurface, Notification, NotificationId, PageContent, PageId, PageItem,
+    Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, MAX_RADIAL_ITEMS, Module,
+    ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory,
+    ModuleLifetime, ModuleSurface, Notification, NotificationId, PageContent, PageId, PageItem,
     RadialActionDescriptor, RadialGlyph, RadialItem, RadialItemState, Rgb, ScreenLockState,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
@@ -36,7 +36,7 @@ pub use bridge::{
 use elapsed::ElapsedChanged;
 use icons::{
     ACCEPT, ACTIVITY, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED,
-    RETURN,
+    RETURN, TEAM,
 };
 use reminders::MeetingSoon;
 pub use reminders::{TeamsSettings, WallClock};
@@ -74,12 +74,19 @@ const DEFAULT_PROFILE_SUFFIX: &str = "-Default";
 /// Prefix of the identifier of the items that open a conversation.
 const CHAT_ITEM_PREFIX: &str = "chat:";
 
+/// Prefix of the identifier of the items that open a channel.
+const CHANNEL_ITEM_PREFIX: &str = "channel:";
+
 /// Identifier of the item opening the Activity panel.
 const ACTIVITY_ITEM: &str = "activity";
 
 /// Identifier of the item opening the Conversation panel, for the unread
 /// conversations the list does not name.
 const CONVERSATIONS_ITEM: &str = "chats";
+
+/// Identifier of the item opening the Teams panel, for the unread channels
+/// the list does not name.
+const TEAMS_ITEM: &str = "teams";
 
 /// Page of the unread conversations.
 const UNREAD_PAGE: &str = "unread";
@@ -182,6 +189,7 @@ const RADIAL_MUTE: &str = "mute";
 const RADIAL_CAMERA: &str = "camera";
 const RADIAL_HANG_UP: &str = "hang-up";
 const RADIAL_CONVERSATIONS: &str = "conversations";
+const RADIAL_TEAMS: &str = "teams";
 const RADIAL_ACTIVITY: &str = "activity";
 const RADIAL_RETURN_TO_CALL: &str = "return-to-call";
 
@@ -197,7 +205,7 @@ fn descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         kind: TEAMS_KIND.into(),
         name: MODULE_LABEL.into(),
-        description: "Teams (navigateur, extension HuBergamof) : conversations non lues, \
+        description: "Teams (navigateur, extension HuBergamof) : conversations et canaux non lus, \
                       appel en cours (micro, caméra, raccrocher), rappel des réunions."
             .into(),
         capabilities: ModuleCapabilities {
@@ -265,6 +273,11 @@ impl ModuleFactory for TeamsFactory {
                 RADIAL_CONVERSATIONS,
                 "Conversations Teams",
                 "Affiche les conversations dans Teams et le met au premier plan.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_TEAMS,
+                "Équipes Teams",
+                "Affiche les équipes dans Teams et le met au premier plan.",
             ),
             RadialActionDescriptor::new(
                 RADIAL_ACTIVITY,
@@ -336,6 +349,13 @@ pub(crate) struct Teams {
     /// The number of unread conversations at the last change, to tell when
     /// it grows.
     unread_seen: u32,
+}
+
+/// What an item of the unread page opens.
+#[derive(Debug, Clone, Copy)]
+enum Listed {
+    Conversation,
+    Channel,
 }
 
 /// A key of the call page.
@@ -508,24 +528,31 @@ impl Teams {
         front.map_or_else(Vec::new, |surface| self.bring_to_front(surface))
     }
 
-    /// Shows the conversation `id` in Teams and brings its window to the
-    /// front. Only a conversation the extension reported is asked for: a
-    /// list that changed since the key was drawn is not followed blindly.
-    fn open_conversation(&mut self, id: &str, surface: ModuleSurface) -> Vec<Command> {
+    /// Shows the conversation or the channel `id` in Teams and brings its
+    /// window to the front. Only an item the extension reported is asked
+    /// for: a list that changed since the key was drawn is not followed
+    /// blindly.
+    fn open_listed(&mut self, target: Listed, id: &str, surface: ModuleSurface) -> Vec<Command> {
         if self.screen_lock.is_locked() {
             return Vec::new();
         }
-        let known = self
-            .changes
-            .borrow()
-            .conversations
-            .iter()
-            .any(|conversation| conversation.id.as_deref() == Some(id));
+        let known = {
+            let state = self.changes.borrow();
+            let list = match target {
+                Listed::Conversation => &state.conversations,
+                Listed::Channel => &state.channels,
+            };
+            list.iter().any(|item| item.id.as_deref() == Some(id))
+        };
         if !known {
             return Command::alert();
         }
-        if let Err(error) = self.bridge.open_conversation(id) {
-            tracing::debug!(%error, "Teams conversation not opened");
+        let sent = match target {
+            Listed::Conversation => self.bridge.open_conversation(id),
+            Listed::Channel => self.bridge.open_channel(id),
+        };
+        if let Err(error) = sent {
+            tracing::debug!(%error, ?target, "Teams item not opened");
             return Command::alert();
         }
         self.bring_to_front(surface)
@@ -566,10 +593,10 @@ fn call_notification(caller: Option<&str>) -> Notification {
 }
 
 /// The unread keys, hidden while the computer is locked (a name must not be
-/// read by someone passing by): the Activity counter, the "+N" of the
-/// gap between the Conversation badge and the named conversations
-/// ("+N" or "-N", absent when they agree), then one key per named unread conversation, with its
-/// avatar or a generic icon.
+/// read by someone passing by): the Activity counter, then for the
+/// conversations and for the channels the "+N" of the gap between the badge
+/// and the named items ("+N" or "-N", absent when they agree) and one key per
+/// named unread item, with its avatar or a generic icon.
 fn unread_items(state: &TeamsState) -> Vec<PageItem> {
     let mut items = Vec::new();
     let activity = state.activity();
@@ -583,40 +610,66 @@ fn unread_items(state: &TeamsState) -> Vec<PageItem> {
             .hidden_when_locked(true),
         );
     }
-    let gap = state.conversation_gap();
-    if gap != 0 {
-        items.push(
-            PageItem::new(
-                ItemId(CONVERSATIONS_ITEM.into()),
-                KeyContent::with_icon(&CONVERSATION, format!("{gap:+}")),
-            )
-            .hidden_when_locked(true),
-        );
-    }
-    items.extend(
-        state
-            .conversations
-            .iter()
-            .enumerate()
-            .map(|(index, conversation)| conversation_item(index, conversation)),
-    );
+    items.extend(unread_list(
+        state.conversation_gap(),
+        CONVERSATIONS_ITEM,
+        &CONVERSATION,
+        CHAT_ITEM_PREFIX,
+        &state.conversations,
+    ));
+    items.extend(unread_list(
+        state.channel_gap(),
+        TEAMS_ITEM,
+        &TEAM,
+        CHANNEL_ITEM_PREFIX,
+        &state.channels,
+    ));
     items
 }
 
-/// A conversation key: its avatar when the extension could read one.
-fn conversation_item(index: usize, conversation: &UnreadConversation) -> PageItem {
-    let icon = conversation.icon.as_ref().unwrap_or(&CONVERSATION);
+/// The keys of one list of unread items: the gap key, then one per item.
+fn unread_list(
+    gap: i64,
+    gap_item: &str,
+    generic_icon: &ImageData,
+    prefix: &str,
+    named: &[UnreadConversation],
+) -> Vec<PageItem> {
+    let gap_key = (gap != 0).then(|| {
+        PageItem::new(
+            ItemId(gap_item.into()),
+            KeyContent::with_icon(generic_icon, format!("{gap:+}")),
+        )
+        .hidden_when_locked(true)
+    });
+    gap_key
+        .into_iter()
+        .chain(
+            named
+                .iter()
+                .enumerate()
+                .map(|(index, item)| listed_item(index, item, generic_icon, prefix)),
+        )
+        .collect()
+}
+
+/// A key of a conversation or a channel: its avatar when the extension could
+/// read one.
+fn listed_item(
+    index: usize,
+    listed: &UnreadConversation,
+    generic_icon: &ImageData,
+    prefix: &str,
+) -> PageItem {
+    let icon = listed.icon.as_ref().unwrap_or(generic_icon);
     // The identifier of Teams is in the one of the item: what is pressed is
     // what was shown, whatever the list became since.
-    let id = conversation.id.as_ref().map_or_else(
-        || format!("c{index}"),
-        |id| format!("{CHAT_ITEM_PREFIX}{id}"),
+    let id = listed.id.as_ref().map_or_else(
+        || format!("{}{index}", prefix.chars().next().unwrap_or('c')),
+        |id| format!("{prefix}{id}"),
     );
-    PageItem::new(
-        ItemId(id),
-        KeyContent::with_icon(icon, conversation.name.clone()),
-    )
-    .hidden_when_locked(true)
+    PageItem::new(ItemId(id), KeyContent::with_icon(icon, listed.name.clone()))
+        .hidden_when_locked(true)
 }
 
 /// The icon says whether the microphone is on, as the label does.
@@ -639,41 +692,59 @@ fn camera_key(camera_on: Option<bool>) -> KeyContent {
 /// The actions around the petal: the rail's panels while the extension
 /// answers (without it nothing would happen), then the call controls during a
 /// call only (not while it rings: answering belongs to the notification).
+///
+/// The host draws six items at most: during a call the controls come first and
+/// only the panels with something unread take the places left.
 fn radial_items(state: &TeamsState) -> Vec<RadialItem> {
     if !state.connected {
         return Vec::new();
     }
-    let mut items = vec![
-        counted(
+    let panels = [
+        (
             RadialItem::new(RADIAL_CONVERSATIONS, "Conversations", RadialGlyph::Chat),
             state.unread_chats(),
         ),
-        counted(
+        (
+            RadialItem::new(RADIAL_TEAMS, "Équipes", RadialGlyph::People),
+            state.unread_teams(),
+        ),
+        (
             RadialItem::new(RADIAL_ACTIVITY, "Activités", RadialGlyph::Bell),
             state.activity(),
         ),
     ];
-    if state.call.phase == CallPhase::InCall {
-        let call = &state.call;
-        items.extend([
-            toggle_item(
-                RadialItem::new(RADIAL_MUTE, "Couper le micro", RadialGlyph::Microphone),
-                "Rétablir le micro",
-                call.muted == Some(true),
-            ),
-            toggle_item(
-                RadialItem::new(RADIAL_CAMERA, "Couper la caméra", RadialGlyph::Camera),
-                "Activer la caméra",
-                call.camera_on == Some(false),
-            ),
-            RadialItem::new(RADIAL_HANG_UP, "Raccrocher", RadialGlyph::HangUp),
-            RadialItem::new(
-                RADIAL_RETURN_TO_CALL,
-                "Retour à l'appel",
-                RadialGlyph::ReturnToCall,
-            ),
-        ]);
+    if state.call.phase != CallPhase::InCall {
+        return panels
+            .into_iter()
+            .map(|(item, count)| counted(item, count))
+            .collect();
     }
+    let call = &state.call;
+    let mut items = vec![
+        toggle_item(
+            RadialItem::new(RADIAL_MUTE, "Couper le micro", RadialGlyph::Microphone),
+            "Rétablir le micro",
+            call.muted == Some(true),
+        ),
+        toggle_item(
+            RadialItem::new(RADIAL_CAMERA, "Couper la caméra", RadialGlyph::Camera),
+            "Activer la caméra",
+            call.camera_on == Some(false),
+        ),
+        RadialItem::new(RADIAL_HANG_UP, "Raccrocher", RadialGlyph::HangUp),
+        RadialItem::new(
+            RADIAL_RETURN_TO_CALL,
+            "Retour à l'appel",
+            RadialGlyph::ReturnToCall,
+        ),
+    ];
+    let room = MAX_RADIAL_ITEMS.saturating_sub(items.len());
+    let unread_panels = panels.into_iter().filter(|(_, count)| *count > 0);
+    items.extend(
+        unread_panels
+            .take(room)
+            .map(|(item, count)| counted(item, count)),
+    );
     items
 }
 
@@ -768,10 +839,14 @@ impl Module for Teams {
         match item.0.as_str() {
             ACTIVITY_ITEM => return self.show_panel(Panel::Activity, Some(surface)),
             CONVERSATIONS_ITEM => return self.show_panel(Panel::Chat, None),
+            TEAMS_ITEM => return self.show_panel(Panel::Teams, None),
             _ => {}
         }
         if let Some(id) = item.0.strip_prefix(CHAT_ITEM_PREFIX) {
-            return self.open_conversation(id, surface);
+            return self.open_listed(Listed::Conversation, id, surface);
+        }
+        if let Some(id) = item.0.strip_prefix(CHANNEL_ITEM_PREFIX) {
+            return self.open_listed(Listed::Channel, id, surface);
         }
         if page.0 != CALL_PAGE {
             return Vec::new();
@@ -808,6 +883,7 @@ impl Module for Teams {
             // The menu has no key to mark a failure on: the home key is the
             // surface, and Teams comes forward since the user is at the screen.
             RADIAL_CONVERSATIONS => self.show_panel(Panel::Chat, Some(ModuleSurface::HomeKey)),
+            RADIAL_TEAMS => self.show_panel(Panel::Teams, Some(ModuleSurface::HomeKey)),
             RADIAL_ACTIVITY => self.show_panel(Panel::Activity, Some(ModuleSurface::HomeKey)),
             RADIAL_RETURN_TO_CALL => self.return_to_call(ModuleSurface::HomeKey),
             _ => Vec::new(),

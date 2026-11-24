@@ -98,6 +98,8 @@ pub struct RailBadges {
     pub activity: u32,
     /// Unread conversations, as the badge of the Conversation panel says.
     pub chats: u32,
+    /// Unread channels, as the badge of the Teams panel says.
+    pub teams: u32,
 }
 
 /// What Teams last showed, as the extension reported it.
@@ -112,10 +114,17 @@ pub struct TeamsState {
     pub badges: Option<RailBadges>,
     /// The unread conversations, named (possibly fewer than `unread`).
     pub conversations: Vec<UnreadConversation>,
+    /// The unread channels, named (possibly fewer than the badge says).
+    pub channels: Vec<UnreadConversation>,
     /// The call.
     pub call: CallState,
     /// Upcoming meetings.
     pub meetings: Vec<Meeting>,
+}
+
+/// What a counter says beyond the `named` items of a list.
+fn gap(counted: u32, named: usize) -> i64 {
+    i64::from(counted) - i64::try_from(named).unwrap_or(i64::MAX)
 }
 
 impl TeamsState {
@@ -141,21 +150,36 @@ impl TeamsState {
         self.badges.map_or(self.unread, |badges| badges.chats)
     }
 
+    /// Unread channels, as the badge of the Teams panel says; `0` while the
+    /// rail is not read.
+    #[must_use]
+    pub fn unread_teams(&self) -> u32 {
+        self.badges.map_or(0, |badges| badges.teams)
+    }
+
     /// What the counter says of the conversations beyond the list: positive
     /// when it announces more than the list names, negative when it announces
     /// fewer (a list read before the counter fell), `0` when they agree.
     #[must_use]
     pub fn conversation_gap(&self) -> i64 {
-        let known = i64::try_from(self.conversations.len()).unwrap_or(i64::MAX);
-        i64::from(self.unread_chats()) - known
+        gap(self.unread_chats(), self.conversations.len())
+    }
+
+    /// The same for the channels and the badge of the Teams panel.
+    #[must_use]
+    pub fn channel_gap(&self) -> i64 {
+        gap(self.unread_teams(), self.channels.len())
     }
 
     /// Everything waiting for the user, as the home key counts it: the
     /// window title, unless the rail says more.
     #[must_use]
     pub fn total_unread(&self) -> u32 {
-        self.unread
-            .max(self.activity().saturating_add(self.unread_chats()))
+        self.unread.max(
+            self.activity()
+                .saturating_add(self.unread_chats())
+                .saturating_add(self.unread_teams()),
+        )
     }
 
     /// The clock of the call after a report: the duration Teams shows, else
@@ -179,10 +203,19 @@ impl TeamsState {
             // Not a state: the bridge logs it when it arrives.
             BrowserReport::Hello { .. } => {}
             BrowserReport::Unread { count } => self.unread = count,
-            BrowserReport::Badges { activity, chats } => {
-                self.badges = Some(RailBadges { activity, chats });
+            BrowserReport::Badges {
+                activity,
+                chats,
+                teams,
+            } => {
+                self.badges = Some(RailBadges {
+                    activity,
+                    chats,
+                    teams,
+                });
             }
             BrowserReport::Conversations { unread } => self.conversations = unread,
+            BrowserReport::Channels { unread } => self.channels = unread,
             BrowserReport::Call {
                 phase,
                 muted,
@@ -236,6 +269,14 @@ pub trait TeamsBridge: fmt::Debug + Send + Sync {
     ///
     /// As [`Self::request`].
     fn open_conversation(&self, id: &str) -> Result<(), RequestError>;
+
+    /// Asks the extension to show the channel `id`, one it reported, without
+    /// waiting for it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::request`].
+    fn open_channel(&self, id: &str) -> Result<(), RequestError>;
 
     /// Asks the extension to show `panel` of the rail, without waiting for
     /// it.
@@ -385,6 +426,10 @@ impl TeamsBridge for SocketBridge {
 
     fn open_conversation(&self, id: &str) -> Result<(), RequestError> {
         self.send(ManagerRequest::OpenConversation { id: id.to_owned() })
+    }
+
+    fn open_channel(&self, id: &str) -> Result<(), RequestError> {
+        self.send(ManagerRequest::OpenChannel { id: id.to_owned() })
     }
 
     fn open_panel(&self, panel: Panel) -> Result<(), RequestError> {
@@ -597,7 +642,8 @@ impl SimulatedBridge {
     }
 
     /// The demo: two named unread conversations among the three the badge
-    /// announces, two items of activity, no call.
+    /// announces, two items of activity, one named channel among the two the
+    /// Teams badge announces, no call.
     #[must_use]
     pub fn demo() -> Self {
         let bridge = Self::new();
@@ -605,12 +651,16 @@ impl SimulatedBridge {
         bridge.report(BrowserReport::Badges {
             activity: 2,
             chats: 3,
+            teams: 2,
         });
         bridge.report(BrowserReport::Conversations {
             unread: vec![
                 UnreadConversation::named("Équipe produit"),
                 UnreadConversation::named("Camille"),
             ],
+        });
+        bridge.report(BrowserReport::Channels {
+            unread: vec![UnreadConversation::named("Général")],
         });
         bridge
     }
@@ -632,7 +682,9 @@ impl SimulatedBridge {
             .iter()
             .filter_map(|request| match request {
                 ManagerRequest::Do { action } => Some(*action),
-                ManagerRequest::OpenConversation { .. } | ManagerRequest::OpenPanel { .. } => None,
+                ManagerRequest::OpenConversation { .. }
+                | ManagerRequest::OpenChannel { .. }
+                | ManagerRequest::OpenPanel { .. } => None,
             })
             .collect()
     }
@@ -644,7 +696,23 @@ impl SimulatedBridge {
             .iter()
             .filter_map(|request| match request {
                 ManagerRequest::OpenConversation { id } => Some(id.clone()),
-                ManagerRequest::Do { .. } | ManagerRequest::OpenPanel { .. } => None,
+                ManagerRequest::Do { .. }
+                | ManagerRequest::OpenChannel { .. }
+                | ManagerRequest::OpenPanel { .. } => None,
+            })
+            .collect()
+    }
+
+    /// The channels asked to be shown so far.
+    #[must_use]
+    pub fn opened_channels(&self) -> Vec<String> {
+        lock_unpoisoned(&self.requests)
+            .iter()
+            .filter_map(|request| match request {
+                ManagerRequest::OpenChannel { id } => Some(id.clone()),
+                ManagerRequest::Do { .. }
+                | ManagerRequest::OpenConversation { .. }
+                | ManagerRequest::OpenPanel { .. } => None,
             })
             .collect()
     }
@@ -656,7 +724,9 @@ impl SimulatedBridge {
             .iter()
             .filter_map(|request| match request {
                 ManagerRequest::OpenPanel { panel } => Some(*panel),
-                ManagerRequest::Do { .. } | ManagerRequest::OpenConversation { .. } => None,
+                ManagerRequest::Do { .. }
+                | ManagerRequest::OpenConversation { .. }
+                | ManagerRequest::OpenChannel { .. } => None,
             })
             .collect()
     }
@@ -689,6 +759,10 @@ impl TeamsBridge for SimulatedBridge {
 
     fn open_conversation(&self, id: &str) -> Result<(), RequestError> {
         self.record(ManagerRequest::OpenConversation { id: id.to_owned() })
+    }
+
+    fn open_channel(&self, id: &str) -> Result<(), RequestError> {
+        self.record(ManagerRequest::OpenChannel { id: id.to_owned() })
     }
 
     fn open_panel(&self, panel: Panel) -> Result<(), RequestError> {
@@ -916,7 +990,7 @@ mod tests {
     #[tokio::test]
     async fn the_simulated_bridge_keeps_what_was_asked() {
         let bridge = SimulatedBridge::demo();
-        assert_eq!(bridge.state().borrow().total_unread(), 5);
+        assert_eq!(bridge.state().borrow().total_unread(), 7);
         assert_eq!(bridge.request(CallAction::HangUp), Ok(()));
         assert_eq!(bridge.requests(), [CallAction::HangUp]);
         bridge.set_connected(false);

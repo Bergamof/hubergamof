@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Ajouté
+
+- Teams : le panneau « Équipes » est géré comme les conversations : compteur du rail dans le total des non lus, canaux non lus sur la page des non lus (une touche par canal qui l'ouvre, « +N » qui ouvre le panneau), action « Équipes » du menu circulaire avec son badge. En appel, le menu montre d'abord les commandes d'appel puis les panneaux qui ont des non lus. Recharger l'extension ; le balisage d'un canal non lu reste à valider dans Teams.
+
 ### Corrigé
 
 - Souris : une souris inactive (veille d'économie d'énergie) n'est plus déclarée éteinte puis revenue toutes les vingt secondes : chaque contrôle de présence envoie trois pings au lieu d'un, et quatre contrôles ratés d'affilée sont nécessaires (au lieu de deux).
