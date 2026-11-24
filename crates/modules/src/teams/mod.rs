@@ -665,7 +665,9 @@ fn listed_item(
     // The identifier of Teams is in the one of the item: what is pressed is
     // what was shown, whatever the list became since.
     let id = listed.id.as_ref().map_or_else(
-        || format!("{}{index}", prefix.chars().next().unwrap_or('c')),
+        // Without identifier the item cannot open anything: the index alone
+        // keeps it apart, under the prefix of its own list.
+        || format!("{prefix}#{index}"),
         |id| format!("{prefix}{id}"),
     );
     PageItem::new(ItemId(id), KeyContent::with_icon(icon, listed.name.clone()))

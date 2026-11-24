@@ -987,10 +987,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_total_is_the_title_count_unless_the_rail_says_more() {
+        let mut state = TeamsState::fresh(true);
+        assert!(state.apply(BrowserReport::Badges {
+            activity: 0,
+            chats: 0,
+            teams: 3,
+        }));
+        assert_eq!(state.total_unread(), 3, "the Teams counter alone counts");
+        state.apply(BrowserReport::Unread { count: 9 });
+        assert_eq!(state.total_unread(), 9, "the larger of the two");
+    }
+
     #[tokio::test]
     async fn the_simulated_bridge_keeps_what_was_asked() {
         let bridge = SimulatedBridge::demo();
         assert_eq!(bridge.state().borrow().total_unread(), 7);
+        assert_eq!(bridge.state().borrow().channels.len(), 1);
+        assert_eq!(bridge.state().borrow().channel_gap(), 1);
         assert_eq!(bridge.request(CallAction::HangUp), Ok(()));
         assert_eq!(bridge.requests(), [CallAction::HangUp]);
         bridge.set_connected(false);

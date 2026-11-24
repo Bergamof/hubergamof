@@ -116,6 +116,11 @@ describe('readUnreadChannels', () => {
 		expect(readUnreadChannels(page(both))?.map((c) => c.name)).toEqual(['Général']);
 		expect(readUnreadConversations(page(both))?.map((c) => c.name)).toEqual(['Alice', 'Carol']);
 	});
+	it('reports no channel at all when the title says nothing is unread', () => {
+		const doc = page(railItem(ACTIVITY_APP, '0') + railItem(CHAT_RAIL, '0') + channels, 'Teams');
+		const reports = readReports(doc, 'teams.cloud.microsoft', 0, TOP);
+		expect(reports.find((r) => r.type === 'channels')).toEqual({ type: 'channels', unread: [] });
+	});
 	it('is part of what Teams reports, once a channel list is on screen', () => {
 		const withList = page(
 			railItem(ACTIVITY_APP, '0') + railItem(CHAT_RAIL, '0') + channels,
@@ -478,6 +483,30 @@ describe('start', () => {
 		tick();
 		expect(calls()).toHaveLength(2);
 		expect(calls()[1][0].report.elapsedSeconds).toBe(40);
+	});
+
+	it('opens a channel on request, one at a time, in the top frame only', async () => {
+		const doc = page(conversation('Général', true, 'channel'));
+		const click = vi.fn();
+		doc.querySelector('[role="treeitem"]')!.addEventListener('click', click);
+		const sub = runtime();
+		start(doc, sub, {
+			hostname: 'teams.cloud.microsoft',
+			context: { top: false, underTeams: false },
+			setInterval: (() => 0) as never
+		});
+		sub.deliver({ type: 'openChannel', id: 'id:Général' });
+		expect(click).not.toHaveBeenCalled();
+		const top = runtime();
+		start(doc, top, {
+			hostname: 'teams.cloud.microsoft',
+			context: TOP,
+			setInterval: (() => 0) as never
+		});
+		top.deliver({ type: 'openChannel', id: 7 });
+		expect(click).not.toHaveBeenCalled();
+		top.deliver({ type: 'openChannel', id: 'id:Général' });
+		await vi.waitFor(() => expect(click).toHaveBeenCalledOnce());
 	});
 
 	it('does not click in a sub-frame', () => {

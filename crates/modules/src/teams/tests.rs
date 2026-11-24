@@ -1196,6 +1196,57 @@ async fn the_unread_count_growing_raises_the_haptic_event_and_shrinking_does_not
     assert!(!none.contains(&Command::haptic("new-message")));
 }
 
+#[tokio::test]
+async fn the_teams_counter_growing_raises_the_haptic_event_and_shrinking_does_not() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    let badges = |teams| BrowserReport::Badges {
+        activity: 0,
+        chats: 0,
+        teams,
+    };
+    harness.report(badges(0)).await;
+    let grown = harness.report(badges(1)).await;
+    assert!(grown.contains(&Command::haptic("new-message")));
+    let shrunk = harness.report(badges(0)).await;
+    assert!(!shrunk.contains(&Command::haptic("new-message")));
+}
+
+#[tokio::test]
+async fn the_unread_channels_show_a_negative_gap_and_hide_their_gap_key_when_locked() {
+    // Two named channels, the badge says none.
+    let harness = harness_with_channels(0, &[("Général", Some("19:g")), ("Annonces", None)]);
+    assert_eq!(unread_labels(&harness), ["-2", "Général", "Annonces"]);
+    let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
+    assert!(page.items[0].hidden_when_locked);
+}
+
+#[tokio::test]
+async fn during_a_call_every_state_of_the_counters_stays_within_the_six_places() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.in_call().await;
+    for mask in 0..8_u32 {
+        let counter = |bit: u32| u32::from(mask & bit != 0);
+        harness
+            .report(BrowserReport::Badges {
+                activity: counter(1),
+                chats: counter(2),
+                teams: counter(4),
+            })
+            .await;
+        let ids = radial_ids(&harness);
+        assert!(ids.len() <= MAX_RADIAL_ITEMS, "{mask}: {ids:?}");
+        assert_eq!(ids[..4], ["mute", "camera", "hang-up", "return-to-call"]);
+    }
+    harness
+        .report(BrowserReport::Badges {
+            activity: 1,
+            chats: 0,
+            teams: 1,
+        })
+        .await;
+    assert_eq!(radial_ids(&harness)[4..], ["teams", "activity"]);
+}
+
 fn radial_summary(harness: &Harness) -> Vec<(String, String, Option<String>, RadialItemState)> {
     harness
         .module
@@ -1708,9 +1759,23 @@ async fn a_channel_that_was_not_reported_is_not_asked_for() {
 
 #[tokio::test]
 async fn a_channel_key_does_nothing_when_locked_and_alerts_without_extension() {
-    let mut harness = harness_with_channels(1, &[("Général", Some("19:g"))]);
-    let item = ItemId("channel:19:g".into());
+    let mut harness = harness_with_channels(2, &[("Général", Some("19:g"))]);
+    let channel = ItemId("channel:19:g".into());
+    harness.locked.store(true, Ordering::SeqCst);
+    for item in [channel.clone(), ItemId(TEAMS_ITEM.into())] {
+        let commands = harness
+            .module
+            .on_item_press(&UNREAD_PAGE.into(), &item)
+            .await;
+        assert_eq!(commands, []);
+    }
+    assert_eq!(harness.module.on_radial_action("teams").await, []);
+    assert_eq!(harness.bridge.opened_channels(), Vec::<String>::new());
+    assert_eq!(harness.bridge.opened_panels(), []);
+
+    harness.locked.store(false, Ordering::SeqCst);
     harness.bridge.set_connected(false);
+    harness.next_event().await;
     harness.bridge.report(BrowserReport::Channels {
         unread: vec![UnreadConversation {
             id: Some("19:g".into()),
@@ -1720,10 +1785,29 @@ async fn a_channel_key_does_nothing_when_locked_and_alerts_without_extension() {
     assert_eq!(
         harness
             .module
-            .on_item_press(&UNREAD_PAGE.into(), &item)
+            .on_item_press(&UNREAD_PAGE.into(), &channel)
             .await,
         Command::alert()
     );
+}
+
+#[tokio::test]
+async fn items_without_identifier_keep_distinct_keys_across_the_lists() {
+    let harness = Harness::new(SimulatedBridge::new());
+    harness.bridge.report(BrowserReport::Conversations {
+        unread: vec![UnreadConversation::named("Alice")],
+    });
+    harness.bridge.report(BrowserReport::Channels {
+        unread: vec![UnreadConversation::named("Général")],
+    });
+    harness.bridge.report(BrowserReport::Badges {
+        activity: 0,
+        chats: 1,
+        teams: 1,
+    });
+    let page = harness.module.page(&UNREAD_PAGE.into()).unwrap();
+    let ids: std::collections::HashSet<_> = page.items.iter().map(|item| item.id.clone()).collect();
+    assert_eq!(ids.len(), page.items.len());
 }
 
 #[tokio::test(start_paused = true)]

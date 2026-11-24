@@ -102,6 +102,7 @@ describe('background worker', () => {
 		ask({ type: 'do', action: 'formatDisk' });
 		ask({ type: 'openConversation', id: '' });
 		ask({ type: 'openConversation', id: 'x'.repeat(401) });
+		ask({ type: 'openChannel', id: 'x'.repeat(401) });
 		ask({ type: 'openChannel', id: '' });
 		ask({ type: 'openChannel', id: 7 });
 		ask({ type: 'openPanel', panel: 'settings' });
