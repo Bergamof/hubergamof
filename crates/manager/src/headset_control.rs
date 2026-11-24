@@ -52,6 +52,16 @@ fn headset(state: HeadsetState) -> Headset {
     }
 }
 
+/// Shows `seen` unless it is what is shown: a module takes every change for a
+/// state of the headphones, which ends what it asked of them.
+fn publish(view: &watch::Sender<Option<Headset>>, seen: Option<Headset>) {
+    view.send_if_modified(|shown| {
+        let changed = *shown != seen;
+        *shown = seen;
+        changed
+    });
+}
+
 /// Follows the first headphones of the hub: what they say, as it changes;
 /// `None` while there are none.
 async fn follow(hub: HeadsetHub, view: watch::Sender<Option<Headset>>) {
@@ -60,14 +70,14 @@ async fn follow(hub: HeadsetHub, view: watch::Sender<Option<Headset>>) {
         let first = list.borrow_and_update().first().cloned();
         let state = first.and_then(|first| hub.subscribe_state(&first.address));
         let Some(mut state) = state else {
-            view.send_replace(None);
+            publish(&view, None);
             if list.changed().await.is_err() {
                 return;
             }
             continue;
         };
         loop {
-            view.send_replace(Some(headset(*state.borrow_and_update())));
+            publish(&view, Some(headset(*state.borrow_and_update())));
             tokio::select! {
                 gone = state.changed() => if gone.is_err() { break },
                 changed = list.changed() => {
@@ -154,11 +164,13 @@ mod tests {
     use std::time::Duration;
 
     use hubergamof_protocol::HeadsetInfo;
+    use tokio::sync::mpsc;
     use tokio::time::timeout;
 
     use super::*;
-    use crate::headset_hub::Action;
+    use crate::headset_hub::{Action, Request};
 
+    /// Longest a test waits for what it expects: only reached when it fails.
     const WAIT: Duration = Duration::from_secs(5);
 
     fn info(address: &str) -> HeadsetInfo {
@@ -168,18 +180,43 @@ mod tests {
         }
     }
 
-    fn connected(hub: &HeadsetHub, address: &str, mode: AmbientMode) {
+    fn say(hub: &HeadsetHub, address: &str, link: HeadsetLink, ambient: AmbientSound) {
         hub.update_state(address, |state| {
-            state.link = HeadsetLink::Connected;
-            state.ambient = Some(AmbientSound {
-                mode,
-                level: 6,
-                focus_on_voice: true,
-            });
+            state.link = link;
+            state.ambient = Some(ambient);
+            state.wind_reduction = true;
         });
     }
 
-    #[tokio::test]
+    fn sound(mode: AmbientMode, level: u8) -> AmbientSound {
+        AmbientSound {
+            mode,
+            level,
+            focus_on_voice: true,
+        }
+    }
+
+    /// Waits until the view shows what `matches` accepts.
+    async fn seen(
+        view: &mut watch::Receiver<Option<Headset>>,
+        matches: impl Fn(&Headset) -> bool,
+    ) -> Headset {
+        timeout(
+            WAIT,
+            view.wait_for(|seen| seen.as_ref().is_some_and(&matches)),
+        )
+        .await
+        .expect("the view did not show it")
+        .unwrap()
+        .clone()
+        .unwrap()
+    }
+
+    async fn request(requests: &mut mpsc::Receiver<Request>) -> Request {
+        timeout(WAIT, requests.recv()).await.unwrap().unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn it_follows_the_first_headphones_and_their_departure() {
         let (hub, _requests) = HeadsetHub::new();
         let control = HubControl::start(hub.clone());
@@ -187,19 +224,16 @@ mod tests {
         assert_eq!(*view.borrow(), None);
 
         hub.present(vec![info("AA"), info("BB")]);
-        connected(&hub, "AA", AmbientMode::Ambient);
-        let seen = timeout(
-            WAIT,
-            view.wait_for(|seen| seen.as_ref().is_some_and(|seen| seen.ambient.is_some())),
-        )
-        .await
-        .unwrap()
-        .unwrap()
-        .clone()
-        .unwrap();
-        assert_eq!(seen.link, Link::Connected);
+        say(
+            &hub,
+            "AA",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Ambient, 6),
+        );
+        let first = seen(&mut view, |seen| seen.ambient.is_some()).await;
+        assert_eq!(first.link, Link::Connected);
         assert_eq!(
-            seen.ambient,
+            first.ambient,
             Some(Ambient {
                 mode: Mode::Ambient,
                 level: 6,
@@ -214,27 +248,102 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn it_moves_to_the_next_headphones_when_the_first_leave() {
         let (hub, _requests) = HeadsetHub::new();
         let control = HubControl::start(hub.clone());
         let mut view = control.watch();
         hub.present(vec![info("AA"), info("BB")]);
-        connected(&hub, "BB", AmbientMode::Off);
+        say(
+            &hub,
+            "AA",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Ambient, 1),
+        );
+        say(
+            &hub,
+            "BB",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Off, 2),
+        );
+        // The view really showed the first before they left.
+        seen(&mut view, |seen| {
+            seen.ambient.map(|ambient| ambient.mode) == Some(Mode::Ambient)
+        })
+        .await;
+
         hub.present(vec![info("BB")]);
-        let seen = timeout(
-            WAIT,
-            view.wait_for(|seen| seen.as_ref().is_some_and(|seen| seen.ambient.is_some())),
-        )
-        .await
-        .unwrap()
-        .unwrap()
-        .clone()
-        .unwrap();
-        assert_eq!(seen.ambient.map(|ambient| ambient.mode), Some(Mode::Off));
+        let second = seen(&mut view, |seen| {
+            seen.ambient.map(|ambient| ambient.mode) == Some(Mode::Off)
+        })
+        .await;
+        assert_eq!(second.ambient.map(|ambient| ambient.level), Some(2));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn it_follows_what_the_first_headphones_say_while_the_list_stays() {
+        let (hub, _requests) = HeadsetHub::new();
+        let control = HubControl::start(hub.clone());
+        let mut view = control.watch();
+        hub.present(vec![info("AA")]);
+        say(
+            &hub,
+            "AA",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Off, 0),
+        );
+        seen(&mut view, |seen| seen.link == Link::Connected).await;
+        say(&hub, "AA", HeadsetLink::Cut, sound(AmbientMode::Off, 0));
+        seen(&mut view, |seen| seen.link == Link::Cut).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unchanged_state_is_not_shown_again() {
+        let (hub, _requests) = HeadsetHub::new();
+        let control = HubControl::start(hub.clone());
+        let mut view = control.watch();
+        hub.present(vec![info("AA")]);
+        say(
+            &hub,
+            "AA",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Off, 0),
+        );
+        seen(&mut view, |seen| seen.link == Link::Connected).await;
+        view.borrow_and_update();
+
+        // A second headset joining changes the list, not what the first says.
+        hub.present(vec![info("AA"), info("BB")]);
+        assert!(
+            timeout(Duration::from_secs(1), view.changed())
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn every_link_and_mode_is_turned_into_its_own() {
+        for (wire, own) in [
+            (HeadsetLink::Idle, Link::Idle),
+            (HeadsetLink::Connecting, Link::Connecting),
+            (HeadsetLink::Connected, Link::Connected),
+            (HeadsetLink::Released, Link::Released),
+            (HeadsetLink::Cut, Link::Cut),
+        ] {
+            assert_eq!(link(wire), own);
+        }
+        for (wire, own) in [
+            (AmbientMode::Off, Mode::Off),
+            (AmbientMode::NoiseCancelling, Mode::NoiseCancelling),
+            (AmbientMode::Ambient, Mode::Ambient),
+            (AmbientMode::WindReduction, Mode::WindReduction),
+        ] {
+            assert_eq!(mode(wire), own);
+            assert_eq!(wire_mode(own), wire);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn requests_go_to_the_first_headphones_once_linked() {
         let (hub, mut requests) = HeadsetHub::new();
         let control = HubControl::start(hub.clone());
@@ -247,12 +356,17 @@ mod tests {
 
         hub.present(vec![info("AA")]);
         assert_eq!(control.set_ambient(ambient), Err(HeadsetFault::NotLinked));
-        connected(&hub, "AA", AmbientMode::Off);
+        say(
+            &hub,
+            "AA",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Off, 0),
+        );
         assert_eq!(control.set_ambient(ambient), Ok(()));
-        let request = requests.recv().await.unwrap();
-        assert_eq!(request.address, "AA");
+        let sent = request(&mut requests).await;
+        assert_eq!(sent.address, "AA");
         assert_eq!(
-            request.action,
+            sent.action,
             Action::SetAmbient(AmbientSound {
                 mode: AmbientMode::NoiseCancelling,
                 level: 3,
@@ -261,7 +375,49 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn what_the_headphones_would_not_take_is_refused() {
+        let (hub, _requests) = HeadsetHub::new();
+        let control = HubControl::start(hub.clone());
+        hub.present(vec![info("AA")]);
+        hub.update_state("AA", |state| {
+            state.link = HeadsetLink::Connected;
+            state.wind_reduction = false;
+        });
+        let wind = Ambient {
+            mode: Mode::WindReduction,
+            level: 0,
+            focus_on_voice: false,
+        };
+        assert_eq!(control.set_ambient(wind), Err(HeadsetFault::Refused));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_queue_is_refused_and_a_departed_headset_is_not_linked() {
+        let (hub, _requests) = HeadsetHub::new();
+        let control = HubControl::start(hub.clone());
+        hub.present(vec![info("AA")]);
+        say(
+            &hub,
+            "AA",
+            HeadsetLink::Connected,
+            sound(AmbientMode::Off, 0),
+        );
+        let ambient = Ambient {
+            mode: Mode::Ambient,
+            level: 1,
+            focus_on_voice: false,
+        };
+        // Nobody takes the requests: the queue fills up.
+        let outcomes: Vec<_> = (0..200).map(|_| control.set_ambient(ambient)).collect();
+        assert!(outcomes.contains(&Err(HeadsetFault::Refused)));
+        assert_eq!(outcomes[0], Ok(()));
+
+        hub.present(Vec::new());
+        assert_eq!(control.set_ambient(ambient), Err(HeadsetFault::NotLinked));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn opening_asks_the_hub_to_open_the_first_headphones_only_when_there_are_some() {
         let (hub, mut requests) = HeadsetHub::new();
         let control = HubControl::start(hub.clone());
@@ -269,10 +425,25 @@ mod tests {
         assert!(requests.try_recv().is_err());
         hub.present(vec![info("AA")]);
         control.open();
-        let request = requests.recv().await.unwrap();
-        assert_eq!(
-            (request.address.as_str(), request.action),
-            ("AA", Action::Open)
-        );
+        let sent = request(&mut requests).await;
+        assert_eq!((sent.address.as_str(), sent.action), ("AA", Action::Open));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropping_the_control_stops_following() {
+        let (hub, _requests) = HeadsetHub::new();
+        let control = HubControl::start(hub.clone());
+        let mut view = control.watch();
+        let follower = control.follower.abort_handle();
+        drop(control);
+        timeout(WAIT, async {
+            while !follower.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // Nothing publishes any more: the view is closed, not waiting.
+        assert!(timeout(WAIT, view.changed()).await.unwrap().is_err());
     }
 }

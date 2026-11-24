@@ -56,6 +56,7 @@ use hubergamof_manager::update::{
     MemoryPolicyStore, PackageInstaller, SimulatedInstaller, SimulatedReleases, SocketChannel,
     SystemPackages, UnsupportedInstaller, UpdateHandle, UpdateParts, UpdatePolicy, Version, wire,
 };
+use hubergamof_modules::headphones::NoHeadset;
 use hubergamof_modules::teams;
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_mouse::diagnostics::{self, Action, parse_waveform};
@@ -1197,6 +1198,8 @@ fn real_services(
     let mut builtins = builtin_services(cli.demo);
     if let Some(hub) = headsets.clone() {
         builtins.headset = HubControl::start(hub);
+    } else if cli.no_headsets {
+        builtins.headset = Arc::new(NoHeadset::default());
     }
     let services = services(
         &cli.config_dir,

@@ -200,6 +200,7 @@ async fn an_unopened_link_is_opened_once_and_the_press_is_reported_failed() {
 async fn nothing_is_known_when_no_headphones_are_connected() {
     let mut harness = Harness::on(SimulatedHeadset::with(None::<Headset>)).await;
     assert_eq!(harness.module.on_key_press().await, Command::alert());
+    assert_eq!(harness.headset.opened(), 1);
     assert_eq!(harness.module.radial_items(), Vec::new());
     assert_eq!(harness.module.radial_status(), None);
 }
@@ -258,7 +259,7 @@ async fn a_petal_action_vibrates_unless_it_failed_and_unknown_ones_do_nothing() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_cut_link_is_not_reopened_by_the_module() {
+async fn the_module_only_asks_to_open_a_cut_link_the_hub_decides() {
     let mut harness = Harness::on(SimulatedHeadset::with(headset(
         Link::Cut,
         Some(ambient(Mode::Off, 0)),
@@ -268,29 +269,165 @@ async fn a_cut_link_is_not_reopened_by_the_module() {
     assert_eq!(harness.headset.opened(), 1);
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_request_the_headphones_refuse_is_reported() {
-    #[derive(Debug)]
-    struct Refusing(tokio::sync::watch::Sender<Option<Headset>>);
-    impl HeadsetControl for Refusing {
-        fn watch(&self) -> tokio::sync::watch::Receiver<Option<Headset>> {
-            self.0.subscribe()
-        }
-        fn set_ambient(&self, _: Ambient) -> Result<(), HeadsetFault> {
-            Err(HeadsetFault::Refused)
-        }
-        fn open(&self) {
-            panic!("a refusal is not a closed link");
-        }
+/// Headphones linked that take no request.
+#[derive(Debug)]
+struct Refusing {
+    state: tokio::sync::watch::Sender<Option<Headset>>,
+    opened: std::sync::atomic::AtomicU32,
+    asked: std::sync::atomic::AtomicU32,
+}
+
+impl HeadsetControl for Refusing {
+    fn watch(&self) -> tokio::sync::watch::Receiver<Option<Headset>> {
+        self.state.subscribe()
     }
-    let control = Arc::new(Refusing(
-        tokio::sync::watch::channel(Some(headset(Link::Connected, Some(ambient(Mode::Off, 0))))).0,
-    ));
-    let factory = HeadphonesFactory::new(control);
+
+    fn set_ambient(&self, _: Ambient) -> Result<(), HeadsetFault> {
+        self.asked
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err(HeadsetFault::Refused)
+    }
+
+    fn open(&self) {
+        self.opened
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_request_the_headphones_refuse_is_reported_and_not_remembered() {
+    let control = Arc::new(Refusing {
+        state: tokio::sync::watch::channel(Some(headset(
+            Link::Connected,
+            Some(ambient(Mode::Off, 0)),
+        )))
+        .0,
+        opened: 0.into(),
+        asked: 0.into(),
+    });
+    let factory = HeadphonesFactory::new(Arc::clone(&control) as _);
     let TestContext { ctx, scope, .. } = TestContext::new(HEADPHONES_KIND);
-    let mut module = factory.create(ctx, &json!({})).unwrap();
     let _scope = scope;
+    let mut module = factory.create(ctx, &json!({})).unwrap();
     assert_eq!(module.on_key_press().await, Command::alert());
+    // A refusal is not a closed link, and the next press starts from what the
+    // headphones said.
+    assert_eq!(module.on_key_press().await, Command::alert());
+    assert_eq!(module.on_radial_action("ambient").await, Command::alert());
+    assert_eq!(control.opened.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(control.asked.load(std::sync::atomic::Ordering::Relaxed), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn what_the_headphones_say_ends_what_was_asked_of_them() {
+    let mut harness = Harness::start().await;
+    harness.module.on_dial_rotate(&dial(), 3).await;
+    // The headphones end up elsewhere (a button, another app): the next turn
+    // starts from there, not from what was asked.
+    harness
+        .headset
+        .say(headset(Link::Connected, Some(ambient(Mode::Off, 3))));
+    harness.settle().await;
+    harness.module.on_dial_rotate(&dial(), 1).await;
+    assert_eq!(
+        harness.headset.requests().last(),
+        Some(&ambient(Mode::Ambient, 4))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn losing_the_headphones_forgets_everything() {
+    let mut harness = Harness::start().await;
+    harness.module.on_dial_rotate(&dial(), 1).await;
+    harness.headset.say(None::<Headset>);
+    harness.settle().await;
+    assert_eq!(harness.label(), "Casque");
+    assert_eq!(harness.module.radial_items(), Vec::new());
+    assert_eq!(harness.module.radial_status(), None);
+    assert_eq!(
+        harness.module.on_dial_rotate(&dial(), 1).await,
+        Command::alert()
+    );
+    assert_eq!(harness.headset.opened(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn nothing_is_shown_or_set_until_the_link_is_open() {
+    for link in [Link::Idle, Link::Connecting, Link::Released, Link::Cut] {
+        let mut harness = Harness::on(SimulatedHeadset::with(headset(
+            link,
+            Some(ambient(Mode::Ambient, 5)),
+        )))
+        .await;
+        assert_eq!(harness.label(), "Casque", "{link:?}");
+        assert_eq!(harness.module.radial_items(), Vec::new(), "{link:?}");
+        assert_eq!(
+            harness.module.on_key_press().await,
+            Command::alert(),
+            "{link:?}"
+        );
+        assert_eq!(harness.headset.requests(), Vec::new(), "{link:?}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_dial_never_overflows_and_ignores_no_ticks() {
+    let mut harness = Harness::start().await;
+    assert_eq!(harness.module.on_dial_rotate(&dial(), 0).await, Vec::new());
+    assert_eq!(harness.headset.requests(), Vec::new());
+    harness.module.on_dial_rotate(&dial(), i32::MAX).await;
+    harness.settle().await;
+    harness.module.on_dial_rotate(&dial(), i32::MIN).await;
+    assert_eq!(
+        harness.headset.requests(),
+        [ambient(Mode::Ambient, MAX_LEVEL), ambient(Mode::Ambient, 0)]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn turning_down_at_the_bottom_of_ambient_asks_nothing_but_wakes_other_modes() {
+    let mut ambient_mode = Harness::on(SimulatedHeadset::with(headset(
+        Link::Connected,
+        Some(ambient(Mode::Ambient, 0)),
+    )))
+    .await;
+    ambient_mode.module.on_dial_rotate(&dial(), -1).await;
+    assert_eq!(ambient_mode.headset.requests(), Vec::new());
+
+    let mut off = Harness::on(SimulatedHeadset::with(headset(
+        Link::Connected,
+        Some(ambient(Mode::Off, 0)),
+    )))
+    .await;
+    off.module.on_dial_rotate(&dial(), -1).await;
+    assert_eq!(off.headset.requests(), [ambient(Mode::Ambient, 0)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_wind_reduction_in_use_is_shown_and_left_by_the_next_mode() {
+    let mut harness = Harness::on(SimulatedHeadset::with(Headset {
+        link: Link::Connected,
+        ambient: Some(ambient(Mode::WindReduction, 7)),
+        wind_reduction: false,
+    }))
+    .await;
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("Réduction du vent")
+    );
+    assert_eq!(harness.module.radial_items().len(), 3);
+    harness.module.on_key_press().await;
+    assert_eq!(harness.headset.requests(), [ambient(Mode::Off, 7)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_petal_action_that_changes_nothing_does_not_vibrate() {
+    let mut harness = Harness::start().await;
+    assert_eq!(
+        harness.module.on_radial_action("noise-cancelling").await,
+        Vec::new()
+    );
+    assert_eq!(harness.headset.requests(), Vec::new());
 }
 
 #[test]

@@ -68,7 +68,7 @@ pub enum RadialGlyph {
     ReturnToCall,
     /// A speaker.
     Speaker,
-    /// Headphones: noise cancelling.
+    /// Headphones: noise cancelling, or the headphones themselves.
     Headphones,
     /// An ear: ambient sound.
     Ear,
