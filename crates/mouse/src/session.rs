@@ -79,9 +79,9 @@ const SERVE_STEP: Duration = Duration::from_millis(40);
 /// it), so the only way to know is to ask.
 const LIVENESS_INTERVAL: Duration = Duration::from_secs(3);
 
-/// Pings in a row a mouse may miss before it is taken for switched off: one
-/// miss can be a mouse busy playing a vibration.
-const MISSED_PINGS_BEFORE_AWAY: u32 = 2;
+/// Checks in a row a mouse may miss before it is taken for switched off: a
+/// miss can be a mouse busy playing a vibration or asleep to save power.
+const MISSED_PINGS_BEFORE_AWAY: u32 = 4;
 
 /// How many updates in a row may find the mouse asleep before it is given up.
 const MAX_WAKE_FAILURES: u32 = 3;
@@ -1255,12 +1255,16 @@ mod tests {
         assert!(session.link_changes.is_empty(), "one miss");
         set_ping_muted(&shared, false);
         session.check_alive_at(tick(1)).unwrap();
-        // The miss was forgotten: two more are needed.
+        // The miss was forgotten: all of them are needed again.
         set_ping_muted(&shared, true);
-        session.check_alive_at(tick(2)).unwrap();
-        assert!(session.link_changes.is_empty(), "one miss again");
-        session.check_alive_at(tick(3)).unwrap();
-        assert_eq!(session.link_changes, [false], "two in a row");
+        for turn in 2..2 + MISSED_PINGS_BEFORE_AWAY - 1 {
+            session.check_alive_at(tick(turn)).unwrap();
+            assert!(session.link_changes.is_empty(), "miss {turn} is not enough");
+        }
+        session
+            .check_alive_at(tick(2 + MISSED_PINGS_BEFORE_AWAY - 1))
+            .unwrap();
+        assert_eq!(session.link_changes, [false], "all of them in a row");
     }
 
     #[test]
