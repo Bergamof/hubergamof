@@ -28,6 +28,11 @@ const AMBIENT_INQUIRED_TYPE: u8 = 0x02;
 const SINGLE_BATTERY: u8 = 0x00;
 /// Inquired type of the equalizer.
 const EQUALIZER_INQUIRED_TYPE: u8 = 0x01;
+/// Number of values (clear bass and five bands) of a manual equalizer.
+const EQUALIZER_VALUE_COUNT: u8 = 0x06;
+/// Preset byte of a manual setting of the bands.
+const EQUALIZER_MANUAL_BANDS: u8 = 0xFF;
+const SET_EQUALIZER: u8 = 0x58;
 
 /// Capability byte: only noise cancelling and ambient sound.
 const CAPABILITY_BASIC: u8 = 0x00;
@@ -53,17 +58,20 @@ pub enum Query {
     ConnectionStatus,
     /// Information about the paired devices (payload unknown: the bare code is sent).
     DeviceInfo,
+    /// "Concierge" data (payload unknown: the bare code is sent).
+    Concierge,
 }
 
 impl Query {
     /// Every query, in the order `probe` lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::ProtocolInfo,
         Self::Ambient,
         Self::Battery,
         Self::Equalizer,
         Self::ConnectionStatus,
         Self::DeviceInfo,
+        Self::Concierge,
     ];
 
     /// The name a person types.
@@ -76,6 +84,7 @@ impl Query {
             Self::Equalizer => "equalizer",
             Self::ConnectionStatus => "connection-status",
             Self::DeviceInfo => "device-info",
+            Self::Concierge => "concierge",
         }
     }
 
@@ -95,8 +104,46 @@ impl Query {
             Self::Equalizer => vec![GET_EQUALIZER, EQUALIZER_INQUIRED_TYPE],
             Self::ConnectionStatus => vec![0x24],
             Self::DeviceInfo => vec![0x1C],
+            Self::Concierge => vec![0x28],
         }
     }
+
+    /// The payload with `args` after the code, to find what the undocumented
+    /// queries take. Only those queries accept any: the others have a known payload.
+    ///
+    /// # Errors
+    /// [`ProbeError`] when the query takes no argument or too many are given.
+    pub fn payload_with(self, args: &[u8]) -> Result<Vec<u8>, ProbeError> {
+        if args.is_empty() {
+            return Ok(self.payload());
+        }
+        if !matches!(
+            self,
+            Self::ConnectionStatus | Self::DeviceInfo | Self::Concierge
+        ) {
+            return Err(ProbeError::NoArguments(self.name()));
+        }
+        if args.len() > MAX_PROBE_ARGS {
+            return Err(ProbeError::TooMany(args.len()));
+        }
+        let mut payload = self.payload();
+        payload.extend_from_slice(args);
+        Ok(payload)
+    }
+}
+
+/// Most argument bytes `probe` appends to an undocumented query.
+pub const MAX_PROBE_ARGS: usize = 4;
+
+/// Why a probe cannot be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ProbeError {
+    /// This query has a known payload and takes no argument.
+    #[error("the {0} query takes no argument")]
+    NoArguments(&'static str),
+    /// More than [`MAX_PROBE_ARGS`] bytes.
+    #[error("{0} argument bytes, at most {MAX_PROBE_ARGS}")]
+    TooMany(usize),
 }
 
 /// What noise cancelling and ambient sound do.
@@ -211,11 +258,164 @@ pub enum Battery {
     },
 }
 
-/// The equalizer as the headphones report it (preset codes are not named yet).
+/// An equalizer preset (codes from Gadgetbridge; `Speech` was read on a WH-1000XM4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EqualizerPreset {
+    /// No equalizer.
+    Off,
+    /// Bright.
+    Bright,
+    /// Excited.
+    Excited,
+    /// Mellow.
+    Mellow,
+    /// Relaxed.
+    Relaxed,
+    /// Vocal.
+    Vocal,
+    /// Treble boost.
+    TrebleBoost,
+    /// Bass boost.
+    BassBoost,
+    /// Speech.
+    Speech,
+    /// The bands set by hand.
+    Manual,
+    /// First user preset.
+    Custom1,
+    /// Second user preset.
+    Custom2,
+    /// A code this project does not know, kept as the headphones sent it.
+    Unknown(u8),
+}
+
+impl EqualizerPreset {
+    /// The presets a person can choose (the manual bands have their own setting).
+    pub const CHOOSABLE: [Self; 11] = [
+        Self::Off,
+        Self::Bright,
+        Self::Excited,
+        Self::Mellow,
+        Self::Relaxed,
+        Self::Vocal,
+        Self::TrebleBoost,
+        Self::BassBoost,
+        Self::Speech,
+        Self::Custom1,
+        Self::Custom2,
+    ];
+
+    /// The preset behind a code.
+    #[must_use]
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            0x00 => Self::Off,
+            0x10 => Self::Bright,
+            0x11 => Self::Excited,
+            0x12 => Self::Mellow,
+            0x13 => Self::Relaxed,
+            0x14 => Self::Vocal,
+            0x15 => Self::TrebleBoost,
+            0x16 => Self::BassBoost,
+            0x17 => Self::Speech,
+            0xA0 => Self::Manual,
+            0xA1 => Self::Custom1,
+            0xA2 => Self::Custom2,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// The code of the preset.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Off => 0x00,
+            Self::Bright => 0x10,
+            Self::Excited => 0x11,
+            Self::Mellow => 0x12,
+            Self::Relaxed => 0x13,
+            Self::Vocal => 0x14,
+            Self::TrebleBoost => 0x15,
+            Self::BassBoost => 0x16,
+            Self::Speech => 0x17,
+            Self::Manual => 0xA0,
+            Self::Custom1 => 0xA1,
+            Self::Custom2 => 0xA2,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+/// Lowest and highest value of a band or of the clear bass.
+pub const EQUALIZER_RANGE: std::ops::RangeInclusive<i8> = -10..=10;
+
+/// A request to change the equalizer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EqualizerSetting {
+    /// One of the presets.
+    Preset(EqualizerPreset),
+    /// The bands by hand.
+    Manual {
+        /// Bass boost, `-10..=10`.
+        clear_bass: i8,
+        /// The five bands, `-10..=10`.
+        bands: [i8; 5],
+    },
+}
+
+/// Why an equalizer setting cannot be sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum EqualizerError {
+    /// A value outside `-10..=10`.
+    #[error("equalizer value {0} is outside -10..=10")]
+    Value(i8),
+    /// The preset is not one a person can choose.
+    #[error("this preset cannot be chosen")]
+    NotChoosable,
+}
+
+impl EqualizerSetting {
+    /// The payload of the command.
+    ///
+    /// # Errors
+    /// [`EqualizerError`] for a value out of range or a preset that is not choosable.
+    pub fn payload(self) -> Result<Vec<u8>, EqualizerError> {
+        match self {
+            Self::Preset(preset) => {
+                if !EqualizerPreset::CHOOSABLE.contains(&preset) {
+                    return Err(EqualizerError::NotChoosable);
+                }
+                Ok(vec![
+                    SET_EQUALIZER,
+                    EQUALIZER_INQUIRED_TYPE,
+                    preset.code(),
+                    0x00,
+                ])
+            }
+            Self::Manual { clear_bass, bands } => {
+                let mut payload = vec![
+                    SET_EQUALIZER,
+                    EQUALIZER_INQUIRED_TYPE,
+                    EQUALIZER_MANUAL_BANDS,
+                    EQUALIZER_VALUE_COUNT,
+                ];
+                for value in std::iter::once(clear_bass).chain(bands) {
+                    if !EQUALIZER_RANGE.contains(&value) {
+                        return Err(EqualizerError::Value(value));
+                    }
+                    payload.push(u8::try_from(i16::from(value) + EQUALIZER_OFFSET).unwrap_or(0));
+                }
+                Ok(payload)
+            }
+        }
+    }
+}
+
+/// The equalizer as the headphones report it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EqualizerState {
-    /// The preset code, as sent.
-    pub preset: u8,
+    /// The preset.
+    pub preset: EqualizerPreset,
     /// Bass boost, `-10..=10`.
     pub clear_bass: i8,
     /// The five bands, `-10..=10`, in the order the headphones send them.
@@ -349,7 +549,7 @@ fn decode_equalizer(payload: &[u8]) -> Result<EqualizerState, MalformedAnswer> {
         ));
     };
     Ok(EqualizerState {
-        preset,
+        preset: EqualizerPreset::from_code(preset),
         clear_bass: equalizer_value(code, clear_bass)?,
         bands: [
             equalizer_value(code, b1)?,
@@ -514,13 +714,103 @@ mod tests {
         assert_eq!(
             decode(&[0x57, 0x01, 0xA0, 0x06, 0x0A, 0x0F, 0x05, 0x0A, 0x14, 0x00]).unwrap(),
             Event::Equalizer(EqualizerState {
-                preset: 0xA0,
+                preset: EqualizerPreset::Manual,
                 clear_bass: 0,
                 bands: [5, -5, 0, 10, -10],
             })
         );
         assert!(decode(&[0x57, 0x01, 0xA0, 0x06, 0x0A, 0x0F, 0x05, 0x0A, 0x15, 0x00]).is_err());
         assert!(decode(&[0x57, 0x01]).is_err());
+    }
+
+    #[test]
+    fn the_equalizer_read_on_the_xm4_is_the_speech_preset() {
+        let event = decode(&[0x57, 0x01, 0x17, 0x06, 0x00, 0x0E, 0x0D, 0x0B, 0x0C, 0x00]).unwrap();
+        assert_eq!(
+            event,
+            Event::Equalizer(EqualizerState {
+                preset: EqualizerPreset::Speech,
+                clear_bass: -10,
+                bands: [4, 3, 1, 2, -10],
+            })
+        );
+    }
+
+    #[test]
+    fn preset_codes_round_trip_and_unknown_ones_are_kept() {
+        for preset in EqualizerPreset::CHOOSABLE
+            .into_iter()
+            .chain([EqualizerPreset::Manual])
+        {
+            assert_eq!(EqualizerPreset::from_code(preset.code()), preset);
+        }
+        assert_eq!(
+            EqualizerPreset::from_code(0x42),
+            EqualizerPreset::Unknown(0x42)
+        );
+        assert_eq!(EqualizerPreset::Unknown(0x42).code(), 0x42);
+    }
+
+    #[test]
+    fn equalizer_commands_follow_the_documented_layouts() {
+        assert_eq!(
+            EqualizerSetting::Preset(EqualizerPreset::BassBoost)
+                .payload()
+                .unwrap(),
+            [0x58, 0x01, 0x16, 0x00]
+        );
+        assert_eq!(
+            EqualizerSetting::Manual {
+                clear_bass: -10,
+                bands: [4, 3, 0, -3, 10]
+            }
+            .payload()
+            .unwrap(),
+            [0x58, 0x01, 0xFF, 0x06, 0x00, 0x0E, 0x0D, 0x0A, 0x07, 0x14]
+        );
+    }
+
+    #[test]
+    fn an_equalizer_setting_the_headphones_would_refuse_is_not_built() {
+        assert_eq!(
+            EqualizerSetting::Manual {
+                clear_bass: 0,
+                bands: [0, 0, 11, 0, 0]
+            }
+            .payload(),
+            Err(EqualizerError::Value(11))
+        );
+        assert_eq!(
+            EqualizerSetting::Manual {
+                clear_bass: -11,
+                bands: [0; 5]
+            }
+            .payload(),
+            Err(EqualizerError::Value(-11))
+        );
+        for preset in [EqualizerPreset::Manual, EqualizerPreset::Unknown(0x42)] {
+            assert_eq!(
+                EqualizerSetting::Preset(preset).payload(),
+                Err(EqualizerError::NotChoosable)
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_undocumented_queries_take_arguments() {
+        assert_eq!(
+            Query::ConnectionStatus.payload_with(&[0x00, 0x01]).unwrap(),
+            [0x24, 0x00, 0x01]
+        );
+        assert_eq!(Query::DeviceInfo.payload_with(&[]).unwrap(), [0x1C]);
+        assert_eq!(
+            Query::Battery.payload_with(&[0x01]),
+            Err(ProbeError::NoArguments("battery"))
+        );
+        assert_eq!(
+            Query::Concierge.payload_with(&[0; MAX_PROBE_ARGS + 1]),
+            Err(ProbeError::TooMany(MAX_PROBE_ARGS + 1))
+        );
     }
 
     #[test]

@@ -128,7 +128,7 @@ impl Channel for FakeHeadset {
     fn read(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
         let mut state = self.lock();
         if state.closed {
-            return Err(ChannelError("the headphones closed the stream".into()));
+            return Err(ChannelError::Closed);
         }
         Ok(state.outgoing.pop_front())
     }

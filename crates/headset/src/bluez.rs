@@ -226,22 +226,32 @@ impl Channel for RfcommChannel {
     fn write(&mut self, bytes: &[u8]) -> Result<(), ChannelError> {
         self.stream
             .write_all(bytes)
-            .map_err(|error| ChannelError(error.to_string()))
+            .map_err(|error| io_error(&error))
     }
 
     fn read(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
         self.stream
             .set_read_timeout(Some(timeout.max(MIN_READ_TIMEOUT)))
-            .map_err(|error| ChannelError(error.to_string()))?;
+            .map_err(|error| io_error(&error))?;
         let mut buffer = [0u8; READ_BUFFER];
         match self.stream.read(&mut buffer) {
-            Ok(0) => Err(ChannelError("the headphones closed the connection".into())),
+            Ok(0) => Err(ChannelError::Closed),
             Ok(count) => Ok(Some(buffer[..count].to_vec())),
             Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 Ok(None)
             }
-            Err(error) => Err(ChannelError(error.to_string())),
+            Err(error) => Err(io_error(&error)),
         }
+    }
+}
+
+/// A reset or broken connection is the headphones closing it; the rest is a failure.
+fn io_error(error: &std::io::Error) -> ChannelError {
+    match error.kind() {
+        ErrorKind::ConnectionReset | ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted => {
+            ChannelError::Closed
+        }
+        _ => ChannelError::Io(error.to_string()),
     }
 }
 

@@ -24,8 +24,15 @@ pub trait Channel {
 
 /// The stream could not be written or read.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("{0}")]
-pub struct ChannelError(pub String);
+pub enum ChannelError {
+    /// The headphones closed the connection (another app took the settings
+    /// channel, or they went away).
+    #[error("the headphones closed the connection")]
+    Closed,
+    /// The stream failed.
+    #[error("{0}")]
+    Io(String),
+}
 
 impl<C: Channel + ?Sized> Channel for &mut C {
     fn write(&mut self, bytes: &[u8]) -> Result<(), ChannelError> {

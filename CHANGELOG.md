@@ -9,7 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Ajouté
 
-- Casque Sony WH-1000XM4, étape 0 : nouveau crate `hubergamof-headset` (trames MDR et acquittements, charges utiles du son ambiant, de la batterie et de l'égaliseur en lecture, connexion RFCOMM confiée à BlueZ par D-Bus, casque simulé pour les tests) et commande `hubergamof headset-test` (`list`, `info`, `watch`, `ambient`, `probe`) pour relever sur le vrai casque les valeurs que personne n'a documentées. Pas encore branché au service ni à l'interface ; relevés et suite : `docs/headset-sony.md`.
+- Casque Sony WH-1000XM4, étape 0 : nouveau crate `hubergamof-headset` (trames MDR et acquittements, charges utiles du son ambiant, de la batterie et de l'égaliseur en lecture, connexion RFCOMM confiée à BlueZ par D-Bus, casque simulé pour les tests) et commande `hubergamof headset-test` (`list`, `info`, `watch`, `ambient`, `probe`) pour relever sur le vrai casque les valeurs que personne n'a documentées. Les relevés sur un vrai XM4 confirment le son ambiant (lecture, réglage, notifications), la batterie et la lecture de l'égaliseur ; `headset-test` gagne `equalizer preset|manual` et `probe --arg`, et dit clairement quand une autre appli a pris le canal. Pas encore branché au service ni à l'interface ; relevés et suite : `docs/headset-sony.md`.
 
 ### Modifié
 

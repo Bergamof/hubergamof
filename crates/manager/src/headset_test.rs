@@ -13,7 +13,10 @@ use clap::{Subcommand, ValueEnum};
 use hubergamof_headset::bluez;
 use hubergamof_headset::diagnostics::{self, Action, DataKind, Settings};
 use hubergamof_headset::link::Link;
-use hubergamof_headset::payload::{AmbientMode, AmbientSetting, MAX_AMBIENT_LEVEL, Query};
+use hubergamof_headset::payload::{
+    AmbientMode, AmbientSetting, EQUALIZER_RANGE, EqualizerPreset, EqualizerSetting,
+    MAX_AMBIENT_LEVEL, Query,
+};
 
 /// Level used when none is given.
 const DEFAULT_LEVEL: u8 = 10;
@@ -83,6 +86,8 @@ pub enum QueryArg {
     ConnectionStatus,
     /// Paired devices information (payload unknown: the bare code is sent).
     DeviceInfo,
+    /// Concierge data (payload unknown: the bare code is sent).
+    Concierge,
 }
 
 impl From<QueryArg> for Query {
@@ -94,8 +99,107 @@ impl From<QueryArg> for Query {
             QueryArg::Equalizer => Self::Equalizer,
             QueryArg::ConnectionStatus => Self::ConnectionStatus,
             QueryArg::DeviceInfo => Self::DeviceInfo,
+            QueryArg::Concierge => Self::Concierge,
         }
     }
+}
+
+/// The equalizer presets a person can choose.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PresetArg {
+    /// No equalizer.
+    Off,
+    /// Bright.
+    Bright,
+    /// Excited.
+    Excited,
+    /// Mellow.
+    Mellow,
+    /// Relaxed.
+    Relaxed,
+    /// Vocal.
+    Vocal,
+    /// Treble boost.
+    TrebleBoost,
+    /// Bass boost.
+    BassBoost,
+    /// Speech.
+    Speech,
+    /// First user preset.
+    Custom1,
+    /// Second user preset.
+    Custom2,
+}
+
+impl From<PresetArg> for EqualizerPreset {
+    fn from(preset: PresetArg) -> Self {
+        match preset {
+            PresetArg::Off => Self::Off,
+            PresetArg::Bright => Self::Bright,
+            PresetArg::Excited => Self::Excited,
+            PresetArg::Mellow => Self::Mellow,
+            PresetArg::Relaxed => Self::Relaxed,
+            PresetArg::Vocal => Self::Vocal,
+            PresetArg::TrebleBoost => Self::TrebleBoost,
+            PresetArg::BassBoost => Self::BassBoost,
+            PresetArg::Speech => Self::Speech,
+            PresetArg::Custom1 => Self::Custom1,
+            PresetArg::Custom2 => Self::Custom2,
+        }
+    }
+}
+
+/// Number of bands of the equalizer.
+const EQUALIZER_BANDS: usize = 5;
+
+/// What `equalizer` sets.
+#[derive(Debug, Subcommand)]
+pub enum EqualizerAction {
+    /// Choose a preset.
+    Preset {
+        /// The preset.
+        #[arg(value_enum)]
+        preset: PresetArg,
+    },
+    /// Set the clear bass and the five bands (400 Hz, 1, 2.5, 6.3 and 16 kHz) by hand.
+    Manual {
+        /// Clear bass, -10 to 10.
+        #[arg(long, allow_negative_numbers = true, value_parser = parse_equalizer_value)]
+        bass: i8,
+        /// The five bands, -10 to 10, comma separated (`--bands=-3,0,2,4,1`).
+        #[arg(long, allow_hyphen_values = true, value_parser = parse_bands)]
+        bands: [i8; EQUALIZER_BANDS],
+    },
+}
+
+fn parse_equalizer_value(text: &str) -> Result<i8, String> {
+    let value: i8 = text
+        .parse()
+        .map_err(|_| format!("{text:?} is not a number"))?;
+    if EQUALIZER_RANGE.contains(&value) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{} to {}",
+            EQUALIZER_RANGE.start(),
+            EQUALIZER_RANGE.end()
+        ))
+    }
+}
+
+fn parse_bands(text: &str) -> Result<[i8; EQUALIZER_BANDS], String> {
+    let values = text
+        .split(',')
+        .map(parse_equalizer_value)
+        .collect::<Result<Vec<i8>, String>>()?;
+    <[i8; EQUALIZER_BANDS]>::try_from(values)
+        .map_err(|values| format!("{} values, expected {EQUALIZER_BANDS}", values.len()))
+}
+
+/// One byte written in hexadecimal (`0A`, `a`, `0x0a`).
+fn parse_hex_byte(text: &str) -> Result<u8, String> {
+    u8::from_str_radix(text.trim_start_matches("0x"), 16)
+        .map_err(|_| format!("{text:?} is not a byte in hexadecimal"))
 }
 
 /// What `headset-test` does.
@@ -123,11 +227,21 @@ pub enum HeadsetTestAction {
         #[arg(long, default_value_t = DEFAULT_WATCH_SECONDS, value_parser = clap::value_parser!(u64).range(1..=MAX_WATCH_SECONDS))]
         seconds: u64,
     },
+    /// Change the equalizer, then read it back.
+    Equalizer {
+        #[command(subcommand)]
+        action: EqualizerAction,
+    },
     /// Send one query from a closed list and print the answers.
     Probe {
         /// The query.
         #[arg(value_enum)]
         query: QueryArg,
+        /// Argument byte in hexadecimal after the query code, to find what the
+        /// undocumented queries (`connection-status`, `device-info`,
+        /// `concierge`) take; repeat for several (at most 4).
+        #[arg(long = "arg", value_parser = parse_hex_byte)]
+        args: Vec<u8>,
     },
 }
 
@@ -143,7 +257,23 @@ impl HeadsetTestAction {
                 focus_on_voice: voice,
             })),
             Self::Watch { seconds } => Some(Action::Watch(Duration::from_secs(seconds))),
-            Self::Probe { query } => Some(Action::Probe(query.into())),
+            Self::Equalizer { action } => Some(Action::Equalizer(action.into_setting())),
+            Self::Probe { query, args } => Some(Action::Probe {
+                query: query.into(),
+                args,
+            }),
+        }
+    }
+}
+
+impl EqualizerAction {
+    fn into_setting(self) -> EqualizerSetting {
+        match self {
+            Self::Preset { preset } => EqualizerSetting::Preset(preset.into()),
+            Self::Manual { bass, bands } => EqualizerSetting::Manual {
+                clear_bass: bass,
+                bands,
+            },
         }
     }
 }
@@ -277,7 +407,36 @@ mod tests {
         );
         assert_eq!(
             action(&["probe", "connection-status"]),
-            Some(Action::Probe(Query::ConnectionStatus))
+            Some(Action::Probe {
+                query: Query::ConnectionStatus,
+                args: Vec::new()
+            })
+        );
+        assert_eq!(
+            action(&["probe", "device-info", "--arg", "00", "--arg", "0x1f"]),
+            Some(Action::Probe {
+                query: Query::DeviceInfo,
+                args: vec![0x00, 0x1F]
+            })
+        );
+        assert_eq!(
+            action(&["equalizer", "preset", "bass-boost"]),
+            Some(Action::Equalizer(EqualizerSetting::Preset(
+                EqualizerPreset::BassBoost
+            )))
+        );
+        assert_eq!(
+            action(&[
+                "equalizer",
+                "manual",
+                "--bass",
+                "-10",
+                "--bands=-3,0,2,4,10"
+            ]),
+            Some(Action::Equalizer(EqualizerSetting::Manual {
+                clear_bass: -10,
+                bands: [-3, 0, 2, 4, 10]
+            }))
         );
     }
 
@@ -292,6 +451,42 @@ mod tests {
             &["headset-test", "watch", "--seconds", "0"],
             &["headset-test", "watch", "--seconds", "601"],
             &["headset-test", "probe", "format-disk"],
+            &["headset-test", "probe", "ambient", "--arg", "zz"],
+            &["headset-test", "equalizer"],
+            &["headset-test", "equalizer", "preset", "loud"],
+            &["headset-test", "equalizer", "preset", "manual"],
+            &[
+                "headset-test",
+                "equalizer",
+                "manual",
+                "--bass",
+                "11",
+                "--bands=0,0,0,0,0",
+            ],
+            &[
+                "headset-test",
+                "equalizer",
+                "manual",
+                "--bass",
+                "0",
+                "--bands=0,0,0,0",
+            ],
+            &[
+                "headset-test",
+                "equalizer",
+                "manual",
+                "--bass",
+                "0",
+                "--bands=0,0,0,0,0,0",
+            ],
+            &[
+                "headset-test",
+                "equalizer",
+                "manual",
+                "--bass",
+                "0",
+                "--bands=0,0,0,0,11",
+            ],
             &["headset-test", "--address", "nope", "info"],
             &["headset-test", "--address", "AA:BB:CC:DD:EE", "info"],
             &["headset-test", "--address", "AA:BB:CC:DD:EE:GG", "info"],

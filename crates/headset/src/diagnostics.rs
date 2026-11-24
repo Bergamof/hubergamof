@@ -11,13 +11,16 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::channel::Channel;
+use crate::channel::{Channel, ChannelError};
 use crate::frame::{DATA_TYPE_MDR, Frame};
 use crate::link::{Link, LinkError};
-use crate::payload::{AmbientSetting, AmbientState, Event, Query, SettingError, decode};
+use crate::payload::{
+    AmbientSetting, AmbientState, EqualizerError, EqualizerSetting, Event, ProbeError, Query,
+    SettingError, decode,
+};
 
 /// How long to wait for more answers after the last one (or for the first).
-pub const REPLY_WAIT: Duration = Duration::from_millis(600);
+pub const REPLY_WAIT: Duration = Duration::from_millis(1000);
 
 /// Data type of the second MDR channel some headphones use.
 const DATA_TYPE_MDR_NO2: u8 = 0x0E;
@@ -55,8 +58,16 @@ pub enum Action {
     Ambient(AmbientSetting),
     /// Ask for the states, then print everything the headphones announce.
     Watch(Duration),
-    /// Send one query from the closed list and print the answers.
-    Probe(Query),
+    /// Change the equalizer, then read it back.
+    Equalizer(EqualizerSetting),
+    /// Send one query from the closed list (with argument bytes for the
+    /// undocumented ones) and print the answers.
+    Probe {
+        /// The query.
+        query: Query,
+        /// Bytes appended after its code.
+        args: Vec<u8>,
+    },
 }
 
 /// How the action talks to the headphones.
@@ -82,16 +93,36 @@ impl Default for Settings {
 pub enum DiagnosticError {
     /// A frame could not be exchanged.
     #[error(transparent)]
-    Link(#[from] LinkError),
+    Link(LinkError),
+    /// The headphones closed the connection.
+    #[error(
+        "the headphones closed the connection: another app (the Sony app on a phone?) probably took the settings channel"
+    )]
+    Closed,
     /// The change asked for is not one the headphones accept.
     #[error(transparent)]
     Setting(#[from] SettingError),
+    /// The equalizer change asked for is not one the headphones accept.
+    #[error(transparent)]
+    Equalizer(#[from] EqualizerError),
+    /// The probe asked for cannot be built.
+    #[error(transparent)]
+    Probe(#[from] ProbeError),
     /// The headphones did not say whether they have wind noise reduction.
     #[error("the headphones did not report their ambient sound state: run `info` first")]
     NoAmbientState,
     /// The output could not be written.
     #[error("cannot write the report: {0}")]
     Output(#[from] io::Error),
+}
+
+impl From<LinkError> for DiagnosticError {
+    fn from(error: LinkError) -> Self {
+        match error {
+            LinkError::Channel(ChannelError::Closed) => Self::Closed,
+            other => Self::Link(other),
+        }
+    }
 }
 
 /// `00 1F ab` for a payload.
@@ -126,7 +157,8 @@ pub fn run<C: Channel>(
         Action::Info => session.info(),
         Action::Ambient(setting) => session.ambient(*setting),
         Action::Watch(duration) => session.watch(*duration, stop),
-        Action::Probe(query) => session.ask(*query).map(|_| ()),
+        Action::Equalizer(setting) => session.equalizer(*setting),
+        Action::Probe { query, args } => session.probe(*query, args),
     }
 }
 
@@ -169,9 +201,26 @@ impl<C: Channel, W: Write> Session<'_, C, W> {
 
     /// Sends a query and shows every answer that follows it.
     fn ask(&mut self, query: Query) -> Result<Vec<Event>, DiagnosticError> {
+        self.ask_with(query, &[])
+    }
+
+    fn ask_with(&mut self, query: Query, args: &[u8]) -> Result<Vec<Event>, DiagnosticError> {
+        let payload = query.payload_with(args)?;
         writeln!(self.out, "[{}]", query.name())?;
-        self.send(&query.payload())?;
+        self.send(&payload)?;
         self.show_replies()
+    }
+
+    fn probe(&mut self, query: Query, args: &[u8]) -> Result<(), DiagnosticError> {
+        self.ask_with(query, args).map(|_| ())
+    }
+
+    fn equalizer(&mut self, setting: EqualizerSetting) -> Result<(), DiagnosticError> {
+        let payload = setting.payload()?;
+        writeln!(self.out, "[set equalizer {setting:?}]")?;
+        self.send(&payload)?;
+        self.show_replies()?;
+        self.ask(Query::Equalizer).map(|_| ())
     }
 
     fn show_replies(&mut self) -> Result<Vec<Event>, DiagnosticError> {
@@ -241,7 +290,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::payload::AmbientMode;
+    use crate::payload::{AmbientMode, EqualizerPreset};
     use crate::testing::FakeHeadset;
 
     const AMBIENT_REPLY: [u8; 8] = [0x67, 0x02, 0x01, 0x02, 0x00, 0x01, 0x00, 0x05];
@@ -356,10 +405,71 @@ mod tests {
     #[test]
     fn a_probe_sends_only_its_query_and_shows_unknown_answers() {
         let headset = FakeHeadset::new().answering(&[0x24], &[&[0x25, 0x01, 0x02]]);
-        let (result, report) = run_on(&headset, &Action::Probe(Query::ConnectionStatus));
+        let (result, report) = run_on(
+            &headset,
+            &Action::Probe {
+                query: Query::ConnectionStatus,
+                args: Vec::new(),
+            },
+        );
         result.unwrap();
         assert_eq!(headset.received(), [vec![0x24]]);
         assert!(report.contains("<- type 0x0C seq 0: 25 01 02"));
+    }
+
+    #[test]
+    fn a_probe_appends_its_arguments_only_where_allowed() {
+        let headset = FakeHeadset::new().answering(&[0x24, 0x01], &[&[0x25, 0x31, 0x01, 0x01]]);
+        let probe = |query, args: &[u8]| Action::Probe {
+            query,
+            args: args.to_vec(),
+        };
+        let (result, report) = run_on(&headset, &probe(Query::ConnectionStatus, &[0x01]));
+        result.unwrap();
+        assert_eq!(headset.received(), [vec![0x24, 0x01]]);
+        assert!(report.contains("<- type 0x0C seq 0: 25 31 01 01"));
+
+        let (result, _) = run_on(&headset, &probe(Query::Battery, &[0x01]));
+        assert!(matches!(result, Err(DiagnosticError::Probe(_))));
+        assert_eq!(headset.received().len(), 1, "nothing was sent");
+    }
+
+    #[test]
+    fn an_equalizer_change_is_sent_then_read_back() {
+        let headset = FakeHeadset::new().answering(
+            &Query::Equalizer.payload(),
+            &[&[0x57, 0x01, 0x16, 0x06, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A]],
+        );
+        let setting = EqualizerSetting::Preset(EqualizerPreset::BassBoost);
+        let (result, report) = run_on(&headset, &Action::Equalizer(setting));
+        result.unwrap();
+        assert_eq!(
+            headset.received(),
+            [vec![0x58, 0x01, 0x16, 0x00], Query::Equalizer.payload()]
+        );
+        assert!(report.contains("preset: BassBoost"));
+    }
+
+    #[test]
+    fn an_equalizer_value_out_of_range_is_not_sent() {
+        let headset = FakeHeadset::new();
+        let setting = EqualizerSetting::Manual {
+            clear_bass: 11,
+            bands: [0; 5],
+        };
+        let (result, _) = run_on(&headset, &Action::Equalizer(setting));
+        assert!(matches!(result, Err(DiagnosticError::Equalizer(_))));
+        assert_eq!(headset.received(), Vec::<Vec<u8>>::new());
+    }
+
+    #[test]
+    fn a_connection_closed_by_the_headphones_is_said_plainly() {
+        let headset = talkative();
+        headset.close();
+        let (result, _) = run_on(&headset, &Action::Info);
+        let error = result.unwrap_err();
+        assert!(matches!(error, DiagnosticError::Closed));
+        assert!(error.to_string().contains("another app"));
     }
 
     #[test]
