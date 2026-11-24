@@ -24,7 +24,8 @@ use hubergamof_module_api::{
     Command, DialFunctionDescriptor, DialFunctionId, DialHint, ImageData, ItemId, KeyContent,
     KeyState, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
     ModuleEvent, ModuleFactory, ModuleLifetime, ModuleSurface, PageContent, PageId, PageItem,
-    RadialActionDescriptor, SettingField, SettingKind, StripWidget, VolumeWidget,
+    RadialActionDescriptor, RadialGlyph, RadialItem, RadialItemState, SettingField, SettingKind,
+    StripWidget, VolumeWidget,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde::Deserialize;
@@ -291,11 +292,16 @@ impl Audio {
         }
     }
 
+    /// Whether the default device of `direction` is known and muted.
+    fn default_muted(&self, direction: Direction) -> bool {
+        self.snapshot()
+            .and_then(|snapshot| snapshot.default_device(direction))
+            .is_some_and(|device| device.muted)
+    }
+
     /// Whether the default output is known and muted.
     fn output_muted(&self) -> bool {
-        self.snapshot()
-            .and_then(|snapshot| snapshot.default_device(Direction::Output))
-            .is_some_and(|device| device.muted)
+        self.default_muted(Direction::Output)
     }
 
     /// Submits `change`; `surface` will show its outcome. Should the hub
@@ -359,10 +365,7 @@ impl Audio {
     }
 
     fn main_page(&self) -> PageContent {
-        let microphone_muted = self
-            .snapshot()
-            .and_then(|snapshot| snapshot.default_device(Direction::Input))
-            .is_some_and(|device| device.muted);
+        let microphone_muted = self.default_muted(Direction::Input);
         // The struck microphone says it is muted: no attention colour.
         let microphone = if microphone_muted {
             KeyContent::with_icon(&icons::MICROPHONE_MUTED, MICROPHONE_MUTED_LABEL)
@@ -442,6 +445,21 @@ fn item(id: &str, key: KeyContent) -> PageItem {
     PageItem::new(id.into(), key)
 }
 
+/// A petal item that toggles a mute: crossed out and offering to restore
+/// while `muted`, `(mute, restore)` being its two labels.
+fn mute_item(
+    id: &str,
+    glyph: RadialGlyph,
+    muted: bool,
+    (mute_label, restore_label): (&str, &str),
+) -> RadialItem {
+    if muted {
+        RadialItem::new(id, restore_label, glyph).with_state(RadialItemState::Off)
+    } else {
+        RadialItem::new(id, mute_label, glyph)
+    }
+}
+
 fn direction_of(page: &PageId) -> Option<Direction> {
     match page.0.as_str() {
         OUTPUTS_PAGE => Some(Direction::Output),
@@ -510,6 +528,23 @@ impl Module for Audio {
             commands.push(Command::haptic(HAPTIC_MUTE_CHANGED));
         }
         commands
+    }
+
+    fn radial_items(&self) -> Vec<RadialItem> {
+        vec![
+            mute_item(
+                RADIAL_MUTE_MICROPHONE,
+                RadialGlyph::Microphone,
+                self.default_muted(Direction::Input),
+                ("Couper le micro", "Rétablir le micro"),
+            ),
+            mute_item(
+                RADIAL_MUTE_SPEAKERS,
+                RadialGlyph::Speaker,
+                self.default_muted(Direction::Output),
+                ("Couper le son", "Rétablir le son"),
+            ),
+        ]
     }
 
     async fn on_dial_rotate(&mut self, function: &DialFunctionId, ticks: i32) -> Vec<Command> {

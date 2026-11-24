@@ -12,6 +12,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use hubergamof_module_api::RadialItem;
 use thiserror::Error;
 use x11rb::CURRENT_TIME;
 use x11rb::connection::Connection;
@@ -28,8 +29,8 @@ use super::controller::{View, WindowEvent};
 use super::geometry::{Point, Size};
 use super::paint::{PetalView, paint};
 use super::window::{
-    Content, Gone, MAX_OPEN, MAX_SURFACE_SIDE, PetalNote, Report, Surface, apply_notes,
-    has_expired, opening_progress, premultiplied_bgra,
+    Content, Gone, MAX_OPEN, MAX_SURFACE_SIDE, PetalNote, Report, Surface, apply_items,
+    apply_notes, has_expired, opening_progress, premultiplied_bgra,
 };
 use crate::render::{RenderError, TextRenderer};
 
@@ -78,6 +79,7 @@ enum Command {
     Place(View),
     Redraw(View),
     Notes(Vec<PetalNote>),
+    Items(Vec<Vec<RadialItem>>),
     Close,
     Stop,
 }
@@ -241,6 +243,10 @@ impl Surface for X11Overlay {
 
     fn update_notes(&self, notes: Vec<PetalNote>) {
         self.send(Command::Notes(notes));
+    }
+
+    fn update_items(&self, items: Vec<Vec<RadialItem>>) {
+        self.send(Command::Items(items));
     }
 
     fn close(&self) {
@@ -687,6 +693,12 @@ impl State {
                 }
                 self.draw();
             }
+            Command::Items(items) => {
+                if let Some(shown) = &mut self.shown {
+                    apply_items(&mut shown.content.petals, items);
+                }
+                self.draw();
+            }
             Command::Close => self.hide(),
             Command::Stop => {
                 self.hide();
@@ -789,6 +801,7 @@ impl State {
                 icon: petal.icon.as_ref(),
                 status: petal.note.status.as_deref(),
                 badge: petal.note.badge,
+                items: &petal.items,
             })
             .collect();
         let image = match paint(
@@ -796,6 +809,7 @@ impl State {
             &shown.content.layout,
             &petals,
             view.lit,
+            view.lit_item,
             opening_progress(&shown.content, shown.placed_at),
             shown.content.palette,
         ) {

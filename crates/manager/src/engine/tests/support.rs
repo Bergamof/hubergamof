@@ -106,6 +106,11 @@ pub(super) struct Probe {
     pub(super) checked: Arc<Mutex<Vec<usize>>>,
     /// Radial actions that reached list instances, in order.
     pub(super) radial_actions: Arc<Mutex<Vec<String>>>,
+    /// What list instances show around their petal of the radial menu (each
+    /// item carries the label of its instance as badge).
+    pub(super) radial_items: Arc<Mutex<Vec<hubergamof_module_api::RadialItem>>>,
+    /// Number of times a list instance was asked for its radial items.
+    pub(super) radial_items_reads: Arc<AtomicUsize>,
     /// Haptic events the engines raised, in order.
     pub(super) haptics: RecordedHaptics,
 }
@@ -249,6 +254,17 @@ impl Module for List {
         }
     }
 
+    fn radial_items(&self) -> Vec<hubergamof_module_api::RadialItem> {
+        self.probe.radial_items_reads.fetch_add(1, Ordering::SeqCst);
+        self.probe
+            .radial_items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.clone().with_badge(self.settings.label.clone()))
+            .collect()
+    }
+
     fn page(&self, page: &PageId) -> Option<PageContent> {
         let shift = self.probe.item_shift.load(Ordering::SeqCst);
         let gone = self.probe.gone_page.lock().unwrap().as_deref() == Some(page.0.as_str());
@@ -322,6 +338,14 @@ impl Module for List {
 struct ListFactory(Probe);
 
 impl ModuleFactory for ListFactory {
+    fn radial_actions(&self) -> Vec<hubergamof_module_api::RadialActionDescriptor> {
+        vec![hubergamof_module_api::RadialActionDescriptor::new(
+            "toggle",
+            "Toggle",
+            "Raised by the tests.",
+        )]
+    }
+
     fn haptic_events(&self) -> Vec<hubergamof_module_api::HapticEventDescriptor> {
         vec![hubergamof_module_api::HapticEventDescriptor::new(
             "ping",

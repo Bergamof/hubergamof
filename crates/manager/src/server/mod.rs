@@ -45,6 +45,7 @@ use crate::config_store::ConfigStore;
 use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
 use crate::file_chooser::FilePicker;
+use crate::machine::MachineHub;
 use crate::module_host::ModuleHost;
 use crate::mouse_hub::MouseHub;
 use crate::render::Renderer;
@@ -98,6 +99,9 @@ pub struct ServerContext {
     /// The modules that live in the application, shown and driven from the
     /// interface. `None`: the manager runs without them.
     pub application: Option<ModuleHost>,
+    /// The configuration of the computer (shell aliases) and what its shell
+    /// startup files hold.
+    pub machine: MachineHub,
     /// Whether the computer is locked: nothing is done from the interface then.
     pub screen_lock: Arc<dyn ScreenLock>,
 }

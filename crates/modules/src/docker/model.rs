@@ -1,6 +1,7 @@
 //! What Docker reports, as the module sees it: containers, and the compose
 //! projects they belong to.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,25 @@ pub enum Health {
     Healthy,
     /// Failing its health check.
     Unhealthy,
+}
+
+/// Where a container comes in a listing: the most worrying first. Variants
+/// are declared in listing order, which `Ord` follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum StatusRank {
+    /// Failing its health check, restarting in a loop, dead.
+    Attention,
+    /// On its way somewhere: health check not settled, paused, stopping,
+    /// being removed.
+    Pending,
+    /// Running.
+    Running,
+    /// Stopped, or created and never started.
+    Stopped,
+    /// A service its compose files define that has no container.
+    NotBuilt,
+    /// State Docker reported that the module does not know.
+    Unknown,
 }
 
 /// What compose recorded on a container it created (its labels). Anyone
@@ -141,6 +161,32 @@ impl Container {
         ) || self.health == Some(Health::Unhealthy)
     }
 
+    /// Where it comes in a listing.
+    #[must_use]
+    pub(crate) fn status_rank(&self) -> StatusRank {
+        if self.needs_attention() {
+            return StatusRank::Attention;
+        }
+        match self.status {
+            ContainerStatus::Running if self.health == Some(Health::Starting) => {
+                StatusRank::Pending
+            }
+            ContainerStatus::Running => StatusRank::Running,
+            ContainerStatus::Paused | ContainerStatus::Stopping | ContainerStatus::Removing => {
+                StatusRank::Pending
+            }
+            ContainerStatus::Exited | ContainerStatus::Created => StatusRank::Stopped,
+            _ => StatusRank::Unknown,
+        }
+    }
+
+    /// Listing order: by [`StatusRank`], then by name.
+    pub(crate) fn listing_order(&self, other: &Self) -> Ordering {
+        self.status_rank()
+            .cmp(&other.status_rank())
+            .then_with(|| self.name.cmp(&other.name))
+    }
+
     /// Whether it may be removed: stopped (a running one is never removed,
     /// it must be stopped first).
     #[must_use]
@@ -215,7 +261,7 @@ pub(crate) struct Project {
     /// What compose needs to act on it, `None` when its containers disagree
     /// on its files (compose is then never run on it).
     pub(crate) target: Option<ComposeTarget>,
-    /// Its containers, by name.
+    /// Its containers, in listing order.
     pub(crate) containers: Vec<Container>,
     /// The services its files define that have no container (not built
     /// yet, or removed), by name.
@@ -314,7 +360,7 @@ impl Overview {
             project.planned =
                 planned_services(project, services.get(&project.name).map(Vec::as_slice));
         }
-        isolated.sort_by(|a, b| a.name.cmp(&b.name));
+        isolated.sort_by(Container::listing_order);
         Self {
             projects: projects.into_values().collect(),
             isolated,
@@ -411,7 +457,7 @@ fn found_project(
         agreed_target(name, members)
     };
     let mut containers: Vec<Container> = members.iter().map(|(c, _)| (*c).clone()).collect();
-    containers.sort_by(|a, b| a.name.cmp(&b.name));
+    containers.sort_by(Container::listing_order);
     Project {
         name: name.to_owned(),
         custom_name: own.iter().find_map(|file| file.name.clone()),
@@ -498,6 +544,95 @@ mod tests {
         overview.projects.iter().map(|p| p.name.as_str()).collect()
     }
 
+    fn with_health(mut container: Container, health: Health) -> Container {
+        container.health = Some(health);
+        container
+    }
+
+    #[test]
+    fn every_state_has_its_rank() {
+        use ContainerStatus::*;
+        let rank = |status| container("c", status, None).status_rank();
+        assert_eq!(rank(Restarting), StatusRank::Attention);
+        assert_eq!(rank(Dead), StatusRank::Attention);
+        for status in [Paused, Stopping, Removing] {
+            assert_eq!(rank(status), StatusRank::Pending, "{status:?}");
+        }
+        assert_eq!(rank(Running), StatusRank::Running);
+        assert_eq!(rank(Exited), StatusRank::Stopped);
+        assert_eq!(rank(Created), StatusRank::Stopped);
+        assert_eq!(rank(Unknown), StatusRank::Unknown);
+    }
+
+    #[test]
+    fn health_moves_a_running_container() {
+        let running = || container("c", ContainerStatus::Running, None);
+        assert_eq!(
+            with_health(running(), Health::Unhealthy).status_rank(),
+            StatusRank::Attention
+        );
+        assert_eq!(
+            with_health(running(), Health::Starting).status_rank(),
+            StatusRank::Pending
+        );
+        assert_eq!(
+            with_health(running(), Health::Healthy).status_rank(),
+            StatusRank::Running
+        );
+    }
+
+    #[test]
+    fn a_failing_health_check_outranks_the_transitional_states() {
+        use ContainerStatus::*;
+        for status in [Paused, Stopping, Removing, Restarting] {
+            let unhealthy = with_health(container("c", status, None), Health::Unhealthy);
+            assert_eq!(unhealthy.status_rank(), StatusRank::Attention, "{status:?}");
+        }
+        let restarting = with_health(container("c", Restarting, None), Health::Starting);
+        assert_eq!(restarting.status_rank(), StatusRank::Attention);
+        let created = with_health(container("c", Created, None), Health::Starting);
+        assert_eq!(created.status_rank(), StatusRank::Stopped);
+        let unknown = with_health(container("c", Unknown, None), Health::Healthy);
+        assert_eq!(unknown.status_rank(), StatusRank::Unknown);
+    }
+
+    #[test]
+    fn ranks_are_in_listing_order() {
+        assert!(StatusRank::Attention < StatusRank::Pending);
+        assert!(StatusRank::Pending < StatusRank::Running);
+        assert!(StatusRank::Running < StatusRank::Stopped);
+        assert!(StatusRank::Stopped < StatusRank::NotBuilt);
+        assert!(StatusRank::NotBuilt < StatusRank::Unknown);
+    }
+
+    #[test]
+    fn containers_are_listed_by_state_then_name() {
+        let containers = [
+            container("a-stopped", ContainerStatus::Exited, None),
+            container("b-running", ContainerStatus::Running, None),
+            container("c-dead", ContainerStatus::Dead, None),
+            container("a-running", ContainerStatus::Running, None),
+            container("d-paused", ContainerStatus::Paused, None),
+            container("shop-z-1", ContainerStatus::Running, Some("shop")),
+            container("shop-a-1", ContainerStatus::Exited, Some("shop")),
+            container("shop-m-1", ContainerStatus::Restarting, Some("shop")),
+        ];
+        let overview = Overview::new(&containers, &[], &HashMap::new());
+        let isolated: Vec<_> = overview.isolated.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            isolated,
+            ["c-dead", "d-paused", "a-running", "b-running", "a-stopped"]
+        );
+        let shop: Vec<_> = overview
+            .project("shop")
+            .unwrap()
+            .containers
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(shop, ["shop-m-1", "shop-z-1", "shop-a-1"]);
+    }
+
     #[test]
     fn containers_are_grouped_by_project_and_sorted() {
         let containers = [
@@ -511,14 +646,18 @@ mod tests {
         assert_eq!(names(&overview), ["logs", "shop"]);
         let shop = overview.project("shop").unwrap();
         let shop_names: Vec<_> = shop.containers.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(shop_names, ["shop-db-1", "shop-web-1"]);
+        assert_eq!(
+            shop_names,
+            ["shop-web-1", "shop-db-1"],
+            "running before stopped"
+        );
         let target = shop.target.as_ref().unwrap();
         assert_eq!(target.project.as_deref(), Some("shop"));
         assert_eq!(target.directory, Some(PathBuf::from("/srv/shop")));
         assert_eq!(target.files, [PathBuf::from("/srv/shop/compose.yaml")]);
         assert_eq!((shop.running(), shop.containers.len()), (1, 2));
         let isolated: Vec<_> = overview.isolated.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(isolated, ["alpha", "zeta"]);
+        assert_eq!(isolated, ["zeta", "alpha"], "running before stopped");
         assert_eq!((overview.running(), overview.total()), (3, 5));
         assert_eq!(overview.container("shop-db-1").unwrap().id, "id-shop-db-1");
         assert!(overview.container("nope").is_none());

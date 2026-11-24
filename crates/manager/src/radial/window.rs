@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use hubergamof_module_api::RadialItem;
 use image::RgbaImage;
 
 use super::controller::{View, WindowEvent};
@@ -34,6 +35,9 @@ pub struct Petal {
     pub icon: Option<RgbaImage>,
     /// What the module says on the petal, changing while the menu is open.
     pub note: PetalNote,
+    /// The actions of the arc in front of the petal, in order, changing while
+    /// the menu is open.
+    pub items: Vec<RadialItem>,
 }
 
 /// What a module says on its petal while the menu is open.
@@ -73,6 +77,9 @@ pub trait Surface {
     /// Gives the petals what their modules say now (one per petal, in order)
     /// and draws the menu again.
     fn update_notes(&self, notes: Vec<PetalNote>);
+    /// Gives the petals the actions their modules offer now (one list per
+    /// petal, in order) and draws the menu again.
+    fn update_items(&self, items: Vec<Vec<RadialItem>>);
     /// Hides the window.
     fn close(&self);
 }
@@ -102,6 +109,19 @@ pub(super) fn apply_notes(petals: &mut [Petal], notes: Vec<PetalNote>) {
     let mut notes = notes.into_iter();
     for petal in petals {
         petal.note = notes.next().unwrap_or_default();
+    }
+}
+
+/// Puts `items` on `petals`, one list each in order; a petal without one keeps
+/// none.
+pub(super) fn apply_items(petals: &mut [Petal], items: Vec<Vec<RadialItem>>) {
+    debug_assert!(
+        items.len() == petals.len(),
+        "one list of items per petal: the entries do not change while the menu is open"
+    );
+    let mut items = items.into_iter();
+    for petal in petals {
+        petal.items = items.next().unwrap_or_default();
     }
 }
 
@@ -173,6 +193,10 @@ impl Surface for Box<dyn Surface + Send> {
         (**self).update_notes(notes);
     }
 
+    fn update_items(&self, items: Vec<Vec<RadialItem>>) {
+        (**self).update_items(items);
+    }
+
     fn close(&self) {
         (**self).close();
     }
@@ -222,6 +246,7 @@ mod tests {
             label: "a".to_owned(),
             icon: None,
             note: PetalNote::default(),
+            items: Vec::new(),
         }];
         apply_notes(&mut petals, Vec::new());
     }
@@ -235,6 +260,7 @@ mod tests {
                 status: Some("old".to_owned()),
                 badge: Some(9),
             },
+            items: Vec::new(),
         };
         let mut petals = vec![petal("a"), petal("b"), petal("c")];
         apply_notes(
@@ -261,6 +287,22 @@ mod tests {
             notes,
             [Some("new".to_owned()), None, Some("last".to_owned())]
         );
+    }
+
+    #[test]
+    fn items_are_given_to_the_petals_in_order_and_replace_what_they_had() {
+        use hubergamof_module_api::RadialGlyph;
+        let item = |id: &str| RadialItem::new(id, id, RadialGlyph::Play);
+        let petal = |items| Petal {
+            label: String::new(),
+            icon: None,
+            note: PetalNote::default(),
+            items,
+        };
+        let mut petals = vec![petal(vec![item("old")]), petal(Vec::new())];
+        apply_items(&mut petals, vec![Vec::new(), vec![item("a"), item("b")]]);
+        assert_eq!(petals[0].items, Vec::new());
+        assert_eq!(petals[1].items, [item("a"), item("b")]);
     }
 
     fn content(animate: bool) -> Content {

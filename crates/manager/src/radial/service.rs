@@ -2,7 +2,8 @@
 //! window, and takes what the mice, the window, the configuration and the
 //! screen lock tell it, one event at a time.
 //!
-//! What a chosen entry does is up to the `chooser` the service is given.
+//! What a chosen entry, or a chosen action of the arc around its petal, does is
+//! up to the `chooser` the service is given.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,7 +15,7 @@ use tokio::sync::{mpsc, watch};
 use super::backend;
 use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
-use super::looks::{Looks, PetalNotes};
+use super::looks::{Items, Looks, PetalNotes};
 use super::paint::DEFAULT_PALETTE;
 use super::window::{PetalNote, Surface};
 use crate::haptics::HapticOutput;
@@ -32,8 +33,8 @@ pub(super) const NUDGE_PERIOD: std::time::Duration = std::time::Duration::from_m
 /// Nudges tried at most for one opening.
 pub(super) const NUDGE_TRIES: u32 = 6;
 
-/// Time between two readings of what the modules say under their names while
-/// the menu is open.
+/// Time between two readings of what the modules say under their names, and
+/// of the actions they offer around their petals, while the menu is open.
 pub(super) const REFRESH_PERIOD: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// The waveforms of the feel of the menu: it opens, the pointer comes onto a
@@ -141,7 +142,7 @@ impl RadialService {
         locked: watch::Receiver<bool>,
         runtime: &tokio::runtime::Handle,
         nudge: impl Fn() + Send + Sync + 'static,
-        chooser: impl Fn(&RadialEntryConfig) + Send + 'static,
+        chooser: impl Fn(&RadialEntryConfig, Option<&str>) + Send + 'static,
         presentation: Presentation,
     ) -> Self {
         let parts = Parts {
@@ -277,6 +278,8 @@ pub struct Presentation {
     pub looks: Looks,
     /// What the modules say now under their names.
     pub notes: PetalNotes,
+    /// The actions the modules offer now around their petals.
+    pub items: Items,
 }
 
 /// How the menu learns where the pointer is when the desktop does not say.
@@ -315,8 +318,9 @@ async fn follow(
     }
 }
 
-/// What is done with the entry that is chosen.
-type Chooser = Box<dyn Fn(&RadialEntryConfig) + Send>;
+/// What is done with the entry that is chosen, and with the action of its arc
+/// when one was (`None`: the click was on the body of the petal).
+type Chooser = Box<dyn Fn(&RadialEntryConfig, Option<&str>) + Send>;
 
 /// What the menu is given besides its window and its configuration.
 struct Parts {
@@ -359,10 +363,16 @@ impl<S: Surface> Menu<S> {
         wake: PointerWake,
         presentation: Presentation,
     ) -> Self {
-        let Presentation { feel, looks, notes } = presentation;
+        let Presentation {
+            feel,
+            looks,
+            notes,
+            items,
+        } = presentation;
         let mut controller = Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN);
         controller.set_looks(looks);
         controller.set_notes(notes);
+        controller.set_items(items);
         Self {
             controller,
             surface,
@@ -394,7 +404,7 @@ impl<S: Surface> Menu<S> {
             }
             Event::Refresh => {
                 self.refresh_notes();
-                Vec::new()
+                self.controller.refresh_items()
             }
             Event::Stop => Vec::new(),
             Event::Cancel | Event::Window(WindowEvent::Escape) => {
@@ -471,13 +481,16 @@ impl<S: Surface> Menu<S> {
                         self.feel(HOVER_WAVEFORM);
                     }
                 }
-                Effect::Choose(entry) => {
+                Effect::UpdateItems(items) => {
+                    self.with_surface(|surface| surface.update_items(items));
+                }
+                Effect::Choose { entry, action } => {
                     if *self.locked.borrow() {
                         tracing::debug!(
                             "a radial entry was chosen as the computer locked: dropped"
                         );
                     } else {
-                        (self.chooser)(&entry);
+                        (self.chooser)(&entry, action.as_deref());
                         self.feel(CHOICE_WAVEFORM);
                     }
                 }
@@ -489,7 +502,9 @@ impl<S: Surface> Menu<S> {
         }
     }
 
-    /// Reads again what the modules say, and shows it if it changed.
+    /// Reads again what the modules say on their petals, and shows it if it
+    /// changed. The actions around the petals are read again by the
+    /// controller, which tells what to show.
     fn refresh_notes(&mut self) {
         if !self.controller.is_open() {
             return;
@@ -531,6 +546,8 @@ fn run<S: Surface>(menu: &mut Menu<S>, mut received: mpsc::UnboundedReceiver<Eve
 mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    use hubergamof_module_api::RadialItem;
 
     use super::*;
     use crate::radial::controller::View;
@@ -585,6 +602,14 @@ mod tests {
             self.push(&format!("notes {notes:?}"));
         }
 
+        fn update_items(&self, items: Vec<Vec<RadialItem>>) {
+            let ids: Vec<Vec<&str>> = items
+                .iter()
+                .map(|petal| petal.iter().map(|item| item.id.as_str()).collect())
+                .collect();
+            self.push(&format!("items {ids:?}"));
+        }
+
         fn close(&self) {
             self.push("close");
         }
@@ -620,7 +645,7 @@ mod tests {
             &RadialMenuConfig::default_menu(),
             locked,
             Some(notes.clone()),
-            Box::new(move |entry| chosen.push(&entry.module.to_string())),
+            Box::new(move |entry, action| chosen.push(&chosen_note(entry, action))),
             quiet_wake(notes),
             presentation(notes, PetalNotes::default()),
         );
@@ -632,6 +657,16 @@ mod tests {
             feel: Arc::new(window.clone()),
             looks: Looks::default(),
             notes,
+            items: Items::default(),
+        }
+    }
+
+    /// What the test chooser writes for a choice: the module, and the action
+    /// of the arc after a colon when there is one.
+    fn chosen_note(entry: &RadialEntryConfig, action: Option<&str>) -> String {
+        match action {
+            Some(action) => format!("{}:{action}", entry.module),
+            None => entry.module.to_string(),
         }
     }
 
@@ -643,7 +678,7 @@ mod tests {
             &RadialMenuConfig::default_menu(),
             locked,
             Some(notes.clone()),
-            Box::new(|_| {}),
+            Box::new(|_, _| {}),
             quiet_wake(notes),
             presentation(
                 notes,
@@ -807,12 +842,13 @@ mod tests {
             &RadialMenuConfig::default_menu(),
             locked,
             None,
-            Box::new(move |entry| chosen_for_menu.push(&entry.module.to_string())),
+            Box::new(move |entry, action| chosen_for_menu.push(&chosen_note(entry, action))),
             quiet_wake(&Notes::default()),
             Presentation {
                 feel: Arc::new(Notes::default()),
                 looks: Looks::default(),
                 notes: PetalNotes::default(),
+                items: Items::default(),
             },
         );
         menu.handle(Event::Press(menu.started));
@@ -986,6 +1022,146 @@ mod tests {
         assert!(menu.surface.is_none());
     }
 
+    /// A menu whose Teams petal (the second) offers what `offered` holds.
+    fn menu_offering(
+        notes: &Notes,
+        chosen: &Notes,
+        offered: &Arc<Mutex<Vec<RadialItem>>>,
+    ) -> Menu<Notes> {
+        let (chosen, reader) = (chosen.clone(), Arc::clone(offered));
+        let (_lock, locked) = watch::channel(false);
+        let mut presentation = presentation(notes, PetalNotes::default());
+        presentation.items = Items::new(move |module| {
+            if module.0 == "teams" {
+                reader.lock().unwrap().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        Menu::new(
+            &RadialMenuConfig::default_menu(),
+            locked,
+            Some(notes.clone()),
+            Box::new(move |entry, action| chosen.push(&chosen_note(entry, action))),
+            quiet_wake(notes),
+            presentation,
+        )
+    }
+
+    fn offered(ids: &[&str]) -> Arc<Mutex<Vec<RadialItem>>> {
+        Arc::new(Mutex::new(
+            ids.iter()
+                .map(|id| RadialItem::new(id, id, hubergamof_module_api::RadialGlyph::Play))
+                .collect(),
+        ))
+    }
+
+    /// The pointer on the axis of the second petal, `radius` from the middle
+    /// of the menu that `open` placed at (900, 500).
+    fn on_teams(menu: &mut Menu<Notes>, radius: f64) {
+        menu.handle(Event::Window(WindowEvent::Pointer(Point::new(
+            900.0 + radius,
+            500.0,
+        ))));
+    }
+
+    #[test]
+    fn what_the_modules_offer_is_read_again_while_the_menu_is_open_and_given_to_the_window() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let offer = offered(&["mute"]);
+        let mut menu = menu_offering(&notes, &chosen, &offer);
+
+        menu.handle(Event::Refresh);
+        assert_eq!(notes.all().len(), 0, "closed: nothing to update");
+
+        open(&mut menu);
+        menu.handle(Event::Refresh);
+        assert_eq!(
+            notes.all(),
+            ["open 4", "place"],
+            "nothing changed: nothing drawn"
+        );
+
+        offer.lock().unwrap().push(RadialItem::new(
+            "camera",
+            "camera",
+            hubergamof_module_api::RadialGlyph::Camera,
+        ));
+        menu.handle(Event::Refresh);
+        assert_eq!(
+            notes.all().last().map(String::as_str),
+            Some(r#"items [[], ["mute", "camera"], [], []]"#)
+        );
+        menu.handle(Event::Refresh);
+        assert_eq!(notes.all().len(), 3, "said once");
+    }
+
+    #[test]
+    fn choosing_an_action_of_the_arc_tells_the_chooser_which_and_is_felt() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let mut menu = menu_offering(&notes, &chosen, &offered(&["mute", "camera", "hang-up"]));
+        open(&mut menu);
+        on_teams(&mut menu, 100.0);
+        on_teams(&mut menu, 187.0);
+        menu.handle(Event::Release(at(&menu, 600)));
+        assert_eq!(chosen.all(), ["teams:camera"]);
+        assert_eq!(
+            feels(&notes).last().map(String::as_str),
+            Some("feel SharpStateChange")
+        );
+        assert_eq!(notes.all().last().map(String::as_str), Some("close"));
+    }
+
+    #[test]
+    fn the_body_of_a_petal_that_has_actions_still_chooses_its_primary_action() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let mut menu = menu_offering(&notes, &chosen, &offered(&["mute", "camera", "hang-up"]));
+        open(&mut menu);
+        on_teams(&mut menu, 100.0);
+        menu.handle(Event::Release(at(&menu, 600)));
+        assert_eq!(chosen.all(), ["teams"]);
+    }
+
+    #[test]
+    fn coming_onto_an_action_is_felt_like_coming_onto_a_petal() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let mut menu = menu_offering(&notes, &chosen, &offered(&["mute", "camera", "hang-up"]));
+        open(&mut menu);
+        on_teams(&mut menu, 100.0);
+        let tics = |notes: &Notes| {
+            feels(notes)
+                .iter()
+                .filter(|note| *note == "feel WhisperCollision")
+                .count()
+        };
+        assert_eq!(tics(&notes), 1, "the petal");
+        on_teams(&mut menu, 155.0);
+        assert_eq!(tics(&notes), 1, "the corridor is the same petal");
+        on_teams(&mut menu, 187.0);
+        assert_eq!(tics(&notes), 2, "the action");
+        // The window was told which one is lit.
+        assert_eq!(
+            notes.all().last().map(String::as_str),
+            Some("redraw Some(1)")
+        );
+    }
+
+    #[test]
+    fn an_action_that_goes_away_under_the_pointer_is_not_chosen_blind() {
+        let (notes, chosen) = (Notes::default(), Notes::default());
+        let offer = offered(&["mute", "camera", "hang-up"]);
+        let mut menu = menu_offering(&notes, &chosen, &offer);
+        open(&mut menu);
+        on_teams(&mut menu, 100.0);
+        on_teams(&mut menu, 187.0);
+        offer.lock().unwrap().clear();
+        menu.handle(Event::Refresh);
+        menu.handle(Event::Release(at(&menu, 600)));
+        // The pointer is in the void by then: nothing runs.
+        assert_eq!(chosen.all(), [] as [String; 0]);
+        assert_eq!(notes.all().last().map(String::as_str), Some("close"));
+    }
+
     #[tokio::test]
     async fn the_service_follows_the_button_the_lock_and_stops_with_its_window() {
         let notes = Notes::default();
@@ -996,11 +1172,12 @@ mod tests {
             move |_| Some(for_menu),
             Parts {
                 nudge: Arc::new(|| {}),
-                chooser: Box::new(|_| {}),
+                chooser: Box::new(|_, _| {}),
                 presentation: Presentation {
                     feel: Arc::new(crate::haptics::NoHaptics),
                     looks: Looks::default(),
                     notes: PetalNotes::default(),
+                    items: Items::default(),
                 },
             },
             config,

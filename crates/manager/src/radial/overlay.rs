@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use hubergamof_module_api::RadialItem;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, FrameCallbackData};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop::channel::{self, Channel, Event as ChannelEvent};
@@ -40,8 +41,8 @@ use super::controller::{View, WindowEvent};
 use super::geometry::{Point, Size};
 use super::paint::{PetalView, paint};
 use super::window::{
-    BYTES_PER_PIXEL, Content, Gone, MAX_SURFACE_SIDE, PetalNote, Report, Surface, apply_notes,
-    blit, has_expired, opening_progress, pixels, signed,
+    BYTES_PER_PIXEL, Content, Gone, MAX_SURFACE_SIDE, PetalNote, Report, Surface, apply_items,
+    apply_notes, blit, has_expired, opening_progress, pixels, signed,
 };
 use crate::render::{RenderError, TextRenderer};
 
@@ -61,6 +62,7 @@ enum Command {
     Place(View),
     Redraw(View),
     Notes(Vec<PetalNote>),
+    Items(Vec<Vec<RadialItem>>),
     Close,
     Stop,
 }
@@ -267,6 +269,12 @@ impl State {
                 }
                 self.draw();
             }
+            Command::Items(items) => {
+                if let Some(window) = &mut self.window {
+                    apply_items(&mut window.content.petals, items);
+                }
+                self.draw();
+            }
             Command::Close => self.window = None,
             Command::Stop => self.stop(),
         }
@@ -364,6 +372,7 @@ impl State {
                     icon: petal.icon.as_ref(),
                     status: petal.note.status.as_deref(),
                     badge: petal.note.badge,
+                    items: &petal.items,
                 })
                 .collect();
             match paint(
@@ -371,6 +380,7 @@ impl State {
                 &window.content.layout,
                 &petals,
                 view.lit,
+                view.lit_item,
                 opening,
                 window.content.palette,
             ) {
@@ -655,6 +665,10 @@ impl Surface for Overlay {
 
     fn update_notes(&self, notes: Vec<PetalNote>) {
         self.send(Command::Notes(notes));
+    }
+
+    fn update_items(&self, items: Vec<Vec<RadialItem>>) {
+        self.send(Command::Items(items));
     }
 
     fn close(&self) {

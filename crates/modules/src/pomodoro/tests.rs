@@ -1024,3 +1024,70 @@ async fn the_petal_of_the_menu_says_the_step_and_the_time() {
         Some("Pause\n05:00 · prêt")
     );
 }
+
+/// Id, label and glyph of the petal items of `pomodoro`.
+fn petal_items(pomodoro: &Harness) -> Vec<(String, String, RadialGlyph)> {
+    pomodoro
+        .module
+        .radial_items()
+        .into_iter()
+        .map(|item| (item.id, item.label, item.glyph))
+        .collect()
+}
+
+fn petal(id: &str, label: &str, glyph: RadialGlyph) -> (String, String, RadialGlyph) {
+    (id.to_owned(), label.to_owned(), glyph)
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_items_follow_the_timer_from_stopped_to_running_to_paused() {
+    let mut pomodoro = Harness::new(&json!({}));
+    assert_eq!(
+        petal_items(&pomodoro),
+        [
+            petal("toggle", "Démarrer", RadialGlyph::Play),
+            petal("skip", "Passer à la pause", RadialGlyph::Skip),
+            petal("reset", "Remise à zéro", RadialGlyph::Reset),
+        ]
+    );
+
+    pomodoro.module.on_radial_action("toggle").await;
+    assert_eq!(
+        petal_items(&pomodoro)[0],
+        petal("toggle", "Pause", RadialGlyph::Pause)
+    );
+
+    pomodoro.run_for(MINUTE).await;
+    pomodoro.module.on_radial_action("toggle").await;
+    assert_eq!(
+        petal_items(&pomodoro)[0],
+        petal("toggle", "Reprendre", RadialGlyph::Play)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_skip_item_names_the_step_it_leads_to() {
+    let mut pomodoro = Harness::new(&json!({}));
+    pomodoro.module.on_radial_action("skip").await;
+    assert_eq!(petal_items(&pomodoro)[1].1, "Passer au travail");
+    pomodoro.module.on_radial_action("skip").await;
+    assert_eq!(petal_items(&pomodoro)[1].1, "Passer à la pause");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_items_are_actions_of_the_catalogue_and_still_run() {
+    let mut pomodoro = Harness::new(&json!({}));
+    let catalogue: Vec<String> = simple_factory()
+        .radial_actions()
+        .into_iter()
+        .map(|action| action.id)
+        .collect();
+    for item in pomodoro.module.radial_items() {
+        assert!(
+            catalogue.contains(&item.id),
+            "{} is not in the catalogue",
+            item.id
+        );
+        assert_eq!(pomodoro.module.on_radial_action(&item.id).await, []);
+    }
+}
