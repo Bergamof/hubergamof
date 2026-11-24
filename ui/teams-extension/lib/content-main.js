@@ -1,4 +1,10 @@
-import { openConversation, openPanel, performAction, readReports } from './teams-dom.js';
+import {
+	openChannel,
+	openConversation,
+	openPanel,
+	performAction,
+	readReports
+} from './teams-dom.js';
 
 /** Teams changes its page without events we could rely on: look again regularly. */
 export const POLL_INTERVAL_MS = 2000;
@@ -39,7 +45,7 @@ export function start(doc, runtime, env = {}) {
 	};
 	const now = env.now ?? Date.now;
 	const schedule = env.setInterval ?? setInterval;
-	/** A conversation is being opened (the list is awaited). */
+	/** A conversation or a channel is being opened (the list is awaited). */
 	let opening = false;
 	/** Last report sent of each type and when, to send changes (and reminders) only. */
 	const sent = new Map();
@@ -61,10 +67,15 @@ export function start(doc, runtime, env = {}) {
 			performAction(doc, message.action);
 		} else if (message?.type === 'openPanel' && typeof message.panel === 'string') {
 			openPanel(doc, message.panel);
-		} else if (message?.type === 'openConversation' && typeof message.id === 'string' && !opening) {
+		} else if (
+			(message?.type === 'openConversation' || message?.type === 'openChannel') &&
+			typeof message.id === 'string' &&
+			!opening
+		) {
 			// One at a time: a second press while the list is awaited is dropped.
 			opening = true;
-			openConversation(doc, message.id).finally(() => {
+			const open = message.type === 'openChannel' ? openChannel : openConversation;
+			open(doc, message.id).finally(() => {
 				opening = false;
 			});
 		}
