@@ -4,10 +4,12 @@ import { RESEND_AFTER_MS, start } from '../lib/content-main.js';
 import {
 	avatarIcon,
 	frameRole,
+	openChannel,
 	openConversation,
 	openPanel,
 	performAction,
 	readBadges,
+	readUnreadChannels,
 	readCall,
 	readMeetings,
 	readReports,
@@ -96,6 +98,65 @@ describe('readUnreadConversations', () => {
 			'<div role="treeitem" aria-level="2" data-item-type="chat"><i data-tid="unread"></i></div>'
 		);
 		expect(readUnreadConversations(doc)).toEqual([]);
+	});
+});
+
+describe('readUnreadChannels', () => {
+	const channels =
+		conversation('Général', true, 'channel') + conversation('Annonces', false, 'channel');
+
+	it('reads the unread channels, without avatar', () => {
+		expect(readUnreadChannels(page(channels))).toEqual([
+			{ name: 'Général', icon: null, id: 'id:Général' }
+		]);
+	});
+	it('leaves the conversations out and learns nothing from them alone', () => {
+		expect(readUnreadChannels(page(CONVERSATIONS))).toBeNull();
+		const both = CONVERSATIONS + channels;
+		expect(readUnreadChannels(page(both))?.map((c) => c.name)).toEqual(['Général']);
+		expect(readUnreadConversations(page(both))?.map((c) => c.name)).toEqual(['Alice', 'Carol']);
+	});
+	it('reports no channel at all when the title says nothing is unread', () => {
+		const doc = page(railItem(ACTIVITY_APP, '0') + railItem(CHAT_RAIL, '0') + channels, 'Teams');
+		const reports = readReports(doc, 'teams.cloud.microsoft', 0, TOP);
+		expect(reports.find((r) => r.type === 'channels')).toEqual({ type: 'channels', unread: [] });
+	});
+	it('is part of what Teams reports, once a channel list is on screen', () => {
+		const withList = page(
+			railItem(ACTIVITY_APP, '0') + railItem(CHAT_RAIL, '0') + channels,
+			'(1) Teams'
+		);
+		const reports = readReports(withList, 'teams.cloud.microsoft', 0, TOP);
+		expect(reports.find((r) => r.type === 'channels')).toMatchObject({
+			unread: [{ name: 'Général' }]
+		});
+		const without = page(railItem(ACTIVITY_APP, '0') + railItem(CHAT_RAIL, '0'), '(1) Teams');
+		const types = readReports(without, 'teams.cloud.microsoft', 0, TOP).map((r) => r.type);
+		expect(types).not.toContain('channels');
+	});
+});
+
+describe('openChannel', () => {
+	it('clicks the channel of that identifier, and no conversation', async () => {
+		const doc = page(conversation('Général', true) + conversation('Général', true, 'channel'));
+		const clicked: (string | null)[] = [];
+		for (const item of doc.querySelectorAll('[role="treeitem"]')) {
+			item.addEventListener('click', () => clicked.push(item.getAttribute('data-item-type')));
+		}
+		expect(await openChannel(doc, 'id:Général')).toBe(true);
+		expect(clicked).toEqual(['channel']);
+	});
+	it('goes to the Teams application first when the list is not on screen', async () => {
+		const doc = page(`<button data-tid="${TEAMS_RAIL}"></button>`);
+		doc.querySelector('button')!.addEventListener('click', () => {
+			doc.body.insertAdjacentHTML('beforeend', conversation('Général', true, 'channel'));
+		});
+		expect(await openChannel(doc, 'id:Général', async () => {})).toBe(true);
+	});
+	it('does not take the identifier for a selector, nor open a missing channel', async () => {
+		const doc = page(conversation('Général', true, 'channel'));
+		expect(await openChannel(doc, 'x"] , [role="treeitem')).toBe(false);
+		expect(await openChannel(page('<p/>'), 'id:Général', async () => {})).toBe(false);
 	});
 });
 
@@ -192,6 +253,7 @@ describe('openConversation', () => {
 // The rail of Teams, reduced: the counter is a sibling of the button.
 const ACTIVITY_APP = '14d6962d-6eeb-4f48-8890-de55454bb136';
 const CHAT_RAIL = '86fcd49b-61a2-4701-b771-54728cd291fb';
+const TEAMS_RAIL = '2a84919f-59d8-4441-a975-2a8c2643b741';
 function railItem(tid: string, badge?: string) {
 	return `<div role="none"><button data-tid="${tid}"></button>${
 		badge === undefined ? '' : `<div class="fui-Badge fui-CounterBadge">${badge}</div>`
@@ -201,15 +263,25 @@ function railItem(tid: string, badge?: string) {
 describe('readBadges', () => {
 	it('reads the counters of the bell and the bubble', () => {
 		const doc = page(railItem(ACTIVITY_APP, '2') + railItem(CHAT_RAIL, '3'));
-		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 2, chats: 3 });
+		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 2, chats: 3, teams: 0 });
 	});
 	it('counts a button without badge as zero', () => {
 		const doc = page(railItem(ACTIVITY_APP) + railItem(CHAT_RAIL, '1'));
-		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 0, chats: 1 });
+		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 0, chats: 1, teams: 0 });
 	});
 	it('caps "99+" and ignores the text around the digits', () => {
 		const doc = page(railItem(ACTIVITY_APP, '99+') + railItem(CHAT_RAIL, '12'));
-		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 99, chats: 12 });
+		expect(readBadges(doc)).toEqual({ type: 'badges', activity: 99, chats: 12, teams: 0 });
+	});
+	it('reads the counter of the Teams application, zero when it is not pinned', () => {
+		const rail = railItem(ACTIVITY_APP, '2') + railItem(CHAT_RAIL, '3');
+		expect(readBadges(page(rail + railItem(TEAMS_RAIL, '4')))).toEqual({
+			type: 'badges',
+			activity: 2,
+			chats: 3,
+			teams: 4
+		});
+		expect(readBadges(page(rail))).toMatchObject({ teams: 0 });
 	});
 	it('learns nothing when the rail is not on screen', () => {
 		expect(readBadges(page('<p/>'))).toBeNull();
@@ -232,6 +304,12 @@ describe('openPanel', () => {
 		expect(openPanel(doc, 'activity')).toBe(true);
 		expect(openPanel(doc, 'chat')).toBe(true);
 		expect(clicked).toEqual([ACTIVITY_APP, CHAT_RAIL]);
+		doc.body.insertAdjacentHTML('beforeend', railItem(TEAMS_RAIL, '1'));
+		for (const button of doc.querySelectorAll('button')) {
+			button.addEventListener('click', () => clicked.push(button.dataset.tid!));
+		}
+		expect(openPanel(doc, 'teams')).toBe(true);
+		expect(clicked.at(-1)).toBe(TEAMS_RAIL);
 	});
 	it('refuses an unknown panel and a missing button', () => {
 		expect(openPanel(page(railItem(CHAT_RAIL)), 'activity')).toBe(false);
@@ -405,6 +483,30 @@ describe('start', () => {
 		tick();
 		expect(calls()).toHaveLength(2);
 		expect(calls()[1][0].report.elapsedSeconds).toBe(40);
+	});
+
+	it('opens a channel on request, one at a time, in the top frame only', async () => {
+		const doc = page(conversation('Général', true, 'channel'));
+		const click = vi.fn();
+		doc.querySelector('[role="treeitem"]')!.addEventListener('click', click);
+		const sub = runtime();
+		start(doc, sub, {
+			hostname: 'teams.cloud.microsoft',
+			context: { top: false, underTeams: false },
+			setInterval: (() => 0) as never
+		});
+		sub.deliver({ type: 'openChannel', id: 'id:Général' });
+		expect(click).not.toHaveBeenCalled();
+		const top = runtime();
+		start(doc, top, {
+			hostname: 'teams.cloud.microsoft',
+			context: TOP,
+			setInterval: (() => 0) as never
+		});
+		top.deliver({ type: 'openChannel', id: 7 });
+		expect(click).not.toHaveBeenCalled();
+		top.deliver({ type: 'openChannel', id: 'id:Général' });
+		await vi.waitFor(() => expect(click).toHaveBeenCalledOnce());
 	});
 
 	it('does not click in a sub-frame', () => {

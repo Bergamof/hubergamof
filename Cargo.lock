@@ -1010,6 +1010,7 @@ dependencies = [
  "elgato-streamdeck",
  "futures-util",
  "hidapi",
+ "hubergamof-headset",
  "hubergamof-module-api",
  "hubergamof-modules",
  "hubergamof-mouse",
@@ -1038,6 +1039,16 @@ dependencies = [
  "x11rb",
  "zbus",
  "zip",
+]
+
+[[package]]
+name = "hubergamof-headset"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tokio",
+ "tracing",
+ "zbus",
 ]
 
 [[package]]

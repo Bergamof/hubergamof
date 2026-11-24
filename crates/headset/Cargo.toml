@@ -1,0 +1,28 @@
+[package]
+name = "hubergamof-headset"
+description = "Sony headphones access for HuBergamof: MDR frames over RFCOMM (BlueZ) and the read-mostly diagnostics."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# The scripted headset of the tests, for the crates that test code using one.
+test-support = []
+
+[dependencies]
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tracing.workspace = true
+# BlueZ is reached over the system bus: it hands the connected RFCOMM socket
+# to an exported `org.bluez.Profile1` object (no `unsafe` needed here).
+zbus = { workspace = true, features = ["proxy", "service"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+zbus = { workspace = true, features = ["p2p", "proxy", "service"] }
+
+[lints]
+workspace = true

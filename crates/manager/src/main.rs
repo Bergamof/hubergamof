@@ -62,6 +62,8 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing_subscriber::EnvFilter;
 
+mod headset_test;
+
 /// Port of the local web UI and WebSocket server.
 const DEFAULT_PORT: u16 = 7878;
 
@@ -170,6 +172,21 @@ enum Command {
         model: Option<MouseModelArg>,
         #[command(subcommand)]
         action: MouseTestAction,
+    },
+
+    /// Try Sony headphones (WH-1000XM4) through BlueZ: read their state, listen
+    /// to what they announce, or change the ambient sound. The headphones must
+    /// be paired and no other app (Sony's, on a phone) should be connected to
+    /// their settings channel.
+    HeadsetTest {
+        /// Which headphones, when more than one is paired.
+        #[arg(long, global = true, value_parser = headset_test::parse_address)]
+        address: Option<String>,
+        /// The data type of the frames sent.
+        #[arg(long, global = true, value_enum, default_value_t = headset_test::DataKindArg::Mdr)]
+        data_type: headset_test::DataKindArg,
+        #[command(subcommand)]
+        action: headset_test::HeadsetTestAction,
     },
 
     /// Show the radial menu for a few seconds over the desktop (Wayland with
@@ -387,6 +404,7 @@ async fn main() -> Result<()> {
             Command::Open
             | Command::InstallExtension { .. }
             | Command::MouseTest { .. }
+            | Command::HeadsetTest { .. }
             | Command::RadialPreview { .. },
         )
         | None => LogOutput::Stdout,
@@ -396,6 +414,11 @@ async fn main() -> Result<()> {
         Some(Command::NativeHost { origin }) => exit_with(run_native_host(&origin).await),
         Some(Command::InstallExtension { browser }) => install_extension(browser),
         Some(Command::MouseTest { model, action }) => run_mouse_test(model, action.into()).await,
+        Some(Command::HeadsetTest {
+            address,
+            data_type,
+            action,
+        }) => headset_test::run(address, data_type, action, termination_requested()).await,
         Some(Command::RadialPreview { seconds }) => run_radial_preview(seconds).await,
         None => run_manager(cli).await,
     }
