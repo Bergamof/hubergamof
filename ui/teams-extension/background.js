@@ -6,7 +6,7 @@ const RETRY_PERIOD_MINUTES = 0.5;
 /** What the manager may ask; anything else is dropped before it reaches a page. */
 const ACTIONS = new Set(['toggleMute', 'toggleCamera', 'hangUp', 'returnToCall']);
 /** The panels of the rail the manager may show. */
-const PANELS = new Set(['activity', 'chat']);
+const PANELS = new Set(['activity', 'chat', 'teams']);
 const TEAMS_ORIGIN = 'https://teams.cloud.microsoft';
 const CALENDAR_ORIGIN = 'https://outlook.office.com';
 const TEAMS_URLS = ['https://teams.cloud.microsoft/*'];
@@ -20,12 +20,12 @@ async function teamsTab() {
 	return tab?.id ?? null;
 }
 
-/** Longest identifier of a conversation passed on (the manager keeps the same bound). */
+/** Longest identifier of a conversation or a channel passed on (the manager keeps the same bound). */
 const MAX_ID_LENGTH = 400;
 
 /**
  * What the manager may ask, rebuilt field by field: an action of the fixed set,
- * or the identifier of a conversation, which the content script only compares
+ * or the identifier of a conversation or a channel, which the content script only compares
  * with the page.
  * @param {any} request
  */
@@ -37,12 +37,12 @@ function checked(request) {
 		return { type: 'openPanel', panel: request.panel };
 	}
 	if (
-		request?.type === 'openConversation' &&
+		(request?.type === 'openConversation' || request?.type === 'openChannel') &&
 		typeof request.id === 'string' &&
 		request.id.length > 0 &&
 		request.id.length <= MAX_ID_LENGTH
 	) {
-		return { type: 'openConversation', id: request.id };
+		return { type: request.type, id: request.id };
 	}
 	return null;
 }

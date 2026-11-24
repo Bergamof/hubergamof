@@ -19,6 +19,10 @@ const CALL_DURATION = '[data-tid="call-duration"]';
 const RETURN_TO_CALL = '[data-tid="call-monitor-navigate-cw-button"]';
 // Conversations only: the channels of the Teams view are `data-item-type="channel"`.
 const CONVERSATION = '[role="treeitem"][aria-level="2"][data-item-type="chat"]';
+// Channels only, from the list of the Teams view. Its markup was never surveyed:
+// assumed to be the one of the conversations (to check in Teams, see
+// docs/integrations-desktop.md).
+const CHANNEL = '[role="treeitem"][data-item-type="channel"]';
 const UNREAD_MARK = '[data-tid="unread"]';
 const CONVERSATION_TITLE = '[role="text"][id^="title-"]';
 const AVATAR = 'img.fui-Avatar__image';
@@ -26,6 +30,8 @@ const AVATAR = 'img.fui-Avatar__image';
 const CONVERSATION_ID = 'data-fui-tree-item-value';
 /** The Chat application of the left rail: a constant of Teams, in any language. */
 const CHAT_APP = '[data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]';
+/** The Teams application of the rail (the teams and their channels): a constant too. */
+const TEAMS_APP = '[data-tid="2a84919f-59d8-4441-a975-2a8c2643b741"]';
 /** The Activity application of the rail (the bell): a constant of Teams too. */
 const ACTIVITY_APP = '[data-tid="14d6962d-6eeb-4f48-8890-de55454bb136"]';
 /** The counter of a rail application, next to its button, in the same wrapper. */
@@ -33,7 +39,8 @@ const RAIL_BADGE = '.fui-CounterBadge';
 /** Panels of the rail the manager may ask for, by name. */
 const PANELS = new Map([
 	['activity', ACTIVITY_APP],
-	['chat', CHAT_APP]
+	['chat', CHAT_APP],
+	['teams', TEAMS_APP]
 ]);
 /** Largest counter reported (the badge says "99+" past 99). */
 const MAX_BADGE = 9999;
@@ -110,16 +117,38 @@ export function readCall(doc) {
  * @returns {{ name: string, icon: string | null, id: string | null }[] | null}
  */
 export function readUnreadConversations(doc) {
-	const items = [...doc.querySelectorAll(CONVERSATION)];
+	return readUnreadItems(doc, CONVERSATION, (item) => conversationIcon(doc, item));
+}
+
+/**
+ * The unread channels, without avatar; `null` when the list of channels is not
+ * on screen (it only is on the Teams view), so that nothing is learnt.
+ * @param {Document} doc
+ * @returns {{ name: string, icon: null, id: string | null }[] | null}
+ */
+export function readUnreadChannels(doc) {
+	return readUnreadItems(doc, CHANNEL, () => null);
+}
+
+/**
+ * The unread entries of a list of the rail panels.
+ * @template {string | null} Icon
+ * @param {Document} doc
+ * @param {string} selector
+ * @param {(item: Element) => Icon} iconOf
+ * @returns {{ name: string, icon: Icon, id: string | null }[] | null}
+ */
+function readUnreadItems(doc, selector, iconOf) {
+	const items = [...doc.querySelectorAll(selector)];
 	if (items.length === 0) return null;
 	return items
 		.filter((item) => item.querySelector(UNREAD_MARK))
 		.map((item) => ({
 			name: conversationName(item),
-			icon: conversationIcon(doc, item),
+			icon: iconOf(item),
 			id: item.getAttribute(CONVERSATION_ID)
 		}))
-		.filter((conversation) => conversation.name !== '')
+		.filter((entry) => entry.name !== '')
 		.slice(0, MAX_ITEMS);
 }
 
@@ -210,14 +239,16 @@ function railCount(doc, selector) {
 }
 
 /**
- * The counters of the Activity and Conversation applications of the rail;
- * `null` when the rail is not on screen (the previous ones then stay).
+ * The counters of the Activity, Conversation and Teams applications of the rail;
+ * `null` when the rail is not on screen (the previous ones then stay). Teams
+ * not being pinned to the rail counts as zero.
  * @param {Document} doc
  */
 export function readBadges(doc) {
 	const activity = railCount(doc, ACTIVITY_APP);
 	const chats = railCount(doc, CHAT_APP);
-	return activity === null || chats === null ? null : { type: 'badges', activity, chats };
+	const teams = railCount(doc, TEAMS_APP) ?? 0;
+	return activity === null || chats === null ? null : { type: 'badges', activity, chats, teams };
 }
 
 /**
@@ -236,55 +267,82 @@ export function readReports(doc, hostname, nowSeconds, context) {
 	if (role !== FrameRole.Teams) return [];
 	const count = unreadCountFromTitle(doc.title);
 	const names = count === 0 ? [] : readUnreadConversations(doc);
+	const channels = count === 0 ? [] : readUnreadChannels(doc);
 	const badges = readBadges(doc);
 	return [
 		{ type: 'unread', count },
 		...(badges ? [badges] : []),
 		...(names ? [{ type: 'conversations', unread: names }] : []),
+		...(channels ? [{ type: 'channels', unread: channels }] : []),
 		readCall(doc)
 	];
 }
 
 /**
  * @param {Document} doc
+ * @param {string} selector
  * @param {string} id
  */
-function findConversation(doc, id) {
+function findListed(doc, selector, id) {
 	// Compared with the attribute, never put in a selector.
-	return [...doc.querySelectorAll(CONVERSATION)].find(
+	return [...doc.querySelectorAll(selector)].find(
 		(item) => item.getAttribute(CONVERSATION_ID) === id
 	);
 }
 
 /**
- * Shows the conversation `id` (one the extension reported): clicks it in the
- * list, after a click on the Chat application of the rail when the list is not
- * on screen (the Teams or the calendar view). Only clicks, never navigates: a
- * reload would end a call in progress. Whether it was found.
+ * Clicks the entry `id` (one the extension reported) of a list, after a click
+ * on the rail application `railSelector` when the list is not on screen. Only
+ * clicks, never navigates: a reload would end a call in progress. Whether it
+ * was found.
  * @param {Document} doc
+ * @param {{ list: string, rail: string }} where
  * @param {string} id
- * @param {(ms: number) => Promise<void>} [wait]
+ * @param {(ms: number) => Promise<void>} wait
  */
-export async function openConversation(
-	doc,
-	id,
-	wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-) {
-	if (!findConversation(doc, id)) {
-		const rail = doc.querySelector(CHAT_APP);
+async function openListed(doc, where, id, wait) {
+	if (!findListed(doc, where.list, id)) {
+		const rail = doc.querySelector(where.rail);
 		if (rail instanceof HTMLElement) rail.click();
-		for (let attempt = 0; attempt < LIST_ATTEMPTS && !findConversation(doc, id); attempt++) {
+		for (let attempt = 0; attempt < LIST_ATTEMPTS && !findListed(doc, where.list, id); attempt++) {
 			await wait(LIST_POLL_MS);
 		}
 	}
-	const item = findConversation(doc, id);
+	const item = findListed(doc, where.list, id);
 	if (!(item instanceof HTMLElement)) return false;
 	item.click();
 	return true;
 }
 
+/** @param {number} ms */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Shows `panel` of the rail (`activity` or `chat`) by clicking its button,
+ * Shows the conversation `id` (one the extension reported): clicks it in the
+ * list, after a click on the Chat application of the rail when the list is not
+ * on screen (the Teams or the calendar view). Whether it was found.
+ * @param {Document} doc
+ * @param {string} id
+ * @param {(ms: number) => Promise<void>} [wait]
+ */
+export function openConversation(doc, id, wait = sleep) {
+	return openListed(doc, { list: CONVERSATION, rail: CHAT_APP }, id, wait);
+}
+
+/**
+ * Shows the channel `id` (one the extension reported): clicks it in the list,
+ * after a click on the Teams application of the rail when the list is not on
+ * screen. Whether it was found.
+ * @param {Document} doc
+ * @param {string} id
+ * @param {(ms: number) => Promise<void>} [wait]
+ */
+export function openChannel(doc, id, wait = sleep) {
+	return openListed(doc, { list: CHANNEL, rail: TEAMS_APP }, id, wait);
+}
+
+/**
+ * Shows `panel` of the rail (`activity`, `chat` or `teams`) by clicking its button,
  * which already being the open panel leaves as it is. Whether the button was
  * there.
  * @param {Document} doc

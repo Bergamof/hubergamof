@@ -10,6 +10,8 @@ use crate::icons::{asset, svg};
 /// readable).
 pub(super) static CONVERSATION: LazyLock<ImageData> =
     LazyLock::new(|| svg(asset!("teams-conversation")));
+/// Group of people: a channel of the Teams panel.
+pub(super) static TEAM: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams-team")));
 /// Bell: the unread items of the Activity panel.
 pub(super) static ACTIVITY: LazyLock<ImageData> = LazyLock::new(|| svg(asset!("teams-activity")));
 /// Microphone: the microphone is on.
@@ -40,6 +42,7 @@ mod tests {
         for icon in [
             &CONVERSATION,
             &ACTIVITY,
+            &TEAM,
             &MICROPHONE,
             &MICROPHONE_MUTED,
             &CAMERA,
