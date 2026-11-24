@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
 import { FakeConnection } from '#lib/deck/fake-connection.js';
+import { ADVANCED_MAX } from '#lib/deck/advanced-validation.js';
 import { SSH_HOSTS_MAX } from '#lib/deck/ssh-validation.js';
 import type { SshConfig, SshHost, SshSystemHost } from '#lib/generated/index.js';
 import SshPanel from './SshPanel.svelte';
@@ -17,6 +18,7 @@ function host(alias: string, change: Partial<SshHost> = {}): SshHost {
 		proxyJump: '',
 		forwardAgent: false,
 		enabled: true,
+		options: [],
 		...change
 	};
 }
@@ -36,7 +38,7 @@ function found(alias: string, change: Partial<SshSystemHost> = {}): SshSystemHos
 }
 
 function ssh(revision: number, ...hosts: SshHost[]): SshConfig {
-	return { schemaVersion: 1, hosts, revision };
+	return { schemaVersion: 1, hosts, commonOptions: [], revision };
 }
 
 const SYSTEM: SshSystemHost[] = [
@@ -52,6 +54,15 @@ async function renderPanel(config: SshConfig | null = ssh(1), system = SYSTEM) {
 	await render(SshPanel, { deck });
 	if (config) connection.receive({ type: 'ssh', config, systemHosts: system });
 	return { connection };
+}
+
+/** Answers the update in flight with the configuration it asked for, one revision further. */
+function confirm(connection: FakeConnection) {
+	const sent = connection.lastSent();
+	if (sent?.type !== 'updateSsh') throw new Error('no update in flight');
+	const saved: SshConfig = JSON.parse(JSON.stringify(sent.config));
+	saved.revision += 1;
+	connection.receive({ type: 'ssh', config: saved, systemHosts: SYSTEM });
 }
 
 const addForm = () => page.getByRole('form', { name: 'Ajouter un serveur' });
@@ -268,6 +279,154 @@ describe('SshPanel', () => {
 			await expect
 				.element(page.getByRole('heading', { name: 'Serveurs définis ailleurs, non gérés' }))
 				.toHaveFocus();
+		});
+	});
+
+	describe('the options written by the person', () => {
+		const optionForm = (name: string) => page.getByRole('form', { name });
+
+		it('adds an option common to every host', async () => {
+			const { connection } = await renderPanel();
+			const form = optionForm('Ajouter une option commune');
+			await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('ServerAliveInterval');
+			await form.getByRole('textbox', { name: 'Valeur' }).fill('30');
+			await form.getByRole('button', { name: 'Ajouter' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				type: 'updateSsh',
+				config: {
+					revision: 1,
+					commonOptions: [{ key: 'ServerAliveInterval', value: '30', enabled: true }]
+				}
+			});
+			confirm(connection);
+			await expect.element(form.getByRole('textbox', { name: 'Nom de l’option' })).toHaveFocus();
+		});
+
+		it('refuses a section keyword and says why, sending nothing', async () => {
+			const { connection } = await renderPanel();
+			const before = connection.sent.length;
+			const form = optionForm('Ajouter une option commune');
+			await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('Host');
+			await form.getByRole('textbox', { name: 'Valeur' }).fill('evil');
+			await form.getByRole('button', { name: 'Ajouter' }).click();
+			await expect.element(page.getByText(/ouvrent une autre section/)).toBeVisible();
+			expect(connection.sent).toHaveLength(before);
+		});
+
+		it('warns that an option is written as it is', async () => {
+			await renderPanel();
+			await expect
+				.element(page.getByText(/une option est écrite telle quelle/).first())
+				.toBeVisible();
+		});
+
+		it('adds an option to one host, the other fields of the host untouched', async () => {
+			const { connection } = await renderPanel(
+				ssh(1, host('prod', { hostName: '10.0.0.1' }), host('other'))
+			);
+			await page
+				.getByText(/^Options avancées/)
+				.first()
+				.click();
+			const form = optionForm('Ajouter une option à prod');
+			await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
+			await form.getByRole('textbox', { name: 'Valeur' }).fill('yes');
+			await form.getByRole('button', { name: 'Ajouter' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				type: 'updateSsh',
+				config: {
+					hosts: [
+						{
+							alias: 'prod',
+							hostName: '10.0.0.1',
+							options: [{ key: 'Compression', value: 'yes', enabled: true }]
+						},
+						{ alias: 'other', options: [] }
+					]
+				}
+			});
+		});
+
+		it('keeps the options of a host when its other fields are changed', async () => {
+			const option = { key: 'Compression', value: 'yes', enabled: true };
+			const { connection } = await renderPanel(ssh(1, host('prod', { options: [option] })));
+			await expect.element(page.getByText(/^Options avancées \(1\)/)).toBeVisible();
+			await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
+			const form = page.getByRole('form', { name: 'Modifier le serveur prod' });
+			await form.getByRole('textbox', { name: 'Utilisateur' }).fill('deploy');
+			await form.getByRole('button', { name: 'Enregistrer' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				type: 'updateSsh',
+				config: { hosts: [{ alias: 'prod', user: 'deploy', options: [option] }] }
+			});
+		});
+
+		it('describes the form that adds an option by the warning', async () => {
+			await renderPanel();
+			await expect
+				.element(optionForm('Ajouter une option commune'))
+				.toHaveAccessibleDescription(/une option est écrite telle quelle/);
+		});
+
+		it('shows no form when the list holds as many options as the manager accepts', async () => {
+			const options = Array.from({ length: ADVANCED_MAX }, (_, index) => ({
+				key: `Key${index}`,
+				value: 'v',
+				enabled: true
+			}));
+			await renderPanel({ ...ssh(1), commonOptions: options });
+			await expect.element(page.getByText(/nombre maximal d’éléments/)).toBeVisible();
+			await expect.element(optionForm('Ajouter une option commune')).not.toBeInTheDocument();
+		});
+
+		it('keeps the options of a host shown after the host was changed', async () => {
+			const option = { key: 'Compression', value: 'yes', enabled: true };
+			const { connection } = await renderPanel(ssh(1, host('prod', { options: [option] })));
+			await page.getByText(/^Options avancées/).click();
+			await expect
+				.element(page.getByRole('list', { name: 'Options du serveur prod' }))
+				.toBeVisible();
+			await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
+			const form = page.getByRole('form', { name: 'Modifier le serveur prod' });
+			await form.getByRole('textbox', { name: 'Utilisateur' }).fill('deploy');
+			await form.getByRole('button', { name: 'Enregistrer' }).click();
+			confirm(connection);
+			await expect
+				.element(page.getByRole('list', { name: 'Options du serveur prod' }))
+				.toBeVisible();
+		});
+
+		it('gives the focus to the next host when one that has options is removed', async () => {
+			const option = { key: 'Compression', value: 'yes', enabled: true };
+			await renderPanel(ssh(1, host('a', { options: [option] }), host('b')));
+			await page.getByRole('button', { name: 'Supprimer le serveur a' }).click();
+			const dialog = page.getByRole('dialog', { name: 'Supprimer le serveur ?' });
+			await dialog.getByRole('button', { name: 'Supprimer' }).click();
+			await expect
+				.element(page.getByRole('button', { name: 'Supprimer le serveur b' }))
+				.toHaveFocus();
+		});
+
+		it('switches an option off and removes it after a confirmation', async () => {
+			const option = { key: 'Compression', value: 'yes', enabled: true };
+			const { connection } = await renderPanel(ssh(1, host('prod', { options: [option] })));
+			await page
+				.getByText(/^Options avancées/)
+				.first()
+				.click();
+			await page.getByRole('switch', { name: 'Option Compression du serveur prod' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { hosts: [{ options: [{ key: 'Compression', enabled: false }] }] }
+			});
+			confirm(connection);
+			await page
+				.getByRole('button', { name: 'Supprimer l’option Compression du serveur prod' })
+				.click();
+			const dialog = page.getByRole('dialog', { name: 'Supprimer l’option ?' });
+			await dialog.getByRole('button', { name: 'Supprimer' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { hosts: [{ alias: 'prod', options: [] }] }
+			});
 		});
 	});
 });

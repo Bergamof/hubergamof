@@ -5,11 +5,13 @@
 //! - [`render`]: the hosts as the file `ssh` reads.
 //! - [`apply`]: that file on the computer, and the include that loads it.
 //! - [`sections`]: `~/.ssh/config` cut into the sections `ssh` sees.
+//! - [`preflight`]: `ssh` asked whether it can read the options of the person.
 //! - [`claim`]: the hosts taken over, commented out where they came from.
 //! - [`system`]: the hosts found besides.
 
 mod apply;
 mod claim;
+mod preflight;
 mod render;
 mod sections;
 mod system;

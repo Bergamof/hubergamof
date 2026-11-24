@@ -10,8 +10,11 @@ sent at once; the line under the title says whether the manager has saved it.
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import { SaveTracker } from '#lib/deck/save-tracker.svelte.js';
+	import { SSH_OPTION_ALIAS_RULES } from '#lib/deck/alias-rules.js';
 	import {
 		addHost,
+		editCommonOptions,
+		editHostOptions,
 		isHostListFull,
 		removeHost,
 		replaceHost,
@@ -20,6 +23,7 @@ sent at once; the line under the title says whether the manager has saved it.
 	} from '#lib/deck/ssh-edits.js';
 	import { draftOf, hostOf } from '#lib/deck/ssh-validation.js';
 	import type { SshSystemHost } from '#lib/generated/index.js';
+	import AdvancedSettings from './AdvancedSettings.svelte';
 	import SaveStatusLine from './SaveStatusLine.svelte';
 	import SshHostForm from './SshHostForm.svelte';
 	import SshHostList from './SshHostList.svelte';
@@ -66,9 +70,9 @@ sent at once; the line under the title says whether the manager has saved it.
 		<p class="text-sm text-muted">
 			Écrits dans un fichier de HuBergamof, inclus tout en haut de
 			<code class="font-mono">~/.ssh/config</code>, qui reste sinon tel que vous l’avez écrit : ce
-			qui est écrit ici l’emporte. Seules les options qui ne lancent aucun programme sont gérées
-			(pas de <code class="font-mono">ProxyCommand</code>). Un serveur désactivé reste ici mais
-			n’est plus sur l’ordinateur.
+			qui est écrit ici l’emporte. Les champs du formulaire ne lancent aucun programme ; les autres
+			réglages passent par les « options avancées » de chaque serveur. Un serveur désactivé reste
+			ici mais n’est plus sur l’ordinateur.
 		</p>
 		{#if config}
 			<SshHostList
@@ -76,6 +80,7 @@ sent at once; the line under the title says whether the manager has saved it.
 				onreplace={(alias, host) => edit(replaceHost(alias, host))}
 				ontoggle={(alias, enabled) => void edit(setHostEnabled(alias, enabled))}
 				onremove={(alias) => void edit(removeHost(alias))}
+				onoptions={(alias, change) => edit(editHostOptions(alias, change))}
 				fallbackFocus={() => (addForm ? addForm.focusAlias() : addHeading?.focus())}
 			/>
 			<h3
@@ -108,6 +113,27 @@ sent at once; the line under the title says whether the manager has saved it.
 	</section>
 
 	{#if config}
+		<section aria-labelledby="{uid}-common" class="flex flex-col gap-4 card">
+			<h2 id="{uid}-common" class="font-display text-xl font-semibold">
+				Options communes à tous les serveurs
+			</h2>
+			<p class="text-sm text-muted">
+				Écrites sous <code class="font-mono">Host *</code>, à la fin du fichier de HuBergamof : un
+				serveur ci-dessus garde ce qu’il règle lui-même. Elles passent avant le reste de
+				<code class="font-mono">~/.ssh/config</code>, et l’emportent donc sur les mêmes options
+				qu’il contient.
+			</p>
+			<AdvancedSettings
+				settings={config.commonOptions}
+				rules={SSH_OPTION_ALIAS_RULES}
+				tool="ssh"
+				label="Options communes"
+				suffix=" commune"
+				addLabel="Ajouter une option commune"
+				onchange={(change) => edit(editCommonOptions(change))}
+			/>
+		</section>
+
 		<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
 			<h2
 				bind:this={systemHeading}

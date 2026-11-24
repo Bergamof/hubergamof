@@ -14,11 +14,19 @@ interface SshHost {
 	proxyJump: string;
 	forwardAgent: boolean;
 	enabled: boolean;
+	options: Setting[];
+}
+
+interface Setting {
+	key: string;
+	value: string;
+	enabled: boolean;
 }
 
 interface FakeConfig {
 	schemaVersion: number;
 	hosts: SshHost[];
+	commonOptions: Setting[];
 	revision: number;
 }
 
@@ -58,6 +66,8 @@ interface FakeManager {
 	sockets: WebSocketRoute[];
 	received: string[];
 	config: FakeConfig;
+	/** What the manager answers after saving, when it cannot apply: an error as the real one sends it. */
+	notApplied?: string;
 }
 
 function host(alias: string, change: Partial<SshHost> = {}): SshHost {
@@ -70,13 +80,14 @@ function host(alias: string, change: Partial<SshHost> = {}): SshHost {
 		proxyJump: '',
 		forwardAgent: false,
 		enabled: true,
+		options: [],
 		...change
 	};
 }
 
 async function playManager(
 	page: Page,
-	config: FakeConfig = { schemaVersion: 1, hosts: [], revision: 1 }
+	config: FakeConfig = { schemaVersion: 1, hosts: [], commonOptions: [], revision: 1 }
 ): Promise<FakeManager> {
 	const manager: FakeManager = { sockets: [], received: [], config };
 	const sendSsh = (socket: WebSocketRoute) =>
@@ -96,6 +107,11 @@ async function playManager(
 			}
 			manager.config = { ...message.config, revision: manager.config.revision + 1 };
 			sendSsh(socket);
+			if (manager.notApplied) {
+				socket.send(
+					JSON.stringify({ type: 'error', code: 'notApplied', message: manager.notApplied })
+				);
+			}
 		});
 	});
 	return manager;
@@ -147,6 +163,62 @@ test('ajoute un serveur, le désactive, le modifie et le supprime', async ({ pag
 	expect(manager.config.hosts).toEqual([]);
 });
 
+test('ajoute des options communes et des options d’un serveur, refuse « Host »', async ({
+	page
+}) => {
+	const manager = await playManager(page, {
+		schemaVersion: 1,
+		hosts: [host('prod', { hostName: '10.0.0.1' })],
+		commonOptions: [],
+		revision: 1
+	});
+	await openSsh(page);
+
+	const common = page.getByRole('form', { name: 'Ajouter une option commune' });
+	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('Host');
+	await common.getByRole('textbox', { name: 'Valeur' }).fill('evil');
+	await page.keyboard.press('Enter');
+	await expect(
+		common.getByRole('textbox', { name: 'Nom de l’option' })
+	).toHaveAccessibleDescription(/autre section/);
+	expect(manager.received).not.toContain('updateSsh');
+
+	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('ServerAliveInterval');
+	await common.getByRole('textbox', { name: 'Valeur' }).fill('30');
+	await page.keyboard.press('Enter');
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
+	expect(manager.config.commonOptions).toEqual([
+		{ key: 'ServerAliveInterval', value: '30', enabled: true }
+	]);
+
+	await page.getByText(/^Options avancées/).click();
+	const own = page.getByRole('form', { name: 'Ajouter une option à prod' });
+	await own.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
+	await own.getByRole('textbox', { name: 'Valeur' }).fill('yes');
+	await page.keyboard.press('Enter');
+	await expect(page.getByText(/^Options avancées \(1\)/)).toBeVisible();
+	expect(manager.config.hosts[0].options).toEqual([
+		{ key: 'Compression', value: 'yes', enabled: true }
+	]);
+});
+
+test('montre à l’écran, en français, qu’une option enregistrée n’est pas appliquée', async ({
+	page
+}) => {
+	const manager = await playManager(page);
+	manager.notApplied = 'ssh refuses the options of *: Bad configuration option: Nope';
+	await openSsh(page);
+	const common = page.getByRole('form', { name: 'Ajouter une option commune' });
+	await common.scrollIntoViewIfNeeded();
+	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('Nope');
+	await common.getByRole('textbox', { name: 'Valeur' }).fill('1');
+	await page.keyboard.press('Enter');
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText('Enregistré, mais pas appliqué à l’ordinateur');
+	await expect(alert).toContainText('Bad configuration option: Nope');
+	await expect(alert).toBeInViewport();
+});
+
 test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page }) => {
 	const manager = await playManager(page);
 	await openSsh(page);
@@ -191,6 +263,7 @@ test('tient dans 320 px sans défilement horizontal', async ({ page }) => {
 		hosts: [
 			host('prod', { hostName: 'a-very-long-host-name.example.org', proxyJump: 'me@bastion:22' })
 		],
+		commonOptions: [],
 		revision: 1
 	});
 	await openSsh(page);
@@ -205,7 +278,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await page.emulateMedia({ colorScheme });
 		await playManager(page, {
 			schemaVersion: 1,
-			hosts: [host('prod', { hostName: '10.0.0.1', forwardAgent: true, enabled: false })],
+			hosts: [
+				host('prod', {
+					hostName: '10.0.0.1',
+					forwardAgent: true,
+					enabled: false,
+					options: [{ key: 'Compression', value: 'yes', enabled: true }]
+				})
+			],
+			commonOptions: [{ key: 'ServerAliveInterval', value: '30', enabled: false }],
 			revision: 1
 		});
 		await openSsh(page);
@@ -219,6 +300,9 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 		await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
 		await scan('formulaire en erreur');
+
+		await page.getByText(/^Options avancées/).click();
+		await scan('options avancées d’un serveur');
 
 		await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
 		await scan('serveur en modification');

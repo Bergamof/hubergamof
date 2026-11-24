@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { SshSystemHost } from '#lib/generated/index.js';
+import { validateSetting } from './advanced-validation.js';
 import {
 	BLANK_HOST,
 	draftOf,
@@ -9,8 +10,11 @@ import {
 	isValidAlias,
 	isValidHostName,
 	isValidIdentityFile,
+	isValidOptionKey,
+	isValidOptionValue,
 	isValidProxyJump,
 	isValidUser,
+	SSH_OPTION_RULES,
 	takeOverObstacle,
 	validateHost
 } from './ssh-validation.js';
@@ -25,6 +29,8 @@ interface SharedCases {
 	hostNames: SharedCase[];
 	identityFiles: SharedCase[];
 	proxyJumps: SharedCase[];
+	optionKeys: SharedCase[];
+	optionValues: SharedCase[];
 }
 
 /** The cases the Rust validation (`SshConfig::validate`) is tested with as well. */
@@ -45,7 +51,9 @@ describe('the cases shared with the manager', () => {
 		['users', isValidUser],
 		['hostNames', isValidHostName],
 		['identityFiles', isValidIdentityFile],
-		['proxyJumps', isValidProxyJump]
+		['proxyJumps', isValidProxyJump],
+		['optionKeys', isValidOptionKey],
+		['optionValues', isValidOptionValue]
 	];
 	for (const [group, check] of checks) {
 		it(`gives the verdicts of the manager for ${group}`, () => {
@@ -121,7 +129,8 @@ describe('the draft of a host', () => {
 			identityFile: '',
 			proxyJump: '',
 			forwardAgent: false,
-			enabled: true
+			enabled: true,
+			options: [{ key: 'Compression', value: 'yes', enabled: true }]
 		};
 		expect(draftOf(host).port).toBe('2222');
 		expect(hostOf(draftOf(host))).toEqual(host);
@@ -158,5 +167,35 @@ describe('takeOverObstacle', () => {
 			/Ne respecte pas les règles/
 		);
 		expect(takeOverObstacle(found({ alias: 'a b' }), [])).toMatch(/Ne respecte pas les règles/);
+	});
+});
+
+describe('the options written by the person', () => {
+	const check = (key: string, value: string, takenKeys: string[] = []) =>
+		validateSetting({ key, value }, takenKeys, SSH_OPTION_RULES);
+
+	it('accepts any option that is not managed elsewhere', () => {
+		expect(check('ServerAliveInterval', '30')).toEqual({});
+		expect(check('ProxyCommand', 'ssh -W %h:%p bastion')).toEqual({});
+	});
+
+	it('says why a key is refused', () => {
+		expect(check('', 'x').name).toMatch(/nom de l’option/);
+		expect(check('Host', 'x').name).toMatch(/autre section/);
+		expect(check('match', 'x').name).toMatch(/autre section/);
+		expect(check('User', 'x').name).toMatch(/propre champ/);
+		expect(check('Server-Alive', 'x').name).toMatch(/commence par une lettre/);
+	});
+
+	it('says why a value is refused', () => {
+		expect(check('A', '').command).toMatch(/Saisissez la valeur/);
+		expect(check('A', 'a\nb').command).toMatch(/une ligne/);
+		expect(check('A', '"open').command).toMatch(/guillemets/);
+		expect(check('A', 'x'.repeat(1025)).command).toMatch(/1024 caractères/);
+	});
+
+	it('compares keys without regard to case', () => {
+		expect(check('compression', 'no', ['Compression']).name).toMatch(/déjà dans la liste/);
+		expect(check('Compression', 'no', ['Other'])).toEqual({});
 	});
 });

@@ -3,7 +3,10 @@
 
 use std::fmt::Write as _;
 
-use hubergamof_protocol::{GitConfig, GitCredentialHelper, GitPullMode, GitSigningFormat};
+use hubergamof_protocol::{
+    GIT_MANAGED_KEYS, GitConfig, GitCredentialHelper, GitPullMode, GitSigningFormat, git_key_parts,
+    is_valid_git_setting_key, is_valid_git_setting_value,
+};
 use thiserror::Error;
 
 /// Folder, relative to the home folder, of the files HuBergamof keeps.
@@ -18,18 +21,7 @@ pub(super) const FOLDER_FILE_PREFIX: &str = "gitconfig-folder-";
 
 /// Keys, in lower case, that HuBergamof writes besides the aliases: those of
 /// the same keys found in other files are listed for the person.
-pub(super) const MANAGED_KEYS: [&str; 10] = [
-    "user.name",
-    "user.email",
-    "user.signingkey",
-    "commit.gpgsign",
-    "gpg.format",
-    "init.defaultbranch",
-    "pull.rebase",
-    "pull.ff",
-    "core.editor",
-    "credential.helper",
-];
+pub(super) const MANAGED_KEYS: [&str; 10] = GIT_MANAGED_KEYS;
 
 /// What the keys of the aliases start with, in lower case.
 pub(super) const ALIAS_KEY_PREFIX: &str = "alias.";
@@ -181,9 +173,38 @@ fn global_sections(config: &GitConfig) -> Result<Vec<Section>, UnwritableValue> 
         aliases.text(&alias.name, &alias.command)?;
     }
 
-    Ok(vec![
-        user, commit, gpg, init, pull, core, credential, aliases,
-    ])
+    let mut sections = vec![user, commit, gpg, init, pull, core, credential, aliases];
+    sections.extend(extra_sections(config)?);
+    Ok(sections)
+}
+
+/// One section per setting the person wrote, in their order. A section name
+/// is written bare and a sub-section between quotes: both are checked again
+/// here, the file being read by Git.
+fn extra_sections(config: &GitConfig) -> Result<Vec<Section>, UnwritableValue> {
+    let mut sections = Vec::new();
+    for setting in config
+        .extra_settings
+        .iter()
+        .filter(|setting| setting.enabled)
+    {
+        let writable =
+            is_valid_git_setting_key(&setting.key) && is_valid_git_setting_value(&setting.value);
+        let Some((section, subsection, name)) = git_key_parts(&setting.key).filter(|_| writable)
+        else {
+            return Err(UnwritableValue {
+                key: setting.key.clone(),
+            });
+        };
+        let header = match subsection {
+            Some(subsection) => format!("{section} \"{subsection}\""),
+            None => section.to_owned(),
+        };
+        let mut extra = Section::new(&header);
+        extra.text(name, &setting.value)?;
+        sections.push(extra);
+    }
+    Ok(sections)
 }
 
 fn file_text(sections: &[Section]) -> String {
@@ -487,5 +508,70 @@ mod tests {
             enabled: true,
         }];
         assert_eq!(rendered(&config).folders.len(), 1);
+    }
+
+    fn setting(key: &str, value: &str, enabled: bool) -> hubergamof_protocol::AdvancedSetting {
+        hubergamof_protocol::AdvancedSetting {
+            key: key.into(),
+            value: value.into(),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn the_settings_of_the_person_become_one_section_each_after_the_aliases() {
+        let mut config = GitConfig::empty();
+        config.aliases = vec![GitAlias {
+            name: "co".into(),
+            command: "checkout".into(),
+            enabled: true,
+        }];
+        config.extra_settings = vec![
+            setting("push.default", "current", true),
+            setting("core.autocrlf", "input", false),
+            setting("url.https://example.org/.insteadOf", "ex:", true),
+        ];
+        let content = rendered(&config).main.content;
+        assert!(
+            content.ends_with(
+                "[alias]\n\tco = \"checkout\"\n[push]\n\tdefault = \"current\"\n\
+             [url \"https://example.org/\"]\n\tinsteadOf = \"ex:\"\n"
+            ),
+            "{content}"
+        );
+        assert!(!content.contains("autocrlf"));
+    }
+
+    #[test]
+    fn settings_alone_are_enough_to_write_a_file() {
+        let mut config = GitConfig::empty();
+        config.extra_settings = vec![setting("push.default", "current", true)];
+        assert!(render(&config).unwrap().is_some());
+        config.extra_settings = vec![setting("push.default", "current", false)];
+        assert_eq!(render(&config), Ok(None));
+    }
+
+    #[test]
+    fn a_setting_the_contract_would_refuse_is_refused_even_when_it_is_off() {
+        for (key, value) in [
+            ("alias.x", "!rm"),
+            ("user.email", "a@b.c"),
+            ("include.path", "/etc/x"),
+            ("push.default", "a\nb"),
+            ("a.b\"c", "x"),
+            ("nodot", "x"),
+        ] {
+            for enabled in [true, false] {
+                let mut config = GitConfig::empty();
+                config.extra_settings = vec![setting(key, value, enabled)];
+                if enabled {
+                    assert_eq!(
+                        render(&config),
+                        Err(UnwritableValue { key: key.into() }),
+                        "{key}"
+                    );
+                }
+            }
+        }
     }
 }

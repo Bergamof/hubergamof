@@ -14,6 +14,7 @@ export function emptyGit(revision = 0): GitConfig {
 		},
 		aliases: [],
 		folderIdentities: [],
+		extraSettings: [],
 		revision
 	};
 }

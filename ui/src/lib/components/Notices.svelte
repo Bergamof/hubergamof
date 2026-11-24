@@ -26,7 +26,11 @@ next message, or to a fallback element, rather than losing it.
 	}
 </script>
 
-<div bind:this={list} role="alert" class="flex flex-col gap-2 empty:hidden">
+<div
+	bind:this={list}
+	role="alert"
+	class="sticky top-0 z-20 flex flex-col gap-2 bg-page empty:hidden"
+>
 	{#each notices as notice (notice.id)}
 		<div
 			class="flex items-start justify-between gap-4 rounded-xl border border-danger bg-danger-soft p-3 text-sm text-danger"

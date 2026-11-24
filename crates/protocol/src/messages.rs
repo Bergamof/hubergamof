@@ -350,6 +350,10 @@ pub enum ErrorCode {
     /// The computer is locked: nothing is done from the interface until it
     /// is unlocked.
     Locked,
+    /// The configuration was saved but could not be put on the computer (a
+    /// file that cannot be written, an option `ssh` refuses): it stays saved,
+    /// and what is wrong is to be corrected or removed.
+    NotApplied,
     /// Unexpected failure inside the manager.
     Internal,
 }

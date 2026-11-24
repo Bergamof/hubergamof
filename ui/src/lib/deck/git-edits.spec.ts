@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { GitConfig, GitFolderIdentity } from '#lib/generated/index.js';
+import { addSetting, removeSetting } from './advanced-edits.js';
 import { addAlias, isFull, removeAlias, replaceAlias, setAliasEnabled } from './machine-edits.js';
 import {
 	addFolderIdentity,
+	editExtraSettings,
 	isFolderListFull,
 	removeFolderIdentity,
 	replaceFolderIdentity,
@@ -107,5 +109,12 @@ describe('edits of the identities by folder', () => {
 		expect(config.folderIdentities.map(({ enabled }) => enabled)).toEqual([false, true]);
 		config = removeFolderIdentity('~/a')(config);
 		expect(config.folderIdentities.map(({ folder }) => folder)).toEqual(['~/renamed']);
+	});
+
+	it('changes the settings written by the person', () => {
+		const setting = { key: 'push.default', value: 'current', enabled: true };
+		const config = editExtraSettings(addSetting(setting))(emptyGit());
+		expect(config.extraSettings).toEqual([setting]);
+		expect(editExtraSettings(removeSetting('push.default'))(config).extraSettings).toEqual([]);
 	});
 });

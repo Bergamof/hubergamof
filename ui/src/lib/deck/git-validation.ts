@@ -1,6 +1,12 @@
 import type { GitAlias, GitFolderIdentity } from '#lib/generated/index.js';
 import type { AliasErrors } from './alias-validation.js';
 import { hasHiddenCharacter, isBlank, lengthOf, trimCommand } from './alias-validation.js';
+import {
+	ADVANCED_KEY_MAX,
+	isOneLineValue,
+	valueError,
+	type SettingRules
+} from './advanced-validation.js';
 
 /** A value as it is sent: as typed, minus the white space at its edges. */
 export const trimValue = trimCommand;
@@ -243,3 +249,94 @@ export function validateFolderIdentity(
 export function hasFolderIdentityErrors(errors: FolderIdentityErrors): boolean {
 	return Object.keys(errors).length > 0;
 }
+
+/** The keys of Git that the forms manage (`GIT_MANAGED_KEYS`), in lower case. */
+const MANAGED_KEYS: readonly string[] = [
+	'user.name',
+	'user.email',
+	'user.signingkey',
+	'commit.gpgsign',
+	'gpg.format',
+	'init.defaultbranch',
+	'pull.rebase',
+	'pull.ff',
+	'core.editor',
+	'credential.helper'
+];
+
+/** The sections whose keys have their own list, or that Git reads as an include. */
+const RESERVED_SECTIONS: readonly string[] = ['alias', 'include', 'includeif'];
+
+const KEY_WORD = /^[A-Za-z][A-Za-z0-9-]*$/;
+/** The longest sub-section of a key (`MAX_GIT_SUBSECTION_CHARS`). */
+export const GIT_SUBSECTION_MAX = 128;
+const SUBSECTION_CHARACTERS = /^[A-Za-z0-9._/:@*~+-]+$/;
+
+/** `section`, `subsection` (`null` for none) and `name` of a key: the sub-section is between the first and the last `.`. */
+function partsOfKey(key: string): [string, string | null, string] | undefined {
+	const first = key.indexOf('.');
+	if (first < 0) return undefined;
+	const rest = key.slice(first + 1);
+	const last = rest.lastIndexOf('.');
+	return last < 0
+		? [key.slice(0, first), null, rest]
+		: [key.slice(0, first), rest.slice(0, last), rest.slice(last + 1)];
+}
+
+/** A key as Git compares it (`fold_git_key`): section and name without regard to case, the sub-section as it is. */
+export function foldKey(key: string): string {
+	const parts = partsOfKey(key);
+	if (!parts) return key;
+	const [section, subsection, name] = parts;
+	return [
+		section.toLowerCase(),
+		...(subsection === null ? [] : [subsection]),
+		name.toLowerCase()
+	].join('.');
+}
+
+function isKeyWord(word: string): boolean {
+	return KEY_WORD.test(word) && lengthOf(word) <= ADVANCED_KEY_MAX;
+}
+
+/** Mirrors `is_valid_git_setting_key`: `section.name` or `section.subsection.name` in closed characters, which no form manages. */
+export function isValidSettingKey(key: string): boolean {
+	const parts = partsOfKey(key);
+	if (!parts) return false;
+	const [section, subsection, name] = parts;
+	const subsectionOk =
+		subsection === null ||
+		(lengthOf(subsection) <= GIT_SUBSECTION_MAX && SUBSECTION_CHARACTERS.test(subsection));
+	return (
+		isKeyWord(section) &&
+		isKeyWord(name) &&
+		subsectionOk &&
+		!MANAGED_KEYS.includes(foldKey(key)) &&
+		!RESERVED_SECTIONS.includes(section.toLowerCase())
+	);
+}
+
+/** Mirrors `is_valid_git_setting_value`: one line. */
+export function isValidSettingValue(value: string): boolean {
+	return isOneLineValue(value);
+}
+
+function settingKeyError(key: string): string | undefined {
+	if (key === '') return 'Saisissez la clé.';
+	if (isValidSettingKey(key)) return undefined;
+	const parts = partsOfKey(key);
+	if (parts && RESERVED_SECTIONS.includes(parts[0].toLowerCase())) {
+		return 'Les alias et les inclusions ont leur propre place : ils ne sont pas acceptés ici.';
+	}
+	if (MANAGED_KEYS.includes(foldKey(key))) {
+		return 'Cette clé a son propre champ dans les formulaires ci-dessus.';
+	}
+	return 'Une clé s’écrit section.nom (push.default) ou section.sous-section.nom, en lettres, chiffres et « - ».';
+}
+
+/** What the settings written by the person must follow: the keys of Git, compared as Git does. */
+export const GIT_SETTING_RULES: SettingRules = {
+	keyError: settingKeyError,
+	valueError: (value) => valueError(value, false),
+	fold: foldKey
+};

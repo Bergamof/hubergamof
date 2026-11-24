@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
+use crate::advanced::{
+    AdvancedSetting, SettingsFault, check_settings, has_paired_quotes, is_one_line_value,
+};
+
 /// SSH configuration schema version produced and understood by this crate.
 pub const SSH_SCHEMA_VERSION: u32 = 1;
 
@@ -58,6 +62,9 @@ pub struct SshHost {
     /// (`ForwardAgent`): whoever controls the remote machine can use its keys
     /// while connected.
     pub forward_agent: bool,
+    /// The other options of the host, written by the person (`Compression yes`).
+    #[serde(default)]
+    pub options: Vec<AdvancedSetting>,
     /// Whether the host is on the computer. A disabled one stays in the
     /// configuration and is removed from the computer.
     pub enabled: bool,
@@ -97,6 +104,10 @@ pub struct SshConfig {
     pub schema_version: u32,
     /// The hosts, in the order they are shown and written.
     pub hosts: Vec<SshHost>,
+    /// The options common to every host (`Host *`), written by the person.
+    /// They come before the hosts of the person's own file, so they win over it.
+    #[serde(default)]
+    pub common_options: Vec<AdvancedSetting>,
     /// Revision counter, incremented on every accepted update; an update
     /// carrying an outdated revision is rejected.
     pub revision: u64,
@@ -130,6 +141,21 @@ pub enum SshConfigError {
         alias: String,
         /// The field.
         field: &'static str,
+    },
+    /// An option is not valid, written twice or too many. `scope` is the alias
+    /// of the host, or `*` for the options common to all.
+    #[error("invalid option {option:?} for ssh host `{scope}`")]
+    InvalidOption {
+        /// The alias of the host, or `*`.
+        scope: String,
+        /// The key of the option.
+        option: String,
+    },
+    /// A host, or the common options, has more options than a list holds.
+    #[error("too many options for ssh host `{scope}`")]
+    TooManyOptions {
+        /// The alias of the host, or `*`.
+        scope: String,
     },
 }
 
@@ -225,6 +251,41 @@ fn is_valid_jump(entry: &str) -> bool {
         })
 }
 
+/// Options of a host that the form manages: the person does not write them
+/// twice.
+const MANAGED_OPTIONS: [&str; 6] = [
+    "hostname",
+    "user",
+    "port",
+    "identityfile",
+    "proxyjump",
+    "forwardagent",
+];
+
+/// Whether `key` can be the key of an option written by the person: a keyword
+/// of `ssh_config` (letters and digits). Not `Host` nor `Match`, which would
+/// open another section, and not what the form of a host manages.
+#[must_use]
+pub fn is_valid_ssh_option_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    let lower = key.to_ascii_lowercase();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && key.chars().count() <= crate::advanced::MAX_SETTING_KEY_CHARS
+        && chars.all(|c| c.is_ascii_alphanumeric())
+        && lower != "host"
+        && lower != "match"
+        && !MANAGED_OPTIONS.contains(&lower.as_str())
+}
+
+/// Whether `value` can be the value of an option: one line, with its quotes in
+/// pairs (`ssh` refuses the whole configuration for one it cannot close).
+#[must_use]
+pub fn is_valid_ssh_option_value(value: &str) -> bool {
+    is_one_line_value(value) && has_paired_quotes(value)
+}
+
 /// Whether `jumps` can be `ProxyJump`: hops joined by `,`.
 #[must_use]
 pub fn is_valid_ssh_proxy_jump(jumps: &str) -> bool {
@@ -241,6 +302,7 @@ impl SshConfig {
         Self {
             schema_version: SSH_SCHEMA_VERSION,
             hosts: Vec::new(),
+            common_options: Vec::new(),
             revision: 0,
         }
     }
@@ -268,12 +330,31 @@ impl SshConfig {
                 return Err(SshConfigError::InvalidAlias(host.alias.clone()));
             }
             host.validate_values()?;
+            check_options(&host.alias, &host.options)?;
             if !known.insert(host.alias.as_str()) {
                 return Err(SshConfigError::DuplicateAlias(host.alias.clone()));
             }
         }
-        Ok(())
+        check_options("*", &self.common_options)
     }
+}
+
+fn check_options(scope: &str, options: &[AdvancedSetting]) -> Result<(), SshConfigError> {
+    check_settings(
+        options,
+        is_valid_ssh_option_key,
+        is_valid_ssh_option_value,
+        str::to_ascii_lowercase,
+    )
+    .map_err(|fault| match fault {
+        SettingsFault::TooMany => SshConfigError::TooManyOptions {
+            scope: scope.to_owned(),
+        },
+        SettingsFault::Invalid(option) => SshConfigError::InvalidOption {
+            scope: scope.to_owned(),
+            option,
+        },
+    })
 }
 
 impl SshHost {
@@ -318,6 +399,7 @@ mod tests {
             identity_file: String::new(),
             proxy_jump: String::new(),
             forward_agent: false,
+            options: Vec::new(),
             enabled: true,
         }
     }
@@ -345,6 +427,10 @@ mod tests {
         identity_files: Vec<Case>,
         #[serde(rename = "proxyJumps")]
         proxy_jumps: Vec<Case>,
+        #[serde(rename = "optionKeys")]
+        option_keys: Vec<Case>,
+        #[serde(rename = "optionValues")]
+        option_values: Vec<Case>,
     }
 
     fn verdicts(cases: &[Case], check: fn(&str) -> bool, what: &str) {
@@ -368,6 +454,12 @@ mod tests {
             "identity file",
         );
         verdicts(&cases.proxy_jumps, is_valid_ssh_proxy_jump, "proxy jump");
+        verdicts(&cases.option_keys, is_valid_ssh_option_key, "option key");
+        verdicts(
+            &cases.option_values,
+            is_valid_ssh_option_value,
+            "option value",
+        );
     }
 
     #[test]
@@ -403,6 +495,82 @@ mod tests {
                 field: "port"
             })
         );
+    }
+
+    fn option(key: &str, value: &str) -> AdvancedSetting {
+        AdvancedSetting {
+            key: key.into(),
+            value: value.into(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn the_options_of_a_host_and_the_common_ones_are_checked() {
+        let mut with_option = host("a");
+        with_option.options = vec![
+            option("Compression", "yes"),
+            option("ServerAliveInterval", "30"),
+        ];
+        let mut ok = config(vec![with_option.clone()]);
+        ok.common_options = vec![option("LogLevel", "ERROR")];
+        assert_eq!(ok.validate(), Ok(()));
+
+        let mut repeated = with_option.clone();
+        repeated.options.push(option("compression", "no"));
+        assert_eq!(
+            config(vec![repeated]).validate(),
+            Err(SshConfigError::InvalidOption {
+                scope: "a".into(),
+                option: "compression".into()
+            })
+        );
+        let mut managed = with_option;
+        managed.options = vec![option("User", "x")];
+        assert_eq!(
+            config(vec![managed]).validate(),
+            Err(SshConfigError::InvalidOption {
+                scope: "a".into(),
+                option: "User".into()
+            })
+        );
+        let mut common = SshConfig::empty();
+        common.common_options = vec![option("Host", "evil"), option("A", "1")];
+        assert_eq!(
+            common.validate(),
+            Err(SshConfigError::InvalidOption {
+                scope: "*".into(),
+                option: "Host".into()
+            })
+        );
+        common.common_options = (0..=crate::MAX_ADVANCED_SETTINGS)
+            .map(|i| option(&format!("K{i}"), "v"))
+            .collect();
+        assert_eq!(
+            common.validate(),
+            Err(SshConfigError::TooManyOptions { scope: "*".into() })
+        );
+    }
+
+    #[test]
+    fn a_host_with_too_many_options_is_refused() {
+        let mut crowded = host("a");
+        crowded.options = (0..=crate::MAX_ADVANCED_SETTINGS)
+            .map(|i| option(&format!("K{i}"), "v"))
+            .collect();
+        assert_eq!(
+            config(vec![crowded]).validate(),
+            Err(SshConfigError::TooManyOptions { scope: "a".into() })
+        );
+    }
+
+    #[test]
+    fn a_configuration_saved_before_the_options_existed_is_still_read() {
+        let old = r#"{"schemaVersion":1,"hosts":[{"alias":"a","hostName":"","user":"","port":null,
+            "identityFile":"","proxyJump":"","forwardAgent":false,"enabled":true}],"revision":3}"#;
+        let config: SshConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(config.hosts[0].options, []);
+        assert_eq!(config.common_options, []);
     }
 
     #[test]
