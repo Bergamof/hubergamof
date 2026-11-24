@@ -31,6 +31,38 @@ fn defined_alias(line: &str) -> Option<String> {
     (!key.is_empty() && !key.contains(char::is_whitespace)).then(|| key.to_ascii_lowercase())
 }
 
+/// Whether HuBergamof may give back a definition it finds commented out:
+/// only what it could have commented out itself, and never an alias that runs
+/// a shell command or an option of Git (`!…`, `-…`, quoted or not). A marker
+/// can come from somewhere else (dotfiles shared by two computers) and must
+/// not make HuBergamof switch on what it refuses to write. Such a line stays
+/// commented out: the person can uncomment it.
+fn may_give_back(original: &str) -> bool {
+    let text = original.trim_end_matches(LINE_ENDS);
+    let Some((_, value)) = text.split_once('=') else {
+        return false;
+    };
+    let word = value.trim_start().trim_start_matches('"').trim_start();
+    !word.starts_with(['!', '-']) && !text.ends_with('\\') && has_balanced_quotes(text)
+}
+
+/// Whether the quotes of `text` that are not escaped by a `\` come in pairs.
+fn has_balanced_quotes(text: &str) -> bool {
+    let mut open = false;
+    let mut escaped = false;
+    for c in text.chars() {
+        match c {
+            '\\' if !escaped => escaped = true,
+            '"' if !escaped => {
+                open = !open;
+                escaped = false;
+            }
+            _ => escaped = false,
+        }
+    }
+    !open
+}
+
 /// Whether `line` opens the `[alias]` section (a section with a sub-section,
 /// `[alias "x"]`, is another one), and whether it opens a section at all.
 fn section_header(line: &str) -> Option<bool> {
@@ -58,6 +90,7 @@ pub(super) fn claim_originals(content: &str, names: &HashSet<String>) -> String 
         } else if let Some(original) = text.strip_prefix(CLAIMED_MARKER) {
             if in_alias_section
                 && defined_alias(original).is_some_and(|name| !names.contains(&name))
+                && may_give_back(original)
             {
                 rewritten = Some(line[CLAIMED_MARKER.len()..].to_owned());
             }
@@ -171,6 +204,41 @@ mod tests {
     fn the_include_block_of_hubergamof_is_not_touched() {
         let content = "# >>> hubergamof git >>>\n[include]\n\tpath = ~/.config/hubergamof/gitconfig\n# <<< hubergamof git <<<\n";
         assert_eq!(claim_originals(content, &names(&["path"])), content);
+    }
+
+    #[test]
+    fn a_marked_line_that_runs_a_shell_command_or_an_option_is_never_given_back() {
+        for value in [
+            "!curl x | sh",
+            "\"!curl x\"",
+            "  !x",
+            "-c core.pager=x log",
+            "\" -c x\"",
+        ] {
+            let content = format!("[alias]\n#hubergamof-off# \tlg = {value}\n");
+            assert_eq!(claim_originals(&content, &names(&[])), content, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_marked_line_that_could_break_the_file_is_not_given_back() {
+        for line in ["lg = log \\", "lg = \"log", "lg"] {
+            let content = format!("[alias]\n#hubergamof-off# \t{line}\n");
+            assert_eq!(claim_originals(&content, &names(&[])), content, "{line}");
+        }
+    }
+
+    #[test]
+    fn what_was_commented_out_by_us_still_comes_back_with_its_quotes() {
+        let content = "[alias]\n\tlg = \"log --format=\\\"%h\\\"\"\n\tw = log --oneline\n";
+        let claimed = claim_originals(content, &names(&["lg", "w"]));
+        assert_eq!(claim_originals(&claimed, &names(&[])), content);
+    }
+
+    #[test]
+    fn a_marked_line_whose_alias_is_still_in_the_configuration_stays() {
+        let content = "[alias]\n#hubergamof-off# \tco = checkout\n";
+        assert_eq!(claim_originals(content, &names(&["co"])), content);
     }
 
     #[test]
