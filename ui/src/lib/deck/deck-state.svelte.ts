@@ -19,6 +19,7 @@ import { ApplicationState } from './application-state.svelte.js';
 import { GitState } from './git-state.svelte.js';
 import { MachineState } from './machine-state.svelte.js';
 import { SshState } from './ssh-state.svelte.js';
+import { HeadsetState } from './headset-state.svelte.js';
 import { MouseState } from './mouse-state.svelte.js';
 import { problemOf, type Problem } from './problems.js';
 
@@ -61,6 +62,8 @@ export class DeckState {
 	readonly mice: MouseState;
 	/** The modules that live in the application, and whether the computer is locked. */
 	readonly application: ApplicationState;
+	/** The connected headphones and what they said. */
+	readonly headsets: HeadsetState;
 	/** The shell aliases of the machine, managed and found. */
 	readonly machine: MachineState;
 	/** The Git configuration of the machine, managed and found. */
@@ -93,6 +96,7 @@ export class DeckState {
 		this.#preference = preference;
 		this.mice = new MouseState(connection, (problem) => this.report(problem));
 		this.application = new ApplicationState(connection);
+		this.headsets = new HeadsetState(connection);
 		this.machine = new MachineState(connection, (problem) => this.report(problem));
 		this.git = new GitState(connection, (problem) => this.report(problem));
 		this.ssh = new SshState(connection, (problem) => this.report(problem));
@@ -146,6 +150,7 @@ export class DeckState {
 				this.#edits.dropPending(CONNECTION_LOST);
 				this.mice.dropPending(CONNECTION_LOST);
 				this.application.dropPending(CONNECTION_LOST);
+				this.headsets.reconnected();
 				for (const state of [this.machine, this.git, this.ssh]) {
 					state.dropPending(CONNECTION_LOST);
 					state.reconnected();
@@ -185,6 +190,10 @@ export class DeckState {
 				break;
 			case 'ssh':
 				this.ssh.handle(message);
+				break;
+			case 'headsets':
+			case 'headsetState':
+				this.headsets.handle(message);
 				break;
 			case 'applicationModules':
 			case 'locked':
