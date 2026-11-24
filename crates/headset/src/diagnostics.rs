@@ -15,8 +15,8 @@ use crate::channel::{Channel, ChannelError};
 use crate::frame::{DATA_TYPE_MDR, Frame};
 use crate::link::{Link, LinkError};
 use crate::payload::{
-    AmbientSetting, AmbientState, EqualizerError, EqualizerSetting, Event, ProbeError, Query,
-    SettingError, decode,
+    AmbientSetting, AmbientState, EqualizerError, EqualizerSetting, Event, Query, SettingError,
+    decode,
 };
 
 /// How long to wait for more answers after the last one (or for the first).
@@ -60,14 +60,8 @@ pub enum Action {
     Watch(Duration),
     /// Change the equalizer, then read it back.
     Equalizer(EqualizerSetting),
-    /// Send one query from the closed list (with argument bytes for the
-    /// undocumented ones) and print the answers.
-    Probe {
-        /// The query.
-        query: Query,
-        /// Bytes appended after its code.
-        args: Vec<u8>,
-    },
+    /// Send one query from the closed list and print the answers.
+    Probe(Query),
 }
 
 /// How the action talks to the headphones.
@@ -105,9 +99,6 @@ pub enum DiagnosticError {
     /// The equalizer change asked for is not one the headphones accept.
     #[error(transparent)]
     Equalizer(#[from] EqualizerError),
-    /// The probe asked for cannot be built.
-    #[error(transparent)]
-    Probe(#[from] ProbeError),
     /// The headphones did not say whether they have wind noise reduction.
     #[error("the headphones did not report their ambient sound state: run `info` first")]
     NoAmbientState,
@@ -158,7 +149,7 @@ pub fn run<C: Channel>(
         Action::Ambient(setting) => session.ambient(*setting),
         Action::Watch(duration) => session.watch(*duration, stop),
         Action::Equalizer(setting) => session.equalizer(*setting),
-        Action::Probe { query, args } => session.probe(*query, args),
+        Action::Probe(query) => session.ask(*query).map(|_| ()),
     }
 }
 
@@ -189,8 +180,7 @@ impl<C: Channel, W: Write> Session<'_, C, W> {
                 Ok(None)
             }
             Ok(event) => {
-                writeln!(self.out)?;
-                self.describe(&event)?;
+                writeln!(self.out, "\n   {event:?}")?;
                 Ok(Some(event))
             }
             Err(error) => {
@@ -200,38 +190,11 @@ impl<C: Channel, W: Write> Session<'_, C, W> {
         }
     }
 
-    fn describe(&mut self, event: &Event) -> Result<(), DiagnosticError> {
-        match event {
-            Event::PairedDevices { devices, trailing } => {
-                writeln!(self.out, "   {} paired device(s):", devices.len())?;
-                for device in devices {
-                    writeln!(
-                        self.out,
-                        "   {}  state 0x{:02X}  {}",
-                        device.address, device.state, device.name
-                    )?;
-                }
-                writeln!(self.out, "   after the last one: {}", hex(trailing))?;
-            }
-            other => writeln!(self.out, "   {other:?}")?,
-        }
-        Ok(())
-    }
-
     /// Sends a query and shows every answer that follows it.
     fn ask(&mut self, query: Query) -> Result<Vec<Event>, DiagnosticError> {
-        self.ask_with(query, &[])
-    }
-
-    fn ask_with(&mut self, query: Query, args: &[u8]) -> Result<Vec<Event>, DiagnosticError> {
-        let payload = query.payload_with(args)?;
         writeln!(self.out, "[{}]", query.name())?;
-        self.send(&payload)?;
+        self.send(&query.payload())?;
         self.show_replies()
-    }
-
-    fn probe(&mut self, query: Query, args: &[u8]) -> Result<(), DiagnosticError> {
-        self.ask_with(query, args).map(|_| ())
     }
 
     fn equalizer(&mut self, setting: EqualizerSetting) -> Result<(), DiagnosticError> {
@@ -423,34 +386,12 @@ mod tests {
 
     #[test]
     fn a_probe_sends_only_its_query_and_shows_unknown_answers() {
-        let headset = FakeHeadset::new().answering(&[0x24], &[&[0x25, 0x01, 0x02]]);
-        let (result, report) = run_on(
-            &headset,
-            &Action::Probe {
-                query: Query::ConnectionStatus,
-                args: Vec::new(),
-            },
-        );
+        let headset =
+            FakeHeadset::new().answering(&Query::Battery.payload(), &[&[0x7F, 0x01, 0x02]]);
+        let (result, report) = run_on(&headset, &Action::Probe(Query::Battery));
         result.unwrap();
-        assert_eq!(headset.received(), [vec![0x24]]);
-        assert!(report.contains("<- type 0x0C seq 0: 25 01 02"));
-    }
-
-    #[test]
-    fn a_probe_appends_its_arguments_only_where_allowed() {
-        let headset = FakeHeadset::new().answering(&[0x24, 0x01], &[&[0x25, 0x31, 0x01, 0x01]]);
-        let probe = |query, args: &[u8]| Action::Probe {
-            query,
-            args: args.to_vec(),
-        };
-        let (result, report) = run_on(&headset, &probe(Query::ConnectionStatus, &[0x01]));
-        result.unwrap();
-        assert_eq!(headset.received(), [vec![0x24, 0x01]]);
-        assert!(report.contains("<- type 0x0C seq 0: 25 31 01 01"));
-
-        let (result, _) = run_on(&headset, &probe(Query::Battery, &[0x01]));
-        assert!(matches!(result, Err(DiagnosticError::Probe(_))));
-        assert_eq!(headset.received().len(), 1, "nothing was sent");
+        assert_eq!(headset.received(), [Query::Battery.payload()]);
+        assert!(report.contains("<- type 0x0C seq 0: 7F 01 02"));
     }
 
     #[test]
@@ -489,24 +430,6 @@ mod tests {
         let error = result.unwrap_err();
         assert!(matches!(error, DiagnosticError::Closed));
         assert!(error.to_string().contains("another app"));
-    }
-
-    #[test]
-    fn paired_devices_are_listed_one_per_line() {
-        let list = [
-            0x39, 0x01, 0x01, b'0', b'0', b':', b'1', b'1', b':', b'2', b'2', b':', b'3', b'3',
-            b':', b'4', b'4', b':', b'5', b'5', 0x02, 0x04, b'T', b'e', b's', b't', 0x02,
-        ];
-        let headset = FakeHeadset::new().answering(&[0x38], &[&list]);
-        let probe = Action::Probe {
-            query: Query::PairedDevices,
-            args: Vec::new(),
-        };
-        let (result, report) = run_on(&headset, &probe);
-        result.unwrap();
-        assert!(report.contains("1 paired device(s):"));
-        assert!(report.contains("00:11:22:33:44:55  state 0x02  Test"));
-        assert!(report.contains("after the last one: 02"));
     }
 
     #[test]

@@ -82,14 +82,6 @@ pub enum QueryArg {
     Battery,
     /// Equalizer.
     Equalizer,
-    /// Connected devices (payload unknown: the bare code is sent).
-    ConnectionStatus,
-    /// Paired devices information (payload unknown: the bare code is sent).
-    DeviceInfo,
-    /// Concierge data (payload unknown: the bare code is sent).
-    Concierge,
-    /// The paired devices (the request is a guess: the bare code is sent).
-    PairedDevices,
 }
 
 impl From<QueryArg> for Query {
@@ -99,10 +91,6 @@ impl From<QueryArg> for Query {
             QueryArg::Ambient => Self::Ambient,
             QueryArg::Battery => Self::Battery,
             QueryArg::Equalizer => Self::Equalizer,
-            QueryArg::ConnectionStatus => Self::ConnectionStatus,
-            QueryArg::DeviceInfo => Self::DeviceInfo,
-            QueryArg::Concierge => Self::Concierge,
-            QueryArg::PairedDevices => Self::PairedDevices,
         }
     }
 }
@@ -199,12 +187,6 @@ fn parse_bands(text: &str) -> Result<[i8; EQUALIZER_BANDS], String> {
         .map_err(|values| format!("{} values, expected {EQUALIZER_BANDS}", values.len()))
 }
 
-/// One byte written in hexadecimal (`0A`, `a`, `0x0a`).
-fn parse_hex_byte(text: &str) -> Result<u8, String> {
-    u8::from_str_radix(text.trim_start_matches("0x"), 16)
-        .map_err(|_| format!("{text:?} is not a byte in hexadecimal"))
-}
-
 /// What `headset-test` does.
 #[derive(Debug, Subcommand)]
 pub enum HeadsetTestAction {
@@ -240,11 +222,6 @@ pub enum HeadsetTestAction {
         /// The query.
         #[arg(value_enum)]
         query: QueryArg,
-        /// Argument byte in hexadecimal after the query code, to find what the
-        /// undocumented queries (`connection-status`, `device-info`,
-        /// `concierge`, `paired-devices`) take; repeat for several (at most 4).
-        #[arg(long = "arg", value_parser = parse_hex_byte)]
-        args: Vec<u8>,
     },
 }
 
@@ -261,10 +238,7 @@ impl HeadsetTestAction {
             })),
             Self::Watch { seconds } => Some(Action::Watch(Duration::from_secs(seconds))),
             Self::Equalizer { action } => Some(Action::Equalizer(action.into_setting())),
-            Self::Probe { query, args } => Some(Action::Probe {
-                query: query.into(),
-                args,
-            }),
+            Self::Probe { query } => Some(Action::Probe(query.into())),
         }
     }
 }
@@ -409,25 +383,8 @@ mod tests {
             Some(Action::Watch(Duration::from_secs(60)))
         );
         assert_eq!(
-            action(&["probe", "connection-status"]),
-            Some(Action::Probe {
-                query: Query::ConnectionStatus,
-                args: Vec::new()
-            })
-        );
-        assert_eq!(
-            action(&["probe", "device-info", "--arg", "00", "--arg", "0x1f"]),
-            Some(Action::Probe {
-                query: Query::DeviceInfo,
-                args: vec![0x00, 0x1F]
-            })
-        );
-        assert_eq!(
-            action(&["probe", "paired-devices"]),
-            Some(Action::Probe {
-                query: Query::PairedDevices,
-                args: Vec::new()
-            })
+            action(&["probe", "battery"]),
+            Some(Action::Probe(Query::Battery))
         );
         assert_eq!(
             action(&["equalizer", "preset", "bass-boost"]),
@@ -470,11 +427,11 @@ mod tests {
             "--address",
             "ac:80:0a:0b:2e:61",
             "probe",
-            "paired-devices",
+            "battery",
         ]);
         let after = parsed(&[
             "probe",
-            "paired-devices",
+            "battery",
             "--data-type",
             "mdr2",
             "--address",
@@ -497,7 +454,8 @@ mod tests {
             &["headset-test", "watch", "--seconds", "0"],
             &["headset-test", "watch", "--seconds", "601"],
             &["headset-test", "probe", "format-disk"],
-            &["headset-test", "probe", "ambient", "--arg", "zz"],
+            &["headset-test", "probe", "ambient", "--arg", "00"],
+            &["headset-test", "probe", "paired-devices"],
             &["headset-test", "equalizer"],
             &["headset-test", "equalizer", "preset", "loud"],
             &["headset-test", "equalizer", "preset", "manual"],
