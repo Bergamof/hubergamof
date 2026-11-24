@@ -45,6 +45,7 @@ impl Face for KeyFace {
         let Self {
             image,
             label,
+            caption,
             state,
             focused,
             checked,
@@ -53,6 +54,7 @@ impl Face for KeyFace {
         } = self;
         *image == other.image
             && *label == other.label
+            && *caption == other.caption
             && *state == other.state
             && *focused == other.focused
             && *checked == other.checked
@@ -414,6 +416,7 @@ fn render_key(
     let label = face.label.as_deref();
     let request = |image| {
         KeyRequest::new(size, image, label)
+            .captioned(face.caption.as_deref())
             .themed(theme)
             .in_state(face.state)
             .focused(face.focused)

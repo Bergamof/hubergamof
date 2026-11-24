@@ -14,9 +14,9 @@ use hubergamof_protocol::{RadialEntryConfig, RadialMenuConfig};
 
 use super::geometry::{FIT_RADIUS, Hit, Layout, Point, Ring, Size, fit_on_screen};
 use super::interaction::{Input, Menu, Output};
-use super::looks::{Items, Looks, Statuses};
+use super::looks::{Items, Looks, PetalNotes};
 use super::paint::Palette;
-use super::window::{Content, Petal};
+use super::window::{Content, Petal, PetalNote};
 
 /// What the window must show of the menu.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -82,7 +82,7 @@ pub struct Controller {
     layout: Option<Layout>,
     centre: Option<Point>,
     looks: Looks,
-    statuses: Statuses,
+    notes: PetalNotes,
     /// Where the actions of the modules are read from.
     item_reader: Items,
     /// The actions around each petal while the menu is open, read when it
@@ -109,7 +109,7 @@ impl Controller {
             layout: None,
             centre: None,
             looks: Looks::default(),
-            statuses: Statuses::default(),
+            notes: PetalNotes::default(),
             item_reader: Items::default(),
             items: Vec::new(),
             pointer_offset: None,
@@ -151,9 +151,9 @@ impl Controller {
         self.looks = looks;
     }
 
-    /// What the modules say under their names while the menu is open.
-    pub fn set_statuses(&mut self, statuses: Statuses) {
-        self.statuses = statuses;
+    /// What the modules say on their petals while the menu is open.
+    pub fn set_notes(&mut self, notes: PetalNotes) {
+        self.notes = notes;
     }
 
     /// What the modules offer around their petals, read when the menu opens.
@@ -198,10 +198,10 @@ impl Controller {
     /// What the modules of the shown entries say now, in the order of the
     /// petals.
     #[must_use]
-    pub fn statuses(&self) -> Vec<Option<String>> {
+    pub fn notes(&self) -> Vec<PetalNote> {
         self.entries
             .iter()
-            .map(|entry| self.statuses.of(&entry.module))
+            .map(|entry| self.notes.of(&entry.module))
             .collect()
     }
 
@@ -213,11 +213,11 @@ impl Controller {
         let petals = self
             .entries
             .iter()
-            .zip(self.statuses())
+            .zip(self.notes())
             .enumerate()
-            .map(|(index, (entry, status))| Petal {
+            .map(|(index, (entry, note))| Petal {
                 items: self.items.get(index).cloned().unwrap_or_default(),
-                ..self.looks.petal(&entry.module, status)
+                ..self.looks.petal(&entry.module, note)
             })
             .collect();
         Some(Content {
@@ -441,8 +441,9 @@ mod tests {
         let mut controller = controller();
         let says = Arc::new(Mutex::new("Focus 1/4".to_owned()));
         let reader = Arc::clone(&says);
-        controller.set_statuses(Statuses::new(move |module| {
-            (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone())
+        controller.set_notes(PetalNotes::new(move |module| PetalNote {
+            status: (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone()),
+            badge: None,
         }));
         let petals = |controller: &Controller| {
             controller
@@ -452,13 +453,18 @@ mod tests {
         };
         let statuses: Vec<_> = petals(&controller)
             .iter()
-            .map(|petal| petal.status.clone())
+            .map(|petal| petal.note.status.clone())
             .collect();
         assert_eq!(statuses, [Some("Focus 1/4".to_owned()), None, None, None]);
-        assert_eq!(controller.statuses(), statuses);
+        let said: Vec<_> = controller
+            .notes()
+            .into_iter()
+            .map(|note| note.status)
+            .collect();
+        assert_eq!(said, statuses);
 
         "Focus 2/4".clone_into(&mut says.lock().unwrap());
-        assert_eq!(controller.statuses()[0].as_deref(), Some("Focus 2/4"));
+        assert_eq!(controller.notes()[0].status.as_deref(), Some("Focus 2/4"));
     }
 
     #[test]

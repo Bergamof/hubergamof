@@ -50,6 +50,45 @@ pub struct CallState {
     pub camera_on: Option<bool>,
     /// Who is calling, while it rings.
     pub caller: Option<String>,
+    /// How long the call has lasted; `None` outside a call.
+    pub elapsed: Option<CallClock>,
+}
+
+/// The duration of a call, kept as a moment and a number of seconds so that
+/// it can be read at any time without a report from Teams.
+#[derive(Debug, Clone, Copy)]
+pub struct CallClock {
+    /// Seconds of the call at `since`.
+    seconds: u64,
+    /// When `seconds` was read.
+    since: tokio::time::Instant,
+}
+
+/// Two clocks are equal when they read the same second now: a report that
+/// agrees with the count is not a change of state.
+impl PartialEq for CallClock {
+    fn eq(&self, other: &Self) -> bool {
+        self.seconds() == other.seconds()
+    }
+}
+
+impl Eq for CallClock {}
+
+impl CallClock {
+    /// A call that lasted `seconds` just now.
+    fn at(seconds: u64) -> Self {
+        Self {
+            seconds,
+            since: tokio::time::Instant::now(),
+        }
+    }
+
+    /// Whole seconds of the call now. Each report of Teams sets the clock
+    /// again, so the count may jump by a second when Teams and it disagree.
+    #[must_use]
+    pub fn seconds(&self) -> u64 {
+        self.seconds.saturating_add(self.since.elapsed().as_secs())
+    }
 }
 
 /// The counters of the left rail of Teams.
@@ -119,6 +158,19 @@ impl TeamsState {
             .max(self.activity().saturating_add(self.unread_chats()))
     }
 
+    /// The clock of the call after a report: the duration Teams shows, else
+    /// the one already running, else one started now (the call was just
+    /// seen); none outside a call.
+    fn call_clock(&self, phase: CallPhase, shown: Option<u64>) -> Option<CallClock> {
+        if phase != CallPhase::InCall {
+            return None;
+        }
+        shown
+            .map(CallClock::at)
+            .or(self.call.elapsed)
+            .or_else(|| Some(CallClock::at(0)))
+    }
+
     /// The state after `report`, which is sanitized here: what the page
     /// sent is never trusted. Tells whether the state changed.
     pub(crate) fn apply(&mut self, report: BrowserReport) -> bool {
@@ -136,12 +188,15 @@ impl TeamsState {
                 muted,
                 camera_on,
                 caller,
+                elapsed_seconds,
             } => {
+                let elapsed = self.call_clock(phase, elapsed_seconds);
                 self.call = CallState {
                     phase,
                     muted,
                     camera_on,
                     caller,
+                    elapsed,
                 };
             }
             BrowserReport::Meetings { items } => self.meetings = items,

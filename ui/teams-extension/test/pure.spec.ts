@@ -1,6 +1,7 @@
 import manifest from '../manifest.json';
 import { describe, expect, it, vi } from 'vitest';
 import { reconnectDelay } from '../lib/backoff.js';
+import { secondsFromDuration } from '../lib/duration.js';
 import { cameraOnFromLabel, mutedFromLabel } from '../lib/labels.js';
 import { meetingFromLabel } from '../lib/meetings.js';
 import { HEALTHY_AFTER_MS, Relay } from '../lib/relay.js';
@@ -179,5 +180,33 @@ describe('the manifest', () => {
 			{ resources: ['lib/*.js'], matches: origins }
 		]);
 		expect(manifest).not.toHaveProperty('externally_connectable');
+	});
+});
+
+describe('secondsFromDuration', () => {
+	it('reads minutes and seconds, with or without hours', () => {
+		expect(secondsFromDuration('00:10')).toBe(10);
+		expect(secondsFromDuration(' 12:34 ')).toBe(754);
+		expect(secondsFromDuration('1:02:03')).toBe(3723);
+		expect(secondsFromDuration('01:00:00')).toBe(3600);
+		expect(secondsFromDuration('0:00:00')).toBe(0);
+	});
+	it('gives nothing for anything else', () => {
+		for (const text of [
+			null,
+			undefined,
+			'',
+			'en cours',
+			'12',
+			'12:60',
+			'75:00',
+			'1000:00:00',
+			'12:3',
+			'1\n2:34',
+			'1:75:00',
+			'-1:00'
+		]) {
+			expect(secondsFromDuration(text)).toBeNull();
+		}
 	});
 });

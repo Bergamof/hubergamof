@@ -33,12 +33,21 @@ pub struct Petal {
     pub label: String,
     /// Icon, if the entry has one.
     pub icon: Option<RgbaImage>,
-    /// What the module says under the name: up to two lines separated by
-    /// `\n`, changing while the menu is open.
-    pub status: Option<String>,
+    /// What the module says on the petal, changing while the menu is open.
+    pub note: PetalNote,
     /// The actions of the arc in front of the petal, in order, changing while
     /// the menu is open.
     pub items: Vec<RadialItem>,
+}
+
+/// What a module says on its petal while the menu is open.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PetalNote {
+    /// Up to two lines under the name, separated by `\n`.
+    pub status: Option<String>,
+    /// The count drawn as a badge on the icon; none (preferred) or zero
+    /// draws no badge.
+    pub badge: Option<u32>,
 }
 
 /// What the window draws while the menu is open.
@@ -67,7 +76,7 @@ pub trait Surface {
     fn redraw(&self, view: View);
     /// Gives the petals what their modules say now (one per petal, in order)
     /// and draws the menu again.
-    fn update_statuses(&self, statuses: Vec<Option<String>>);
+    fn update_notes(&self, notes: Vec<PetalNote>);
     /// Gives the petals the actions their modules offer now (one list per
     /// petal, in order) and draws the menu again.
     fn update_items(&self, items: Vec<Vec<RadialItem>>);
@@ -90,16 +99,16 @@ pub(super) fn opening_progress(content: &Content, placed_at: Option<Instant>) ->
     }
 }
 
-/// Puts `statuses` on `petals`, one each in order; a petal without one keeps
+/// Puts `notes` on `petals`, one each in order; a petal without one keeps
 /// none.
-pub(super) fn apply_statuses(petals: &mut [Petal], statuses: Vec<Option<String>>) {
+pub(super) fn apply_notes(petals: &mut [Petal], notes: Vec<PetalNote>) {
     debug_assert!(
-        statuses.len() == petals.len(),
-        "one status per petal: the entries do not change while the menu is open"
+        notes.len() == petals.len(),
+        "one note per petal: the entries do not change while the menu is open"
     );
-    let mut statuses = statuses.into_iter();
+    let mut notes = notes.into_iter();
     for petal in petals {
-        petal.status = statuses.next().flatten();
+        petal.note = notes.next().unwrap_or_default();
     }
 }
 
@@ -180,8 +189,8 @@ impl Surface for Box<dyn Surface + Send> {
         (**self).redraw(view);
     }
 
-    fn update_statuses(&self, statuses: Vec<Option<String>>) {
-        (**self).update_statuses(statuses);
+    fn update_notes(&self, notes: Vec<PetalNote>) {
+        (**self).update_notes(notes);
     }
 
     fn update_items(&self, items: Vec<Vec<RadialItem>>) {
@@ -230,21 +239,52 @@ mod tests {
     use crate::radial::paint::DEFAULT_PALETTE;
 
     #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "one note per petal")]
+    fn notes_that_do_not_match_the_petals_are_refused_in_debug() {
+        let mut petals = vec![Petal {
+            label: "a".to_owned(),
+            icon: None,
+            note: PetalNote::default(),
+            items: Vec::new(),
+        }];
+        apply_notes(&mut petals, Vec::new());
+    }
+
+    #[test]
     fn statuses_are_given_to_the_petals_in_order_and_replace_what_they_said() {
         let petal = |label: &str| Petal {
             label: label.to_owned(),
             icon: None,
-            status: Some("old".to_owned()),
+            note: PetalNote {
+                status: Some("old".to_owned()),
+                badge: Some(9),
+            },
             items: Vec::new(),
         };
         let mut petals = vec![petal("a"), petal("b"), petal("c")];
-        apply_statuses(
+        apply_notes(
             &mut petals,
-            vec![Some("new".to_owned()), None, Some("last".to_owned())],
+            vec![
+                PetalNote {
+                    status: Some("new".to_owned()),
+                    badge: Some(2),
+                },
+                PetalNote::default(),
+                PetalNote {
+                    status: Some("last".to_owned()),
+                    badge: None,
+                },
+            ],
         );
-        let statuses: Vec<_> = petals.iter().map(|petal| petal.status.clone()).collect();
+        let badges: Vec<_> = petals.iter().map(|petal| petal.note.badge).collect();
+        assert_eq!(badges, [Some(2), None, None]);
+        let notes: Vec<_> = petals
+            .iter()
+            .map(|petal| petal.note.status.clone())
+            .collect();
         assert_eq!(
-            statuses,
+            notes,
             [Some("new".to_owned()), None, Some("last".to_owned())]
         );
     }
@@ -256,7 +296,7 @@ mod tests {
         let petal = |items| Petal {
             label: String::new(),
             icon: None,
-            status: None,
+            note: PetalNote::default(),
             items,
         };
         let mut petals = vec![petal(vec![item("old")]), petal(Vec::new())];

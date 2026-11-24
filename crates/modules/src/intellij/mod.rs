@@ -29,8 +29,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities, ModuleContext,
-    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface, PageContent, PageId,
-    PageItem, RadialActionDescriptor, SettingField, SettingKind,
+    ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime, ModuleSurface,
+    PageContent, PageId, PageItem, RadialActionDescriptor, SettingField, SettingKind,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -162,6 +162,11 @@ impl IntellijSettings {
 }
 
 impl ModuleFactory for IntellijFactory {
+    /// One instance for the whole application.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
     }
@@ -400,6 +405,10 @@ impl Module for Intellij {
         }
         self.app.acknowledge();
         self.launch(Opening::Application, ModuleSurface::HomeKey, Vec::new())
+    }
+
+    fn page_ids(&self) -> Vec<PageId> {
+        vec![PageId(MAIN_PAGE.into())]
     }
 
     fn page(&self, page: &PageId) -> Option<PageContent> {

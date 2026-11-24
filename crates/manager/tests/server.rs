@@ -1585,7 +1585,7 @@ async fn what_the_modules_of_the_application_do_not_offer_is_refused() {
 
     client
         .send(&ClientMessage::UpdateModuleSettings {
-            module: "audio".into(),
+            module: "docker".into(),
             settings: serde_json::json!({}),
         })
         .await;

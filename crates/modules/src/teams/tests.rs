@@ -102,9 +102,11 @@ impl Harness {
                 .await
                 .expect("an event")
                 .expect("the instance is alive");
-            let from_desktop = event.is::<AppEvent>();
+            // The desktop and the clock of the call report on their own: not
+            // what a test waits for.
+            let aside = event.is::<AppEvent>() || event.is::<ElapsedChanged>();
             let commands = self.module.on_event(event).await;
-            if !from_desktop {
+            if !aside {
                 return commands;
             }
         }
@@ -114,7 +116,13 @@ impl Harness {
     /// the commands among them are.
     async fn settle_desktop(&mut self) -> Vec<Command> {
         let mut commands = Vec::new();
-        while let Ok(Some(event)) = tokio::time::timeout(DESKTOP_QUIET, self.events.recv()).await {
+        let mut quiet_at = tokio::time::Instant::now() + DESKTOP_QUIET;
+        while let Ok(Some(event)) = tokio::time::timeout_at(quiet_at, self.events.recv()).await {
+            // A call's clock ticks every second: it never makes the desktop
+            // any less quiet.
+            if !event.is::<ElapsedChanged>() {
+                quiet_at = tokio::time::Instant::now() + DESKTOP_QUIET;
+            }
             commands.extend(self.module.on_event(event).await);
         }
         commands
@@ -126,6 +134,7 @@ impl Harness {
             muted: Some(false),
             camera_on: Some(false),
             caller: None,
+            elapsed_seconds: None,
         })
         .await
     }
@@ -472,6 +481,7 @@ async fn a_call_opens_its_page_once_and_keeps_the_device_lit() {
             muted: Some(true),
             camera_on: Some(false),
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     assert!(!open_page(&commands, CALL_PAGE));
@@ -512,6 +522,7 @@ async fn the_call_page_follows_the_microphone() {
             muted: Some(true),
             camera_on: None,
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     let mute = &harness.call_page().items[0].key;
@@ -529,6 +540,7 @@ async fn the_actions_of_a_call_have_icons_and_no_attention_state() {
             muted: Some(true),
             camera_on: Some(false),
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     let page = harness.call_page();
@@ -554,6 +566,7 @@ async fn the_actions_of_a_call_have_icons_and_no_attention_state() {
             muted: Some(false),
             camera_on: Some(true),
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     let page = harness.call_page();
@@ -591,6 +604,7 @@ async fn a_ringing_call_shows_no_conversations() {
             muted: None,
             camera_on: None,
             caller: Some("Camille".into()),
+            elapsed_seconds: None,
         })
         .await;
     let page = harness.call_page();
@@ -642,6 +656,7 @@ async fn the_home_key_is_usable_when_locked_only_during_a_call() {
             muted: None,
             camera_on: None,
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     assert!(!harness.module.key().usable_when_locked);
@@ -699,6 +714,7 @@ async fn a_ringing_call_offers_to_answer_or_decline() {
             muted: None,
             camera_on: None,
             caller: Some("Camille".into()),
+            elapsed_seconds: None,
         })
         .await;
     assert!(open_page(&commands, CALL_PAGE));
@@ -739,6 +755,7 @@ async fn an_event_lost_in_a_full_queue_costs_nothing_but_the_page_opening() {
         muted: Some(true),
         camera_on: None,
         caller: None,
+        elapsed_seconds: None,
     });
     while harness.events.try_recv().is_ok() {}
 
@@ -856,6 +873,7 @@ async fn an_incoming_call_is_announced_and_its_notification_answers_it() {
             muted: None,
             camera_on: None,
             caller: Some("Alice".into()),
+            elapsed_seconds: None,
         })
         .await;
     let announced = notification(&commands).expect("a notification");
@@ -893,6 +911,7 @@ async fn a_ringing_call_is_announced_once() {
         muted: None,
         camera_on: None,
         caller: Some(caller.into()),
+        elapsed_seconds: None,
     };
     assert!(notification(&harness.report(ringing("Alice")).await).is_some());
     assert!(notification(&harness.report(ringing("Alice B.")).await).is_none());
@@ -1145,6 +1164,7 @@ async fn a_call_that_starts_ringing_raises_the_haptic_event_once() {
         muted: None,
         camera_on: None,
         caller: Some("Camille".into()),
+        elapsed_seconds: None,
     };
     let commands = harness.report(ringing).await;
     assert!(commands.contains(&Command::haptic("incoming-call")));
@@ -1155,6 +1175,7 @@ async fn a_call_that_starts_ringing_raises_the_haptic_event_once() {
             muted: None,
             camera_on: None,
             caller: Some("Camille D.".into()),
+            elapsed_seconds: None,
         })
         .await;
     assert!(!again.contains(&Command::haptic("incoming-call")));
@@ -1225,6 +1246,7 @@ async fn the_petal_adds_the_call_controls_during_a_call_only() {
         muted: None,
         camera_on: None,
         caller: Some("Camille".into()),
+        elapsed_seconds: None,
     };
     harness.report(ringing).await;
     assert_eq!(radial_ids(&harness), ["conversations", "activity"]);
@@ -1256,6 +1278,7 @@ async fn the_petal_shows_a_muted_microphone_then_loses_the_call_controls() {
             muted: Some(true),
             camera_on: Some(true),
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     let items = harness.module.radial_items();
@@ -1270,6 +1293,7 @@ async fn the_petal_shows_a_muted_microphone_then_loses_the_call_controls() {
             muted: None,
             camera_on: None,
             caller: None,
+            elapsed_seconds: None,
         })
         .await;
     assert_eq!(radial_ids(&harness), ["conversations", "activity"]);
@@ -1351,4 +1375,211 @@ async fn the_navigation_actions_of_the_menu_do_nothing_when_locked_and_alert_wit
         harness.module.on_radial_action("activity").await,
         Command::alert()
     );
+}
+
+fn call_report(elapsed_seconds: Option<u64>) -> BrowserReport {
+    BrowserReport::Call {
+        phase: CallPhase::InCall,
+        muted: Some(false),
+        camera_on: Some(false),
+        caller: None,
+        elapsed_seconds,
+    }
+}
+
+fn hang_up_caption(harness: &Harness) -> Option<String> {
+    let page = harness.call_page();
+    let hang_up = page
+        .items
+        .iter()
+        .find(|item| item.id.0 == "hangup")
+        .expect("a hang up key");
+    hang_up.key.caption.clone()
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_hang_up_key_shows_the_duration_teams_shows_and_counts_on() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.report(call_report(Some(65))).await;
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("1:05"));
+    tokio::time::advance(Duration::from_secs(5)).await;
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("1:10"));
+    // Teams shows the duration again: its value wins over the count.
+    harness.report(call_report(Some(3600))).await;
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("1:00:00"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_instance_is_woken_when_a_new_second_shows() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.report(call_report(Some(0))).await;
+    // The first sight of the duration wakes the instance once; that wake-up
+    // must not stand for the one of the next second.
+    tokio::time::advance(Duration::from_millis(300)).await;
+    while harness.events.try_recv().is_ok() {}
+    tokio::time::advance(Duration::from_secs(2)).await;
+    // Without the wake-up the page would keep the second it was drawn with.
+    let event = tokio::time::timeout(Duration::from_secs(2), harness.events.recv())
+        .await
+        .expect("an event")
+        .expect("the instance is alive");
+    assert!(event.is::<ElapsedChanged>());
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("0:02"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_call_without_a_shown_duration_is_timed_from_when_it_was_seen() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness.report(call_report(None)).await;
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("0:00"));
+    tokio::time::advance(Duration::from_secs(12)).await;
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("0:12"));
+    // A later report without a duration does not restart the count (and is
+    // no change worth an event: only the clock wakes the instance).
+    harness.bridge.report(call_report(None));
+    assert_eq!(hang_up_caption(&harness).as_deref(), Some("0:12"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_a_call_in_progress_has_a_duration() {
+    let mut state = TeamsState::default();
+    state.apply(call_report(Some(30)));
+    assert!(state.call.elapsed.is_some());
+    state.apply(BrowserReport::Call {
+        phase: CallPhase::Ringing,
+        muted: None,
+        camera_on: None,
+        caller: Some("Camille".into()),
+        elapsed_seconds: Some(30),
+    });
+    assert!(state.call.elapsed.is_none());
+    state.apply(call_report(None));
+    assert_eq!(state.call.elapsed.map(|clock| clock.seconds()), Some(0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_report_that_agrees_with_the_count_is_not_a_change() {
+    let mut state = TeamsState::default();
+    assert!(state.apply(call_report(Some(30))));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(!state.apply(call_report(Some(32))));
+    assert!(state.apply(call_report(Some(90))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_duration_ends_with_the_call_and_a_new_call_starts_again() {
+    let mut state = TeamsState::default();
+    state.apply(call_report(None));
+    tokio::time::advance(Duration::from_secs(40)).await;
+    state.apply(BrowserReport::Call {
+        phase: CallPhase::Idle,
+        muted: None,
+        camera_on: None,
+        caller: None,
+        elapsed_seconds: None,
+    });
+    assert!(state.call.elapsed.is_none());
+    state.apply(call_report(None));
+    assert_eq!(state.call.elapsed.map(|clock| clock.seconds()), Some(0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_says_a_call_is_going_on_with_its_duration() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    assert_eq!(harness.module.radial_status(), None);
+    harness.report(call_report(Some(65))).await;
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("En appel\n1:05")
+    );
+    tokio::time::advance(Duration::from_secs(5)).await;
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("En appel\n1:10")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_says_when_a_call_rings_and_forgets_it_after() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: Some("Camille".into()),
+            elapsed_seconds: None,
+        })
+        .await;
+    // The caller is a name: it stays off the petal, which is read aloud and logged.
+    assert_eq!(
+        harness.module.radial_status().as_deref(),
+        Some("Appel entrant")
+    );
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Idle,
+            muted: None,
+            camera_on: None,
+            caller: None,
+            elapsed_seconds: None,
+        })
+        .await;
+    assert_eq!(harness.module.radial_status(), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_counts_what_teams_counts_and_lists_its_pages() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    assert_eq!(harness.module.radial_badge(), None);
+    harness
+        .report(BrowserReport::Badges {
+            activity: 2,
+            chats: 3,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(5));
+    harness
+        .report(BrowserReport::Badges {
+            activity: 0,
+            chats: 0,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), None, "zero draws no badge");
+
+    // One counter alone counts.
+    harness
+        .report(BrowserReport::Badges {
+            activity: 0,
+            chats: 4,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(4));
+    harness
+        .report(BrowserReport::Badges {
+            activity: 6,
+            chats: 0,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(6));
+
+    let pages: Vec<_> = harness
+        .module
+        .page_ids()
+        .into_iter()
+        .map(|page| page.0)
+        .collect();
+    assert_eq!(pages, [CALL_PAGE, UNREAD_PAGE]);
+}
+
+#[test]
+fn teams_lives_in_the_application() {
+    let factory = TeamsFactory::new(
+        Arc::new(SimulatedBridge::new()),
+        DesktopHub::new(
+            Arc::new(SimulatedDesktop::empty()) as _,
+            vec![desktop_app()],
+        ),
+    );
+    assert_eq!(factory.lifetime(), ModuleLifetime::Application);
 }

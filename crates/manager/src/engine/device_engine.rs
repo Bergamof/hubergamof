@@ -770,7 +770,7 @@ impl DeviceEngine {
             return false;
         }
         self.trace_declared_while_locked(module, declared);
-        let Some(outcome) = self.instances.call(module, call).await else {
+        let Some(outcome) = self.instances.call(module, call, declared).await else {
             return false;
         };
         let done = matches!(outcome, Outcome::Done(_));

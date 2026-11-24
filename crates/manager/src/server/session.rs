@@ -147,6 +147,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         update_settings,
         mouse,
         application,
+        told_modules: Vec::new(),
         machine,
         git,
         locked,
@@ -166,6 +167,9 @@ struct Session {
     mouse: MouseFeed,
     /// What the modules of the application show, when the manager has them.
     application: Option<watch::Receiver<ModuleViews>>,
+    /// What the client was last told of them: the views also change for what
+    /// the interface does not show (the pages), which is not worth a message.
+    told_modules: Vec<ApplicationModuleView>,
     /// The machine as updates leave it, from any client.
     machine: broadcast::Receiver<Arc<MachineSnapshot>>,
     /// The Git configuration as updates leave it, from any client.
@@ -213,7 +217,7 @@ impl Session {
                 Event::Mouse(Some(message)) => self.send(&message).await?,
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
-                Event::ApplicationChanged => self.send_application_modules().await?,
+                Event::ApplicationChanged => self.send_application_modules_if_changed().await?,
                 Event::MachineChanged(snapshot) => self.send_machine(&snapshot).await?,
                 Event::GitChanged(snapshot) => self.send_git(&snapshot).await?,
                 Event::LockChanged => {
@@ -537,9 +541,29 @@ impl Session {
 
     /// What the modules of the application show now, if the manager has any.
     async fn send_application_modules(&mut self) -> Result<(), Closed> {
-        let Some(views) = self.application.as_mut() else {
+        let Some(modules) = self.application_modules() else {
             return Ok(());
         };
+        self.told_modules.clone_from(&modules);
+        self.send(&ServerMessage::ApplicationModules { modules })
+            .await
+    }
+
+    /// The same, unless the client already knows it.
+    async fn send_application_modules_if_changed(&mut self) -> Result<(), Closed> {
+        match self.application_modules() {
+            Some(modules) if modules != self.told_modules => {
+                self.told_modules.clone_from(&modules);
+                self.send(&ServerMessage::ApplicationModules { modules })
+                    .await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// What the interface shows of the modules of the application now.
+    fn application_modules(&mut self) -> Option<Vec<ApplicationModuleView>> {
+        let views = self.application.as_mut()?;
         let modules = views
             .borrow_and_update()
             .iter()
@@ -549,8 +573,7 @@ impl Session {
                 settings: view.settings.clone(),
             })
             .collect();
-        self.send(&ServerMessage::ApplicationModules { modules })
-            .await
+        Some(modules)
     }
 
     /// Tells the client what it could not hear while the computer was locked.

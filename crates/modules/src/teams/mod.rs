@@ -9,6 +9,7 @@
 //! lit while its page is displayed.
 
 mod bridge;
+mod elapsed;
 mod icons;
 pub mod native_host;
 mod reminders;
@@ -20,9 +21,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
-    Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor,
-    RadialGlyph, RadialItem, RadialItemState, Rgb, ScreenLockState,
+    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime,
+    ModuleSurface, Notification, NotificationId, PageContent, PageId, PageItem,
+    RadialActionDescriptor, RadialGlyph, RadialItem, RadialItemState, Rgb, ScreenLockState,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
@@ -32,6 +33,7 @@ pub use bridge::{
     CallState, RailBadges, RequestError, SimulatedBridge, SocketBridge, TeamsBridge, TeamsState,
     is_same_user, socket_path,
 };
+use elapsed::ElapsedChanged;
 use icons::{
     ACCEPT, ACTIVITY, CAMERA, CAMERA_OFF, CONVERSATION, HANG_UP, MICROPHONE, MICROPHONE_MUTED,
     RETURN,
@@ -91,6 +93,9 @@ const IN_CALL_LABEL: &str = "En appel";
 const RINGING_LABEL: &str = "Appel";
 const OFFLINE_LABEL: &str = "Hors ligne";
 const CLOSED_LABEL: &str = "Teams fermé";
+/// What the petal of the radial menu says during a call, and while it rings.
+const IN_CALL_STATUS: &str = "En appel";
+const RINGING_STATUS: &str = "Appel entrant";
 const ANSWER_LABEL: &str = "Répondre";
 
 /// Background of the notifications of a meeting and of an incoming call.
@@ -207,6 +212,11 @@ fn descriptor() -> ModuleDescriptor {
 }
 
 impl ModuleFactory for TeamsFactory {
+    /// One instance for the whole application.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
     }
@@ -287,6 +297,8 @@ impl ModuleFactory for TeamsFactory {
                 events.send(TeamsChanged);
             }
         });
+        ctx.tasks()
+            .spawn(elapsed::run(changes.clone(), ctx.events().clone()));
         ctx.tasks().spawn(reminders::run(
             changes.clone(),
             lead_changes,
@@ -387,6 +399,15 @@ impl CallItem {
     }
 }
 
+/// The Hang up key, with the duration of the call over its icon.
+fn hang_up_key(state: &TeamsState) -> KeyContent {
+    let key = KeyContent::with_icon(&HANG_UP, "Raccrocher");
+    match elapsed::shown(state) {
+        Some(duration) => key.with_caption(duration),
+        None => key,
+    }
+}
+
 impl Teams {
     /// The unread conversations; no page once nothing is unread, which takes
     /// the host back to the page below (the home page).
@@ -416,7 +437,7 @@ impl Teams {
         let actions = [
             CallItem::Mute.item(mute_key(call.muted)),
             CallItem::Camera.item(camera_key(call.camera_on)),
-            CallItem::HangUp.item(KeyContent::with_icon(&HANG_UP, "Raccrocher")),
+            CallItem::HangUp.item(hang_up_key(&state)),
             CallItem::ReturnToCall.item(KeyContent::with_icon(&RETURN, "Revenir à l'appel")),
         ];
         let pinned = actions.len();
@@ -727,6 +748,10 @@ impl Module for Teams {
         }
     }
 
+    fn page_ids(&self) -> Vec<PageId> {
+        vec![PageId(CALL_PAGE.into()), PageId(UNREAD_PAGE.into())]
+    }
+
     fn page(&self, page: &PageId) -> Option<PageContent> {
         match page.0.as_str() {
             UNREAD_PAGE => self.unread_page(),
@@ -755,6 +780,23 @@ impl Module for Teams {
             Some(CallItem::ReturnToCall) => self.return_to_call(surface),
             Some(item) => self.ask(item.action()),
             None => Vec::new(),
+        }
+    }
+
+    fn radial_badge(&self) -> Option<u32> {
+        let unread = self.changes.borrow().total_unread();
+        (unread > 0).then_some(unread)
+    }
+
+    fn radial_status(&self) -> Option<String> {
+        let state = self.changes.borrow();
+        match state.call.phase {
+            CallPhase::InCall => Some(match elapsed::shown(&state) {
+                Some(duration) => format!("{IN_CALL_STATUS}\n{duration}"),
+                None => IN_CALL_STATUS.to_owned(),
+            }),
+            CallPhase::Ringing => Some(RINGING_STATUS.to_owned()),
+            CallPhase::Idle | CallPhase::Prejoin => None,
         }
     }
 
@@ -788,6 +830,10 @@ impl Module for Teams {
                 Command::Notify(notification),
                 Command::haptic(HAPTIC_MEETING_SOON),
             ];
+        }
+        if event.is::<ElapsedChanged>() {
+            // Nothing to do but draw the keys again with the new duration.
+            return Vec::new();
         }
         if !event.is::<TeamsChanged>() {
             return Vec::new();

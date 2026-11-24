@@ -111,8 +111,12 @@ async fn the_settings_of_a_device_become_those_of_the_application() {
     let stored = || fixture.store.load_app_modules().unwrap().config.modules;
 
     // The settings the deck had are kept, since the file had none.
-    wait_until(|| !stored().is_empty()).await;
-    assert_eq!(stored()[0].kind, pomodoro());
+    let stored_pomodoro = || {
+        stored()
+            .into_iter()
+            .find(|instance| instance.kind == pomodoro())
+    };
+    wait_until(|| stored_pomodoro().is_some()).await;
 
     // Settings saved on the deck replace them.
     let mut config = fixture.engine.config().borrow().clone();
@@ -123,7 +127,8 @@ async fn the_settings_of_a_device_become_those_of_the_application() {
         .unwrap();
     instance.settings = json!({ "workMinutes": 30 });
     fixture.engine.apply_config(config).await.unwrap();
-    wait_until(|| stored()[0].settings["workMinutes"] == 30).await;
+    wait_until(|| stored_pomodoro().is_some_and(|stored| stored.settings["workMinutes"] == 30))
+        .await;
 }
 
 /// Waits, in real time, until `done` holds.
@@ -135,4 +140,41 @@ async fn wait_until(done: impl Fn() -> bool) {
     })
     .await
     .expect("it happens");
+}
+
+#[tokio::test]
+async fn a_device_shows_the_pages_of_a_module_of_the_application() {
+    let fixture = start_applied(virtual_plus_info(DEMO_SERIAL), |_, _| {}).await;
+    fixture
+        .configure(
+            vec![instance("audio", "audio", json!({}))],
+            &["audio"],
+            &[Some(NAVIGATION_DIAL), None, None, None],
+        )
+        .await;
+    // The application lists its pages a moment after it started.
+    let mut views = fixture.host.clone().unwrap().views();
+    tokio::time::timeout(
+        WAIT,
+        views.wait_for(|views| {
+            views
+                .get(&"audio".into())
+                .is_some_and(|view| !view.pages.is_empty())
+        }),
+    )
+    .await
+    .expect("the application lists the pages of audio")
+    .unwrap();
+
+    fixture.engine.press_key(0).await.unwrap();
+    fixture.wait_for(|f| f.page().id == "audio/audio").await;
+    assert!(
+        fixture.labels().iter().flatten().count() > 0,
+        "the page of the application has keys"
+    );
+
+    // A press on an item goes to the application, which opens its other page
+    // (the outputs), and the device shows that one.
+    fixture.engine.press_key(1).await.unwrap();
+    fixture.wait_for(|f| f.page().id == "audio/outputs").await;
 }

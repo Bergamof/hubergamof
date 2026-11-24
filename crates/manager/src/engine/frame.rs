@@ -20,6 +20,8 @@ use crate::strip::StripFace;
 pub(crate) struct KeyFace {
     pub(crate) image: Option<ImageSource>,
     pub(crate) label: Option<String>,
+    /// Short text over the top of the image.
+    pub(crate) caption: Option<String>,
     pub(crate) state: KeyState,
     /// Holds the cursor of the contextual dial.
     pub(crate) focused: bool,
@@ -36,6 +38,7 @@ impl KeyFace {
         Self {
             image: content.image.map(image_source),
             label: content.label,
+            caption: content.caption,
             state: content.state,
             focused: content.focused,
             checked: content.checked,
@@ -47,6 +50,7 @@ impl KeyFace {
     pub(crate) fn is_blank(&self) -> bool {
         self.image.is_none()
             && self.label.is_none()
+            && self.caption.is_none()
             && self.state == KeyState::Normal
             && !self.focused
             && !self.checked

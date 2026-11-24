@@ -11,6 +11,17 @@ export const POLL_INTERVAL_MS = 2000;
 export const RESEND_AFTER_MS = 30_000;
 
 /**
+ * The duration of a call changes every second and the manager counts it by
+ * itself: it is not what makes a report new. Whether it is known is (and a
+ * report goes again after {@link RESEND_AFTER_MS}, which sets the count right).
+ * @param {string} key
+ * @param {unknown} value
+ */
+function unchangingFields(key, value) {
+	return key === 'elapsedSeconds' ? value !== null : value;
+}
+
+/**
  * Reports what the page shows, whenever it changes (and now and then even if
  * it does not, see {@link RESEND_AFTER_MS}), and carries out the
  * actions the manager asks for.
@@ -36,7 +47,7 @@ export function start(doc, runtime, env = {}) {
 	function report() {
 		const time = now();
 		for (const item of readReports(doc, hostname, Math.floor(time / 1000), context)) {
-			const text = JSON.stringify(item);
+			const text = JSON.stringify(item, unchangingFields);
 			const previous = sent.get(item.type);
 			if (previous?.text === text && time - previous.at < RESEND_AFTER_MS) continue;
 			sent.set(item.type, { text, at: time });
