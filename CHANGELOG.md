@@ -9,6 +9,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Rubrique « Machine » : un `machine.json` invalide, mis de côté et remplacé par une configuration vide, retire aussi de l'ordinateur ce qu'il y avait appliqué (alias du fichier géré, lignes d'origine commentées rétablies), comme pour Git.
 - Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
 
 ### Ajouté
