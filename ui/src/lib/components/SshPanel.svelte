@@ -71,8 +71,9 @@ sent at once; the line under the title says whether the manager has saved it.
 			Écrits dans un fichier de HuBergamof, inclus tout en haut de
 			<code class="font-mono">~/.ssh/config</code>, qui reste sinon tel que vous l’avez écrit : ce
 			qui est écrit ici l’emporte. Les champs du formulaire ne lancent aucun programme ; les autres
-			réglages passent par les « options avancées » de chaque serveur. Un serveur désactivé reste
-			ici mais n’est plus sur l’ordinateur.
+			réglages sont les « options avancées » du serveur, dans son formulaire ou dans sa ligne, et
+			peuvent en lancer un. « Reprendre » un serveur de ce fichier emporte aussi ses options. Un
+			serveur désactivé reste ici mais n’est plus sur l’ordinateur.
 		</p>
 		{#if config}
 			<SshHostList
@@ -101,7 +102,7 @@ sent at once; the line under the title says whether the manager has saved it.
 					bind:this={addForm}
 					labelledby="{uid}-add"
 					takenAliases={config.hosts.map(({ alias }) => alias)}
-					submitLabel="Ajouter"
+					submitLabel="Ajouter le serveur"
 					onsubmit={(host) => edit(addHost(host))}
 				/>
 			{/if}

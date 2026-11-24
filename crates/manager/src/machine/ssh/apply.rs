@@ -6,12 +6,12 @@
 //! would only be read for that host: the block goes at the very start of the
 //! file, so the hosts of HuBergamof come first and win.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use hubergamof_protocol::SshConfig;
+use hubergamof_protocol::{AdvancedSetting, SshConfig};
 use thiserror::Error;
 
 use super::claim::{claim_originals, untakeable_names};
@@ -160,12 +160,12 @@ impl SshFiles {
         let Some(bytes) = read_text_file(&self.config_file())? else {
             return Ok(());
         };
-        let aliases: HashSet<&str> = config
+        let hosts: HashMap<&str, &[AdvancedSetting]> = config
             .hosts
             .iter()
-            .map(|host| host.alias.as_str())
+            .map(|host| (host.alias.as_str(), host.options.as_slice()))
             .collect();
-        let in_use = untakeable_names(&String::from_utf8_lossy(&bytes), &aliases);
+        let in_use = untakeable_names(&String::from_utf8_lossy(&bytes), &hosts);
         if in_use.is_empty() {
             Ok(())
         } else {

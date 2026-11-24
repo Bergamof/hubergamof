@@ -54,7 +54,7 @@ them from the managed ones. Once one is taken, the focus goes to the next « Rep
 			host.proxyJump && `via ${host.proxyJump}`,
 			host.forwardAgent && 'agent transmis',
 			host.options.length > 0 &&
-				`${host.options.length} option${host.options.length > 1 ? 's' : ''} avancée${host.options.length > 1 ? 's' : ''}`
+				`options avancées : ${host.options.map(({ key }) => key).join(', ')}`
 		]
 			.filter(Boolean)
 			.join(' · ');

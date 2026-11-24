@@ -82,6 +82,7 @@ one) after a removal.
 		if (removing) {
 			const index = hosts.findIndex(({ alias }) => alias === removing?.alias);
 			afterRemoval = { neighbour: (hosts[index + 1] ?? hosts[index - 1])?.alias };
+			optionsOpen.delete(removing.alias);
 			onremove(removing.alias);
 		}
 		removing = undefined;

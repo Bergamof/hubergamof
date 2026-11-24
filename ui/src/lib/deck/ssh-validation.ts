@@ -120,8 +120,6 @@ export interface HostErrors {
 	port?: string;
 	identityFile?: string;
 	proxyJump?: string;
-	/** The first option of the list that does not follow the rules. */
-	options?: string;
 }
 
 /** A host as typed: the port is text until it is checked. */
@@ -185,8 +183,6 @@ export function validateHost(draft: HostDraft, takenAliases: readonly string[]):
 		const jumpError = proxyJumpError(draft.proxyJump);
 		if (jumpError) found.proxyJump = jumpError;
 	}
-	const optionsError = optionListError(draft.options);
-	if (optionsError) found.options = optionsError;
 	return found;
 }
 
@@ -195,14 +191,16 @@ export function hasHostErrors(errors: HostErrors): boolean {
 }
 
 /** The name `ssh` documents for an option the manager could not carry, from the lowercase one it gives. */
-const OPTION_NAMES: Record<string, string> = {
-	identityfile: 'IdentityFile (plusieurs clés)',
-	forwardagent: 'ForwardAgent (une valeur autre que yes ou no)',
-	port: 'Port (une valeur qui n’est pas un nombre)'
+const OPTION_REASONS: Record<string, string> = {
+	identityfile: 'plusieurs clés',
+	forwardagent: 'une valeur autre que yes ou no',
+	port: 'une valeur qui n’est pas un nombre'
 };
 
-function optionName(option: string): string {
-	return OPTION_NAMES[option] ?? option;
+/** What is said of an option that cannot be taken: its name, and why when it is a known case. */
+function lostOption(option: string): string {
+	const reason = OPTION_REASONS[option] ?? 'écrite deux fois, ou hors des règles de HuBergamof';
+	return `${option} (${reason})`;
 }
 
 /** What is wrong with the first option of a list, in French; `undefined` when the list is fine. */
@@ -224,13 +222,15 @@ export function takeOverObstacle(
 	host: SshSystemHost,
 	takenAliases: readonly string[]
 ): string | undefined {
-	if (host.otherOptions.length > 0) {
-		const names = host.otherOptions.map(optionName).join(', ');
-		return `Utilise ${names}, que HuBergamof ne sait pas reprendre tel quel (une option écrite deux fois, une valeur qu’ssh lirait autrement) : le reprendre ferait perdre ce réglage.`;
+	if (host.lostOptions.length > 0) {
+		const names = host.lostOptions.map(lostOption).join(' ; ');
+		return `Ne peut pas être repris sans perte : ${names}. Corrigez-le dans ~/.ssh/config.`;
 	}
 	const draft = draftOf({ ...host, enabled: true });
 	const [problem] = Object.values(validateHost(draft, takenAliases));
-	return problem ? `Ne respecte pas les règles de HuBergamof : ${problem}` : undefined;
+	const optionsProblem = optionListError(host.options);
+	const found = problem ?? optionsProblem;
+	return found ? `Ne respecte pas les règles de HuBergamof : ${found}` : undefined;
 }
 
 /** The options the form of a host manages (`MANAGED_OPTIONS` in `ssh.rs`), in lower case. */

@@ -14,7 +14,7 @@ const FOUND: SshSystemHost[] = [
 		proxyJump: '',
 		forwardAgent: false,
 		options: [],
-		otherOptions: []
+		lostOptions: []
 	}
 ];
 

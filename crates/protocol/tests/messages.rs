@@ -739,7 +739,7 @@ fn ssh_messages_and_configuration() {
                     value: "nc %h %p".into(),
                     enabled: true,
                 }],
-                other_options: vec!["identityfile".into()],
+                lost_options: vec!["identityfile".into()],
             }],
         },
         &json!({
@@ -749,7 +749,7 @@ fn ssh_messages_and_configuration() {
                 "alias": "web", "hostName": "", "user": "", "port": null,
                 "identityFile": "", "proxyJump": "", "forwardAgent": false,
                 "options": [{ "key": "ProxyCommand", "value": "nc %h %p", "enabled": true }],
-                "otherOptions": ["identityfile"]
+                "lostOptions": ["identityfile"]
             }]
         }),
     );

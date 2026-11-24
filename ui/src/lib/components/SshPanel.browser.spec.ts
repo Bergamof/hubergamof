@@ -33,7 +33,7 @@ function found(alias: string, change: Partial<SshSystemHost> = {}): SshSystemHos
 		proxyJump: '',
 		forwardAgent: false,
 		options: [],
-		otherOptions: [],
+		lostOptions: [],
 		...change
 	};
 }
@@ -44,7 +44,7 @@ function ssh(revision: number, ...hosts: SshHost[]): SshConfig {
 
 const SYSTEM: SshSystemHost[] = [
 	found('web', { hostName: 'web.example.org', user: 'ada' }),
-	found('tunnel', { otherOptions: ['identityfile'] }),
+	found('tunnel', { lostOptions: ['identityfile'] }),
 	found('far', { identityFile: '/home/ada/key' })
 ];
 
@@ -93,7 +93,7 @@ describe('SshPanel', () => {
 			await addForm().getByRole('textbox', { name: 'Port' }).fill('2222');
 			await addForm().getByRole('textbox', { name: 'Clé privée' }).fill('~/.ssh/id_ed25519');
 			await addForm().getByRole('textbox', { name: 'Rebonds' }).fill('bastion');
-			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			expect(connection.lastSent()).toMatchObject({
 				type: 'updateSsh',
 				config: {
@@ -117,7 +117,7 @@ describe('SshPanel', () => {
 		it('says what is wrong and sends nothing, with the focus on the first field', async () => {
 			const { connection } = await renderPanel();
 			const before = connection.sent.length;
-			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			const name = addForm().getByRole('textbox', { name: 'Nom du serveur' });
 			await expect.element(name).toHaveFocus();
 			await expect.element(page.getByText('Saisissez le nom du serveur.')).toBeVisible();
@@ -125,7 +125,7 @@ describe('SshPanel', () => {
 
 			await name.fill('prod');
 			await addForm().getByRole('textbox', { name: 'Rebonds' }).fill('-oProxyCommand=evil');
-			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			await expect.element(addForm().getByRole('textbox', { name: 'Rebonds' })).toHaveFocus();
 			expect(connection.sent).toHaveLength(before);
 		});
@@ -136,7 +136,7 @@ describe('SshPanel', () => {
 			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
 			await addForm().getByRole('textbox', { name: 'Clé privée' }).fill('/etc/shadow');
 			await addForm().getByRole('textbox', { name: 'Port' }).fill('70000');
-			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			await expect
 				.element(addForm().getByRole('textbox', { name: 'Clé privée' }))
 				.toHaveAccessibleDescription(/chaque nom : lettres, chiffres/);
@@ -148,7 +148,7 @@ describe('SshPanel', () => {
 			await renderPanel();
 			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
 			await addForm().getByRole('textbox', { name: 'Rebonds' }).fill('bastion,2001:db8::1');
-			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			await expect.element(page.getByText(/« 2001:db8::1 » n’est pas valide/)).toBeVisible();
 			await expect.element(page.getByText(/entre crochets/)).toBeVisible();
 		});
@@ -156,7 +156,7 @@ describe('SshPanel', () => {
 		it('refuses a name that is taken', async () => {
 			await renderPanel(ssh(1, host('prod')));
 			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
-			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			await expect.element(page.getByText('Un serveur porte déjà ce nom.')).toBeVisible();
 		});
 
@@ -257,9 +257,7 @@ describe('SshPanel', () => {
 			await expect.element(tunnel).toHaveAttribute('aria-disabled', 'true');
 			await expect
 				.element(
-					page.getByText(
-						/Utilise IdentityFile \(plusieurs clés\), que HuBergamof ne sait pas reprendre/
-					)
+					page.getByText(/Ne peut pas être repris sans perte : identityfile \(plusieurs clés\)/)
 				)
 				.toBeVisible();
 			const before = connection.sent.length;
@@ -377,7 +375,7 @@ describe('SshPanel', () => {
 			await page.getByRole('textbox', { name: 'Valeur' }).first().click();
 			await userEvent.keyboard('{Enter}');
 			expect(connection.lastSent()?.type).not.toBe('updateSsh');
-			await addForm().getByRole('button', { name: 'Ajouter', exact: true }).click();
+			await addForm().getByRole('button', { name: 'Ajouter le serveur' }).click();
 			expect(connection.lastSent()).toMatchObject({
 				type: 'updateSsh',
 				config: {
@@ -404,7 +402,7 @@ describe('SshPanel', () => {
 		it('takes over a host found elsewhere with its options', async () => {
 			const option = { key: 'ProxyCommand', value: 'nc %h %p', enabled: true };
 			const { connection } = await renderPanel(ssh(1), [found('proxied', { options: [option] })]);
-			await expect.element(page.getByText(/1 option avancée/)).toBeVisible();
+			await expect.element(page.getByText(/options avancées : ProxyCommand/)).toBeVisible();
 			await page.getByRole('button', { name: 'Reprendre le serveur proxied' }).click();
 			expect(connection.lastSent()).toMatchObject({
 				config: { hosts: [{ alias: 'proxied', options: [option], enabled: true }] }

@@ -39,3 +39,7 @@ export function asAlias({ key, value, enabled }: AdvancedSetting): ShellAlias {
 export function fromAlias({ name, command, enabled }: ShellAlias): AdvancedSetting {
 	return { key: name, value: command, enabled };
 }
+
+/** What a list that holds as many settings as the manager accepts says instead of its form. */
+export const SETTINGS_FULL_TEXT =
+	'La liste contient déjà le nombre maximal d’éléments : supprimez-en un pour en ajouter.';

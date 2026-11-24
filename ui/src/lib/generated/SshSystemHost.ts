@@ -35,14 +35,15 @@ proxyJump: string,
 forwardAgent: boolean, 
 /**
  * The other options of the host, as written, which become its options
- * when it is taken over.
+ * when it is taken over. Empty for a host that cannot be taken (several
+ * names, jokers, options that would be lost): its values are not sent.
  */
 options: Array<AdvancedSetting>, 
 /**
  * What of the host HuBergamof cannot carry without loss, by option name
- * (lowercase): an option written twice, a second `IdentityFile`, a
+ * (not to be mistaken for `options`, which is what it carries): an option written twice, a second `IdentityFile`, a
  * `ForwardAgent` that is not `yes` or `no`, a port that is not a number,
  * quotes that do not pair up. A host that has some cannot be taken over:
  * commenting it out would lose them.
  */
-otherOptions: Array<string>, };
+lostOptions: Array<string>, };

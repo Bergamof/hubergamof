@@ -2,13 +2,21 @@
 @component
 The options of a host, inside the form of the host: those already written (each switched on or off,
 or removed) and a pair of fields to add one. It lives in a form, which cannot hold another one, so
-nothing here submits: « Ajouter l’option » is a plain button, and Enter in the fields adds the option
-instead of sending the host. The options are checked as the manager checks them.
+nothing here submits: « Ajouter l’option » is a plain button, and Enter in a filled field adds the
+option instead of sending the host. The options are checked as the manager checks them. The form
+calls `commit()` when it is sent, so that a pair typed but not added is not lost.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
+	import {
+		addSetting,
+		isSettingsListFull,
+		removeSetting,
+		setSettingEnabled,
+		SETTINGS_FULL_TEXT
+	} from '#lib/deck/advanced-edits.js';
 	import {
 		ADVANCED_KEY_MAX,
-		ADVANCED_MAX,
 		ADVANCED_VALUE_MAX,
 		validateSetting
 	} from '#lib/deck/advanced-validation.js';
@@ -34,57 +42,78 @@ instead of sending the host. The options are checked as the manager checks them.
 	let key = $state('');
 	let value = $state('');
 	let submitted = $state(false);
+	/** Read by screen readers when an option is removed: the button that was pressed is gone. */
+	let announcement = $state('');
+	let list: HTMLUListElement | undefined = $state();
 	let keyField: ReturnType<typeof TextField> | undefined = $state();
 	let valueField: ReturnType<typeof TextField> | undefined = $state();
 
 	const suffix = $derived(host === '' ? '' : ` de ${host}`);
-	const full = $derived(options.length >= ADVANCED_MAX);
-	const errors = $derived(
-		submitted
-			? validateSetting(
-					{ key, value: trimCommand(value) },
-					options.map((option) => option.key),
-					SSH_OPTION_RULES
-				)
-			: {}
-	);
+	const full = $derived(isSettingsListFull(options));
+	const errors = $derived(submitted ? checked() : {});
 
-	function add() {
-		submitted = true;
-		const setting = { key, value: trimCommand(value) };
-		const found = validateSetting(
-			setting,
+	function checked() {
+		return validateSetting(
+			{ key, value: trimCommand(value) },
 			options.map((option) => option.key),
 			SSH_OPTION_RULES
 		);
+	}
+
+	/** Adds the option of the pair, when it follows the rules; says what is wrong when it does not. */
+	function add(): boolean {
+		submitted = true;
+		const found = checked();
 		if (hasErrors(found)) {
 			(found.name ? keyField : valueField)?.focus();
-			return;
+			return false;
 		}
-		onchange([...options, { ...setting, enabled: true }]);
+		onchange(
+			addSetting({ key, value: trimCommand(value), enabled: true })(options as AdvancedSetting[])
+		);
 		key = '';
 		value = '';
 		submitted = false;
 		keyField?.focus();
+		return true;
 	}
 
-	/** Enter in a field of the pair adds the option: the host is sent by its own button. */
+	/**
+	 * Called when the host is sent: a pair left empty is nothing to add; a pair typed is added, or
+	 * says what is wrong and the host is not sent.
+	 */
+	export function commit(): boolean {
+		return key === '' && value === '' ? true : add();
+	}
+
+	/** Enter in a filled field of the pair adds the option; in an empty pair the host is sent. */
 	function addOnEnter(event: KeyboardEvent) {
-		if (event.key !== 'Enter' || !(event.target instanceof HTMLInputElement)) return;
+		if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) {
+			return;
+		}
+		if (key === '' && value === '') return;
 		event.preventDefault();
 		add();
 	}
+
+	async function remove(option: AdvancedSetting) {
+		const index = options.findIndex(({ key: other }) => other === option.key);
+		const neighbour = options[index + 1] ?? options[index - 1];
+		onchange(removeSetting(option.key)(options as AdvancedSetting[]));
+		announcement = '';
+		await tick();
+		announcement = `Option ${option.key} retirée${suffix}.`;
+		const button = neighbour
+			? list?.querySelector<HTMLButtonElement>(`[data-remove="${neighbour.key}"]`)
+			: undefined;
+		if (button) button.focus();
+		else keyField?.focus();
+	}
 </script>
 
-<div
-	role="group"
-	aria-labelledby={labelledby}
-	aria-describedby="{uid}-warning"
-	class="flex flex-col gap-3"
->
-	<AdvancedWarning id="{uid}-warning" tool="ssh" />
+<div role="group" aria-labelledby={labelledby} class="flex flex-col gap-3">
 	{#if options.length > 0}
-		<ul class="flex flex-col gap-2" aria-label="Options{suffix}">
+		<ul bind:this={list} class="flex flex-col gap-2" aria-label="Options{suffix}">
 			{#each options as option (option.key)}
 				<li class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line p-3">
 					<div class={['flex min-w-0 flex-1 basis-48 flex-col', !option.enabled && 'text-muted']}>
@@ -95,17 +124,14 @@ instead of sending the host. The options are checked as the manager checks them.
 						checked={option.enabled}
 						label="Option {option.key}{suffix}"
 						onchange={(enabled) =>
-							onchange(
-								options.map((existing) =>
-									existing.key === option.key ? { ...existing, enabled } : existing
-								)
-							)}
+							onchange(setSettingEnabled(option.key, enabled)(options as AdvancedSetting[]))}
 					/>
 					<button
 						type="button"
+						data-remove={option.key}
 						class="secondary-button"
 						aria-label="Retirer l’option {option.key}{suffix}"
-						onclick={() => onchange(options.filter(({ key: other }) => other !== option.key))}
+						onclick={() => remove(option)}
 					>
 						Retirer
 					</button>
@@ -113,13 +139,17 @@ instead of sending the host. The options are checked as the manager checks them.
 			{/each}
 		</ul>
 	{/if}
+	<p role="status" class="sr-only">{announcement}</p>
+	<AdvancedWarning id="{uid}-warning" tool="ssh" />
 	{#if full}
-		<p class="text-sm text-muted">
-			La liste contient déjà le nombre maximal d’éléments : retirez-en un pour en ajouter.
-		</p>
+		<p class="text-sm text-muted">{SETTINGS_FULL_TEXT}</p>
 	{:else}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]" onkeydown={addOnEnter}>
+		<div
+			class="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]"
+			aria-describedby="{uid}-warning"
+			onkeydown={addOnEnter}
+		>
 			<TextField
 				bind:this={keyField}
 				label="Nom de l’option"
@@ -136,6 +166,7 @@ instead of sending the host. The options are checked as the manager checks them.
 				mono
 				{value}
 				oninput={(next) => (value = next)}
+				hint="Entrée ajoute l’option."
 				error={errors.command}
 				maxlength={ADVANCED_VALUE_MAX * 2}
 			/>

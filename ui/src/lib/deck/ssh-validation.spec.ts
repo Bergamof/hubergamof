@@ -149,7 +149,7 @@ describe('takeOverObstacle', () => {
 		proxyJump: '',
 		forwardAgent: false,
 		options: [],
-		otherOptions: [],
+		lostOptions: [],
 		...change
 	});
 
@@ -158,9 +158,14 @@ describe('takeOverObstacle', () => {
 	});
 
 	it('names the options that would be lost', () => {
-		expect(takeOverObstacle(found({ otherOptions: ['identityfile', 'port'] }), [])).toMatch(
-			/IdentityFile \(plusieurs clés\), Port/
+		const obstacle = takeOverObstacle(
+			found({ lostOptions: ['identityfile', 'port', 'compression'] }),
+			[]
 		);
+		expect(obstacle).toMatch(/Ne peut pas être repris sans perte/);
+		expect(obstacle).toMatch(/identityfile \(plusieurs clés\)/);
+		expect(obstacle).toMatch(/port \(une valeur qui n’est pas un nombre\)/);
+		expect(obstacle).toMatch(/compression \(écrite deux fois, ou hors des règles/);
 	});
 
 	it('lets a host with options of its own be taken over, and refuses one whose options break the rules', () => {

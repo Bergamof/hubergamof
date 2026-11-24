@@ -53,6 +53,7 @@ the focus goes to the first one.
 	let draft: HostDraft = $state(initial ? draftOf(initial) : { ...BLANK_HOST });
 	let submitted = $state(false);
 	let optionsDetails: HTMLDetailsElement | undefined = $state();
+	let optionsEditor: ReturnType<typeof HostOptionsEditor> | undefined = $state();
 	let aliasField: ReturnType<typeof TextField> | undefined = $state();
 	let hostNameField: ReturnType<typeof TextField> | undefined = $state();
 	let userField: ReturnType<typeof TextField> | undefined = $state();
@@ -77,6 +78,8 @@ the focus goes to the first one.
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		submitted = true;
+		// An option typed but not added is added now, or says what is wrong: it is not lost.
+		if (optionsEditor && !optionsEditor.commit()) return;
 		const values = trimmed(draft);
 		const found = validateHost(values, takenAliases);
 		if (hasHostErrors(found)) {
@@ -194,6 +197,7 @@ the focus goes to the first one.
 		</summary>
 		<div class="mt-3">
 			<HostOptionsEditor
+				bind:this={optionsEditor}
 				options={draft.options}
 				host={initial?.alias}
 				labelledby="{uid}-options"
