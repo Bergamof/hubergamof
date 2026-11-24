@@ -62,6 +62,8 @@ pub enum RadialGlyph {
     Chat,
     /// A bell: activity, notifications.
     Bell,
+    /// Two people: teams, groups.
+    People,
     /// An arrow back: return to what is running.
     ReturnToCall,
     /// A speaker.

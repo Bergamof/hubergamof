@@ -1269,7 +1269,7 @@ mod tests {
             RadialGlyph::HangUp,
             RadialGlyph::Chat,
             RadialGlyph::Bell,
-            RadialGlyph::ReturnToCall,
+            RadialGlyph::People,
         ]
         .into_iter()
         .map(|glyph| {
