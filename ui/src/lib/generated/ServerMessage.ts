@@ -6,6 +6,8 @@ import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
 import type { GitConfig } from "./GitConfig";
 import type { GitSystemEntry } from "./GitSystemEntry";
+import type { HeadsetInfo } from "./HeadsetInfo";
+import type { HeadsetState } from "./HeadsetState";
 import type { LiveState } from "./LiveState";
 import type { MachineConfig } from "./MachineConfig";
 import type { MouseBattery } from "./MouseBattery";
@@ -54,7 +56,19 @@ problems: Array<MouseProblem>,
 /**
  * Its battery, once read; absent while unknown.
  */
-battery?: MouseBattery | null, } | { "type": "radialMenu", 
+battery?: MouseBattery | null, } | { "type": "headsets", 
+/**
+ * Connected headphones.
+ */
+headsets: Array<HeadsetInfo>, } | { "type": "headsetState", 
+/**
+ * Bluetooth address of the headphones.
+ */
+address: string, 
+/**
+ * What is known of them.
+ */
+state: HeadsetState, } | { "type": "radialMenu", 
 /**
  * Current configuration.
  */

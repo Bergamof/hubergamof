@@ -17,6 +17,7 @@ mod catalog;
 mod config;
 mod device;
 mod git;
+mod headset;
 mod live;
 mod machine;
 mod messages;
@@ -51,6 +52,11 @@ pub use git::{
     is_valid_git_alias_command, is_valid_git_alias_name, is_valid_git_branch_name,
     is_valid_git_editor, is_valid_git_folder, is_valid_git_setting_key, is_valid_git_setting_value,
     is_valid_git_signing_key, is_valid_git_user_email, is_valid_git_user_name,
+};
+pub use headset::{
+    AmbientMode, AmbientSound, EQUALIZER_BANDS, EQUALIZER_RANGE, Equalizer, EqualizerChange,
+    EqualizerPreset, HeadsetBattery, HeadsetInfo, HeadsetLink, HeadsetRequestError, HeadsetState,
+    MAX_AMBIENT_LEVEL, MAX_HEADSET_NAME_CHARS,
 };
 pub use live::{KeyView, LiveState, PageView};
 pub use machine::{

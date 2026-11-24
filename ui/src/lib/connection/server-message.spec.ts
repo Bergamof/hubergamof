@@ -17,6 +17,10 @@ describe('parseServerMessage', () => {
 		expect(parseServerMessage(JSON.stringify({ type }))?.type).toBe(type);
 	});
 
+	it.each(['headsets', 'headsetState'])('accepts the headphones message %s', (type) => {
+		expect(parseServerMessage(JSON.stringify({ type }))?.type).toBe(type);
+	});
+
 	it.each([
 		['non-string data', new ArrayBuffer(2)],
 		['invalid JSON', 'not json'],

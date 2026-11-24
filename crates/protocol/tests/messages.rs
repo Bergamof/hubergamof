@@ -3,13 +3,14 @@
 #![cfg(test)]
 
 use hubergamof_protocol::{
-    AdvancedSetting, CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig,
-    DeviceInfo, DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode,
-    GitConfig, GitCredentialHelper, GitSystemEntry, HapticEventDescriptor, HapticWaveform,
-    ImageSize, InstallSupport, KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor,
-    ModuleInstance, MouseBattery, MouseProblem, PageView, RadialActionDescriptor, ServerMessage,
-    SettingField, SettingKind, SshConfig, SshHost, SshSystemHost, StripConfig, UpdateSettings,
-    UpdateStatus,
+    AdvancedSetting, AmbientMode, AmbientSound, CatalogModule, ChoiceOption, ClientMessage,
+    DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DeviceTheme, DialAssignment,
+    DialFunctionDescriptor, Equalizer, EqualizerChange, EqualizerPreset, ErrorCode, GitConfig,
+    GitCredentialHelper, GitSystemEntry, HapticEventDescriptor, HapticWaveform, HeadsetBattery,
+    HeadsetInfo, HeadsetLink, HeadsetState, ImageSize, InstallSupport, KeyState, KeyView,
+    LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem,
+    PageView, RadialActionDescriptor, ServerMessage, SettingField, SettingKind, SshConfig, SshHost,
+    SshSystemHost, StripConfig, UpdateSettings, UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -680,6 +681,176 @@ fn git_messages_and_configuration() {
             "gitAvailable": true
         }),
     );
+}
+
+const HEADSET: &str = "AC:80:0A:0B:2E:61";
+
+#[test]
+fn client_headset_requests() {
+    assert_wire_format(
+        &ClientMessage::SelectHeadset {
+            address: HEADSET.into(),
+        },
+        &json!({ "type": "selectHeadset", "address": HEADSET }),
+    );
+    assert_wire_format(
+        &ClientMessage::ReleaseHeadset {
+            address: HEADSET.into(),
+        },
+        &json!({ "type": "releaseHeadset", "address": HEADSET }),
+    );
+    assert_wire_format(
+        &ClientMessage::ResumeHeadset {
+            address: HEADSET.into(),
+        },
+        &json!({ "type": "resumeHeadset", "address": HEADSET }),
+    );
+}
+
+#[test]
+fn client_set_headset_ambient() {
+    assert_wire_format(
+        &ClientMessage::SetHeadsetAmbient {
+            address: HEADSET.into(),
+            ambient: AmbientSound {
+                mode: AmbientMode::NoiseCancelling,
+                level: 12,
+                focus_on_voice: true,
+            },
+        },
+        &json!({
+            "type": "setHeadsetAmbient",
+            "address": HEADSET,
+            "ambient": { "mode": "noiseCancelling", "level": 12, "focusOnVoice": true }
+        }),
+    );
+}
+
+#[test]
+fn client_set_headset_equalizer_by_preset_or_by_hand() {
+    assert_wire_format(
+        &ClientMessage::SetHeadsetEqualizer {
+            address: HEADSET.into(),
+            equalizer: EqualizerChange::Preset {
+                preset: EqualizerPreset::BassBoost,
+            },
+        },
+        &json!({
+            "type": "setHeadsetEqualizer",
+            "address": HEADSET,
+            "equalizer": { "type": "preset", "preset": "bassBoost" }
+        }),
+    );
+    assert_wire_format(
+        &ClientMessage::SetHeadsetEqualizer {
+            address: HEADSET.into(),
+            equalizer: EqualizerChange::Manual {
+                clear_bass: -3,
+                bands: [4, 3, 1, 2, -10],
+            },
+        },
+        &json!({
+            "type": "setHeadsetEqualizer",
+            "address": HEADSET,
+            "equalizer": { "type": "manual", "clearBass": -3, "bands": [4, 3, 1, 2, -10] }
+        }),
+    );
+}
+
+#[test]
+fn server_headsets() {
+    assert_wire_format(
+        &ServerMessage::Headsets {
+            headsets: vec![HeadsetInfo {
+                address: HEADSET.into(),
+                name: "WH-1000XM4".into(),
+            }],
+        },
+        &json!({
+            "type": "headsets",
+            "headsets": [{ "address": HEADSET, "name": "WH-1000XM4" }]
+        }),
+    );
+}
+
+#[test]
+fn server_headset_state_known_and_unknown() {
+    assert_wire_format(
+        &ServerMessage::HeadsetState {
+            address: HEADSET.into(),
+            state: HeadsetState {
+                link: HeadsetLink::Connected,
+                battery: Some(HeadsetBattery {
+                    percent: 60,
+                    charging: false,
+                }),
+                ambient: Some(AmbientSound {
+                    mode: AmbientMode::Ambient,
+                    level: 5,
+                    focus_on_voice: false,
+                }),
+                wind_reduction: true,
+                equalizer: Some(Equalizer {
+                    preset: EqualizerPreset::Speech,
+                    clear_bass: -10,
+                    bands: [4, 3, 1, 2, -10],
+                }),
+            },
+        },
+        &json!({
+            "type": "headsetState",
+            "address": HEADSET,
+            "state": {
+                "link": "connected",
+                "battery": { "percent": 60, "charging": false },
+                "ambient": { "mode": "ambient", "level": 5, "focusOnVoice": false },
+                "windReduction": true,
+                "equalizer": { "preset": "speech", "clearBass": -10, "bands": [4, 3, 1, 2, -10] }
+            }
+        }),
+    );
+    assert_wire_format(
+        &ServerMessage::HeadsetState {
+            address: HEADSET.into(),
+            state: HeadsetState::unknown(HeadsetLink::Cut),
+        },
+        &json!({
+            "type": "headsetState",
+            "address": HEADSET,
+            "state": { "link": "cut", "windReduction": false }
+        }),
+    );
+}
+
+#[test]
+fn headset_links_and_modes_are_camel_case() {
+    for (link, name) in [
+        (HeadsetLink::Idle, "idle"),
+        (HeadsetLink::Connecting, "connecting"),
+        (HeadsetLink::Connected, "connected"),
+        (HeadsetLink::Released, "released"),
+        (HeadsetLink::Cut, "cut"),
+    ] {
+        assert_eq!(serde_json::to_value(link).unwrap(), json!(name));
+    }
+    for (mode, name) in [
+        (AmbientMode::Off, "off"),
+        (AmbientMode::NoiseCancelling, "noiseCancelling"),
+        (AmbientMode::Ambient, "ambient"),
+        (AmbientMode::WindReduction, "windReduction"),
+    ] {
+        assert_eq!(serde_json::to_value(mode).unwrap(), json!(name));
+    }
+}
+
+#[test]
+fn an_equalizer_with_the_wrong_number_of_bands_is_not_a_message() {
+    let bad = json!({
+        "type": "setHeadsetEqualizer",
+        "address": HEADSET,
+        "equalizer": { "type": "manual", "clearBass": 0, "bands": [0, 0, 0, 0] }
+    });
+    assert!(serde_json::from_value::<ClientMessage>(bad).is_err());
 }
 
 #[test]

@@ -11,6 +11,8 @@ const SERVER_MESSAGE_TYPES = {
 	mouseConfig: true,
 	mouseStatus: true,
 	radialMenu: true,
+	headsets: true,
+	headsetState: true,
 	moduleCatalog: true,
 	applicationModules: true,
 	machine: true,

@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, GitConfig, GitSystemEntry,
-    HapticWaveform, LiveState, MachineConfig, ModuleKind, MouseBattery, MouseConfig, MouseInfo,
-    MouseProblem, RadialMenuConfig, SshConfig, SshSystemHost, SystemAlias, UpdateSettings,
-    UpdateStatus,
+    AmbientSound, ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, EqualizerChange,
+    GitConfig, GitSystemEntry, HapticWaveform, HeadsetInfo, HeadsetState, LiveState, MachineConfig,
+    ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, SshConfig,
+    SshSystemHost, SystemAlias, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -92,6 +92,49 @@ pub enum ClientMessage {
         serial: String,
         /// The pattern to play.
         waveform: HapticWaveform,
+    },
+    /// Follow a pair of headphones and open the link to their settings channel
+    /// if it is not open (the Sony app on a phone loses the channel then):
+    /// `headsetState` right away, then at every change. The link is not
+    /// opened again by itself once it is closed, see
+    /// [`ClientMessage::ResumeHeadset`]. Refused with
+    /// [`ErrorCode::UnknownDevice`] when the headphones are not connected to
+    /// this computer, [`ErrorCode::Unavailable`] when the manager does not
+    /// serve headphones.
+    SelectHeadset {
+        /// Bluetooth address of the headphones.
+        address: String,
+    },
+    /// Set the ambient sound of headphones the link is open to. Answered by
+    /// the `headsetState` that follows; refused with
+    /// [`ErrorCode::InvalidInput`] for a value the headphones do not accept,
+    /// [`ErrorCode::Unavailable`] when the link is not open, like
+    /// [`ErrorCode::UnknownDevice`] and [`ErrorCode::Locked`] otherwise.
+    SetHeadsetAmbient {
+        /// Bluetooth address of the headphones.
+        address: String,
+        /// What to set.
+        ambient: AmbientSound,
+    },
+    /// Change the equalizer of headphones the link is open to, answered and
+    /// refused like [`ClientMessage::SetHeadsetAmbient`].
+    SetHeadsetEqualizer {
+        /// Bluetooth address of the headphones.
+        address: String,
+        /// What to change.
+        equalizer: EqualizerChange,
+    },
+    /// Close the link to the headphones on purpose, to leave their settings
+    /// channel to another app. Answered by `headsetState`.
+    ReleaseHeadset {
+        /// Bluetooth address of the headphones.
+        address: String,
+    },
+    /// Open the link again after it was released or cut (by the Sony app, for
+    /// instance, which then loses the channel). Answered by `headsetState`.
+    ResumeHeadset {
+        /// Bluetooth address of the headphones.
+        address: String,
     },
     /// Replace the configuration of the radial menu, like
     /// [`ClientMessage::UpdateMouseConfig`]; answered by `radialMenu` to
@@ -223,6 +266,21 @@ pub enum ServerMessage {
         /// Its battery, once read; absent while unknown.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         battery: Option<MouseBattery>,
+    },
+    /// Headphones currently connected to this computer: sent after `mice`,
+    /// then at every connection or disconnection. Not sent when the manager
+    /// does not serve headphones.
+    Headsets {
+        /// Connected headphones.
+        headsets: Vec<HeadsetInfo>,
+    },
+    /// What is known of headphones the client selected: sent after
+    /// `selectHeadset`, then at every change.
+    HeadsetState {
+        /// Bluetooth address of the headphones.
+        address: String,
+        /// What is known of them.
+        state: HeadsetState,
     },
     /// Current configuration of the radial menu: sent after `mice`, then at
     /// every change.

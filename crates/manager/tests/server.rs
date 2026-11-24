@@ -38,10 +38,11 @@ use hubergamof_module_api::{
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, ErrorCode, GitAlias, GitConfig, GitSystemEntry, InstallSupport,
-    LiveState, MachineConfig, ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem,
-    RadialMenuConfig, ServerMessage, ShellAlias, SshConfig, SshHost, SshSystemHost, SystemAlias,
-    UpdateSettings, UpdateStatus,
+    AmbientMode, AmbientSound, ClientMessage, DeviceConfig, EqualizerChange, EqualizerPreset,
+    ErrorCode, GitAlias, GitConfig, GitSystemEntry, InstallSupport, LiveState, MachineConfig,
+    ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem, RadialMenuConfig,
+    ServerMessage, ShellAlias, SshConfig, SshHost, SshSystemHost, SystemAlias, UpdateSettings,
+    UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -1582,6 +1583,45 @@ async fn expect_error(client: &mut Client) -> ErrorCode {
 }
 
 #[tokio::test]
+async fn headphones_are_unavailable_while_the_manager_does_not_serve_them() {
+    let server = Running::start().await;
+    let mut client = server.connect().await;
+    let address = String::from("AC:80:0A:0B:2E:61");
+    let requests = [
+        ClientMessage::SelectHeadset {
+            address: address.clone(),
+        },
+        ClientMessage::SetHeadsetAmbient {
+            address: address.clone(),
+            ambient: AmbientSound {
+                mode: AmbientMode::Ambient,
+                level: 5,
+                focus_on_voice: false,
+            },
+        },
+        ClientMessage::SetHeadsetEqualizer {
+            address: address.clone(),
+            equalizer: EqualizerChange::Preset {
+                preset: EqualizerPreset::Speech,
+            },
+        },
+        ClientMessage::ReleaseHeadset {
+            address: address.clone(),
+        },
+        ClientMessage::ResumeHeadset { address },
+    ];
+    for request in &requests {
+        client.send(request).await;
+        assert_eq!(
+            expect_error(&mut client).await,
+            ErrorCode::Unavailable,
+            "{request:?}"
+        );
+    }
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn clients_see_and_drive_the_modules_of_the_application() {
     let (server, _locked) = running_with_application().await;
     let mut client = server.connect().await;
@@ -1719,6 +1759,12 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
             config: SshConfig::empty(),
         },
         ClientMessage::CheckForUpdates,
+        ClientMessage::SelectHeadset {
+            address: "AC:80:0A:0B:2E:61".into(),
+        },
+        ClientMessage::ResumeHeadset {
+            address: "AC:80:0A:0B:2E:61".into(),
+        },
         // Following a device shows its configuration: refused too.
         ClientMessage::SelectDevice {
             serial: DEMO_SERIAL.into(),

@@ -376,27 +376,17 @@ impl Session {
             | ClientMessage::UpdateGit { .. }
             | ClientMessage::RefreshSsh
             | ClientMessage::UpdateSsh { .. } => return self.on_machine_request(request).await,
-            ClientMessage::SelectMouse { serial } => {
-                // The configuration, then what the mouse refused of it.
-                let selected = self.mouse.select(&serial).map(|config| {
-                    let mut messages = vec![config];
-                    messages.extend(self.mouse.status());
-                    messages
-                });
-                return self.answer_mouse(selected).await;
+            ClientMessage::SelectMouse { .. }
+            | ClientMessage::UpdateMouseConfig { .. }
+            | ClientMessage::PlayHaptic { .. }
+            | ClientMessage::UpdateRadialMenu { .. } => {
+                return self.on_mouse_request(request).await;
             }
-            ClientMessage::UpdateMouseConfig { serial, config } => {
-                let saved = self.mouse.update_mouse(serial, config).await;
-                return self.answer_mouse(saved).await;
-            }
-            ClientMessage::PlayHaptic { serial, waveform } => {
-                let played = self.mouse.play_haptic(&serial, waveform);
-                return self.answer_mouse(played).await;
-            }
-            ClientMessage::UpdateRadialMenu { config } => {
-                let saved = self.mouse.update_radial_menu(config).await;
-                return self.answer_mouse(saved).await;
-            }
+            ClientMessage::SelectHeadset { .. }
+            | ClientMessage::SetHeadsetAmbient { .. }
+            | ClientMessage::SetHeadsetEqualizer { .. }
+            | ClientMessage::ReleaseHeadset { .. }
+            | ClientMessage::ResumeHeadset { .. } => Err(RequestFailure::headsets_unavailable()),
             ClientMessage::PressKey { .. }
             | ClientMessage::RotateDial { .. }
             | ClientMessage::PressDial { .. }
@@ -503,6 +493,34 @@ impl Session {
                 self.send_error(ErrorCode::Internal, "the settings could not be saved")
                     .await
             }
+        }
+    }
+
+    /// What a client asks about the mice and the radial menu.
+    async fn on_mouse_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
+        match request {
+            ClientMessage::SelectMouse { serial } => {
+                // The configuration, then what the mouse refused of it.
+                let selected = self.mouse.select(&serial).map(|config| {
+                    let mut messages = vec![config];
+                    messages.extend(self.mouse.status());
+                    messages
+                });
+                self.answer_mouse(selected).await
+            }
+            ClientMessage::UpdateMouseConfig { serial, config } => {
+                let saved = self.mouse.update_mouse(serial, config).await;
+                self.answer_mouse(saved).await
+            }
+            ClientMessage::PlayHaptic { serial, waveform } => {
+                let played = self.mouse.play_haptic(&serial, waveform);
+                self.answer_mouse(played).await
+            }
+            ClientMessage::UpdateRadialMenu { config } => {
+                let saved = self.mouse.update_radial_menu(config).await;
+                self.answer_mouse(saved).await
+            }
+            _ => unreachable!("only the requests about the mice are routed here"),
         }
     }
 
@@ -866,6 +884,14 @@ impl RequestFailure {
         Self {
             code: ErrorCode::InputRefused,
             message: "presses come from the device only (simulated input needs --demo)".into(),
+        }
+    }
+
+    /// Until the manager serves headphones, nothing can be asked of them.
+    fn headsets_unavailable() -> Self {
+        Self {
+            code: ErrorCode::Unavailable,
+            message: "this manager does not serve headphones".into(),
         }
     }
 
