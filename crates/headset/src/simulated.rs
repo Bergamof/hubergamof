@@ -43,6 +43,14 @@ struct State {
     outgoing: VecDeque<Vec<u8>>,
     sequence: u8,
     closed: bool,
+    /// Longest chunk one read returns: a real stream cuts frames anywhere.
+    fragment: Option<usize>,
+    /// Whether one read returns everything queued: an acknowledgement and the
+    /// answer behind it arrive together on a real stream.
+    join_reads: bool,
+    /// The connection in use: a handle of an older one finds it closed, as a
+    /// real socket is once the headphones have another.
+    generation: u64,
     mode: AmbientMode,
     level: u8,
     focus_on_voice: bool,
@@ -59,6 +67,8 @@ struct Shared {
 #[derive(Clone)]
 pub struct SimulatedHeadset {
     shared: Arc<Shared>,
+    /// The connection this handle speaks on.
+    generation: u64,
 }
 
 impl Default for SimulatedHeadset {
@@ -78,6 +88,9 @@ impl SimulatedHeadset {
                     outgoing: VecDeque::new(),
                     sequence: 0,
                     closed: false,
+                    fragment: None,
+                    join_reads: false,
+                    generation: 0,
                     mode: AmbientMode::Ambient,
                     level: 5,
                     focus_on_voice: false,
@@ -85,7 +98,23 @@ impl SimulatedHeadset {
                 }),
                 changed: Condvar::new(),
             }),
+            generation: 0,
         }
+    }
+
+    /// Headphones whose reads return at most `max` bytes, so that a frame
+    /// arrives in pieces.
+    #[must_use]
+    pub fn fragmenting(self, max: usize) -> Self {
+        self.lock().fragment = Some(max.max(1));
+        self
+    }
+
+    /// Headphones whose reads return everything queued at once.
+    #[must_use]
+    pub fn joining_reads(self) -> Self {
+        self.lock().join_reads = true;
+        self
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -113,17 +142,25 @@ impl SimulatedHeadset {
         self.shared.changed.notify_all();
     }
 
-    /// A new connection to the same headphones, after a cut: the transport
-    /// starts over, what the headphones were set to stays.
+    /// A new connection to the same headphones: the transport starts over
+    /// (what the headphones were set to stays), and the connections before it
+    /// are closed.
     #[must_use]
     pub fn reconnect(&self) -> Self {
         let mut state = self.lock();
+        state.generation += 1;
         state.closed = false;
         state.decoder = Decoder::new();
         state.outgoing.clear();
         state.sequence = 0;
+        let generation = state.generation;
         drop(state);
-        self.clone()
+        // Readers of the previous connection are woken to find it closed.
+        self.shared.changed.notify_all();
+        Self {
+            shared: Arc::clone(&self.shared),
+            generation,
+        }
     }
 
     /// The mode the headphones are in now.
@@ -265,7 +302,7 @@ fn answer(state: &mut State, payload: &[u8]) {
 impl Channel for SimulatedHeadset {
     fn write(&mut self, bytes: &[u8]) -> Result<(), ChannelError> {
         let mut state = self.lock();
-        if state.closed {
+        if state.closed || state.generation != self.generation {
             return Err(ChannelError::Closed);
         }
         let frames = state.decoder.push(bytes);
@@ -286,13 +323,24 @@ impl Channel for SimulatedHeadset {
             .shared
             .changed
             .wait_timeout_while(state, timeout, |state| {
-                state.outgoing.is_empty() && !state.closed
+                state.outgoing.is_empty() && !state.closed && state.generation == self.generation
             })
             .unwrap_or_else(PoisonError::into_inner);
-        if state.closed {
+        if state.closed || state.generation != self.generation {
             return Err(ChannelError::Closed);
         }
-        Ok(state.outgoing.pop_front())
+        if state.join_reads {
+            let joined: Vec<u8> = state.outgoing.drain(..).flatten().collect();
+            return Ok((!joined.is_empty()).then_some(joined));
+        }
+        let Some(mut chunk) = state.outgoing.pop_front() else {
+            return Ok(None);
+        };
+        if let Some(max) = state.fragment.filter(|max| chunk.len() > *max) {
+            let rest = chunk.split_off(max);
+            state.outgoing.push_front(rest);
+        }
+        Ok(Some(chunk))
     }
 }
 
@@ -441,6 +489,46 @@ mod tests {
     }
 
     #[test]
+    fn the_session_works_over_frames_cut_into_single_bytes() {
+        let headset = SimulatedHeadset::new().fragmenting(1);
+        let events = drain(&mut opened(&headset));
+        assert_eq!(ambient_of(&events).mode, AmbientMode::Ambient);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Battery(_)))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Equalizer(_)))
+        );
+    }
+
+    #[test]
+    fn the_session_works_when_the_acknowledgement_and_the_answer_arrive_together() {
+        let headset = SimulatedHeadset::new().joining_reads();
+        let mut session = opened(&headset);
+        let events = drain(&mut session);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Battery(_)))
+        );
+        session
+            .apply(&Command::SetAmbient(AmbientSetting {
+                mode: AmbientMode::NoiseCancelling,
+                level: 0,
+                focus_on_voice: false,
+            }))
+            .unwrap();
+        assert_eq!(
+            ambient_of(&drain(&mut session)).mode,
+            AmbientMode::NoiseCancelling
+        );
+    }
+
+    #[test]
     fn a_cut_headset_can_be_connected_again_with_its_settings() {
         let headset = SimulatedHeadset::new();
         let mut session = opened(&headset);
@@ -451,6 +539,28 @@ mod tests {
         let mut again = opened(&headset.reconnect());
         let ambient = ambient_of(&drain(&mut again));
         assert_eq!(ambient.mode, AmbientMode::NoiseCancelling);
+    }
+
+    #[test]
+    fn an_old_connection_finds_itself_closed_when_a_new_one_opens() {
+        let headset = SimulatedHeadset::new();
+        let mut old = opened(&headset);
+        drain(&mut old);
+        let mut new = opened(&headset.reconnect());
+        // The old one neither hears nor takes what the new one is told.
+        assert!(old.poll(SHORT).is_err());
+        assert!(
+            old.apply(&Command::SetEqualizer(EqualizerSetting::Preset(
+                EqualizerPreset::Off
+            )))
+            .is_err()
+        );
+        let events = drain(&mut new);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Battery(_)))
+        );
     }
 
     #[test]

@@ -23,10 +23,10 @@ use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor, fir
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::headset_engine::{
-    BluezSource, HeadsetSource, HeadsetSupervisor, SCAN_INTERVAL as HEADSET_SCAN_INTERVAL,
-    SimulatedSource,
+    HeadsetSupervisor, SCAN_INTERVAL as HEADSET_SCAN_INTERVAL,
 };
 use hubergamof_manager::headset_hub::HeadsetHub;
+use hubergamof_manager::headset_source::{BluezSource, HeadsetSource, SimulatedSource};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
 use hubergamof_manager::machine::ssh::{SshConfigHub, SshFiles};

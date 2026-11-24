@@ -6,6 +6,24 @@ use hubergamof_protocol::ErrorCode;
 /// Message of an internal error, its detail logged.
 pub(super) const INTERNAL_MESSAGE: &str = "internal error, see the manager logs";
 
+/// A request that failed, to report to a WebSocket client as an `error`.
+#[derive(Debug)]
+pub(super) struct Failure {
+    pub(super) code: ErrorCode,
+    pub(super) message: String,
+}
+
+impl Failure {
+    /// A failure `code` described by `detail`, in a request about `context`
+    /// (named in the log when the detail is hidden).
+    pub(super) fn of(code: ErrorCode, detail: impl Into<String>, context: &str) -> Self {
+        Self {
+            code,
+            message: client_message(code, detail, context),
+        }
+    }
+}
+
 /// The message a client receives for a failure `code` described by
 /// `detail`: the detail itself, except for an internal error, logged then
 /// replaced by [`INTERNAL_MESSAGE`].

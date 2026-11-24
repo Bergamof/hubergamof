@@ -18,8 +18,9 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
-use hubergamof_manager::headset_engine::{HeadsetSupervisor, SimulatedSource};
+use hubergamof_manager::headset_engine::HeadsetSupervisor;
 use hubergamof_manager::headset_hub::HeadsetHub;
+use hubergamof_manager::headset_source::SimulatedSource;
 use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
 use hubergamof_manager::machine::ssh::{SshConfigHub, SshFiles};
 use hubergamof_manager::machine::{MachineHub, MachineShell};
@@ -1998,6 +1999,26 @@ async fn the_ambient_sound_and_the_equalizer_are_changed_and_followed() {
             .is_some_and(|ambient| ambient.mode == AmbientMode::Off)
     })
     .await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn every_client_that_follows_the_headphones_hears_what_they_do() {
+    let rig = HeadsetRig::start().await;
+    let mut first = rig.connect().await;
+    let mut second = rig.connect().await;
+    select_headset(&mut first).await;
+    select_headset(&mut second).await;
+
+    rig.headset.press_button(WireMode::NoiseCancelling);
+    for client in [&mut first, &mut second] {
+        headset_state(client, |state| {
+            state
+                .ambient
+                .is_some_and(|ambient| ambient.mode == AmbientMode::NoiseCancelling)
+        })
+        .await;
+    }
     rig.stop().await;
 }
 

@@ -6,20 +6,15 @@ use hubergamof_protocol::{
 };
 use tokio::sync::watch;
 
-use super::errors::client_message;
-use super::mouse_feed::Failure;
+use super::errors::Failure;
 use crate::headset_hub::{HeadsetHub, HubError};
 
-fn failure(code: ErrorCode, detail: impl Into<String>) -> Failure {
-    Failure {
-        code,
-        message: client_message(code, detail, "headphones request"),
-    }
-}
+/// What a failure of a request about the headphones is logged as.
+const CONTEXT: &str = "headphones request";
 
 impl From<HubError> for Failure {
     fn from(error: HubError) -> Self {
-        failure(error.error_code(), error.to_string())
+        Self::of(error.error_code(), error.to_string(), CONTEXT)
     }
 }
 
@@ -67,9 +62,10 @@ impl HeadsetFeed {
 
     fn hub(&self) -> Result<&HeadsetHub, Failure> {
         self.hub.as_ref().ok_or_else(|| {
-            failure(
+            Failure::of(
                 ErrorCode::Unavailable,
                 "this manager does not serve headphones",
+                CONTEXT,
             )
         })
     }
@@ -81,9 +77,10 @@ impl HeadsetFeed {
         self.selected = None;
         let hub = self.hub()?;
         let Some(mut state) = hub.subscribe_state(address) else {
-            return Err(failure(
+            return Err(Failure::of(
                 ErrorCode::UnknownDevice,
                 "no connected headphones with this address",
+                CONTEXT,
             ));
         };
         // Followed before the link is asked for: nothing it does is missed.
@@ -180,12 +177,13 @@ mod tests {
             .expect("a change")
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn without_headphones_served_nothing_is_told_and_everything_is_refused() {
         let mut feed = HeadsetFeed::new(None);
         assert_eq!(feed.initial(), None);
+        // Time is simulated: an hour passes at once, and nothing came.
         assert!(
-            tokio::time::timeout(Duration::from_millis(30), feed.next_change())
+            tokio::time::timeout(Duration::from_secs(3600), feed.next_change())
                 .await
                 .is_err(),
             "never ready"

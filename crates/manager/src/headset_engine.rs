@@ -8,173 +8,33 @@
 //! until the person resumes it.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use async_trait::async_trait;
-use hubergamof_headset::bluez::{BluezHeadsets, HeadsetDevice};
 use hubergamof_headset::channel::Channel;
-use hubergamof_headset::payload::{
-    AmbientMode as WireMode, AmbientSetting, AmbientState, Battery, EqualizerPreset as WirePreset,
-    EqualizerSetting, EqualizerState, Event,
-};
+use hubergamof_headset::payload::{AmbientSetting, EqualizerSetting};
 use hubergamof_headset::session::{Command, Session, SessionError};
-use hubergamof_headset::simulated::SimulatedHeadset;
-use hubergamof_protocol::{
-    AmbientMode, AmbientSound, Equalizer, EqualizerChange, EqualizerPreset, HeadsetBattery,
-    HeadsetInfo, HeadsetLink, HeadsetState,
-};
-use tokio::sync::{Mutex, mpsc};
+use hubergamof_protocol::HeadsetLink;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
+use crate::headset_convert::{ambient_setting, apply_event, equalizer_setting};
 use crate::headset_hub::{Action, HeadsetHub, Request};
+use crate::headset_source::HeadsetSource;
 
 /// Delay between two looks at the headphones connected to this computer.
 pub const SCAN_INTERVAL: Duration = Duration::from_secs(5);
 
-/// How long a serving thread waits for the headphones before looking at the
-/// requests again: the longest a request waits to be carried out.
+/// How long a serving thread waits for the headphones before looking at its
+/// orders again: the longest an order waits to be carried out.
 const POLL: Duration = Duration::from_millis(100);
-
-/// Where headphones come from: BlueZ, or simulated ones.
-#[async_trait]
-pub trait HeadsetSource: Send + Sync + 'static {
-    /// The headphones connected to this computer now.
-    async fn present(&self) -> Vec<HeadsetInfo>;
-
-    /// Opens the settings channel of the headphones at `address`.
-    ///
-    /// # Errors
-    /// Why the channel could not be opened, as text for the log.
-    async fn open(&self, address: &str) -> Result<Box<dyn Channel + Send>, String>;
-}
-
-/// The Sony headphones BlueZ lists as connected.
-#[derive(Default)]
-pub struct BluezSource {
-    /// Reached at the first look, and again after a failure: BlueZ may start
-    /// after this manager.
-    bluez: Mutex<Option<Arc<BluezHeadsets>>>,
-}
-
-impl BluezSource {
-    async fn bluez(&self) -> Result<Arc<BluezHeadsets>, String> {
-        let mut bluez = self.bluez.lock().await;
-        if let Some(bluez) = bluez.as_ref() {
-            return Ok(Arc::clone(bluez));
-        }
-        let started = Arc::new(BluezHeadsets::start().await.map_err(|e| e.to_string())?);
-        *bluez = Some(Arc::clone(&started));
-        Ok(started)
-    }
-
-    async fn connected(&self) -> Result<Vec<HeadsetDevice>, String> {
-        let devices = self.bluez().await?.devices().await;
-        match devices {
-            Ok(devices) => Ok(devices.into_iter().filter(|d| d.connected).collect()),
-            Err(error) => {
-                *self.bluez.lock().await = None;
-                Err(error.to_string())
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl HeadsetSource for BluezSource {
-    async fn present(&self) -> Vec<HeadsetInfo> {
-        match self.connected().await {
-            Ok(devices) => devices
-                .into_iter()
-                .map(|device| HeadsetInfo {
-                    address: device.address,
-                    name: device.name,
-                })
-                .collect(),
-            Err(error) => {
-                // At every look while Bluetooth is off: not a warning.
-                tracing::debug!(%error, "cannot look for headphones");
-                Vec::new()
-            }
-        }
-    }
-
-    async fn open(&self, address: &str) -> Result<Box<dyn Channel + Send>, String> {
-        let device = self
-            .connected()
-            .await?
-            .into_iter()
-            .find(|device| device.address == address)
-            .ok_or_else(|| format!("the headphones {address} are not connected"))?;
-        let channel = self
-            .bluez()
-            .await?
-            .connect(&device)
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok(Box::new(channel))
-    }
-}
-
-/// Simulated headphones, for `--demo` and the tests.
-pub struct SimulatedSource {
-    headsets: std::sync::Mutex<Vec<(HeadsetInfo, SimulatedHeadset)>>,
-}
-
-impl SimulatedSource {
-    /// A source of simulated headphones, all connected.
-    #[must_use]
-    pub fn new(headsets: Vec<(HeadsetInfo, SimulatedHeadset)>) -> Self {
-        Self {
-            headsets: std::sync::Mutex::new(headsets),
-        }
-    }
-
-    /// Makes the headphones at `address` leave (or come back with
-    /// [`SimulatedSource::attach`]).
-    pub fn detach(&self, address: &str) -> Option<(HeadsetInfo, SimulatedHeadset)> {
-        let mut headsets = self.lock();
-        let index = headsets
-            .iter()
-            .position(|(info, _)| info.address == address)?;
-        Some(headsets.remove(index))
-    }
-
-    /// Lists simulated headphones as connected.
-    pub fn attach(&self, headset: (HeadsetInfo, SimulatedHeadset)) {
-        self.lock().push(headset);
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(HeadsetInfo, SimulatedHeadset)>> {
-        // Plain data: nothing to recover from a poisoned lock.
-        self.headsets
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-#[async_trait]
-impl HeadsetSource for SimulatedSource {
-    async fn present(&self) -> Vec<HeadsetInfo> {
-        self.lock().iter().map(|(info, _)| info.clone()).collect()
-    }
-
-    async fn open(&self, address: &str) -> Result<Box<dyn Channel + Send>, String> {
-        let headsets = self.lock();
-        let (_, headset) = headsets
-            .iter()
-            .find(|(info, _)| info.address == address)
-            .ok_or_else(|| format!("the headphones {address} are not connected"))?;
-        Ok(Box::new(headset.reconnect()))
-    }
-}
 
 /// Why a serving thread ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
-    /// The person closed the link.
+    /// The person closed the link (or the supervisor let it go).
     Released,
     /// The headphones closed it, or it failed.
     Cut,
@@ -189,19 +49,69 @@ impl Outcome {
     }
 }
 
-/// What a serving thread is told.
-enum Order {
-    /// Close the link.
-    Close,
-    /// Change something.
-    Apply(Command),
+/// What a serving thread is asked, as the latest of each kind: a flood of
+/// changes (a slider dragged) is not worth carrying out one by one, and holds
+/// no memory.
+#[derive(Default)]
+struct Pending {
+    close: bool,
+    ambient: Option<AmbientSetting>,
+    equalizer: Option<EqualizerSetting>,
+}
+
+impl Pending {
+    fn commands(&self) -> impl Iterator<Item = Command> {
+        self.ambient
+            .map(Command::SetAmbient)
+            .into_iter()
+            .chain(self.equalizer.map(Command::SetEqualizer))
+    }
+}
+
+/// The orders of the engine to a serving thread, and the word that ends it.
+#[derive(Default)]
+struct Orders {
+    pending: Mutex<Pending>,
+    /// Raised when nobody wants the link any more (the slot is dropped): the
+    /// thread ends without telling anything.
+    cancelled: AtomicBool,
+}
+
+impl Orders {
+    fn lock(&self) -> MutexGuard<'_, Pending> {
+        // Plain data: nothing to recover from a poisoned lock.
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn ask(&self, change: impl FnOnce(&mut Pending)) {
+        change(&mut self.lock());
+    }
+
+    fn take(&self) -> Pending {
+        std::mem::take(&mut *self.lock())
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
 }
 
 /// A link being opened or served.
 struct Slot {
     id: u64,
-    orders: Sender<Order>,
-    task: JoinHandle<()>,
+    orders: Arc<Orders>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        // Not an abort of the task: one that is opening the channel finishes,
+        // so that the profile it registered with BlueZ is given back.
+        self.orders.cancel();
+    }
 }
 
 /// A serving task that ended.
@@ -223,7 +133,7 @@ impl HeadsetSupervisor {
     pub fn start(
         source: Arc<dyn HeadsetSource>,
         hub: HeadsetHub,
-        requests: mpsc::UnboundedReceiver<Request>,
+        requests: mpsc::Receiver<Request>,
         scan_interval: Duration,
     ) -> Self {
         let (ended_sender, ended) = mpsc::unbounded_channel();
@@ -241,9 +151,9 @@ impl HeadsetSupervisor {
 
     /// Stops supervising and closes every link.
     pub async fn shutdown(self) {
+        // The engine dropped with its task lets go of every slot, which ends
+        // the serving threads within a poll.
         self.task.abort();
-        // Dropping the slots with the task ended the serving threads; they
-        // finish within a poll.
         let _ = self.task.await;
     }
 }
@@ -259,7 +169,7 @@ struct Engine {
 impl Engine {
     async fn run(
         mut self,
-        mut requests: mpsc::UnboundedReceiver<Request>,
+        mut requests: mpsc::Receiver<Request>,
         mut ended: mpsc::UnboundedReceiver<Ended>,
         scan_interval: Duration,
     ) {
@@ -278,44 +188,34 @@ impl Engine {
     /// Lists the headphones connected now; those that left lose their link.
     async fn scan(&mut self) {
         let present = self.source.present().await;
-        self.slots.retain(|address, slot| {
-            let stays = present.iter().any(|info| &info.address == address);
-            if !stays {
-                // Dropping the slot ends its thread.
-                slot.task.abort();
-            }
-            stays
-        });
+        self.slots
+            .retain(|address, _| present.iter().any(|info| &info.address == address));
         self.hub.present(present);
     }
 
     fn handle(&mut self, request: Request) {
         let Request { address, action } = request;
+        let link = self.hub.state(&address).map(|state| state.link);
         match action {
-            Action::Open => {
-                if self.hub.state(&address).map(|state| state.link) == Some(HeadsetLink::Idle) {
-                    self.open(address);
-                }
-            }
-            Action::Resume => {
-                let link = self.hub.state(&address).map(|state| state.link);
+            Action::Open if link == Some(HeadsetLink::Idle) => self.open(address),
+            Action::Resume
                 if matches!(
                     link,
                     Some(HeadsetLink::Idle | HeadsetLink::Released | HeadsetLink::Cut)
-                ) {
-                    self.open(address);
-                }
+                ) =>
+            {
+                self.open(address);
             }
-            Action::Release => self.order(&address, Order::Close),
+            // The link is already open, being opened, or was not asked for.
+            Action::Open | Action::Resume => {}
+            Action::Release => self.ask(&address, |pending| pending.close = true),
             Action::SetAmbient(ambient) => {
-                self.order(
-                    &address,
-                    Order::Apply(Command::SetAmbient(ambient_setting(ambient))),
-                );
+                let setting = ambient_setting(ambient);
+                self.ask(&address, |pending| pending.ambient = Some(setting));
             }
             Action::SetEqualizer(change) => {
                 if let Some(setting) = equalizer_setting(change) {
-                    self.order(&address, Order::Apply(Command::SetEqualizer(setting)));
+                    self.ask(&address, |pending| pending.equalizer = Some(setting));
                 } else {
                     tracing::debug!("an equalizer change the headphones cannot take, dropped");
                 }
@@ -323,10 +223,9 @@ impl Engine {
         }
     }
 
-    fn order(&self, address: &str, order: Order) {
+    fn ask(&self, address: &str, change: impl FnOnce(&mut Pending)) {
         if let Some(slot) = self.slots.get(address) {
-            // The thread is gone when it ended: its end is already reported.
-            let _ = slot.orders.send(order);
+            slot.orders.ask(change);
         }
     }
 
@@ -336,16 +235,16 @@ impl Engine {
         }
         let id = self.next_id;
         self.next_id += 1;
-        let (orders, received) = channel();
-        let task = tokio::spawn(serve(
+        let orders = Arc::new(Orders::default());
+        tokio::spawn(serve(
             Arc::clone(&self.source),
             self.hub.clone(),
             address.clone(),
             id,
-            received,
+            Arc::clone(&orders),
             self.ended_sender.clone(),
         ));
-        self.slots.insert(address, Slot { id, orders, task });
+        self.slots.insert(address, Slot { id, orders });
     }
 
     fn finish(&mut self, end: &Ended) {
@@ -368,19 +267,24 @@ async fn serve(
     hub: HeadsetHub,
     address: String,
     id: u64,
-    orders: Receiver<Order>,
+    orders: Arc<Orders>,
     ended: mpsc::UnboundedSender<Ended>,
 ) {
-    hub.update_state(&address, |state| state.link = HeadsetLink::Connecting);
+    // Checked before each write: headphones that left and came back are not
+    // written to by the link of their previous visit.
+    if !orders.cancelled() {
+        hub.update_state(&address, |state| state.link = HeadsetLink::Connecting);
+    }
     let outcome = match source.open(&address).await {
+        Ok(_) if orders.cancelled() => Outcome::Released,
         Ok(channel) => {
-            let (hub, address) = (hub.clone(), address.clone());
+            let (hub, address, orders) = (hub.clone(), address.clone(), Arc::clone(&orders));
             tokio::task::spawn_blocking(move || run_session(channel, &hub, &address, &orders))
                 .await
                 .unwrap_or(Outcome::Cut)
         }
         Err(error) => {
-            tracing::warn!(%error, %address, "cannot open the link to the headphones");
+            tracing::warn!(%error, "cannot open the link to the headphones");
             Outcome::Cut
         }
     };
@@ -398,164 +302,63 @@ fn run_session(
     channel: Box<dyn Channel + Send>,
     hub: &HeadsetHub,
     address: &str,
-    orders: &Receiver<Order>,
+    orders: &Orders,
 ) -> Outcome {
     let mut session = Session::new(channel);
     if let Err(error) = session.start() {
-        tracing::warn!(%error, %address, "the headphones did not answer");
+        tracing::warn!(%error, "the headphones did not answer");
         return Outcome::Cut;
     }
-    hub.update_state(address, |state| state.link = HeadsetLink::Connected);
+    if !orders.cancelled() {
+        hub.update_state(address, |state| state.link = HeadsetLink::Connected);
+    }
     loop {
-        match orders.try_recv() {
-            Ok(Order::Close) | Err(TryRecvError::Disconnected) => return Outcome::Released,
-            Ok(Order::Apply(command)) => match session.apply(&command) {
+        if orders.cancelled() {
+            return Outcome::Released;
+        }
+        let pending = orders.take();
+        if pending.close {
+            return Outcome::Released;
+        }
+        for command in pending.commands() {
+            match session.apply(&command) {
                 Ok(()) => {}
                 Err(SessionError::Link(error)) => {
-                    tracing::debug!(%error, %address, "the link to the headphones failed");
+                    tracing::debug!(%error, "the link to the headphones failed");
                     return Outcome::Cut;
                 }
-                Err(error) => tracing::debug!(%error, %address, "change not sent"),
-            },
-            Err(TryRecvError::Empty) => {}
+                // A change the headphones would refuse: the link stays.
+                Err(error) => tracing::debug!(%error, "change not sent"),
+            }
         }
         match session.poll(POLL) {
-            Ok(Some(event)) => hub.update_state(address, |state| apply_event(state, &event)),
-            Ok(None) => {}
+            Ok(Some(event)) if !orders.cancelled() => {
+                hub.update_state(address, |state| apply_event(state, &event));
+            }
+            Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, %address, "the headphones closed the link");
+                tracing::debug!(%error, "the headphones closed the link");
                 return Outcome::Cut;
             }
         }
     }
 }
 
-fn ambient_mode(mode: WireMode) -> AmbientMode {
-    match mode {
-        WireMode::Off => AmbientMode::Off,
-        WireMode::Ambient => AmbientMode::Ambient,
-        WireMode::NoiseCancelling => AmbientMode::NoiseCancelling,
-        WireMode::WindReduction => AmbientMode::WindReduction,
-    }
-}
-
-fn wire_mode(mode: AmbientMode) -> WireMode {
-    match mode {
-        AmbientMode::Off => WireMode::Off,
-        AmbientMode::Ambient => WireMode::Ambient,
-        AmbientMode::NoiseCancelling => WireMode::NoiseCancelling,
-        AmbientMode::WindReduction => WireMode::WindReduction,
-    }
-}
-
-fn ambient_setting(ambient: AmbientSound) -> AmbientSetting {
-    AmbientSetting {
-        mode: wire_mode(ambient.mode),
-        level: ambient.level,
-        focus_on_voice: ambient.focus_on_voice,
-    }
-}
-
-fn preset(preset: WirePreset) -> EqualizerPreset {
-    match preset {
-        WirePreset::Off => EqualizerPreset::Off,
-        WirePreset::Bright => EqualizerPreset::Bright,
-        WirePreset::Excited => EqualizerPreset::Excited,
-        WirePreset::Mellow => EqualizerPreset::Mellow,
-        WirePreset::Relaxed => EqualizerPreset::Relaxed,
-        WirePreset::Vocal => EqualizerPreset::Vocal,
-        WirePreset::TrebleBoost => EqualizerPreset::TrebleBoost,
-        WirePreset::BassBoost => EqualizerPreset::BassBoost,
-        WirePreset::Speech => EqualizerPreset::Speech,
-        WirePreset::Manual => EqualizerPreset::Manual,
-        WirePreset::Custom1 => EqualizerPreset::Custom1,
-        WirePreset::Custom2 => EqualizerPreset::Custom2,
-        WirePreset::Unknown(_) => EqualizerPreset::Other,
-    }
-}
-
-fn wire_preset(preset: EqualizerPreset) -> Option<WirePreset> {
-    Some(match preset {
-        EqualizerPreset::Off => WirePreset::Off,
-        EqualizerPreset::Bright => WirePreset::Bright,
-        EqualizerPreset::Excited => WirePreset::Excited,
-        EqualizerPreset::Mellow => WirePreset::Mellow,
-        EqualizerPreset::Relaxed => WirePreset::Relaxed,
-        EqualizerPreset::Vocal => WirePreset::Vocal,
-        EqualizerPreset::TrebleBoost => WirePreset::TrebleBoost,
-        EqualizerPreset::BassBoost => WirePreset::BassBoost,
-        EqualizerPreset::Speech => WirePreset::Speech,
-        EqualizerPreset::Manual => WirePreset::Manual,
-        EqualizerPreset::Custom1 => WirePreset::Custom1,
-        EqualizerPreset::Custom2 => WirePreset::Custom2,
-        EqualizerPreset::Other => return None,
-    })
-}
-
-fn equalizer_setting(change: EqualizerChange) -> Option<EqualizerSetting> {
-    Some(match change {
-        EqualizerChange::Preset { preset } => EqualizerSetting::Preset(wire_preset(preset)?),
-        EqualizerChange::Manual { clear_bass, bands } => {
-            EqualizerSetting::Manual { clear_bass, bands }
-        }
-    })
-}
-
-/// What an answer or a notification of the headphones changes of the state.
-fn apply_event(state: &mut HeadsetState, event: &Event) {
-    match event {
-        Event::Ambient(AmbientState {
-            mode,
-            wind_capable,
-            focus_on_voice,
-            level,
-        }) => {
-            state.ambient = Some(AmbientSound {
-                mode: ambient_mode(*mode),
-                level: *level,
-                focus_on_voice: *focus_on_voice,
-            });
-            state.wind_reduction = *wind_capable;
-        }
-        Event::Battery(battery) => state.battery = Some(headset_battery(*battery)),
-        Event::Equalizer(EqualizerState {
-            preset: wire,
-            clear_bass,
-            bands,
-        }) => {
-            state.equalizer = Some(Equalizer {
-                preset: preset(*wire),
-                clear_bass: *clear_bass,
-                bands: *bands,
-            });
-        }
-        Event::Other(_) => {}
-    }
-}
-
-/// Headphones with two batteries show the weaker, charging if either is.
-fn headset_battery(battery: Battery) -> HeadsetBattery {
-    match battery {
-        Battery::Single(cell) => HeadsetBattery {
-            percent: cell.level,
-            charging: cell.charging,
-        },
-        Battery::LeftRight { left, right } => HeadsetBattery {
-            percent: left.level.min(right.level),
-            charging: left.charging || right.charging,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
+    use async_trait::async_trait;
     use hubergamof_headset::payload::AmbientMode as WireMode;
-    use hubergamof_protocol::{EqualizerChange, EqualizerPreset};
-    use tokio::sync::watch;
+    use hubergamof_headset::simulated::SimulatedHeadset;
+    use hubergamof_protocol::{
+        AmbientMode, AmbientSound, EqualizerChange, EqualizerPreset, HeadsetInfo, HeadsetState,
+    };
+    use tokio::sync::{Notify, watch};
 
     use super::*;
+    use crate::headset_source::SimulatedSource;
 
     const ADDRESS: &str = "AC:80:0A:0B:2E:61";
     const SCAN: Duration = Duration::from_millis(20);
@@ -568,23 +371,69 @@ mod tests {
         }
     }
 
+    /// What the source of the tests is asked, and what it is told to do.
+    #[derive(Default)]
+    struct Probe {
+        scans: AtomicUsize,
+        opens: AtomicUsize,
+        /// Opening waits for [`Probe::gate`].
+        gated: AtomicBool,
+        gate: Notify,
+        /// Opening is refused.
+        refusing: AtomicBool,
+    }
+
+    struct ProbedSource {
+        source: Arc<SimulatedSource>,
+        probe: Arc<Probe>,
+    }
+
+    #[async_trait]
+    impl HeadsetSource for ProbedSource {
+        async fn present(&self) -> Vec<HeadsetInfo> {
+            self.probe.scans.fetch_add(1, Ordering::Relaxed);
+            self.source.present().await
+        }
+
+        async fn open(&self, address: &str) -> Result<Box<dyn Channel + Send>, String> {
+            self.probe.opens.fetch_add(1, Ordering::Relaxed);
+            if self.probe.gated.load(Ordering::Relaxed) {
+                self.probe.gate.notified().await;
+            }
+            if self.probe.refusing.load(Ordering::Relaxed) {
+                return Err("refused".into());
+            }
+            self.source.open(address).await
+        }
+    }
+
     struct Rig {
         hub: HeadsetHub,
         source: Arc<SimulatedSource>,
+        probe: Arc<Probe>,
         headset: SimulatedHeadset,
         supervisor: HeadsetSupervisor,
     }
 
     impl Rig {
         async fn listed() -> Self {
-            let headset = SimulatedHeadset::new();
+            Self::with(SimulatedHeadset::new()).await
+        }
+
+        async fn with(headset: SimulatedHeadset) -> Self {
             let source = Arc::new(SimulatedSource::new(vec![(info(), headset.clone())]));
+            let probe = Arc::new(Probe::default());
+            let probed = ProbedSource {
+                source: Arc::clone(&source),
+                probe: Arc::clone(&probe),
+            };
             let (hub, requests) = HeadsetHub::new();
             let supervisor =
-                HeadsetSupervisor::start(Arc::clone(&source) as _, hub.clone(), requests, SCAN);
+                HeadsetSupervisor::start(Arc::new(probed), hub.clone(), requests, SCAN);
             let rig = Self {
                 hub,
                 source,
+                probe,
                 headset,
                 supervisor,
             };
@@ -624,9 +473,25 @@ mod tests {
             .await
         }
 
-        /// Gives the scans time to prove nothing happens by itself.
-        async fn let_scans_pass(&self) {
-            tokio::time::sleep(SCAN * 8).await;
+        /// Waits for `count` more looks at the headphones: proof that the
+        /// engine went on, which a fixed pause is not.
+        async fn scans_pass(&self, count: usize) {
+            let target = self.probe.scans.load(Ordering::Relaxed) + count;
+            tokio::time::timeout(PATIENCE, async {
+                while self.probe.scans.load(Ordering::Relaxed) < target {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+            })
+            .await
+            .expect("the scans go on");
+        }
+
+        fn opens(&self) -> usize {
+            self.probe.opens.load(Ordering::Relaxed)
+        }
+
+        fn link(&self) -> HeadsetLink {
+            self.hub.state(ADDRESS).expect("listed").link
         }
     }
 
@@ -641,8 +506,9 @@ mod tests {
     #[tokio::test]
     async fn headphones_are_listed_but_their_link_is_not_opened_by_itself() {
         let rig = Rig::listed().await;
-        rig.let_scans_pass().await;
-        assert_eq!(rig.hub.state(ADDRESS).unwrap().link, HeadsetLink::Idle);
+        rig.scans_pass(8).await;
+        assert_eq!(rig.link(), HeadsetLink::Idle);
+        assert_eq!(rig.opens(), 0);
         rig.supervisor.shutdown().await;
     }
 
@@ -650,15 +516,31 @@ mod tests {
     async fn selecting_the_headphones_opens_the_link_and_tells_everything() {
         let rig = Rig::listed().await;
         let state = rig.connected().await;
-        assert_eq!(
-            state.ambient.unwrap().mode,
-            AmbientMode::Ambient,
-            "as the headphones are"
-        );
+        assert_eq!(state.ambient.unwrap().mode, AmbientMode::Ambient);
         assert!(state.wind_reduction);
         assert_eq!(state.battery.unwrap().percent, 80);
         assert_eq!(state.equalizer.unwrap().preset, EqualizerPreset::Speech);
         rig.supervisor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn the_link_works_over_a_stream_that_cuts_and_joins_frames() {
+        for headset in [
+            SimulatedHeadset::new().fragmenting(1),
+            SimulatedHeadset::new().fragmenting(3),
+            SimulatedHeadset::new().joining_reads(),
+        ] {
+            let rig = Rig::with(headset).await;
+            rig.connected().await;
+            rig.hub.set_ambient(ADDRESS, noise_cancelling()).unwrap();
+            rig.until("noise cancelling", |state| {
+                state
+                    .ambient
+                    .is_some_and(|a| a.mode == AmbientMode::NoiseCancelling)
+            })
+            .await;
+            rig.supervisor.shutdown().await;
+        }
     }
 
     #[tokio::test]
@@ -674,6 +556,33 @@ mod tests {
             })
             .await;
         assert!(state.ambient.unwrap().focus_on_voice);
+        assert_eq!(rig.headset.mode(), WireMode::NoiseCancelling);
+        rig.supervisor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_burst_of_changes_ends_on_the_last_one() {
+        let rig = Rig::listed().await;
+        rig.connected().await;
+        let ambient = |mode, level| AmbientSound {
+            mode,
+            level,
+            focus_on_voice: false,
+        };
+        for level in 0..=20 {
+            rig.hub
+                .set_ambient(ADDRESS, ambient(AmbientMode::Ambient, level))
+                .unwrap();
+        }
+        rig.hub
+            .set_ambient(ADDRESS, ambient(AmbientMode::NoiseCancelling, 0))
+            .unwrap();
+        rig.until("the last change", |state| {
+            state
+                .ambient
+                .is_some_and(|a| a.mode == AmbientMode::NoiseCancelling)
+        })
+        .await;
         assert_eq!(rig.headset.mode(), WireMode::NoiseCancelling);
         rig.supervisor.shutdown().await;
     }
@@ -728,14 +637,16 @@ mod tests {
 
         // Selecting again does not take the channel back: only resuming does.
         rig.hub.select(ADDRESS).unwrap();
-        rig.let_scans_pass().await;
-        assert_eq!(rig.hub.state(ADDRESS).unwrap().link, HeadsetLink::Released);
+        rig.scans_pass(8).await;
+        assert_eq!(rig.link(), HeadsetLink::Released);
+        assert_eq!(rig.opens(), 1);
 
         rig.hub.resume(ADDRESS).unwrap();
         rig.until("connected again", |state| {
             state.link == HeadsetLink::Connected
         })
         .await;
+        assert_eq!(rig.opens(), 2);
         rig.supervisor.shutdown().await;
     }
 
@@ -747,16 +658,18 @@ mod tests {
         rig.until("cut", |state| state.link == HeadsetLink::Cut)
             .await;
 
-        rig.let_scans_pass().await;
+        rig.scans_pass(8).await;
         rig.hub.select(ADDRESS).unwrap();
-        rig.let_scans_pass().await;
-        assert_eq!(rig.hub.state(ADDRESS).unwrap().link, HeadsetLink::Cut);
+        rig.scans_pass(8).await;
+        assert_eq!(rig.link(), HeadsetLink::Cut);
+        assert_eq!(rig.opens(), 1);
 
         rig.hub.resume(ADDRESS).unwrap();
         rig.until("connected again", |state| {
             state.link == HeadsetLink::Connected
         })
         .await;
+        assert_eq!(rig.opens(), 2);
         rig.supervisor.shutdown().await;
     }
 
@@ -769,6 +682,67 @@ mod tests {
             .until("cut", |state| state.link == HeadsetLink::Cut)
             .await;
         assert!(state.ambient.is_some() && state.battery.is_some());
+        rig.supervisor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn releasing_while_the_link_is_being_opened_ends_released() {
+        let rig = Rig::listed().await;
+        rig.probe.gated.store(true, Ordering::Relaxed);
+        rig.hub.select(ADDRESS).unwrap();
+        rig.until("connecting", |state| state.link == HeadsetLink::Connecting)
+            .await;
+
+        rig.hub.release(ADDRESS).unwrap();
+        rig.probe.gate.notify_one();
+        rig.until("released", |state| state.link == HeadsetLink::Released)
+            .await;
+        assert_eq!(rig.opens(), 1);
+        rig.supervisor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn the_link_is_opened_once_however_often_it_is_asked_for() {
+        let rig = Rig::listed().await;
+        rig.probe.gated.store(true, Ordering::Relaxed);
+        rig.hub.select(ADDRESS).unwrap();
+        rig.until("connecting", |state| state.link == HeadsetLink::Connecting)
+            .await;
+        // While it is being opened...
+        rig.hub.select(ADDRESS).unwrap();
+        rig.hub.resume(ADDRESS).unwrap();
+        rig.probe.gate.notify_one();
+        rig.until("connected", |state| state.link == HeadsetLink::Connected)
+            .await;
+        // ...and once it is open.
+        rig.hub.resume(ADDRESS).unwrap();
+        rig.hub.select(ADDRESS).unwrap();
+        rig.scans_pass(4).await;
+        assert_eq!(rig.link(), HeadsetLink::Connected);
+        assert_eq!(rig.opens(), 1);
+        rig.supervisor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn releasing_a_link_that_is_not_open_changes_nothing() {
+        let rig = Rig::listed().await;
+        rig.hub.release(ADDRESS).unwrap();
+        rig.scans_pass(4).await;
+        assert_eq!(rig.link(), HeadsetLink::Idle);
+        assert_eq!(rig.opens(), 0);
+        rig.supervisor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_link_that_cannot_be_opened_is_cut_not_retried() {
+        let rig = Rig::listed().await;
+        rig.probe.refusing.store(true, Ordering::Relaxed);
+        rig.hub.select(ADDRESS).unwrap();
+        rig.until("cut", |state| state.link == HeadsetLink::Cut)
+            .await;
+        rig.scans_pass(8).await;
+        assert_eq!(rig.link(), HeadsetLink::Cut);
+        assert_eq!(rig.opens(), 1);
         rig.supervisor.shutdown().await;
     }
 
@@ -802,37 +776,73 @@ mod tests {
             })
             .await;
         assert!(state.ambient.is_none() && state.battery.is_none());
+
+        // Their link of the last visit is not in the way.
+        rig.connected().await;
         rig.supervisor.shutdown().await;
     }
 
-    #[tokio::test]
-    async fn a_link_that_cannot_be_opened_is_cut_not_retried() {
-        struct Closed;
-
-        #[async_trait]
-        impl HeadsetSource for Closed {
-            async fn present(&self) -> Vec<HeadsetInfo> {
-                vec![info()]
-            }
-
-            async fn open(&self, _address: &str) -> Result<Box<dyn Channel + Send>, String> {
-                Err("refused".into())
-            }
-        }
-
+    fn present_hub() -> HeadsetHub {
         let (hub, requests) = HeadsetHub::new();
-        let supervisor = HeadsetSupervisor::start(Arc::new(Closed), hub.clone(), requests, SCAN);
-        let mut state = loop {
-            if let Some(state) = hub.subscribe_state(ADDRESS) {
-                break state;
-            }
-            tokio::time::sleep(SCAN).await;
+        // Nobody carries the requests out: the thread is driven directly.
+        std::mem::forget(requests);
+        hub.present(vec![info()]);
+        hub
+    }
+
+    #[test]
+    fn a_cancelled_link_writes_nothing_and_ends_released() {
+        let hub = present_hub();
+        let orders = Orders::default();
+        orders.cancel();
+        let outcome = run_session(Box::new(SimulatedHeadset::new()), &hub, ADDRESS, &orders);
+        assert_eq!(outcome, Outcome::Released);
+        assert_eq!(
+            hub.state(ADDRESS).unwrap(),
+            HeadsetState::unknown(HeadsetLink::Idle)
+        );
+    }
+
+    #[test]
+    fn a_change_the_session_refuses_does_not_end_the_link() {
+        let hub = present_hub();
+        let orders = Arc::new(Orders::default());
+        // Before the headphones have said anything, an ambient change cannot
+        // be built: the session refuses it.
+        orders.ask(|pending| {
+            pending.ambient = Some(ambient_setting(noise_cancelling()));
+        });
+        let thread = {
+            let (hub, orders) = (hub.clone(), Arc::clone(&orders));
+            std::thread::spawn(move || {
+                run_session(Box::new(SimulatedHeadset::new()), &hub, ADDRESS, &orders)
+            })
         };
-        hub.select(ADDRESS).unwrap();
-        tokio::time::timeout(PATIENCE, state.wait_for(|s| s.link == HeadsetLink::Cut))
-            .await
-            .expect("cut")
-            .unwrap();
-        supervisor.shutdown().await;
+        let deadline = std::time::Instant::now() + PATIENCE;
+        while hub.state(ADDRESS).unwrap().ambient.is_none() {
+            assert!(std::time::Instant::now() < deadline, "the link went on");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(hub.state(ADDRESS).unwrap().link, HeadsetLink::Connected);
+        orders.ask(|pending| pending.close = true);
+        assert_eq!(thread.join().unwrap(), Outcome::Released);
+    }
+
+    #[test]
+    fn orders_keep_only_the_latest_change_of_each_kind() {
+        let orders = Orders::default();
+        let ambient = |level| AmbientSetting {
+            mode: WireMode::Ambient,
+            level,
+            focus_on_voice: false,
+        };
+        orders.ask(|pending| pending.ambient = Some(ambient(3)));
+        orders.ask(|pending| pending.ambient = Some(ambient(9)));
+        orders.ask(|pending| pending.equalizer = None);
+        let taken = orders.take();
+        assert_eq!(taken.ambient, Some(ambient(9)));
+        assert_eq!(taken.commands().count(), 1);
+        let nothing = orders.take();
+        assert!(!nothing.close && nothing.commands().count() == 0);
     }
 }

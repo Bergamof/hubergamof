@@ -10,9 +10,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::errors::Failure;
 use super::errors::client_message;
 use super::headset_feed::HeadsetFeed;
-use super::mouse_feed::{Failure, MouseFeed};
+use super::mouse_feed::MouseFeed;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
     ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ModuleKind,

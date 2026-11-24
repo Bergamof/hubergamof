@@ -27,6 +27,10 @@ pub enum HubError {
     /// The headphones would not accept this.
     #[error(transparent)]
     Invalid(#[from] HeadsetRequestError),
+    /// Too many requests are waiting for the engine: asking again later may
+    /// work.
+    #[error("too many requests are waiting")]
+    Busy,
 }
 
 impl HubError {
@@ -37,6 +41,7 @@ impl HubError {
             Self::UnknownHeadset(_) => ErrorCode::UnknownDevice,
             Self::NotLinked(_) => ErrorCode::Unavailable,
             Self::Invalid(_) => ErrorCode::InvalidInput,
+            Self::Busy => ErrorCode::Busy,
         }
     }
 }
@@ -58,13 +63,18 @@ pub enum Action {
     Open,
     /// Close the link on purpose.
     Release,
-    /// Open the link again after it was released or cut.
+    /// Open the link again after it was released or cut. Ignored while the
+    /// link is open or being opened, and until a release has ended it.
     Resume,
     /// Change the ambient sound.
     SetAmbient(AmbientSound),
     /// Change the equalizer.
     SetEqualizer(EqualizerChange),
 }
+
+/// Requests waiting for the engine at most: it carries them out one after the
+/// other, and a pile means a client that floods it.
+const REQUEST_QUEUE: usize = 64;
 
 struct Entry {
     info: HeadsetInfo,
@@ -74,7 +84,7 @@ struct Entry {
 struct Shared {
     entries: Mutex<Vec<Entry>>,
     headsets: watch::Sender<Vec<HeadsetInfo>>,
-    requests: mpsc::UnboundedSender<Request>,
+    requests: mpsc::Sender<Request>,
 }
 
 /// The headphones, for the server and the engine. Cheap to clone.
@@ -86,8 +96,8 @@ pub struct HeadsetHub {
 impl HeadsetHub {
     /// An empty hub, and the requests the engine is to carry out.
     #[must_use]
-    pub fn new() -> (Self, mpsc::UnboundedReceiver<Request>) {
-        let (requests, receiver) = mpsc::unbounded_channel();
+    pub fn new() -> (Self, mpsc::Receiver<Request>) {
+        let (requests, receiver) = mpsc::channel(REQUEST_QUEUE);
         let hub = Self {
             shared: Arc::new(Shared {
                 entries: Mutex::default(),
@@ -135,19 +145,25 @@ impl HeadsetHub {
 
     /// Makes the list of connected headphones `present`: the new ones are
     /// listed with their link idle, those that went away are forgotten with
-    /// what was known of them.
+    /// what was known of them. Headphones are the same when their address is:
+    /// one that BlueZ renames keeps what is known of it.
     pub fn present(&self, present: Vec<HeadsetInfo>) {
         let mut entries = self.entries();
-        entries.retain(|entry| present.contains(&entry.info));
-        for info in present {
-            if !entries
+        entries.retain(|entry| {
+            present
                 .iter()
-                .any(|entry| entry.info.address == info.address)
+                .any(|info| info.address == entry.info.address)
+        });
+        for info in present {
+            match entries
+                .iter_mut()
+                .find(|entry| entry.info.address == info.address)
             {
-                entries.push(Entry {
+                Some(entry) => entry.info.name = info.name,
+                None => entries.push(Entry {
                     info,
                     state: Arc::new(watch::channel(HeadsetState::unknown(HeadsetLink::Idle)).0),
-                });
+                }),
             }
         }
         let listed: Vec<HeadsetInfo> = entries.iter().map(|entry| entry.info.clone()).collect();
@@ -239,12 +255,15 @@ impl HeadsetHub {
         if self.state(address).is_none() {
             return Err(HubError::UnknownHeadset(address.to_owned()));
         }
-        // The engine is gone only at shutdown: nothing more to do then.
-        let _ = self.shared.requests.send(Request {
+        let request = Request {
             address: address.to_owned(),
             action,
-        });
-        Ok(())
+        };
+        match self.shared.requests.try_send(request) {
+            Err(mpsc::error::TrySendError::Full(_)) => Err(HubError::Busy),
+            // The engine is gone only at shutdown: nothing more to do then.
+            Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => Ok(()),
+        }
     }
 }
 
@@ -263,7 +282,7 @@ mod tests {
         }
     }
 
-    fn hub_with_headset() -> (HeadsetHub, mpsc::UnboundedReceiver<Request>) {
+    fn hub_with_headset() -> (HeadsetHub, mpsc::Receiver<Request>) {
         let (hub, requests) = HeadsetHub::new();
         hub.present(vec![info(ADDRESS)]);
         (hub, requests)
@@ -304,6 +323,32 @@ mod tests {
         linked(&hub, true);
         hub.present(vec![info(ADDRESS)]);
         assert_eq!(hub.state(ADDRESS).unwrap().link, HeadsetLink::Connected);
+    }
+
+    #[test]
+    fn headphones_renamed_while_connected_keep_what_is_known_of_them() {
+        let (hub, _requests) = hub_with_headset();
+        linked(&hub, true);
+        let mut renamed = info(ADDRESS);
+        renamed.name = "Mes écouteurs".into();
+        hub.present(vec![renamed.clone()]);
+        assert_eq!(hub.headsets(), [renamed]);
+        let state = hub.state(ADDRESS).unwrap();
+        assert_eq!(state.link, HeadsetLink::Connected);
+        assert!(state.wind_reduction);
+    }
+
+    #[test]
+    fn a_pile_of_requests_is_refused_as_busy_until_the_engine_catches_up() {
+        let (hub, mut requests) = hub_with_headset();
+        for _ in 0..REQUEST_QUEUE {
+            hub.select(ADDRESS).unwrap();
+        }
+        let error = hub.select(ADDRESS).unwrap_err();
+        assert!(matches!(error, HubError::Busy), "{error}");
+        assert_eq!(error.error_code(), ErrorCode::Busy);
+        requests.try_recv().unwrap();
+        hub.select(ADDRESS).unwrap();
     }
 
     #[test]
