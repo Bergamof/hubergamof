@@ -12,6 +12,7 @@ configuration.
 		asAlias,
 		fromAlias,
 		isSettingsListFull,
+		SETTINGS_FULL_TEXT,
 		removeSetting,
 		replaceSetting,
 		setSettingEnabled,
@@ -68,9 +69,7 @@ configuration.
 		{addLabel}
 	</p>
 	{#if isSettingsListFull(settings)}
-		<p class="text-sm text-muted">
-			La liste contient déjà le nombre maximal d’éléments : supprimez-en un pour en ajouter.
-		</p>
+		<p class="text-sm text-muted">{SETTINGS_FULL_TEXT}</p>
 	{:else}
 		<AliasForm
 			bind:this={addForm}

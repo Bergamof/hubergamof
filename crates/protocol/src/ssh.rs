@@ -1,10 +1,10 @@
 //! The SSH hosts of the user, persisted as `config/ssh.json`: the short names
 //! they connect with and what each stands for.
 //!
-//! `ssh` runs some of what it reads from its configuration (`ProxyCommand`,
-//! `LocalCommand`…), so a host holds only options that cannot run a program,
-//! and what it names (a user, a host, a file) is written with a closed set of
-//! characters, never as free text.
+//! The fields of a host name what it stands for (a user, a host, a file) with a
+//! closed set of characters, never as free text. The other options, which may
+//! run a program (`ProxyCommand`, `LocalCommand`…), are a list the person writes
+//! (see `docs/security.md`).
 
 use std::collections::HashSet;
 
@@ -89,10 +89,16 @@ pub struct SshSystemHost {
     pub proxy_jump: String,
     /// `ForwardAgent` is `yes`.
     pub forward_agent: bool,
-    /// The options of the host that HuBergamof does not manage, by name. A
-    /// host that has some cannot be taken over: commenting it out would lose
-    /// them.
-    pub other_options: Vec<String>,
+    /// The other options of the host, as written, which become its options
+    /// when it is taken over. Empty for a host that cannot be taken (several
+    /// names, jokers, options that would be lost): its values are not sent.
+    pub options: Vec<AdvancedSetting>,
+    /// What of the host HuBergamof cannot carry without loss, by option name
+    /// (not to be mistaken for `options`, which is what it carries): an option written twice, a second `IdentityFile`, a
+    /// `ForwardAgent` that is not `yes` or `no`, a port that is not a number,
+    /// quotes that do not pair up. A host that has some cannot be taken over:
+    /// commenting it out would lose them.
+    pub lost_options: Vec<String>,
 }
 
 /// The SSH configuration.

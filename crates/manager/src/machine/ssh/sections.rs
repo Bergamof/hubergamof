@@ -4,6 +4,10 @@
 
 use std::ops::Range;
 
+use hubergamof_protocol::{
+    AdvancedSetting, MAX_ADVANCED_SETTINGS, is_valid_ssh_option_key, is_valid_ssh_option_value,
+};
+
 /// What starts a line of `~/.ssh/config` that HuBergamof has commented out
 /// because it took the host over. It is a comment for `ssh`, and the marker
 /// tells it from a comment of the user, so that it can be given back.
@@ -15,37 +19,81 @@ fn dequoted(word: &str) -> String {
     word.chars().filter(|c| !matches!(c, '"' | '\'')).collect()
 }
 
-/// What of a section HuBergamof cannot represent, by option name (lowercase,
-/// once each, in order): the options it does not manage, and the managed ones
-/// whose value it could not give back as it is. `lines` are the lines of one
-/// section, the header included, without the marker of a commented-out line.
+/// What of the options of a section HuBergamof can carry, and what it cannot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct SplitOptions {
+    /// The options it does not manage with a field of its own, that it can give
+    /// back as they were written: a valid name and value, once each. They
+    /// become the options of the host when it is taken over.
+    pub free: Vec<AdvancedSetting>,
+    /// What it cannot represent, by option name (lowercase, once each, in
+    /// order): a host that has some cannot be taken over, it would lose them.
+    pub lost: Vec<String>,
+}
+
+/// The options of one section, split by [`SplitOptions`]. `lines` are the lines
+/// of the section, the header included, without the marker of a commented-out
+/// line.
 ///
-/// `ssh` takes the first value of an option, except `IdentityFile`, which
-/// adds up: a second one would be lost. `ForwardAgent` is `yes` or `no` for
-/// HuBergamof, where `ssh` also takes a socket path or a variable. A port is
-/// a number.
-pub(super) fn unmanaged_options<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
+/// `ssh` takes the first value of an option, except `IdentityFile` and a few
+/// others, which add up: a second one would be lost, so an option written twice
+/// is not carried. `ForwardAgent` is `yes` or `no` for HuBergamof, where `ssh`
+/// also takes a socket path or a variable. A port is a number. The name and the
+/// value of the others are kept as they are written (the case of the name, the
+/// quotes of the value).
+pub(super) fn split_options<'a>(lines: impl IntoIterator<Item = &'a str>) -> SplitOptions {
+    let mut split = SplitOptions::default();
     let mut identity_files = 0;
+    let mut seen: Vec<String> = Vec::new();
     for line in lines {
-        let Some((keyword, value)) = option_of(line) else {
+        let Some(RawOption {
+            name,
+            quoted_name,
+            value: raw,
+        }) = raw_option_of(line)
+        else {
             continue;
         };
-        let unmanaged = match keyword.as_str() {
+        let keyword = name.to_ascii_lowercase();
+        let lost = match keyword.as_str() {
             "host" | "hostname" | "user" | "proxyjump" => false,
-            "port" => value.parse::<u16>().is_err(),
+            "port" => unquoted(&raw).parse::<u16>().is_err(),
             "identityfile" => {
                 identity_files += 1;
                 identity_files > 1
             }
-            "forwardagent" => !matches!(value.to_ascii_lowercase().as_str(), "yes" | "no"),
-            _ => true,
+            "forwardagent" => !matches!(unquoted(&raw).to_ascii_lowercase().as_str(), "yes" | "no"),
+            _ => {
+                if seen.contains(&keyword) {
+                    // Written twice: the first one is not carried either.
+                    split
+                        .free
+                        .retain(|option| option.key.to_ascii_lowercase() != keyword);
+                    true
+                } else {
+                    seen.push(keyword.clone());
+                    // `ssh` takes the quotes off a keyword its own way (`Pro"xy"Command` is
+                    // `proxy` for it): what is quoted is not carried under another meaning.
+                    let carried = !quoted_name
+                        && is_valid_ssh_option_key(&name)
+                        && is_valid_ssh_option_value(&raw)
+                        && split.free.len() < MAX_ADVANCED_SETTINGS;
+                    if carried {
+                        split.free.push(AdvancedSetting {
+                            key: name,
+                            value: raw,
+                            enabled: true,
+                        });
+                    }
+                    !carried
+                }
+            }
         };
-        if unmanaged && !found.contains(&keyword) {
-            found.push(keyword);
+        if lost && !split.lost.contains(&keyword) {
+            split.lost.push(keyword);
         }
     }
-    found
+    split
 }
 
 /// How a section starts.
@@ -68,9 +116,9 @@ pub(super) struct Section {
     pub lines: Range<usize>,
 }
 
-/// The keyword (lowercase) and the value of an option line: `Key value` or
-/// `Key=value`. Nothing for a blank or comment line.
-pub(super) fn option_of(line: &str) -> Option<(String, String)> {
+/// The keyword (its quotes taken off, its case kept) and the value, as written, of
+/// an option line: `Key value` or `Key=value`. Nothing for a blank or comment line.
+pub(super) fn raw_option_of(line: &str) -> Option<RawOption> {
     let text = line.trim();
     if text.is_empty() || text.starts_with('#') {
         return None;
@@ -78,11 +126,31 @@ pub(super) fn option_of(line: &str) -> Option<(String, String)> {
     let end = text
         .find(|c: char| c.is_whitespace() || c == '=')
         .unwrap_or(text.len());
-    let value = text[end..].trim_start_matches(|c: char| c.is_whitespace() || c == '=');
-    Some((
-        dequoted(&text[..end]).to_ascii_lowercase(),
-        unquoted(value.trim_end()),
-    ))
+    // `ssh` takes one `=` as the separator, whatever follows is the value.
+    let after = text[end..].trim_start();
+    let value = after.strip_prefix('=').unwrap_or(after).trim_start();
+    Some(RawOption {
+        name: dequoted(&text[..end]),
+        quoted_name: text[..end].contains(['"', '\'']),
+        value: value.trim_end().to_owned(),
+    })
+}
+
+/// An option line cut in its keyword and its value.
+pub(super) struct RawOption {
+    /// The keyword, its double quotes taken off, its case kept.
+    pub name: String,
+    /// Whether the keyword was written with quotes.
+    pub quoted_name: bool,
+    /// The value, as written.
+    pub value: String,
+}
+
+/// The keyword (lowercase) and the value of an option line, without the double
+/// quotes that surround it. Nothing for a blank or comment line.
+pub(super) fn option_of(line: &str) -> Option<(String, String)> {
+    let option = raw_option_of(line)?;
+    Some((option.name.to_ascii_lowercase(), unquoted(&option.value)))
 }
 
 /// `value` without the double quotes that surround it.
@@ -151,6 +219,8 @@ pub(super) fn sections(lines: &[&str]) -> Vec<Section> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     fn headers(content: &str) -> Vec<(Header, bool, Range<usize>)> {
@@ -242,5 +312,105 @@ mod tests {
             [(Header::Preamble, false, 0..1)]
         );
         assert_eq!(headers(""), [(Header::Preamble, false, 0..0)]);
+    }
+
+    fn carried(content: &str) -> Vec<(String, String)> {
+        split_options(content.lines())
+            .free
+            .into_iter()
+            .map(|option| (option.key, option.value))
+            .collect()
+    }
+
+    fn lost(content: &str) -> Vec<String> {
+        split_options(content.lines()).lost
+    }
+
+    #[test]
+    fn one_equal_sign_is_the_separator_and_what_follows_is_the_value() {
+        for (line, value) in [
+            ("Key=x", "x"),
+            ("Key = x", "x"),
+            ("Key ==x", "=x"),
+            ("Key = =x", "=x"),
+            ("Key  x=y", "x=y"),
+        ] {
+            let option = raw_option_of(line).unwrap();
+            assert_eq!(
+                (option.name.as_str(), option.value.as_str()),
+                ("Key", value),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_options_are_carried_with_the_case_of_their_name_and_their_value_as_written() {
+        assert_eq!(
+            carried(
+                "Host a\n\tcompression=yes\n\tProxyCommand nc %h %p # via\n\tSendEnv \"A B\"\n"
+            ),
+            [
+                ("compression".to_owned(), "yes".to_owned()),
+                ("ProxyCommand".to_owned(), "nc %h %p # via".to_owned()),
+                ("SendEnv".to_owned(), "\"A B\"".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_written_with_quotes_is_not_carried_under_another_meaning() {
+        for line in [
+            "Pro\"xy\"Command nc",
+            "\"ProxyCommand\" nc",
+            "'ProxyCommand' nc",
+        ] {
+            let content = format!("Host a\n\t{line}\n");
+            assert_eq!(carried(&content), Vec::<(String, String)>::new(), "{line}");
+            assert_eq!(lost(&content), ["proxycommand"], "{line}");
+        }
+    }
+
+    #[test]
+    fn what_would_be_lost_is_named_once_and_never_carried() {
+        for (body, names) in [
+            ("Compression yes\n\tcompression no\n", vec!["compression"]),
+            (
+                "Compression yes\n\tCompression no\n\tCompression yes\n",
+                vec!["compression"],
+            ),
+            ("Bad@Key 1\n", vec!["bad@key"]),
+            ("Key\n", vec!["key"]),
+            ("Key =\n", vec!["key"]),
+            ("Key a\tb\n", vec!["key"]),
+            ("IdentityFile k1\n\tIdentityFile k2\n", vec!["identityfile"]),
+            ("ForwardAgent /tmp/s\n", vec!["forwardagent"]),
+            ("Port ssh\n", vec!["port"]),
+        ] {
+            let content = format!("Host a\n\t{body}");
+            assert_eq!(lost(&content), names, "{body}");
+            assert_eq!(carried(&content), Vec::<(String, String)>::new(), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_single_identity_file_and_the_managed_options_are_not_options_of_the_list() {
+        let content =
+            "Host a\n\tHostName h\n\tUser u\n\tIdentityFile k\n\tProxyJump j\n\tLogLevel ERROR\n";
+        assert_eq!(
+            carried(content),
+            [("LogLevel".to_owned(), "ERROR".to_owned())]
+        );
+        assert_eq!(lost(content), Vec::<String>::new());
+    }
+
+    #[test]
+    fn no_more_than_a_list_holds_are_carried_and_the_others_are_lost() {
+        let mut content = String::from("Host a\n");
+        for i in 0..=MAX_ADVANCED_SETTINGS {
+            writeln!(content, "\tKey{i} v").unwrap();
+        }
+        assert_eq!(carried(&content).len(), MAX_ADVANCED_SETTINGS);
+        assert_eq!(lost(&content), [format!("key{MAX_ADVANCED_SETTINGS}")]);
     }
 }

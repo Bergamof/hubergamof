@@ -889,7 +889,8 @@ test('Git : lit la configuration trouvée, enregistre l’identité et refuse un
 });
 
 // SSH: the demo manager reads the `~/.ssh/config` of its own home folder (`SshConfigHub::demo`: a host
-// that can be taken over and one that uses a ProxyCommand).
+// that can be taken over, one that has a ProxyCommand of its own (taken over with it) and one that has two
+// keys, which cannot be carried).
 
 test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le retrouve après un rechargement', async ({
 	page
@@ -901,11 +902,17 @@ test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le r
 	const managed = page.getByRole('list', { name: 'Serveurs SSH gérés' });
 	await expect(found.getByText('ada@192.0.2.10:2222')).toBeVisible();
 	await expect(
-		page.getByRole('button', { name: 'Reprendre le serveur demo-tunnel' })
+		page.getByRole('button', { name: 'Reprendre le serveur demo-keys' })
 	).toHaveAttribute('aria-disabled', 'true');
 
 	await page.getByRole('button', { name: 'Reprendre le serveur demo-server' }).click();
 	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
+	await page.getByRole('button', { name: 'Reprendre le serveur demo-tunnel' }).click();
+	await expect(managed.getByText(/192\.0\.2\.20/)).toBeVisible();
+	await managed.getByText(/^Options avancées \(1\)/).click();
+	await expect(
+		managed.getByRole('list', { name: 'Options du serveur demo-tunnel' }).getByText('ProxyCommand')
+	).toBeVisible();
 
 	await page.reload();
 	await page.getByRole('button', { name: 'Machine' }).click();

@@ -2,8 +2,10 @@ import type { AdvancedSetting, SshHost, SshSystemHost } from '#lib/generated/ind
 import { lengthOf } from './alias-validation.js';
 import {
 	ADVANCED_KEY_MAX,
+	ADVANCED_MAX,
 	hasPairedQuotes,
 	isOneLineValue,
+	validateSetting,
 	valueError,
 	type SettingRules
 } from './advanced-validation.js';
@@ -188,22 +190,31 @@ export function hasHostErrors(errors: HostErrors): boolean {
 	return Object.keys(errors).length > 0;
 }
 
-/** The name `ssh` documents for an option, from the lowercase one the manager gives. */
-const OPTION_NAMES: Record<string, string> = {
-	proxycommand: 'ProxyCommand',
-	localcommand: 'LocalCommand',
-	identityfile: 'IdentityFile (plusieurs clés)',
-	forwardagent: 'ForwardAgent (une valeur autre que yes ou no)',
-	port: 'Port (une valeur qui n’est pas un nombre)',
-	compression: 'Compression',
-	serveraliveinterval: 'ServerAliveInterval',
-	identitiesonly: 'IdentitiesOnly',
-	include: 'Include',
-	match: 'Match'
+/** The name `ssh` documents for an option the manager could not carry, from the lowercase one it gives. */
+const OPTION_REASONS: Record<string, string> = {
+	identityfile: 'plusieurs clés',
+	forwardagent: 'une valeur autre que yes ou no',
+	port: 'une valeur qui n’est pas un nombre'
 };
 
-function optionName(option: string): string {
-	return OPTION_NAMES[option] ?? option;
+/** What is said of an option that cannot be taken: its name, and why when it is a known case. */
+function lostOption(option: string): string {
+	const reason = OPTION_REASONS[option] ?? 'écrite deux fois, ou hors des règles de HuBergamof';
+	return `${option} (${reason})`;
+}
+
+/** What is wrong with the first option of a list, in French; `undefined` when the list is fine. */
+function optionListError(options: readonly AdvancedSetting[]): string | undefined {
+	const taken: string[] = [];
+	if (options.length > ADVANCED_MAX) return `${ADVANCED_MAX} options au plus.`;
+	for (const option of options) {
+		const problem = Object.values(
+			validateSetting({ key: option.key, value: option.value }, taken, SSH_OPTION_RULES)
+		)[0];
+		if (problem) return `L’option « ${option.key} » : ${problem}`;
+		taken.push(option.key);
+	}
+	return undefined;
 }
 
 /** Why a host found in `~/.ssh/config` cannot be taken over, if it cannot. */
@@ -211,13 +222,15 @@ export function takeOverObstacle(
 	host: SshSystemHost,
 	takenAliases: readonly string[]
 ): string | undefined {
-	if (host.otherOptions.length > 0) {
-		const names = host.otherOptions.map(optionName).join(', ');
-		return `Utilise ${names}, que HuBergamof ne gère pas ou ne sait pas reprendre tel quel : le reprendre ferait perdre ce réglage.`;
+	if (host.lostOptions.length > 0) {
+		const names = host.lostOptions.map(lostOption).join(' ; ');
+		return `Ne peut pas être repris sans perte : ${names}. Corrigez-le dans ~/.ssh/config.`;
 	}
 	const draft = draftOf({ ...host, enabled: true });
 	const [problem] = Object.values(validateHost(draft, takenAliases));
-	return problem ? `Ne respecte pas les règles de HuBergamof : ${problem}` : undefined;
+	const optionsProblem = optionListError(host.options);
+	const found = problem ?? optionsProblem;
+	return found ? `Ne respecte pas les règles de HuBergamof : ${found}` : undefined;
 }
 
 /** The options the form of a host manages (`MANAGED_OPTIONS` in `ssh.rs`), in lower case. */

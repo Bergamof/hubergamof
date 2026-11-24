@@ -309,8 +309,17 @@ mod tests {
         }
     }
 
+    /// A script just written may be refused by `exec` while another test thread forks
+    /// (`ETXTBSY`): the program is asked again.
     fn ask(probe: &SshProbe, dir: &Path) -> Verdict {
-        probe.ask(&dir.join("file"), &dir.join("file.err"), "host")
+        for _ in 0..20 {
+            let verdict = probe.ask(&dir.join("file"), &dir.join("file.err"), "host");
+            if verdict != Verdict::Unavailable || !Path::new(&probe.program).exists() {
+                return verdict;
+            }
+            sleep(Duration::from_millis(25));
+        }
+        Verdict::Unavailable
     }
 
     #[test]

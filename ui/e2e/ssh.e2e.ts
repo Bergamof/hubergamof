@@ -39,7 +39,19 @@ const SYSTEM_HOSTS = [
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
-		otherOptions: []
+		options: [],
+		lostOptions: []
+	},
+	{
+		alias: 'proxied',
+		hostName: 'proxied.example.org',
+		user: '',
+		port: null,
+		identityFile: '',
+		proxyJump: '',
+		forwardAgent: false,
+		options: [{ key: 'ProxyCommand', value: 'nc %h %p', enabled: true }],
+		lostOptions: []
 	},
 	{
 		alias: 'tunnel',
@@ -49,7 +61,8 @@ const SYSTEM_HOSTS = [
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
-		otherOptions: ['proxycommand']
+		options: [],
+		lostOptions: ['identityfile']
 	}
 ];
 
@@ -135,7 +148,7 @@ test('ajoute un serveur, le désactive, le modifie et le supprime', async ({ pag
 	await addForm(page).getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
 	await addForm(page).getByRole('textbox', { name: 'Adresse de la machine' }).fill('10.0.0.1');
 	await addForm(page).getByRole('textbox', { name: 'Port' }).fill('2222');
-	await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
+	await addForm(page).getByRole('button', { name: 'Ajouter le serveur' }).click();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 	await expect(managed(page).getByText('10.0.0.1:2222')).toBeVisible();
 	expect(manager.config.hosts[0]).toMatchObject({
@@ -191,7 +204,10 @@ test('ajoute des options communes et des options d’un serveur, refuse « Host 
 		{ key: 'ServerAliveInterval', value: '30', enabled: true }
 	]);
 
-	await page.getByText(/^Options avancées/).click();
+	await page
+		.getByText(/^Options avancées/)
+		.first()
+		.click();
 	const own = page.getByRole('form', { name: 'Ajouter une option à prod' });
 	await own.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
 	await own.getByRole('textbox', { name: 'Valeur' }).fill('yes');
@@ -219,6 +235,27 @@ test('montre à l’écran, en français, qu’une option enregistrée n’est p
 	await expect(alert).toBeInViewport();
 });
 
+test('ajoute un serveur avec ses options depuis le formulaire, Entrée ajoute l’option', async ({
+	page
+}) => {
+	const manager = await playManager(page);
+	await openSsh(page);
+	const form = addForm(page);
+	await form.getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
+	await form.getByText(/^Options avancées/).click();
+	await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
+	await page.keyboard.press('Tab');
+	await page.keyboard.type('yes');
+	await page.keyboard.press('Enter');
+	await expect(form.getByRole('list', { name: 'Options' })).toContainText('Compression');
+	expect(manager.received).not.toContain('updateSsh');
+	await form.getByRole('button', { name: 'Ajouter le serveur' }).click();
+	await expect(managed(page).getByText(/Options avancées \(1\)/)).toBeVisible();
+	expect(manager.config.hosts[0].options).toEqual([
+		{ key: 'Compression', value: 'yes', enabled: true }
+	]);
+});
+
 test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page }) => {
 	const manager = await playManager(page);
 	await openSsh(page);
@@ -231,7 +268,7 @@ test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page 
 	expect(manager.received).not.toContain('updateSsh');
 });
 
-test('reprend un serveur trouvé dans ~/.ssh/config, sauf celui qui lance un programme', async ({
+test('reprend un serveur trouvé dans ~/.ssh/config avec ses options, sauf celui qu’on perdrait', async ({
 	page
 }) => {
 	const manager = await playManager(page);
@@ -243,6 +280,14 @@ test('reprend un serveur trouvé dans ~/.ssh/config, sauf celui qui lance un pro
 	await page.getByRole('button', { name: 'Reprendre le serveur web' }).click();
 	await expect(managed(page).getByText('ada@web.example.org')).toBeVisible();
 	expect(manager.config.hosts).toMatchObject([{ alias: 'web', user: 'ada', enabled: true }]);
+
+	await expect(page.getByText(/options avancées : ProxyCommand/)).toBeVisible();
+	await page.getByRole('button', { name: 'Reprendre le serveur proxied' }).click();
+	await expect(managed(page).getByText(/proxied\.example\.org/)).toBeVisible();
+	expect(manager.config.hosts[1]).toMatchObject({
+		alias: 'proxied',
+		options: [{ key: 'ProxyCommand', value: 'nc %h %p', enabled: true }]
+	});
 });
 
 test('annonce une modification refusée parce que la configuration a changé ailleurs', async ({
@@ -252,7 +297,7 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	await openSsh(page);
 	manager.config.revision = 7;
 	await addForm(page).getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
-	await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
+	await addForm(page).getByRole('button', { name: 'Ajouter le serveur' }).click();
 	await expect(page.getByRole('alert')).toContainText('modifiée ailleurs');
 });
 
@@ -298,10 +343,18 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		};
 		await scan('page SSH');
 
-		await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
+		await addForm(page)
+			.getByText(/^Options avancées/)
+			.click();
+		await scan('options avancées dans le formulaire');
+
+		await addForm(page).getByRole('button', { name: 'Ajouter le serveur' }).click();
 		await scan('formulaire en erreur');
 
-		await page.getByText(/^Options avancées/).click();
+		await page
+			.getByText(/^Options avancées/)
+			.first()
+			.click();
 		await scan('options avancées d’un serveur');
 
 		await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
