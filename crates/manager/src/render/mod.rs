@@ -153,6 +153,8 @@ pub struct KeyRequest<'a> {
     pub size: ImageSize,
     /// Label drawn at the bottom, if any.
     pub label: Option<&'a str>,
+    /// Caption drawn at the top, over the image, if any.
+    pub caption: Option<&'a str>,
     /// Background colour, used when the state does not impose one.
     pub background: Rgba<u8>,
     /// Colour of the label, used when the state does not impose a background.
@@ -180,6 +182,7 @@ impl<'a> KeyRequest<'a> {
             source,
             size,
             label,
+            caption: None,
             background: DEFAULT_BACKGROUND,
             text_color: TEXT_COLOR,
             state: KeyState::Normal,
@@ -224,6 +227,12 @@ impl<'a> KeyRequest<'a> {
     #[must_use]
     pub fn focused(self, focused: bool) -> Self {
         Self { focused, ..self }
+    }
+
+    /// The same request with `caption` drawn at the top of the key.
+    #[must_use]
+    pub fn captioned(self, caption: Option<&'a str>) -> Self {
+        Self { caption, ..self }
     }
 
     /// The same request for a key that is ticked (or not).
@@ -331,6 +340,7 @@ enum CacheKey {
         source: Option<ContentDigest>,
         size: (u32, u32),
         label: Option<String>,
+        caption: Option<String>,
         background: [u8; 4],
         text_color: [u8; 4],
         state: KeyState,
@@ -423,6 +433,7 @@ impl Renderer {
             source: digest.as_ref().map(|digest| digest.digest),
             size: (request.size.width, request.size.height),
             label: request.label.map(str::to_owned),
+            caption: request.caption.map(str::to_owned),
             background: background.0,
             text_color: text_color.0,
             state: request.state,
@@ -441,10 +452,17 @@ impl Renderer {
                 .label
                 .map(str::trim)
                 .filter(|label| !label.is_empty());
+            let caption = request
+                .caption
+                .map(str::trim)
+                .filter(|caption| !caption.is_empty());
             let icon_area = icon_area(request.size, label.is_some());
             let mut canvas = self.compose(bytes.as_deref(), request.size, icon_area, background)?;
             if let Some(label) = label {
                 self.draw_label(&mut canvas, label, text_color)?;
+            }
+            if let Some(caption) = caption {
+                self.draw_caption(&mut canvas, caption, text_color)?;
             }
             if let Some(color) = frame {
                 cursor::draw_frame(&mut canvas, color);
@@ -612,25 +630,54 @@ impl Renderer {
         Ok(())
     }
 
-    /// Draws `label` on one line, shortened with an ellipsis if needed, at the
-    /// bottom of `canvas`.
+    /// Draws `label` on one line at the bottom of `canvas`.
     fn draw_label(
         &self,
         canvas: &mut RgbaImage,
         label: &str,
         color: Rgba<u8>,
     ) -> Result<(), RenderError> {
-        let width = f32_from(canvas.width());
         let height = f32_from(canvas.height());
         let size = height * LABEL_FONT_RATIO;
+        let top = height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
+        self.draw_line(canvas, label, size, top, color)
+    }
+
+    /// Draws `caption` on one line at the top of `canvas`, over the image, in
+    /// the size and the font of the label.
+    fn draw_caption(
+        &self,
+        canvas: &mut RgbaImage,
+        caption: &str,
+        color: Rgba<u8>,
+    ) -> Result<(), RenderError> {
+        let height = f32_from(canvas.height());
+        self.draw_line(
+            canvas,
+            caption,
+            height * LABEL_FONT_RATIO,
+            height * LABEL_VERTICAL_PADDING_RATIO,
+            color,
+        )
+    }
+
+    /// Draws `text` centred on one line of `size` pixels whose top is at
+    /// `top`, shortened with an ellipsis if needed.
+    fn draw_line(
+        &self,
+        canvas: &mut RgbaImage,
+        text: &str,
+        size: f32,
+        top: f32,
+        color: Rgba<u8>,
+    ) -> Result<(), RenderError> {
+        let width = f32_from(canvas.width());
         let max_width = width * (1.0 - 2.0 * LABEL_PADDING_RATIO);
-        let text_top =
-            height * (1.0 - LABEL_VERTICAL_PADDING_RATIO) - TextRenderer::line_height(size);
         let line = self.text.fitted_line(
-            label,
+            text,
             semibold(size, color),
             width / 2.0,
-            text_top + TextRenderer::ascent(size),
+            top + TextRenderer::ascent(size),
             max_width,
         )?;
         self.text.draw(canvas, &[line])
@@ -732,8 +779,9 @@ fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
     canvas
 }
 
-/// Part of a key of `size` left to its image: all of it, or what is above
-/// the label line, so that the image is never covered.
+/// Part of a key of `size` left to its image: all of it, or what is above the
+/// label line, so that the image is never covered by the label. A caption is
+/// drawn over the image and takes none of it.
 fn icon_area(size: ImageSize, labelled: bool) -> ImageSize {
     if !labelled {
         return size;

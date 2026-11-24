@@ -39,6 +39,10 @@ pub const MAX_ICON_BASE64: usize = 16 * 1024;
 /// decoding takes hundreds of megabytes.
 pub const MAX_ICON_SIDE: u32 = 256;
 
+/// Longest call duration accepted, in seconds (one week): a longer one is a
+/// misreading of the page, and the call then has no known duration.
+pub const MAX_CALL_SECONDS: u64 = 7 * 24 * 3600;
+
 /// Start of a PNG file.
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
@@ -256,6 +260,9 @@ pub enum BrowserReport {
         camera_on: Option<bool>,
         /// Who is calling, while it rings.
         caller: Option<String>,
+        /// Seconds of the call, as Teams shows its duration; `None` when
+        /// unknown (and from an extension that does not read it).
+        elapsed_seconds: Option<u64>,
     },
     /// Meetings of the calendar, read when the calendar is open.
     #[serde(rename_all = "camelCase")]
@@ -362,6 +369,7 @@ impl BrowserReport {
                 muted,
                 camera_on,
                 caller,
+                elapsed_seconds,
             } => Self::Call {
                 phase,
                 muted,
@@ -369,6 +377,7 @@ impl BrowserReport {
                 caller: caller
                     .map(|caller| bounded_text(&caller))
                     .filter(|caller| !caller.is_empty()),
+                elapsed_seconds: elapsed_seconds.filter(|seconds| *seconds <= MAX_CALL_SECONDS),
             },
             Self::Meetings { items } => Self::Meetings {
                 items: items
@@ -451,6 +460,7 @@ mod tests {
                 muted: Some(true),
                 camera_on: None,
                 caller: None,
+                elapsed_seconds: None,
             }
         );
         let request = serde_json::to_string(&ManagerRequest::Do {
@@ -739,6 +749,7 @@ mod tests {
             muted: None,
             camera_on: None,
             caller: Some("Ali\u{202E}ce\u{2066}".into()),
+            elapsed_seconds: None,
         }
         .sanitized();
         assert!(matches!(
@@ -754,6 +765,7 @@ mod tests {
             muted: None,
             camera_on: None,
             caller: Some(" \n ".into()),
+            elapsed_seconds: None,
         }
         .sanitized();
         assert!(matches!(report, BrowserReport::Call { caller: None, .. }));
@@ -815,5 +827,31 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn the_duration_of_a_call_is_optional_and_bounded() {
+        let read = |json: &str| {
+            serde_json::from_str::<BrowserReport>(json)
+                .unwrap()
+                .sanitized()
+        };
+        let elapsed = |report: BrowserReport| match report {
+            BrowserReport::Call {
+                elapsed_seconds, ..
+            } => elapsed_seconds,
+            other => panic!("not a call: {other:?}"),
+        };
+        let call = |extra: &str| {
+            format!(
+                r#"{{"type":"call","phase":"inCall","muted":null,"cameraOn":null,"caller":null{extra}}}"#
+            )
+        };
+        assert_eq!(elapsed(read(&call(""))), None);
+        assert_eq!(elapsed(read(&call(r#","elapsedSeconds":754"#))), Some(754));
+        let too_long = format!(r#","elapsedSeconds":{}"#, MAX_CALL_SECONDS + 1);
+        assert_eq!(elapsed(read(&call(&too_long))), None);
+        let longest = format!(r#","elapsedSeconds":{MAX_CALL_SECONDS}"#);
+        assert_eq!(elapsed(read(&call(&longest))), Some(MAX_CALL_SECONDS));
     }
 }

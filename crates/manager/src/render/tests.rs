@@ -112,6 +112,78 @@ fn label_changes_the_image() {
 }
 
 #[test]
+fn a_caption_is_drawn_over_the_top_of_the_image_which_keeps_its_size() {
+    let source = png(120, 120, RED);
+    let subject = renderer();
+    let plain = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), Some("Raccrocher")))
+        .unwrap();
+    let captioned = subject
+        .render_key(
+            &KeyRequest::new(KEY, Some(&source), Some("Raccrocher")).captioned(Some("12:34")),
+        )
+        .unwrap();
+    let (plain, captioned) = (plain.image(), captioned.image());
+    assert_ne!(plain, captioned);
+    // The image is not shrunk: below the caption it is exactly what it was.
+    let below = 40;
+    assert!(
+        captioned
+            .enumerate_pixels()
+            .filter(|(_, y, _)| *y >= below)
+            .all(|(x, y, pixel)| pixel == plain.get_pixel(x, y))
+    );
+    // The caption is text over the image, with no band behind it: the pixels
+    // that are not text are the image's.
+    let differing = captioned
+        .enumerate_pixels()
+        .filter(|(x, y, pixel)| *y < below && *pixel != plain.get_pixel(*x, *y))
+        .count();
+    assert!(differing > 0, "the caption is drawn");
+    assert!(
+        differing < 120 * below as usize / 4,
+        "only the letters differ, not a band: {differing}"
+    );
+    assert_eq!(*captioned.get_pixel(60, 1), RED, "no band over the image");
+    assert!(captioned.pixels().all(|pixel| pixel.0[3] == 255));
+}
+
+#[test]
+fn a_caption_has_the_size_and_the_font_of_a_label() {
+    let subject = renderer();
+    let text_pixels = |request: &KeyRequest<'_>| {
+        let rendered = subject.render_key(request).unwrap();
+        rendered
+            .image()
+            .pixels()
+            .map(|pixel| u32::from(pixel.0[0]))
+            .sum::<u32>()
+    };
+    let as_label = text_pixels(&KeyRequest::new(KEY, None, Some("12:34")));
+    let as_caption = text_pixels(&KeyRequest::new(KEY, None, None).captioned(Some("12:34")));
+    assert!(as_label > 0);
+    // The same letters at another height only differ by their anti-aliasing.
+    let gap = as_label.abs_diff(as_caption);
+    assert!(
+        gap * 20 < as_label,
+        "the same ink: {as_label} vs {as_caption}"
+    );
+}
+
+#[test]
+fn a_blank_caption_changes_nothing() {
+    let source = png(120, 120, RED);
+    let subject = renderer();
+    let plain = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), None))
+        .unwrap();
+    let blank = subject
+        .render_key(&KeyRequest::new(KEY, Some(&source), None).captioned(Some("  ")))
+        .unwrap();
+    assert_eq!(plain.image(), blank.image());
+}
+
+#[test]
 fn a_long_label_stays_on_one_line_below_the_image() {
     let source = png(120, 120, RED);
     let rendered = renderer()

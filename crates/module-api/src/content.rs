@@ -55,6 +55,9 @@ pub struct KeyContent {
     pub image: Option<ImageData>,
     /// Text drawn at the bottom of the key.
     pub label: Option<String>,
+    /// Short text drawn at the top of the key, over the image, which keeps its
+    /// size (a duration, a count).
+    pub caption: Option<String>,
     /// Visual state.
     pub state: KeyState,
     /// The key holds the cursor of the contextual dial: the host draws a
@@ -92,6 +95,15 @@ impl KeyContent {
             image: Some(image.clone()),
             label: Some(label.into()),
             ..Self::default()
+        }
+    }
+
+    /// The same key with `caption` at its top.
+    #[must_use]
+    pub fn with_caption(self, caption: impl Into<String>) -> Self {
+        Self {
+            caption: Some(caption.into()),
+            ..self
         }
     }
 
@@ -255,6 +267,13 @@ mod tests {
     fn keys_take_a_cursor_and_a_tick() {
         let plain = KeyContent::with_label("x");
         assert!(!plain.focused && !plain.checked);
+        assert!(plain.caption.is_none());
+        let key = plain
+            .clone()
+            .with_caption("12:34")
+            .focused(true)
+            .checked(true);
+        assert_eq!(key.caption.as_deref(), Some("12:34"));
         let key = plain.focused(true).checked(true);
         assert!(key.focused && key.checked);
         assert!(!key.clone().checked(false).checked);
