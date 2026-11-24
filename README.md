@@ -101,6 +101,7 @@ Pour signaler qu'une application suivie (Claude Desktop, IntelliJ) demande votre
 | Corepack (fourni avec Node ≥ 24.12) | pnpm à la version épinglée dans `ui/package.json` | `corepack enable pnpm` |
 | Bibliothèques système | accès USB/HID | Arch : `sudo pacman -S base-devel systemd-libs pkgconf` ; Ubuntu : `sudo apt install build-essential pkg-config libudev-dev` |
 | `pactl` ≥ 16 (serveur PipeWire ou PulseAudio) | module Audio | Arch : `libpulse` (présent avec Plasma) ; Ubuntu 24.04 ou plus : `sudo apt install pulseaudio-utils` (non installé par défaut ; Ubuntu 22.04 fournit `pactl` 15, trop ancien) |
+| BlueZ (`bluetoothd`) | casque Sony (`headset-test`, pas encore dans le service) | Arch : `sudo pacman -S bluez` ; Ubuntu : `sudo apt install bluez` (présent avec Bluetooth) |
 | `git` | rubrique « Machine » > Git (lecture de la configuration existante ; absent, la page le dit) et tests Rust | Arch : `sudo pacman -S git` ; Ubuntu : `sudo apt install git` |
 | Docker (utilisateur dans le groupe `docker`) | module Docker, `make docker` | [docs.docker.com](https://docs.docker.com/engine/install/) |
 | [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) 0.20 | `make deny` / `make check` | `cargo install --locked cargo-deny` |
