@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Corrigé
+
+- Souris : une souris inactive (veille d'économie d'énergie) n'est plus déclarée éteinte puis revenue toutes les vingt secondes : chaque contrôle de présence envoie trois pings au lieu d'un, et quatre contrôles ratés d'affilée sont nécessaires (au lieu de deux).
+
 ### Modifié
 
 - Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
