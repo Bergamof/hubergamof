@@ -19,6 +19,17 @@ describe('availableSections', () => {
 			'machine'
 		]);
 	});
+
+	it('offers the headphones after the mice when some are connected', () => {
+		expect(availableSections(true, true, false, true)).toEqual([
+			'deck',
+			'mouse',
+			'headset',
+			'menu',
+			'machine'
+		]);
+		expect(availableSections(false, false, false, true)).toEqual(['headset', 'menu', 'machine']);
+	});
 });
 
 describe('sectionShown', () => {

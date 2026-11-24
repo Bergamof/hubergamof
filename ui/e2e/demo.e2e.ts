@@ -956,3 +956,30 @@ test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', 
 	await expect(start, 'focus given back').toBeFocused();
 	await start.click();
 });
+
+// The demo also serves a simulated pair of headphones: the page opens the link when it is shown.
+
+test('règle le son ambiant et l’égaliseur du casque, et libère la liaison', async ({ page }) => {
+	await open(page);
+	await page.getByRole('button', { name: 'Casque' }).click();
+	await expect(page.getByRole('heading', { name: /WH-1000XM4/ })).toBeVisible();
+	await expect(page.getByText('Connecté', { exact: true })).toBeVisible();
+	await expect(page.getByText(/^Batterie \d+ %/)).toBeVisible();
+
+	await page.getByRole('radio', { name: 'Son ambiant' }).click();
+	await expect(page.getByRole('radio', { name: 'Son ambiant' })).toBeChecked();
+	await expect(page.getByRole('slider', { name: 'Niveau du son ambiant' })).toBeVisible();
+
+	await page.getByLabel('Préréglage de l’égaliseur').selectOption('bassBoost');
+	await expect(page.getByLabel('Préréglage de l’égaliseur')).toHaveValue('bassBoost');
+
+	await expectAccessible(page, 'page Casque');
+
+	await page.getByRole('button', { name: 'Libérer' }).click();
+	await expect(page.getByText(/Libéré/)).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Reprendre la connexion' })).toBeFocused();
+	await expect(page.getByRole('slider', { name: 'Égaliseur : 1 kHz' })).toBeDisabled();
+	await page.getByRole('button', { name: 'Reprendre la connexion' }).click();
+	await expect(page.getByText('Connecté', { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Libérer' })).toBeFocused();
+});

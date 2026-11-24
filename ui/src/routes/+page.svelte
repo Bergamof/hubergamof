@@ -6,6 +6,7 @@
 	import DeckEditor from '#lib/components/DeckEditor.svelte';
 	import DeviceSelector from '#lib/components/DeviceSelector.svelte';
 	import ApplicationPanel from '#lib/components/ApplicationPanel.svelte';
+	import HeadsetPage from '#lib/components/HeadsetPage.svelte';
 	import MachinePage from '#lib/components/MachinePage.svelte';
 	import MouseEditor from '#lib/components/MouseEditor.svelte';
 	import RadialMenuPage from '#lib/components/RadialMenuPage.svelte';
@@ -33,12 +34,13 @@
 	const hasDecks = $derived((deck?.devices.length ?? 0) > 0);
 	const hasMice = $derived((deck?.mice.mice.length ?? 0) > 0);
 	const hasModules = $derived((deck?.application.modules.length ?? 0) > 0);
-	const sections = $derived(availableSections(hasDecks, hasMice, hasModules));
+	const hasHeadsets = $derived((deck?.headsets.headsets.length ?? 0) > 0);
+	const sections = $derived(availableSections(hasDecks, hasMice, hasModules, hasHeadsets));
 	const section = $derived(sectionShown(wanted, sections));
 
 	/** Machine and modules belong to no device: they are named, not the device or the mouse. */
 	const pageTitle = $derived.by(() => {
-		if (section === 'machine' || section === 'modules') {
+		if (section === 'machine' || section === 'modules' || section === 'headset') {
 			return `${SECTION_LABELS[section]} · HuBergamof`;
 		}
 		const shown = section === 'deck' ? deck?.device : deck?.mice.mouse;
@@ -50,7 +52,7 @@
 	const locked = $derived(deck?.application.locked ?? false);
 	/** The editor shown: the mouse one, or the deck one, once its configuration is known. */
 	const editorShown = $derived(
-		section === 'machine'
+		section === 'machine' || section === 'headset'
 			? true
 			: section === 'modules'
 				? hasModules
@@ -175,7 +177,7 @@
 						{/each}
 					</div>
 				{/if}
-				{#if section === 'modules' || section === 'machine'}
+				{#if section === 'modules' || section === 'machine' || section === 'headset'}
 					<!-- The modules of the application and the machine belong to no device. -->
 				{:else if section !== 'deck' && deck.mice.mouse}
 					{#if deck.mice.mice.length > 1}
@@ -203,6 +205,8 @@
 				/>
 				{#if section === 'machine'}
 					<MachinePage {deck} />
+				{:else if section === 'headset'}
+					<HeadsetPage {deck} />
 				{:else if section === 'modules'}
 					<ApplicationPanel {deck} {api} />
 				{:else if section === 'menu'}
