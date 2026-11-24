@@ -108,6 +108,9 @@ const LABEL_VERTICAL_PADDING_RATIO: f32 = 0.03;
 /// Key caption font size, relative to the key height: a little larger than
 /// the label, being short and read at a glance.
 const CAPTION_FONT_RATIO: f32 = 0.16;
+/// Black of the band under a caption, and how much of the icon shows through.
+const CAPTION_BAND_FILL: &str = "#000000";
+const CAPTION_BAND_OPACITY: f32 = 0.6;
 const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 
 /// Rendering failure.
@@ -459,13 +462,13 @@ impl Renderer {
                 .caption
                 .map(str::trim)
                 .filter(|caption| !caption.is_empty());
-            let slot = icon_area(request.size, label.is_some(), caption.is_some());
-            let mut canvas = self.compose(bytes.as_deref(), request.size, slot, background)?;
+            let icon_area = icon_area(request.size, label.is_some());
+            let mut canvas = self.compose(bytes.as_deref(), request.size, icon_area, background)?;
             if let Some(label) = label {
                 self.draw_label(&mut canvas, label, text_color)?;
             }
             if let Some(caption) = caption {
-                self.draw_caption(&mut canvas, caption, text_color)?;
+                self.draw_caption(&mut canvas, caption)?;
             }
             if let Some(color) = frame {
                 cursor::draw_frame(&mut canvas, color);
@@ -507,7 +510,7 @@ impl Renderer {
         check_size(size)?;
         check_source_length(bytes.len())?;
         let kind = ImageKind::sniff(bytes).ok_or(RenderError::UnsupportedFormat)?;
-        self.compose(Some(bytes), size, IconSlot::whole(size), DEFAULT_BACKGROUND)?;
+        self.compose(Some(bytes), size, size, DEFAULT_BACKGROUND)?;
         Ok(kind)
     }
 
@@ -573,13 +576,13 @@ impl Renderer {
         Ok(rendered)
     }
 
-    /// Draws `bytes` scaled to fit `slot`, centred in it, on a canvas of
+    /// Draws `bytes` scaled to fit `icon_area`, centred in it, on a canvas of
     /// `size`.
     fn compose(
         &self,
         bytes: Option<&[u8]>,
         size: ImageSize,
-        slot: IconSlot,
+        icon_area: ImageSize,
         background: Rgba<u8>,
     ) -> Result<RgbaImage, RenderError> {
         let mut canvas = RgbaImage::from_pixel(size.width, size.height, background);
@@ -587,13 +590,13 @@ impl Renderer {
             return Ok(canvas);
         };
         let foreground = match source::decode(bytes, self.text.source_svg_options())? {
-            Decoded::Raster(image) => contain(&image, slot.size),
+            Decoded::Raster(image) => contain(&image, icon_area),
             Decoded::Vector(tree) => {
-                source::rasterize_svg(&tree, slot.size.width, slot.size.height)?
+                source::rasterize_svg(&tree, icon_area.width, icon_area.height)?
             }
         };
         let x = i64::from((size.width - foreground.width()) / 2);
-        let y = i64::from(slot.top + (slot.size.height - foreground.height()) / 2);
+        let y = i64::from((icon_area.height - foreground.height()) / 2);
         imageops::overlay(&mut canvas, &foreground, x, y);
         Ok(canvas)
     }
@@ -646,21 +649,21 @@ impl Renderer {
         self.draw_line(canvas, label, size, top, color)
     }
 
-    /// Draws `caption` on one line at the top of `canvas`.
-    fn draw_caption(
-        &self,
-        canvas: &mut RgbaImage,
-        caption: &str,
-        color: Rgba<u8>,
-    ) -> Result<(), RenderError> {
+    /// Draws `caption` on one line at the top of `canvas`, over the image, in
+    /// white on a darkened band so that it reads on any icon.
+    fn draw_caption(&self, canvas: &mut RgbaImage, caption: &str) -> Result<(), RenderError> {
         let height = f32_from(canvas.height());
-        self.draw_line(
+        let size = height * CAPTION_FONT_RATIO;
+        let padding = height * LABEL_VERTICAL_PADDING_RATIO;
+        let band = TextRenderer::line_height(size) + 2.0 * padding;
+        self.text.overlay_svg(
             canvas,
-            caption,
-            height * CAPTION_FONT_RATIO,
-            height * LABEL_VERTICAL_PADDING_RATIO,
-            color,
-        )
+            &format!(
+                r#"<rect x="0" y="0" width="{}" height="{band}" fill="{CAPTION_BAND_FILL}" fill-opacity="{CAPTION_BAND_OPACITY}"/>"#,
+                canvas.width()
+            ),
+        )?;
+        self.draw_line(canvas, caption, size, padding, TEXT_COLOR)
     }
 
     /// Draws `text` centred on one line of `size` pixels whose top is at
@@ -781,43 +784,19 @@ fn keep_opaque(mut canvas: RgbaImage, background: Rgba<u8>) -> RgbaImage {
     canvas
 }
 
-/// Where the image of a key goes.
-#[derive(Debug, Clone, Copy)]
-struct IconSlot {
-    /// Distance from the top of the key.
-    top: u32,
-    /// Room left to the image.
-    size: ImageSize,
-}
-
-impl IconSlot {
-    /// The whole key.
-    fn whole(size: ImageSize) -> Self {
-        Self { top: 0, size }
+/// Part of a key of `size` left to its image: all of it, or what is above the
+/// label line, so that the image is never covered by the label. A caption is
+/// drawn over the image and takes none of it.
+fn icon_area(size: ImageSize, labelled: bool) -> ImageSize {
+    if !labelled {
+        return size;
     }
-}
-
-/// Part of a key of `size` left to its image, as its distance from the top
-/// and its size: all of it, or what lies between the caption line and the
-/// label line, so that the image is never covered.
-fn icon_area(size: ImageSize, labelled: bool, captioned: bool) -> IconSlot {
     let height = f32_from(size.height);
-    let padding = height * 2.0 * LABEL_VERTICAL_PADDING_RATIO;
-    let strip = |ratio: f32, shown: bool| {
-        if shown {
-            TextRenderer::line_height(height * ratio) + padding
-        } else {
-            0.0
-        }
-    };
-    let top = strip(CAPTION_FONT_RATIO, captioned);
-    let bottom = strip(LABEL_FONT_RATIO, labelled);
-    IconSlot {
-        top: scaled_dimension(size.height, top / height, size.height),
-        size: ImageSize {
-            width: size.width,
-            height: scaled_dimension(size.height, 1.0 - (top + bottom) / height, size.height),
-        },
+    let line = TextRenderer::line_height(height * LABEL_FONT_RATIO);
+    let strip = line + height * 2.0 * LABEL_VERTICAL_PADDING_RATIO;
+    ImageSize {
+        width: size.width,
+        height: scaled_dimension(size.height, 1.0 - strip / height, size.height),
     }
 }
 
