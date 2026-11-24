@@ -380,6 +380,11 @@ impl Session {
                 let saved = self.mouse.update_radial_menu(config).await;
                 return self.answer_mouse(saved).await;
             }
+            ClientMessage::SelectHeadset { .. }
+            | ClientMessage::SetHeadsetAmbient { .. }
+            | ClientMessage::SetHeadsetEqualizer { .. }
+            | ClientMessage::ReleaseHeadset { .. }
+            | ClientMessage::ResumeHeadset { .. } => Err(RequestFailure::headsets_unavailable()),
             ClientMessage::PressKey { .. }
             | ClientMessage::RotateDial { .. }
             | ClientMessage::PressDial { .. }
@@ -843,6 +848,14 @@ impl RequestFailure {
         Self {
             code: ErrorCode::InputRefused,
             message: "presses come from the device only (simulated input needs --demo)".into(),
+        }
+    }
+
+    /// Until the manager serves headphones, nothing can be asked of them.
+    fn headsets_unavailable() -> Self {
+        Self {
+            code: ErrorCode::Unavailable,
+            message: "this manager does not serve headphones".into(),
         }
     }
 
