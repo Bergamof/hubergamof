@@ -179,10 +179,10 @@ enum Command {
     /// their settings channel.
     HeadsetTest {
         /// Which headphones, when more than one is paired.
-        #[arg(long, value_parser = headset_test::parse_address)]
+        #[arg(long, global = true, value_parser = headset_test::parse_address)]
         address: Option<String>,
         /// The data type of the frames sent.
-        #[arg(long, value_enum, default_value_t = headset_test::DataKindArg::Mdr)]
+        #[arg(long, global = true, value_enum, default_value_t = headset_test::DataKindArg::Mdr)]
         data_type: headset_test::DataKindArg,
         #[command(subcommand)]
         action: headset_test::HeadsetTestAction,

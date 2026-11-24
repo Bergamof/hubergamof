@@ -451,6 +451,42 @@ mod tests {
     }
 
     #[test]
+    fn the_options_of_headset_test_go_before_or_after_the_action() {
+        let parsed = |args: &[&str]| {
+            let mut all = vec!["hubergamof", "headset-test"];
+            all.extend_from_slice(args);
+            match Cli::try_parse_from(all).unwrap().command {
+                Some(Command::HeadsetTest {
+                    address,
+                    data_type,
+                    action,
+                }) => (address, DataKind::from(data_type), action.into_action()),
+                other => panic!("not a headset-test: {other:?}"),
+            }
+        };
+        let before = parsed(&[
+            "--data-type",
+            "mdr2",
+            "--address",
+            "ac:80:0a:0b:2e:61",
+            "probe",
+            "paired-devices",
+        ]);
+        let after = parsed(&[
+            "probe",
+            "paired-devices",
+            "--data-type",
+            "mdr2",
+            "--address",
+            "ac:80:0a:0b:2e:61",
+        ]);
+        assert_eq!(before, after);
+        assert_eq!(before.0.as_deref(), Some("AC:80:0A:0B:2E:61"));
+        assert_eq!(before.1, DataKind::MdrNo2);
+        assert_eq!(parsed(&["info"]).1, DataKind::Mdr, "the default is 0x0C");
+    }
+
+    #[test]
     fn headset_test_refuses_what_it_does_not_know() {
         for args in [
             &["headset-test"][..],
@@ -501,6 +537,8 @@ mod tests {
             &["headset-test", "--address", "AA:BB:CC:DD:EE", "info"],
             &["headset-test", "--address", "AA:BB:CC:DD:EE:GG", "info"],
             &["headset-test", "--data-type", "raw", "info"],
+            &["headset-test", "info", "--data-type", "raw"],
+            &["headset-test", "info", "--address", "nope"],
         ] {
             let mut all = vec!["hubergamof"];
             all.extend_from_slice(args);

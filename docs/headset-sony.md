@@ -13,7 +13,7 @@
 - Échappement : `3C`, `3D`, `3E` du corps deviennent `3D` suivi de l'octet avec le bit `0x10` éteint (`3D 2C`, `3D 2D`, `3D 2E`).
 - Acquittement : type `01`, charge vide, séquence inversée par rapport à la trame reçue. L'émetteur ne bascule sa séquence qu'après acquittement et renvoie la même trame sans réponse (3 essais, 1 s).
 - Exemple : demande de l'état du son ambiant `66 02`, type `0C`, séquence 0 → `3E 0C 00 00 00 00 02 66 02 76 3C`.
-- Type de données : `0C` supposé (le plus courant) ; `0E` et `00` s'essaient avec `--data-type`.
+- Type de données : `0C`, **vérifié sur le XM4** (les réponses reviennent en `0C`, sauf la liste des appareils en `0E`) ; `0E` et `00` s'essaient avec `--data-type`.
 
 ## Charges utiles (`payload.rs`)
 | Fonction | Demande | Réponse / notification | État |
@@ -21,7 +21,7 @@
 | Info protocole | `00 00` | `01 00 70 00` (version 0x7000) | **relevé** |
 | Son ambiant | GET `66 02` ; SET `68 02 …` (8 octets) | `67` / `69`, 8 octets : effet, capacité vent, mode, ?, voix, niveau 0–20 | **relevé**, SET vérifié (`68 02 11 02 00 01 00 05` → `69 02 01 02 00 01 00 05`) |
 | Batterie | `10 00` | `11 00 niveau charge` | **relevé** (`11 00 3C 00` = 60 %) |
-| Égaliseur | GET `56 01` ; SET `58 01 <préréglage> 00` ou `58 01 FF 06 <6 valeurs + 10>` | `57` / `59`, 10 octets : préréglage, nombre de valeurs (`06`), clear bass, 5 bandes (valeur + 10) | lecture **relevée** (`57 01 17 06 00 0E 0D 0B 0C 00` = Speech) ; SET d'un **préréglage vérifié** (`58 01 16 00` → `57 01 16 06 11 0A 0A 0A 0A 0A` : clear bass +7 ; `58 01 17 00` répond aussitôt `59 …`) ; SET manuel **à vérifier** |
+| Égaliseur | GET `56 01` ; SET `58 01 <préréglage> 00` ou `58 01 FF 06 <6 valeurs + 10>` | `57` / `59`, 10 octets : préréglage, nombre de valeurs (`06`), clear bass, 5 bandes (valeur + 10) | lecture **relevée** (`57 01 17 06 00 0E 0D 0B 0C 00` = Speech) ; SET d'un **préréglage vérifié** (`58 01 16 00` → `57 01 16 06 11 0A 0A 0A 0A 0A` : clear bass +7 ; `58 01 17 00` répond aussitôt `59 …`) ; SET manuel **vérifié** (`58 01 FF 06 0A 0A 0A 0A 0A 0A` → `59 01 A0 06 0A 0A 0A 0A 0A 0A` : le préréglage devient `A0`, relu à l'identique) |
 | État de connexion | `24` seul | `25 31 01 00` | **sens inconnu** ; `24 00` et `24 01` ne répondent rien |
 | Appareils appairés | `38` (hypothèse : le GET voisin du `39`) | `39 01 N …` sur le type `0E` | format décodé (ci-dessous), requête **à vérifier** |
 | Infos d'appareils, « concierge » | `1C`, `28` | inconnue | à sonder |
@@ -41,10 +41,11 @@ Octets d'état vus : `01`, `02`, `00`, `00`, `00` ; l'ordinateur qui parle au ca
 Quand l'appli Sony d'un téléphone se connecte, le casque envoie `A5 01 01 02` (sens inconnu ; `PLAY_NTFY_STATUS` dans mdr) puis **coupe la connexion RFCOMM** (`Connection reset by peer`) : un seul client de réglages à la fois. Nos trames avaient été acquittées, ce n'est pas un défaut d'ACK. Relevé : quand HuBergamof se connecte, **c'est l'appli Android qui est coupée** (l'audio continue : un appel est resté en cours, seule la liaison de réglages tombe). Conséquence retenue (décision d'Adrien, 2026-11-24) : HuBergamof se connecte **à l'accès à la page de réglages** (jamais de lui-même au retour du casque) ; une coupure en cours d'usage n'est **pas retentée**, un bouton « Reprendre la connexion » la remplace ; un interrupteur « Libérer » ferme la connexion.
 
 ## Ce qu'il reste à relever
-1. Après le correctif de `Link` (réponses collées à l'ACK, voir plus bas), `info` doit répondre à toutes les demandes.
-2. Égaliseur : `equalizer manual` est-il pris en compte et relu à l'identique (clear bass, ordre des bandes) ? Retour à `speech` ensuite.
-3. Liste des appareils : la requête (`probe paired-devices --data-type mdr2`, puis avec `--arg 01`) ; à défaut `watch --data-type mdr2` pendant qu'un téléphone se connecte puis se déconnecte au casque : quand `39` arrive, comment l'octet d'état change.
-4. Le bouton CUSTOM est abandonné (aucun message d'appui connu).
+1. Liste des appareils : la requête (`hubergamof headset-test --data-type mdr2 probe paired-devices`, puis `… probe paired-devices --arg 01`) ; à défaut `hubergamof headset-test --data-type mdr2 watch --seconds 120` pendant qu'un téléphone se connecte puis se déconnecte au casque : quand `39` arrive, comment l'octet d'état change. (Les options `--data-type` et `--address` se placent avant ou après l'action.)
+2. Égaliseur, facultatif : l'ordre des bandes par rapport aux fréquences (`equalizer manual --bass 6 --bands=1,2,3,4,5`, regarder les curseurs dans l'appli Sony, puis `equalizer preset speech`) ; les préréglages personnalisés `custom1`/`custom2`.
+3. Le bouton CUSTOM est abandonné (aucun message d'appui connu).
+
+**Vérifié sur le XM4** : `info` répond à toutes les demandes (correctif de `Link`), préréglages et bandes de l'égaliseur se règlent et se relisent.
 
 ## Réponses perdues (corrigé)
 Les relevés montraient des réponses absentes (l'ambiance dans `info`, la batterie ailleurs). Cause, dans `Link::wait_for_ack` : un paquet RFCOMM qui portait l'ACK **et** la réponse derrière lui perdait la réponse. Toutes les trames d'un paquet sont maintenant gardées, dans l'ordre (tests avec `FakeHeadset::joining_reads`).
@@ -58,6 +59,6 @@ hubergamof headset-test watch --seconds 120
 hubergamof headset-test ambient ambient --level 5
 hubergamof headset-test equalizer preset bass-boost
 hubergamof headset-test equalizer manual --bass 0 --bands=0,0,0,0,0
-hubergamof headset-test probe paired-devices --data-type mdr2
+hubergamof headset-test --data-type mdr2 probe paired-devices
 ```
 `watch` : changer pendant l'écoute le mode depuis le casque. Coller la sortie complète (lignes `->` envoyées, `<-` reçues, lecture en dessous). Les seules commandes qui écrivent sont `ambient` et `equalizer` : elles relisent aussitôt le résultat, et se défont par la même commande (`equalizer preset speech` rétablit le préréglage vu à l'origine). `probe` n'accepte des octets d'argument que pour `connection-status`, `device-info` et `concierge` (4 au plus, en hexadécimal) ; les autres demandes ont une charge utile connue.
