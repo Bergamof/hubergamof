@@ -11,11 +11,15 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
 use futures_util::{SinkExt as _, StreamExt as _};
+use hubergamof_headset::payload::AmbientMode as WireMode;
+use hubergamof_headset::simulated::SimulatedHeadset;
 use hubergamof_manager::config_store::ConfigStore;
 use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
+use hubergamof_manager::headset_engine::{HeadsetSupervisor, SimulatedSource};
+use hubergamof_manager::headset_hub::HeadsetHub;
 use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
 use hubergamof_manager::machine::ssh::{SshConfigHub, SshFiles};
 use hubergamof_manager::machine::{MachineHub, MachineShell};
@@ -39,10 +43,10 @@ use hubergamof_module_api::{
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
     AmbientMode, AmbientSound, ClientMessage, DeviceConfig, EqualizerChange, EqualizerPreset,
-    ErrorCode, GitAlias, GitConfig, GitSystemEntry, InstallSupport, LiveState, MachineConfig,
-    ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem, RadialMenuConfig,
-    ServerMessage, ShellAlias, SshConfig, SshHost, SshSystemHost, SystemAlias, UpdateSettings,
-    UpdateStatus,
+    ErrorCode, GitAlias, GitConfig, GitSystemEntry, HeadsetInfo, HeadsetLink, HeadsetState,
+    InstallSupport, LiveState, MachineConfig, ModuleInstance, MouseConfig, MouseInfo, MouseModel,
+    MouseProblem, RadialMenuConfig, ServerMessage, ShellAlias, SshConfig, SshHost, SshSystemHost,
+    SystemAlias, UpdateSettings, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -196,6 +200,7 @@ impl Devices {
             file_picker: Arc::new(NoFilePicker),
             updates: UpdateHandle::inactive(),
             mice: MouseHub::new(store.clone()).unwrap(),
+            headsets: None,
             application: None,
             machine,
             git,
@@ -1841,4 +1846,240 @@ async fn a_client_connecting_while_the_computer_is_locked_hears_nothing_but_that
     client.send(&ClientMessage::Ping).await;
     assert_eq!(client.receive().await, ServerMessage::Pong);
     server.stop().await;
+}
+
+const HEADSET_ADDRESS: &str = "AC:80:0A:0B:2E:61";
+
+/// A server that serves a simulated pair of headphones, its engine and the
+/// headphones themselves, to act on them from the side.
+struct HeadsetRig {
+    server: Running,
+    headset: SimulatedHeadset,
+    supervisor: HeadsetSupervisor,
+}
+
+impl HeadsetRig {
+    async fn start() -> Self {
+        let mut devices = Devices::start();
+        let headset = SimulatedHeadset::new();
+        let info = HeadsetInfo {
+            address: HEADSET_ADDRESS.into(),
+            name: "WH-1000XM4".into(),
+        };
+        let source = Arc::new(SimulatedSource::new(vec![(info, headset.clone())]));
+        let (hub, requests) = HeadsetHub::new();
+        let supervisor =
+            HeadsetSupervisor::start(source, hub.clone(), requests, Duration::from_millis(20));
+        tokio::time::timeout(
+            WAIT,
+            hub.subscribe_headsets().wait_for(|list| !list.is_empty()),
+        )
+        .await
+        .expect("the headphones are listed")
+        .unwrap();
+        devices.context.headsets = Some(hub);
+        Self {
+            server: Running::with_devices(devices).await,
+            headset,
+            supervisor,
+        }
+    }
+
+    /// A client past the greeting, which ends with the headphones connected.
+    async fn connect(&self) -> Client {
+        let own_origin = format!("http://127.0.0.1:{}", self.server.port);
+        let mut client = self.server.connect_with(Some(&own_origin)).await.unwrap();
+        // The greeting, one message longer: the headphones connected.
+        let mut listed = None;
+        for _ in 0..=GREETING_MESSAGES {
+            if let ServerMessage::Headsets { headsets } = client.receive().await {
+                listed = Some(headsets);
+            }
+        }
+        let listed = listed.expect("the greeting lists the headphones");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].address, HEADSET_ADDRESS);
+        client
+    }
+
+    async fn stop(self) {
+        self.supervisor.shutdown().await;
+        self.server.stop().await;
+    }
+}
+
+/// The next state of the headphones that satisfies `wanted`.
+async fn headset_state(
+    client: &mut Client,
+    wanted: impl Fn(&HeadsetState) -> bool,
+) -> HeadsetState {
+    client
+        .receive_until(|message| match message {
+            ServerMessage::HeadsetState { address, state }
+                if address == HEADSET_ADDRESS && wanted(&state) =>
+            {
+                Some(state)
+            }
+            _ => None,
+        })
+        .await
+}
+
+async fn select_headset(client: &mut Client) -> HeadsetState {
+    client
+        .send(&ClientMessage::SelectHeadset {
+            address: HEADSET_ADDRESS.into(),
+        })
+        .await;
+    headset_state(client, |state| {
+        state.link == HeadsetLink::Connected
+            && state.ambient.is_some()
+            && state.battery.is_some()
+            && state.equalizer.is_some()
+    })
+    .await
+}
+
+#[tokio::test]
+async fn selecting_headphones_opens_the_link_and_shows_what_they_say() {
+    let rig = HeadsetRig::start().await;
+    let mut client = rig.connect().await;
+    let state = select_headset(&mut client).await;
+    assert_eq!(state.ambient.unwrap().mode, AmbientMode::Ambient);
+    assert!(state.wind_reduction);
+    assert_eq!(state.battery.unwrap().percent, 80);
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn the_ambient_sound_and_the_equalizer_are_changed_and_followed() {
+    let rig = HeadsetRig::start().await;
+    let mut client = rig.connect().await;
+    select_headset(&mut client).await;
+
+    client
+        .send(&ClientMessage::SetHeadsetAmbient {
+            address: HEADSET_ADDRESS.into(),
+            ambient: AmbientSound {
+                mode: AmbientMode::NoiseCancelling,
+                level: 0,
+                focus_on_voice: false,
+            },
+        })
+        .await;
+    headset_state(&mut client, |state| {
+        state
+            .ambient
+            .is_some_and(|ambient| ambient.mode == AmbientMode::NoiseCancelling)
+    })
+    .await;
+
+    client
+        .send(&ClientMessage::SetHeadsetEqualizer {
+            address: HEADSET_ADDRESS.into(),
+            equalizer: EqualizerChange::Preset {
+                preset: EqualizerPreset::BassBoost,
+            },
+        })
+        .await;
+    let state = headset_state(&mut client, |state| {
+        state
+            .equalizer
+            .is_some_and(|equalizer| equalizer.preset == EqualizerPreset::BassBoost)
+    })
+    .await;
+    assert_eq!(state.equalizer.unwrap().clear_bass, 7);
+
+    // The button of the headphones is followed too.
+    rig.headset.press_button(WireMode::Off);
+    headset_state(&mut client, |state| {
+        state
+            .ambient
+            .is_some_and(|ambient| ambient.mode == AmbientMode::Off)
+    })
+    .await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_link_cut_by_another_app_is_shown_and_resumed_on_request() {
+    let rig = HeadsetRig::start().await;
+    let mut client = rig.connect().await;
+    select_headset(&mut client).await;
+
+    rig.headset.cut();
+    let cut = headset_state(&mut client, |state| state.link == HeadsetLink::Cut).await;
+    assert!(cut.ambient.is_some(), "what was shown stays shown");
+
+    client
+        .send(&ClientMessage::ResumeHeadset {
+            address: HEADSET_ADDRESS.into(),
+        })
+        .await;
+    headset_state(&mut client, |state| state.link == HeadsetLink::Connected).await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn the_link_is_released_on_request_and_stays_released() {
+    let rig = HeadsetRig::start().await;
+    let mut client = rig.connect().await;
+    select_headset(&mut client).await;
+    client
+        .send(&ClientMessage::ReleaseHeadset {
+            address: HEADSET_ADDRESS.into(),
+        })
+        .await;
+    headset_state(&mut client, |state| state.link == HeadsetLink::Released).await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn requests_about_headphones_are_refused_with_the_right_code() {
+    let rig = HeadsetRig::start().await;
+    let mut client = rig.connect().await;
+    let ambient = AmbientSound {
+        mode: AmbientMode::Ambient,
+        level: 3,
+        focus_on_voice: false,
+    };
+
+    client
+        .send(&ClientMessage::SelectHeadset {
+            address: "00:00:00:00:00:00".into(),
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::UnknownDevice);
+
+    // Nothing is changed before the link is open.
+    client
+        .send(&ClientMessage::SetHeadsetAmbient {
+            address: HEADSET_ADDRESS.into(),
+            ambient,
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::Unavailable);
+
+    select_headset(&mut client).await;
+    client
+        .send(&ClientMessage::SetHeadsetAmbient {
+            address: HEADSET_ADDRESS.into(),
+            ambient: AmbientSound {
+                level: 21,
+                ..ambient
+            },
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::InvalidInput);
+    client
+        .send(&ClientMessage::SetHeadsetEqualizer {
+            address: HEADSET_ADDRESS.into(),
+            equalizer: EqualizerChange::Manual {
+                clear_bass: 11,
+                bands: [0; 5],
+            },
+        })
+        .await;
+    assert_eq!(expect_error(&mut client).await, ErrorCode::InvalidInput);
+    rig.stop().await;
 }

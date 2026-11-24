@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::errors::client_message;
+use super::headset_feed::HeadsetFeed;
 use super::mouse_feed::{Failure, MouseFeed};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
@@ -81,6 +82,7 @@ enum Event {
     SshChanged(Arc<SshSnapshot>),
     LockChanged,
     Mouse(Option<ServerMessage>),
+    Headset(Option<ServerMessage>),
     Shutdown,
 }
 
@@ -158,6 +160,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let updates = state.context.updates.subscribe();
     let update_settings = state.context.updates.subscribe_settings();
     let mouse = MouseFeed::new(&state.context.mice);
+    let headsets = HeadsetFeed::new(state.context.headsets.as_ref());
     let application = state.context.application.as_ref().map(ModuleHost::views);
     let machine = state.context.machine.subscribe();
     let git = state.context.git.subscribe();
@@ -171,6 +174,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         updates,
         update_settings,
         mouse,
+        headsets,
         application,
         told_modules: Vec::new(),
         machine,
@@ -191,6 +195,7 @@ struct Session {
     updates: watch::Receiver<UpdateStatus>,
     update_settings: watch::Receiver<UpdateSettings>,
     mouse: MouseFeed,
+    headsets: HeadsetFeed,
     /// What the modules of the application show, when the manager has them.
     application: Option<watch::Receiver<ModuleViews>>,
     /// What the client was last told of them: the views also change for what
@@ -224,6 +229,9 @@ impl Session {
         for message in self.mouse.initial() {
             self.send(&message).await?;
         }
+        if let Some(message) = self.headsets.initial() {
+            self.send(&message).await?;
+        }
         self.send_update_settings().await?;
         if *self.updates.borrow() != UpdateStatus::Unknown {
             self.send_update_status().await?;
@@ -242,7 +250,9 @@ impl Session {
                     self.selection = Selection::None;
                 }
                 Event::LiveDue => self.send_live_state().await?,
-                Event::Mouse(Some(message)) => self.send(&message).await?,
+                Event::Mouse(Some(message)) | Event::Headset(Some(message)) => {
+                    self.send(&message).await?;
+                }
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
                 Event::ApplicationChanged => self.send_application_modules_if_changed().await?,
@@ -261,7 +271,8 @@ impl Session {
                 // tells the client.
                 Event::SettingsChanged(Err(_))
                 | Event::UpdateChanged(Err(_))
-                | Event::Mouse(None) => {}
+                | Event::Mouse(None)
+                | Event::Headset(None) => {}
                 Event::Shutdown => {
                     self.close().await;
                     return Err(Closed);
@@ -300,6 +311,7 @@ impl Session {
             result = self.updates.changed() => Event::UpdateChanged(result),
             result = self.update_settings.changed() => Event::SettingsChanged(result),
             message = self.mouse.next_change() => Event::Mouse(message),
+            message = self.headsets.next_change() => Event::Headset(message),
             () = application_changed(self.application.as_mut()) => Event::ApplicationChanged,
             snapshot = next_snapshot(&mut self.machine) => Event::MachineChanged(snapshot),
             snapshot = next_snapshot(&mut self.git) => Event::GitChanged(snapshot),
@@ -386,7 +398,9 @@ impl Session {
             | ClientMessage::SetHeadsetAmbient { .. }
             | ClientMessage::SetHeadsetEqualizer { .. }
             | ClientMessage::ReleaseHeadset { .. }
-            | ClientMessage::ResumeHeadset { .. } => Err(RequestFailure::headsets_unavailable()),
+            | ClientMessage::ResumeHeadset { .. } => {
+                return self.on_headset_request(request).await;
+            }
             ClientMessage::PressKey { .. }
             | ClientMessage::RotateDial { .. }
             | ClientMessage::PressDial { .. }
@@ -496,6 +510,23 @@ impl Session {
         }
     }
 
+    /// What a client asks about the headphones.
+    async fn on_headset_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
+        let answer = match request {
+            ClientMessage::SelectHeadset { address } => self.headsets.select(&address),
+            ClientMessage::SetHeadsetAmbient { address, ambient } => {
+                self.headsets.set_ambient(&address, ambient)
+            }
+            ClientMessage::SetHeadsetEqualizer { address, equalizer } => {
+                self.headsets.set_equalizer(&address, equalizer)
+            }
+            ClientMessage::ReleaseHeadset { address } => self.headsets.release(&address),
+            ClientMessage::ResumeHeadset { address } => self.headsets.resume(&address),
+            _ => unreachable!("only the requests about the headphones are routed here"),
+        };
+        self.answer_feed(answer).await
+    }
+
     /// What a client asks about the mice and the radial menu.
     async fn on_mouse_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
         match request {
@@ -506,19 +537,19 @@ impl Session {
                     messages.extend(self.mouse.status());
                     messages
                 });
-                self.answer_mouse(selected).await
+                self.answer_feed(selected).await
             }
             ClientMessage::UpdateMouseConfig { serial, config } => {
                 let saved = self.mouse.update_mouse(serial, config).await;
-                self.answer_mouse(saved).await
+                self.answer_feed(saved).await
             }
             ClientMessage::PlayHaptic { serial, waveform } => {
                 let played = self.mouse.play_haptic(&serial, waveform);
-                self.answer_mouse(played).await
+                self.answer_feed(played).await
             }
             ClientMessage::UpdateRadialMenu { config } => {
                 let saved = self.mouse.update_radial_menu(config).await;
-                self.answer_mouse(saved).await
+                self.answer_feed(saved).await
             }
             _ => unreachable!("only the requests about the mice are routed here"),
         }
@@ -626,6 +657,9 @@ impl Session {
         for message in self.mouse.initial() {
             self.send(&message).await?;
         }
+        if let Some(message) = self.headsets.initial() {
+            self.send(&message).await?;
+        }
         self.send_update_settings().await?;
         if *self.updates.borrow() != UpdateStatus::Unknown {
             self.send_update_status().await?;
@@ -668,8 +702,8 @@ impl Session {
         }
     }
 
-    /// Sends what a mouse request answers, or the failure.
-    async fn answer_mouse(
+    /// Sends what a request about the mice or the headphones answers, or the failure.
+    async fn answer_feed(
         &mut self,
         answer: Result<Vec<ServerMessage>, Failure>,
     ) -> Result<(), Closed> {
@@ -884,14 +918,6 @@ impl RequestFailure {
         Self {
             code: ErrorCode::InputRefused,
             message: "presses come from the device only (simulated input needs --demo)".into(),
-        }
-    }
-
-    /// Until the manager serves headphones, nothing can be asked of them.
-    fn headsets_unavailable() -> Self {
-        Self {
-            code: ErrorCode::Unavailable,
-            message: "this manager does not serve headphones".into(),
         }
     }
 

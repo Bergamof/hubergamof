@@ -12,7 +12,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use zbus::fdo::ObjectManagerProxy;
 use zbus::{Connection, proxy};
 use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
@@ -160,6 +160,8 @@ trait ProfileManager {
         uuid: &str,
         options: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
+
+    fn unregister_profile(&self, profile: &ObjectPath<'_>) -> zbus::Result<()>;
 }
 
 #[proxy(interface = "org.bluez.Device1", default_service = "org.bluez")]
@@ -255,10 +257,121 @@ fn io_error(error: &std::io::Error) -> ChannelError {
     }
 }
 
-/// A connection to the headphones: keep it while the channel is in use (it
-/// holds the exported profile).
+/// The system bus, to look for Sony headphones and to open the link to one.
+///
+/// The profile BlueZ calls back with the socket is registered only while a
+/// link is being opened, so that nothing holds the Sony service the rest of
+/// the time (`hubergamof headset-test` takes it too).
+pub struct BluezHeadsets {
+    bus: Connection,
+    /// One link is opened at a time: they share the profile path.
+    opening: Mutex<()>,
+}
+
+impl BluezHeadsets {
+    /// Connects to the system bus.
+    ///
+    /// # Errors
+    /// [`BluezError`] when the bus cannot be reached.
+    pub async fn start() -> Result<Self, BluezError> {
+        Ok(Self {
+            bus: Connection::system().await?,
+            opening: Mutex::new(()),
+        })
+    }
+
+    /// The Sony headphones BlueZ knows.
+    ///
+    /// # Errors
+    /// [`BluezError`] when BlueZ cannot be reached.
+    pub async fn devices(&self) -> Result<Vec<HeadsetDevice>, BluezError> {
+        Ok(sony_devices(&managed_objects(&self.bus).await?))
+    }
+
+    /// Opens the link to `device`: BlueZ connects the Sony service and hands
+    /// the socket over.
+    ///
+    /// # Errors
+    /// [`BluezError`] when BlueZ refuses or does not open the connection in time.
+    pub async fn connect(&self, device: &HeadsetDevice) -> Result<RfcommChannel, BluezError> {
+        let _opening = self.opening.lock().await;
+        let (sender, mut connections) = mpsc::unbounded_channel();
+        self.bus
+            .object_server()
+            .at(
+                PROFILE_PATH,
+                SonyProfile {
+                    connections: sender,
+                },
+            )
+            .await?;
+        let outcome = self.connect_registered(device, &mut connections).await;
+        // Whatever happened, the profile is not kept: the socket outlives it.
+        self.release_profile().await;
+        outcome
+    }
+
+    async fn connect_registered(
+        &self,
+        device: &HeadsetDevice,
+        connections: &mut mpsc::UnboundedReceiver<OwnedFd>,
+    ) -> Result<RfcommChannel, BluezError> {
+        let options = HashMap::from([
+            ("Role", Variant::from("client")),
+            ("RequireAuthentication", Variant::from(false)),
+            ("RequireAuthorization", Variant::from(false)),
+        ]);
+        ProfileManagerProxy::new(&self.bus)
+            .await?
+            .register_profile(
+                &ObjectPath::try_from(PROFILE_PATH)?,
+                SONY_SERVICE_UUID,
+                options,
+            )
+            .await?;
+        let proxy = DeviceProxy::builder(&self.bus)
+            .path(device.path.as_str())
+            .build()
+            .await?;
+        let socket = tokio::time::timeout(CONNECT_TIMEOUT, async {
+            let (connected, socket) =
+                tokio::join!(proxy.connect_profile(SONY_SERVICE_UUID), connections.recv());
+            connected?;
+            Ok::<_, BluezError>(socket)
+        })
+        .await
+        .map_err(|_| BluezError::Timeout)??
+        .ok_or(BluezError::Timeout)?;
+        Ok(RfcommChannel::new(socket))
+    }
+
+    /// Unregisters and removes the profile; failures are only logged (BlueZ
+    /// forgets a profile whose owner leaves the bus).
+    async fn release_profile(&self) {
+        match ObjectPath::try_from(PROFILE_PATH) {
+            Ok(path) => {
+                if let Ok(manager) = ProfileManagerProxy::new(&self.bus).await
+                    && let Err(error) = manager.unregister_profile(&path).await
+                {
+                    tracing::debug!(%error, "the Sony profile was not unregistered");
+                }
+            }
+            Err(error) => tracing::debug!(%error, "invalid profile path"),
+        }
+        if let Err(error) = self
+            .bus
+            .object_server()
+            .remove::<SonyProfile, _>(PROFILE_PATH)
+            .await
+        {
+            tracing::debug!(%error, "the Sony profile object was not removed");
+        }
+    }
+}
+
+/// A connection to the headphones: keep it while the channel is in use.
 pub struct BluezConnection {
-    _bus: Connection,
+    _headsets: BluezHeadsets,
     /// The headphones this is connected to.
     pub device: HeadsetDevice,
     /// The stream to them.
@@ -292,8 +405,7 @@ async fn managed_objects(bus: &Connection) -> Result<ManagedObjects, BluezError>
 /// # Errors
 /// [`BluezError`] when BlueZ cannot be reached.
 pub async fn list_devices() -> Result<Vec<HeadsetDevice>, BluezError> {
-    let bus = Connection::system().await?;
-    Ok(sony_devices(&managed_objects(&bus).await?))
+    BluezHeadsets::start().await?.devices().await
 }
 
 /// Connects to the headphones at `address` (or the only ones there are).
@@ -302,51 +414,14 @@ pub async fn list_devices() -> Result<Vec<HeadsetDevice>, BluezError> {
 /// [`BluezError`] when BlueZ cannot be reached, no device fits, or the
 /// connection is not opened in time.
 pub async fn connect(address: Option<&str>) -> Result<BluezConnection, BluezError> {
-    let bus = Connection::system().await?;
-    let devices = sony_devices(&managed_objects(&bus).await?);
+    let headsets = BluezHeadsets::start().await?;
+    let devices = headsets.devices().await?;
     let device = choose(&devices, address)?.clone();
-
-    let (sender, mut connections) = mpsc::unbounded_channel();
-    bus.object_server()
-        .at(
-            PROFILE_PATH,
-            SonyProfile {
-                connections: sender,
-            },
-        )
-        .await?;
-    let options = HashMap::from([
-        ("Role", Variant::from("client")),
-        ("RequireAuthentication", Variant::from(false)),
-        ("RequireAuthorization", Variant::from(false)),
-    ]);
-    ProfileManagerProxy::new(&bus)
-        .await?
-        .register_profile(
-            &ObjectPath::try_from(PROFILE_PATH)?,
-            SONY_SERVICE_UUID,
-            options,
-        )
-        .await?;
-
-    let proxy = DeviceProxy::builder(&bus)
-        .path(device.path.as_str())
-        .build()
-        .await?;
-    let socket = tokio::time::timeout(CONNECT_TIMEOUT, async {
-        let (connected, socket) =
-            tokio::join!(proxy.connect_profile(SONY_SERVICE_UUID), connections.recv());
-        connected?;
-        Ok::<_, BluezError>(socket)
-    })
-    .await
-    .map_err(|_| BluezError::Timeout)??
-    .ok_or(BluezError::Timeout)?;
-
+    let channel = headsets.connect(&device).await?;
     Ok(BluezConnection {
-        _bus: bus,
+        _headsets: headsets,
         device,
-        channel: RfcommChannel::new(socket),
+        channel,
     })
 }
 

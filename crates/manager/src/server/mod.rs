@@ -13,6 +13,7 @@ mod api;
 mod assets;
 mod catalog;
 mod errors;
+mod headset_feed;
 mod mouse_feed;
 mod security;
 mod session;
@@ -45,6 +46,7 @@ use crate::config_store::ConfigStore;
 use crate::device::DeviceDiscovery;
 use crate::engine::EngineRegistry;
 use crate::file_chooser::FilePicker;
+use crate::headset_hub::HeadsetHub;
 use crate::machine::MachineHub;
 use crate::machine::git::GitConfigHub;
 use crate::machine::ssh::SshConfigHub;
@@ -98,6 +100,9 @@ pub struct ServerContext {
     pub updates: UpdateHandle,
     /// The mice connected and the mouse and radial menu configurations.
     pub mice: MouseHub,
+    /// The Sony headphones connected and what is known of them. `None`: the
+    /// manager does not serve headphones (`--no-headsets`).
+    pub headsets: Option<HeadsetHub>,
     /// The modules that live in the application, shown and driven from the
     /// interface. `None`: the manager runs without them.
     pub application: Option<ModuleHost>,

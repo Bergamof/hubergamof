@@ -33,6 +33,8 @@ pub mod device;
 pub mod engine;
 pub mod file_chooser;
 pub mod haptics;
+pub mod headset_engine;
+pub mod headset_hub;
 pub mod input;
 pub mod launcher;
 pub mod machine;

@@ -6,6 +6,8 @@
 //! - [`diagnostics`]: the actions of `hubergamof headset-test`.
 //! - [`link`]: frames exchanged on a channel (acknowledgements, resends).
 //! - [`payload`]: the commands sent and the answers read, closed lists only.
+//! - [`session`]: headphones in use (opening queries, changes, answers decoded).
+//! - [`simulated`]: headphones that behave like the real ones, for `--demo` and tests.
 //! - [`testing`]: a scripted headset (feature `test-support`).
 //!
 //! Only the values of [`payload`]'s types reach the headphones: nothing is
@@ -17,5 +19,7 @@ pub mod diagnostics;
 pub mod frame;
 pub mod link;
 pub mod payload;
+pub mod session;
+pub mod simulated;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;

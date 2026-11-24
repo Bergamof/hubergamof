@@ -103,6 +103,7 @@ impl Api {
             catalog,
             simulated_input: SimulatedInput::Refused,
             mice: MouseHub::new(store.clone()).unwrap(),
+            headsets: None,
             machine: MachineHub::new(store.clone(), None),
             git: GitConfigHub::new(store.clone(), None),
             ssh: SshConfigHub::new(store.clone(), None),

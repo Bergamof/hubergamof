@@ -43,3 +43,13 @@ impl<C: Channel + ?Sized> Channel for &mut C {
         (**self).read(timeout)
     }
 }
+
+impl<C: Channel + ?Sized> Channel for Box<C> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), ChannelError> {
+        (**self).write(bytes)
+    }
+
+    fn read(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, ChannelError> {
+        (**self).read(timeout)
+    }
+}
