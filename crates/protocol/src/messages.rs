@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState,
-    MachineConfig, ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem,
-    RadialMenuConfig, SystemAlias, UpdateSettings, UpdateStatus,
+    ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, GitConfig, GitSystemEntry,
+    HapticWaveform, LiveState, MachineConfig, ModuleKind, MouseBattery, MouseConfig, MouseInfo,
+    MouseProblem, RadialMenuConfig, SystemAlias, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -137,6 +137,18 @@ pub enum ClientMessage {
         /// The new configuration, based on the current revision.
         config: MachineConfig,
     },
+    /// Read the Git configuration again: what HuBergamof saved and what the
+    /// computer holds besides. Sent when the Git page is shown, the only time
+    /// the computer is looked at. Answered by `git`.
+    RefreshGit,
+    /// Replace the Git configuration, like [`ClientMessage::UpdateMachine`]:
+    /// what is enabled is written on the computer, the rest removed from it.
+    /// Answered by `git` to every client; refused with [`ErrorCode::Locked`],
+    /// [`ErrorCode::InvalidConfig`] or [`ErrorCode::StaleRevision`].
+    UpdateGit {
+        /// The new configuration, based on the current revision.
+        config: GitConfig,
+    },
     /// Check for a newer release now, instead of waiting for the next
     /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
     CheckForUpdates,
@@ -219,6 +231,18 @@ pub enum ServerMessage {
         config: MachineConfig,
         /// Aliases of the shell startup files, not managed by HuBergamof.
         system_aliases: Vec<SystemAlias>,
+    },
+    /// The Git configuration and what the computer holds besides: sent after
+    /// `refreshGit` and `updateGit` (never otherwise: the computer is not
+    /// watched).
+    Git {
+        /// Current configuration.
+        config: GitConfig,
+        /// Values HuBergamof manages that Git also finds elsewhere.
+        system_entries: Vec<GitSystemEntry>,
+        /// Whether the `git` program was found: without it nothing can be read
+        /// from the computer.
+        git_available: bool,
     },
     /// Whether the computer is locked: sent after `moduleCatalog`, then at
     /// every change. While it is, the manager refuses everything that acts or

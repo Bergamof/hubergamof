@@ -1,25 +1,20 @@
 //! The shell side of the machine: which startup files are read, the managed
 //! aliases file, and the block that sources it. Synchronous: callers run it
-//! on a blocking task.
-//!
-//! Startup files are the user's own: they may be links to a dotfiles
-//! repository, so a link is followed (and the file behind it rewritten, the
-//! link kept), but only a regular file of reasonable size is ever read, and
-//! nothing is written to a file that is not valid text or whose block is
-//! damaged.
+//! on a blocking task. The files are handled as [`super::files`] says.
 
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions, Permissions};
-use std::io::{self, Read as _, Write as _};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use hubergamof_protocol::{ShellAlias, SystemAlias};
-use tempfile::NamedTempFile;
 use thiserror::Error;
 
 use super::aliases::{UnwritableAlias, claim_originals, parse_aliases, render_managed_file};
-use super::rc_block::{UnterminatedBlock, with_block, without_block};
+use super::block::UnterminatedBlock;
+use super::files::{
+    FileError, PRIVATE_FILE_MODE, ensure_private_dir, read_text_file, remove_file_if_present,
+    update_text_file, write_replacing,
+};
+use super::rc_block::{with_block, without_block};
 
 /// Files, relative to the home folder, that the aliases are read from.
 pub const STARTUP_FILES: [&str; 4] = [".bash_aliases", ".bashrc", ".zshrc", ".zsh_aliases"];
@@ -30,60 +25,18 @@ const FILES_WITH_BLOCK: [&str; 2] = [".bashrc", ".zshrc"];
 /// The managed aliases file, relative to the home folder.
 pub const MANAGED_FILE: &str = ".config/hubergamof/aliases.sh";
 
-/// Largest startup file read or rewritten: a bigger one is not a shell
-/// configuration, and is not loaded in memory.
-pub const MAX_STARTUP_FILE_BYTES: u64 = 256 * 1024;
-
 /// Most aliases listed from the startup files.
 pub const MAX_SYSTEM_ALIASES: usize = 512;
-
-/// Permissions of the managed file: the user's only.
-const MANAGED_FILE_MODE: u32 = 0o600;
-
-/// Permissions of the folder holding it.
-const MANAGED_DIR_MODE: u32 = 0o700;
-
-/// Permission bits kept when a file is rewritten: setuid, setgid and sticky
-/// are not copied onto the new file.
-const MODE_MASK: u32 = 0o777;
 
 /// Why the shell files could not be read or written.
 #[derive(Debug, Error)]
 pub enum ShellError {
-    /// A file operation failed.
-    #[error("cannot access {path}: {source}")]
-    Io {
-        /// Path involved.
-        path: PathBuf,
-        /// Underlying error.
-        source: io::Error,
-    },
-    /// The path is not a regular file (or, for the managed folder, a folder).
-    #[error("{0} is not a regular file")]
-    NotRegular(PathBuf),
-    /// Another name links to the same file: replacing it would only change
-    /// one of them.
-    #[error("{0} has other hard links")]
-    HardLinked(PathBuf),
-    /// The file is larger than [`MAX_STARTUP_FILE_BYTES`].
-    #[error("{0} is larger than {MAX_STARTUP_FILE_BYTES} bytes")]
-    TooLarge(PathBuf),
-    /// The file is not valid UTF-8: it is left untouched.
-    #[error("{0} is not valid UTF-8, left untouched")]
-    NotUtf8(PathBuf),
-    /// The file has a HuBergamof block without its end: it is left untouched.
-    #[error("{0} holds an unterminated HuBergamof block, left untouched")]
-    BrokenBlock(PathBuf),
+    /// A file could not be read or written.
+    #[error(transparent)]
+    File(#[from] FileError),
     /// An alias that cannot be written safely.
     #[error(transparent)]
     Unwritable(#[from] UnwritableAlias),
-}
-
-fn io_error(path: &Path, source: io::Error) -> ShellError {
-    ShellError::Io {
-        path: path.to_owned(),
-        source,
-    }
 }
 
 /// The shell files of one user, under `home`.
@@ -116,7 +69,7 @@ impl MachineShell {
         let mut found = Vec::new();
         for relative in STARTUP_FILES {
             let path = self.home.join(relative);
-            let bytes = match read_startup_file(&path) {
+            let bytes = match read_text_file(&path) {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => continue,
                 Err(error) => {
@@ -171,7 +124,7 @@ impl MachineShell {
         // others from being; the first failure is reported at the end.
         let mut first_failure = None;
         for relative in STARTUP_FILES {
-            let outcome = update_startup_file(&self.home.join(relative), |content| {
+            let outcome = update_text_file(&self.home.join(relative), |content| {
                 Ok(claim_originals(content, &names))
             });
             if let Err(error) = outcome {
@@ -179,7 +132,7 @@ impl MachineShell {
                 first_failure.get_or_insert(error);
             }
         }
-        first_failure.map_or(Ok(()), Err)
+        first_failure.map_or(Ok(()), |error| Err(error.into()))
     }
 
     fn update_blocks(
@@ -187,7 +140,7 @@ impl MachineShell {
         change: fn(&str) -> Result<String, UnterminatedBlock>,
     ) -> Result<(), ShellError> {
         for relative in FILES_WITH_BLOCK {
-            update_startup_file(&self.home.join(relative), change)?;
+            update_text_file(&self.home.join(relative), change)?;
         }
         Ok(())
     }
@@ -197,119 +150,27 @@ impl MachineShell {
         if let Some(dir) = path.parent() {
             ensure_private_dir(dir)?;
         }
-        write_replacing(&path, content.as_bytes(), MANAGED_FILE_MODE)
+        Ok(write_replacing(
+            &path,
+            content.as_bytes(),
+            PRIVATE_FILE_MODE,
+        )?)
     }
 
     fn remove_managed_file(&self) -> Result<(), ShellError> {
-        let path = self.home.join(MANAGED_FILE);
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(io_error(&path, error)),
-        }
+        Ok(remove_file_if_present(&self.home.join(MANAGED_FILE))?)
     }
-}
-
-/// The bytes of a startup file; `None` when it does not exist.
-///
-/// Opened without blocking, so that a named pipe in its place is refused
-/// instead of waiting for a writer.
-fn read_startup_file(path: &Path) -> Result<Option<Vec<u8>>, ShellError> {
-    let file = match OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(io_error(path, error)),
-    };
-    let metadata = file.metadata().map_err(|error| io_error(path, error))?;
-    if !metadata.is_file() {
-        return Err(ShellError::NotRegular(path.to_owned()));
-    }
-    let mut bytes = Vec::new();
-    // One byte more than the limit tells a file that grew since the check.
-    file.take(MAX_STARTUP_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| io_error(path, error))?;
-    if bytes.len() as u64 > MAX_STARTUP_FILE_BYTES {
-        return Err(ShellError::TooLarge(path.to_owned()));
-    }
-    Ok(Some(bytes))
-}
-
-/// Rewrites a startup file through `change`, keeping its mode and any link
-/// to it. A missing file is not created; an unchanged one is not written.
-fn update_startup_file(
-    path: &Path,
-    change: impl FnOnce(&str) -> Result<String, UnterminatedBlock>,
-) -> Result<(), ShellError> {
-    // Resolved once: what is read is what is written, even if the link moves.
-    let target = match fs::canonicalize(path) {
-        Ok(target) => target,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(io_error(path, error)),
-    };
-    let Some(bytes) = read_startup_file(&target)? else {
-        return Ok(());
-    };
-    let content = String::from_utf8(bytes).map_err(|_| ShellError::NotUtf8(path.to_owned()))?;
-    let updated =
-        change(&content).map_err(|UnterminatedBlock| ShellError::BrokenBlock(path.to_owned()))?;
-    if updated == content {
-        return Ok(());
-    }
-    let metadata = fs::metadata(&target).map_err(|error| io_error(&target, error))?;
-    if metadata.nlink() > 1 {
-        return Err(ShellError::HardLinked(target));
-    }
-    let mode = metadata.permissions().mode() & MODE_MASK;
-    write_replacing(&target, updated.as_bytes(), mode)
-}
-
-/// Creates the folder of the managed file readable by the user only, or
-/// tightens it. A link or a file in its place is refused.
-fn ensure_private_dir(dir: &Path) -> Result<(), ShellError> {
-    match fs::symlink_metadata(dir) {
-        Ok(metadata) if metadata.is_dir() => {
-            if metadata.permissions().mode() & MODE_MASK != MANAGED_DIR_MODE {
-                fs::set_permissions(dir, Permissions::from_mode(MANAGED_DIR_MODE))
-                    .map_err(|error| io_error(dir, error))?;
-            }
-            Ok(())
-        }
-        Ok(_) => Err(ShellError::NotRegular(dir.to_owned())),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::DirBuilder::new()
-            .recursive(true)
-            .mode(MANAGED_DIR_MODE)
-            .create(dir)
-            .map_err(|error| io_error(dir, error)),
-        Err(error) => Err(io_error(dir, error)),
-    }
-}
-
-/// Writes `bytes` to a temporary file next to `path` with `mode`, then
-/// renames it over `path`: readers see the old or the new content, never
-/// half of it, and a failure leaves `path` as it was.
-fn write_replacing(path: &Path, bytes: &[u8], mode: u32) -> Result<(), ShellError> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut file = NamedTempFile::new_in(dir).map_err(|error| io_error(dir, error))?;
-    let written = file
-        .as_file()
-        .set_permissions(Permissions::from_mode(mode))
-        .and_then(|()| file.write_all(bytes))
-        .and_then(|()| file.as_file().sync_all());
-    written.map_err(|error| io_error(file.path(), error))?;
-    file.persist(path)
-        .map_err(|error| io_error(path, error.error))?;
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::symlink;
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
+    use super::super::files::{
+        MAX_STARTUP_FILE_BYTES, MODE_MASK, PRIVATE_DIR_MODE as MANAGED_DIR_MODE,
+        PRIVATE_FILE_MODE as MANAGED_FILE_MODE,
+    };
     use super::*;
 
     fn home() -> (tempfile::TempDir, MachineShell) {
@@ -477,7 +338,10 @@ mod tests {
         let damaged = "export A=1\n# >>> hubergamof aliases >>>\nno end\n";
         fs::write(dir.path().join(".bashrc"), damaged).unwrap();
         let error = shell.apply(&[alias("a", "ls", true)]).unwrap_err();
-        assert!(matches!(error, ShellError::BrokenBlock(_)), "{error}");
+        assert!(
+            matches!(error, ShellError::File(FileError::BrokenBlock(_))),
+            "{error}"
+        );
         assert_eq!(read(&dir, ".bashrc"), damaged);
     }
 
@@ -491,7 +355,10 @@ mod tests {
         )
         .unwrap();
         let error = shell.apply(&[alias("a", "ls", false)]).unwrap_err();
-        assert!(matches!(error, ShellError::BrokenBlock(_)), "{error}");
+        assert!(
+            matches!(error, ShellError::File(FileError::BrokenBlock(_))),
+            "{error}"
+        );
         assert!(!dir.path().join(MANAGED_FILE).exists());
     }
 
@@ -502,7 +369,10 @@ mod tests {
         fs::write(&original, "export A=1\n").unwrap();
         fs::hard_link(&original, dir.path().join(".bashrc")).unwrap();
         let error = shell.apply(&[alias("a", "ls", true)]).unwrap_err();
-        assert!(matches!(error, ShellError::HardLinked(_)), "{error}");
+        assert!(
+            matches!(error, ShellError::File(FileError::HardLinked(_))),
+            "{error}"
+        );
         assert_eq!(read(&dir, ".bashrc"), "export A=1\n");
     }
 
@@ -524,7 +394,10 @@ mod tests {
         let (dir, shell) = home();
         fs::write(dir.path().join(".bashrc"), [0xff, 0xfe, b'\n']).unwrap();
         let error = shell.apply(&[alias("a", "ls", true)]).unwrap_err();
-        assert!(matches!(error, ShellError::NotUtf8(_)), "{error}");
+        assert!(
+            matches!(error, ShellError::File(FileError::NotUtf8(_))),
+            "{error}"
+        );
         assert_eq!(
             fs::read(dir.path().join(".bashrc")).unwrap(),
             [0xff, 0xfe, b'\n']
@@ -537,7 +410,10 @@ mod tests {
         fs::create_dir_all(dir.path().join(".config")).unwrap();
         fs::write(dir.path().join(".config/hubergamof"), "in the way").unwrap();
         let error = shell.apply(&[alias("a", "ls", true)]).unwrap_err();
-        assert!(matches!(error, ShellError::NotRegular(_)), "{error}");
+        assert!(
+            matches!(error, ShellError::File(FileError::NotRegular(_))),
+            "{error}"
+        );
         assert_eq!(read(&dir, ".config/hubergamof"), "in the way");
     }
 
@@ -639,7 +515,10 @@ mod tests {
         fs::write(dir.path().join(".bash_aliases"), [0xff, b'\n']).unwrap();
         fs::write(dir.path().join(".zsh_aliases"), "alias ll=ls\n").unwrap();
         let error = shell.apply(&[alias("ll", "ls", true)]).unwrap_err();
-        assert!(matches!(error, ShellError::NotUtf8(_)), "{error}");
+        assert!(
+            matches!(error, ShellError::File(FileError::NotUtf8(_))),
+            "{error}"
+        );
         assert_eq!(
             read(&dir, ".zsh_aliases"),
             ": #hubergamof-off# alias ll=ls\n"

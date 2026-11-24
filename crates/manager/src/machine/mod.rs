@@ -6,11 +6,15 @@
 //! a client asks ([`MachineHub::refresh`]) and after an update, which every
 //! client hears through [`MachineHub::subscribe`].
 //!
+//! - [`git`]: the Git configuration, which has its own hub.
 //! - [`shell`]: the files, read without running a shell, written atomically.
 //! - [`aliases`]: parsing and quoting.
 //! - [`rc_block`]: the block that sources the managed file.
 
 mod aliases;
+mod block;
+mod files;
+pub mod git;
 mod rc_block;
 mod shell;
 
@@ -21,9 +25,8 @@ use thiserror::Error;
 use tokio::sync::{Semaphore, broadcast};
 
 pub use aliases::UnwritableAlias;
-pub use shell::{
-    MAX_STARTUP_FILE_BYTES, MAX_SYSTEM_ALIASES, MachineShell, STARTUP_FILES, ShellError,
-};
+pub use files::{FileError, MAX_STARTUP_FILE_BYTES};
+pub use shell::{MAX_SYSTEM_ALIASES, MachineShell, STARTUP_FILES, ShellError};
 
 use crate::config_store::{ConfigStore, ConfigStoreError};
 

@@ -8,6 +8,7 @@
 //! devices/<serial>/mouse.json    MouseConfig of a mouse (`mouse.rs`)
 //! radial-menu.json               RadialMenuConfig (`mouse.rs`)
 //! machine.json                   MachineConfig, the shell aliases (`machine.rs`)
+//! git.json                       GitConfig, the Git configuration (`git.rs`)
 //! ```
 //!
 //! Writes are atomic (temporary file + `rename`) and guarded by the
@@ -21,6 +22,7 @@ mod app_modules;
 mod archive;
 mod defaults;
 mod files;
+mod git;
 mod machine;
 mod mouse;
 pub(crate) use files::write_bytes_atomically;
@@ -36,8 +38,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     AppModulesConfigError, ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode,
-    MachineConfigError, ModuleInstance, ModuleInstanceId, MouseConfigError, MouseModel,
-    RadialConfigError, is_safe_image_name,
+    GitConfigError, MachineConfigError, ModuleInstance, ModuleInstanceId, MouseConfigError,
+    MouseModel, RadialConfigError, is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -73,6 +75,9 @@ pub const RADIAL_MENU_FILE: &str = "radial-menu.json";
 pub const APP_MODULES_FILE: &str = "modules.json";
 /// File name, at the root, of the configuration of the machine (shell aliases).
 pub const MACHINE_FILE: &str = "machine.json";
+
+/// File name, at the root, of the Git configuration.
+pub const GIT_FILE: &str = "git.json";
 
 /// Most images a device stores: far more than its keys use, bounding what
 /// uploads may pile up before unused ones are removed at the next load.
@@ -176,6 +181,9 @@ pub enum ConfigStoreError {
     /// The configuration of the machine is inconsistent.
     #[error("invalid machine configuration: {0}")]
     InvalidMachine(#[from] MachineConfigError),
+    /// The Git configuration is inconsistent.
+    #[error("invalid git configuration: {0}")]
+    InvalidGit(#[from] GitConfigError),
     /// The archive cannot be read.
     #[error(transparent)]
     Archive(#[from] ArchiveError),
@@ -197,6 +205,7 @@ impl ConfigStoreError {
             | Self::InvalidRadialMenu(_)
             | Self::InvalidAppModules(_)
             | Self::InvalidMachine(_)
+            | Self::InvalidGit(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
             | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,

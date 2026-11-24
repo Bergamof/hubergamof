@@ -6,7 +6,8 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 « Intégrer » button, or to `fallbackFocus` when it was the last one.
 -->
 <script lang="ts">
-	import { hasErrors, validateAlias } from '#lib/deck/alias-validation.js';
+	import { SHELL_ALIAS_RULES, type AliasRules } from '#lib/deck/alias-rules.js';
+	import { hasErrors } from '#lib/deck/alias-validation.js';
 	import type { SystemAlias } from '#lib/generated/index.js';
 
 	interface Props {
@@ -16,9 +17,20 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 		onadopt: (alias: SystemAlias) => void;
 		/** Where the focus goes when there is no other alias to take in. */
 		fallbackFocus?: () => void;
+		/** What the aliases must follow; the shell's by default. */
+		rules?: AliasRules;
+		/** Says where an alias was read, from its `source`; the shell files are under `~/`. */
+		describeSource?: (source: string) => string;
 	}
 
-	let { aliases, full, onadopt, fallbackFocus }: Props = $props();
+	let {
+		aliases,
+		full,
+		onadopt,
+		fallbackFocus,
+		rules = SHELL_ALIAS_RULES,
+		describeSource = (source) => `~/${source}`
+	}: Props = $props();
 
 	let list: HTMLUListElement | undefined = $state();
 
@@ -47,16 +59,14 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 	/** Why an alias cannot be taken in, if it cannot: the manager would refuse it. */
 	function obstacle(alias: SystemAlias): string | undefined {
 		if (full) return 'La configuration est pleine.';
-		return hasErrors(validateAlias(alias, []))
-			? 'Cet alias ne respecte pas les règles de HuBergamof (nom ou commande).'
-			: undefined;
+		return hasErrors(rules.validate(alias, [])) ? rules.refusal : undefined;
 	}
 </script>
 
 {#if aliases.length === 0}
-	<p class="text-sm text-muted">Aucun autre alias sur le système.</p>
+	<p class="text-sm text-muted">Aucun autre {rules.noun} sur le système.</p>
 {:else}
-	<ul bind:this={list} class="flex flex-col gap-2" aria-label="Alias du système, non gérés">
+	<ul bind:this={list} class="flex flex-col gap-2" aria-label="{rules.title} du système, non gérés">
 		{#each aliases as alias, index (keyOf(alias))}
 			{@const reason = obstacle(alias)}
 			<li
@@ -65,14 +75,14 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 				<div class="flex min-w-0 flex-1 basis-60 flex-col">
 					<code class="font-mono font-semibold break-all">{alias.name}</code>
 					<code class="font-mono text-sm break-all">{alias.command}</code>
-					<span class="text-sm text-muted">Non géré · lu dans ~/{alias.source}</span>
+					<span class="text-sm text-muted">Non géré · lu dans {describeSource(alias.source)}</span>
 				</div>
 				<div class="flex flex-col items-end gap-1">
 					<button
 						type="button"
 						data-adopt={keyOf(alias)}
 						class="secondary-button"
-						aria-label="Intégrer l’alias {alias.name}"
+						aria-label="Intégrer l’{rules.noun} {alias.name}"
 						aria-disabled={reason !== undefined}
 						aria-describedby={reason ? `${uid}-reason-${index}` : undefined}
 						onclick={() => !reason && adopt(alias, index)}

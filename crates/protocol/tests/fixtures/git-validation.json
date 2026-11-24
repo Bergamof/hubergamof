@@ -1,0 +1,512 @@
+{
+ "names": [
+  {
+   "value": "Ada Lovelace",
+   "valid": true
+  },
+  {
+   "value": "Zo\u00eb O\u2019Brien",
+   "valid": true
+  },
+  {
+   "value": "a",
+   "valid": true
+  },
+  {
+   "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "valid": true
+  },
+  {
+   "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": true
+  },
+  {
+   "value": " Ada",
+   "valid": false
+  },
+  {
+   "value": "Ada <ada>",
+   "valid": false
+  },
+  {
+   "value": "Ada\nL",
+   "valid": false
+  },
+  {
+   "value": "Ada\u200bL",
+   "valid": false
+  },
+  {
+   "value": "Ada\ttab",
+   "valid": false
+  }
+ ],
+ "emails": [
+  {
+   "value": "ada@example.org",
+   "valid": true
+  },
+  {
+   "value": "a.b+c@sub.example.org",
+   "valid": true
+  },
+  {
+   "value": "ada",
+   "valid": false
+  },
+  {
+   "value": "@example.org",
+   "valid": false
+  },
+  {
+   "value": "ada@",
+   "valid": false
+  },
+  {
+   "value": "a@b@c",
+   "valid": false
+  },
+  {
+   "value": "a b@c.d",
+   "valid": false
+  },
+  {
+   "value": "a<b>@c.d",
+   "valid": false
+  },
+  {
+   "value": "a@b\n.c",
+   "valid": false
+  },
+  {
+   "value": "a\u00a0b@c.d",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  }
+ ],
+ "keys": [
+  {
+   "value": "ABCDEF0123456789",
+   "valid": true
+  },
+  {
+   "value": "~/.ssh/id_ed25519.pub",
+   "valid": true
+  },
+  {
+   "value": "key::ssh-ed25519 AAAAC3Nza",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": true
+  },
+  {
+   "value": "-u",
+   "valid": false
+  },
+  {
+   "value": " key",
+   "valid": false
+  },
+  {
+   "value": "a\nb",
+   "valid": false
+  },
+  {
+   "value": "a\u202eb",
+   "valid": false
+  },
+  {
+   "value": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+   "valid": false
+  }
+ ],
+ "branches": [
+  {
+   "value": "main",
+   "valid": true
+  },
+  {
+   "value": "feature/x-1",
+   "valid": true
+  },
+  {
+   "value": "v1.2_3",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "-main",
+   "valid": false
+  },
+  {
+   "value": "/main",
+   "valid": false
+  },
+  {
+   "value": ".main",
+   "valid": false
+  },
+  {
+   "value": "main/",
+   "valid": false
+  },
+  {
+   "value": "main.",
+   "valid": false
+  },
+  {
+   "value": "a..b",
+   "valid": false
+  },
+  {
+   "value": "a//b",
+   "valid": false
+  },
+  {
+   "value": "a/.b",
+   "valid": false
+  },
+  {
+   "value": "main.lock",
+   "valid": false
+  },
+  {
+   "value": "a.lock/b",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "a~b",
+   "valid": false
+  },
+  {
+   "value": "a:b",
+   "valid": false
+  },
+  {
+   "value": "\u00e9",
+   "valid": false
+  },
+  {
+   "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "valid": true
+  },
+  {
+   "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "valid": false
+  },
+  {
+   "value": "main.LOCK",
+   "valid": false
+  },
+  {
+   "value": "a.Lock/b",
+   "valid": false
+  }
+ ],
+ "editors": [
+  {
+   "value": "vim",
+   "valid": true
+  },
+  {
+   "value": "code --wait",
+   "valid": true
+  },
+  {
+   "value": "code --wait --new-window",
+   "valid": false
+  },
+  {
+   "value": "/usr/bin/vim",
+   "valid": true
+  },
+  {
+   "value": "/opt/my-editor/bin/ed+",
+   "valid": true
+  },
+  {
+   "value": "/",
+   "valid": false
+  },
+  {
+   "value": "/usr//vim",
+   "valid": false
+  },
+  {
+   "value": "/usr/../bin/vim",
+   "valid": false
+  },
+  {
+   "value": "/usr/bin/vim --x",
+   "valid": false
+  },
+  {
+   "value": "/usr/bin/vim;rm",
+   "valid": false
+  },
+  {
+   "value": "vim; rm -rf ~",
+   "valid": false
+  },
+  {
+   "value": "$EDITOR",
+   "valid": false
+  },
+  {
+   "value": "`id`",
+   "valid": false
+  },
+  {
+   "value": "relative/vim",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "/a/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "valid": false
+  }
+ ],
+ "knownEditors": [
+  "vi",
+  "vim",
+  "nvim",
+  "nano",
+  "emacs",
+  "micro",
+  "hx",
+  "code --wait",
+  "codium --wait",
+  "subl --wait",
+  "kate --block",
+  "gedit --wait"
+ ],
+ "aliasNames": [
+  {
+   "value": "co",
+   "valid": true
+  },
+  {
+   "value": "Co-2",
+   "valid": true
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "1a",
+   "valid": false
+  },
+  {
+   "value": "-a",
+   "valid": false
+  },
+  {
+   "value": "a_b",
+   "valid": false
+  },
+  {
+   "value": "a.b",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "\u00e9",
+   "valid": false
+  },
+  {
+   "value": "a=b",
+   "valid": false
+  }
+ ],
+ "aliasCommands": [
+  {
+   "value": "checkout",
+   "valid": true
+  },
+  {
+   "value": "log --oneline --graph --decorate",
+   "valid": true
+  },
+  {
+   "value": "  status -s",
+   "valid": true
+  },
+  {
+   "value": "commit -m \"msg\"",
+   "valid": true
+  },
+  {
+   "value": "!ls",
+   "valid": false
+  },
+  {
+   "value": "  !ls",
+   "valid": false
+  },
+  {
+   "value": "\t!ls",
+   "valid": false
+  },
+  {
+   "value": "!",
+   "valid": false
+  },
+  {
+   "value": "-c core.pager=evil log",
+   "valid": false
+  },
+  {
+   "value": "--exec-path=/x status",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "   ",
+   "valid": false
+  },
+  {
+   "value": "a\nb",
+   "valid": false
+  },
+  {
+   "value": "a\tb",
+   "valid": false
+  },
+  {
+   "value": "a\u200bb",
+   "valid": false
+  },
+  {
+   "value": "a\ufeffb",
+   "valid": false
+  },
+  {
+   "value": "\u2003!ls",
+   "valid": false
+  },
+  {
+   "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "valid": true
+  },
+  {
+   "value": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "valid": false
+  }
+ ],
+ "folders": [
+  {
+   "value": "~/work",
+   "valid": true
+  },
+  {
+   "value": "~/work/clients/acme",
+   "valid": true
+  },
+  {
+   "value": "~/mes projets",
+   "valid": true
+  },
+  {
+   "value": "~/.dotfiles",
+   "valid": true
+  },
+  {
+   "value": "~",
+   "valid": false
+  },
+  {
+   "value": "~/",
+   "valid": false
+  },
+  {
+   "value": "/home/x",
+   "valid": false
+  },
+  {
+   "value": "work",
+   "valid": false
+  },
+  {
+   "value": "~/work/",
+   "valid": false
+  },
+  {
+   "value": "~//work",
+   "valid": false
+  },
+  {
+   "value": "~/./work",
+   "valid": false
+  },
+  {
+   "value": "~/work/..",
+   "valid": false
+  },
+  {
+   "value": "~/../etc",
+   "valid": false
+  },
+  {
+   "value": "~/w*",
+   "valid": false
+  },
+  {
+   "value": "~/w?",
+   "valid": false
+  },
+  {
+   "value": "~/w[1]",
+   "valid": false
+  },
+  {
+   "value": "~/w\\x",
+   "valid": false
+  },
+  {
+   "value": "~/w\"x",
+   "valid": false
+  },
+  {
+   "value": "~/w\nx",
+   "valid": false
+  },
+  {
+   "value": "~/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "valid": false
+  }
+ ]
+}

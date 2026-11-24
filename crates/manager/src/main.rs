@@ -22,6 +22,7 @@ use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor, fir
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
+use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
 use hubergamof_manager::machine::{MachineHub, MachineShell};
 use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_actions::ButtonActions;
@@ -595,6 +596,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         mice: mouse_hub,
         application: Some(host.clone()),
         machine: start_machine(cli.demo, store.clone())?,
+        git: start_git(cli.demo, store.clone())?,
         screen_lock,
     };
     let server = match Server::bind(
@@ -631,18 +633,15 @@ async fn run_manager(cli: Cli) -> Result<()> {
     if !cli.demo {
         tokio::spawn(report_first_scan(discovery.clone()));
     }
-    let tray = if cli.no_tray {
-        None
-    } else {
-        TrayIcon::start(
-            url,
-            &discovery,
-            supervisor.engines(),
-            updates,
-            quit_on(shutdown.clone()),
-        )
-        .await
-    };
+    let tray = start_tray(
+        &cli,
+        url,
+        &discovery,
+        supervisor.engines(),
+        updates,
+        &shutdown,
+    )
+    .await;
 
     let outcome = wait_for_stop(&mut terminate, &mut hangup, stopping, &mut server_task).await;
     tracing::info!("shutting down");
@@ -818,6 +817,32 @@ fn start_machine(demo: bool, store: ConfigStore) -> Result<MachineHub> {
         MachineHub::demo(store).context("cannot create the demo home folder")
     } else {
         Ok(MachineHub::new(store, MachineShell::of_current_user()))
+    }
+}
+
+/// The icon in the notification area, unless `--no-tray`: it opens the interface at `url`
+/// and quits the manager through `shutdown`.
+async fn start_tray(
+    cli: &Cli,
+    url: String,
+    discovery: &DeviceDiscovery,
+    engines: EngineRegistry,
+    updates: UpdateHandle,
+    shutdown: &watch::Sender<bool>,
+) -> Option<TrayIcon> {
+    if cli.no_tray {
+        return None;
+    }
+    TrayIcon::start(url, discovery, engines, updates, quit_on(shutdown.clone())).await
+}
+
+/// The Git configuration: the files of the user, or with `--demo` those of a
+/// temporary home folder, so that the real ones are never touched.
+fn start_git(demo: bool, store: ConfigStore) -> Result<GitConfigHub> {
+    if demo {
+        GitConfigHub::demo(store).context("cannot create the demo home folder")
+    } else {
+        Ok(GitConfigHub::new(store, GitFiles::of_current_user()))
     }
 }
 

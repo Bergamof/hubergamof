@@ -109,7 +109,7 @@ const BYTE_ORDER_MARK: char = '\u{FEFF}';
 /// Characters that show nothing or reorder the text around them: a command
 /// containing one reads as something other than what it runs (the same set as
 /// the interface, `alias-validation.ts`).
-fn is_invisible(c: char) -> bool {
+pub(crate) fn is_invisible(c: char) -> bool {
     matches!(c,
         '\u{200B}'..='\u{200F}'
         | '\u{2028}'..='\u{202E}'
@@ -117,7 +117,7 @@ fn is_invisible(c: char) -> bool {
         | BYTE_ORDER_MARK)
 }
 
-fn is_blank(command: &str) -> bool {
+pub(crate) fn is_blank(command: &str) -> bool {
     command
         .chars()
         .all(|c| c.is_whitespace() || c == BYTE_ORDER_MARK)

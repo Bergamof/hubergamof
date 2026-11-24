@@ -15,6 +15,7 @@ mod app_modules;
 mod catalog;
 mod config;
 mod device;
+mod git;
 mod live;
 mod machine;
 mod messages;
@@ -34,6 +35,15 @@ pub use config::{
     SYSTEM_REFRESH_CHOICES, StripConfig, default_lock_sleep_seconds, is_identifier,
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
+pub use git::{
+    CREDENTIAL_CACHE_SECONDS, DEFAULT_CREDENTIAL_CACHE_SECONDS, GIT_EDITORS, GIT_SCHEMA_VERSION,
+    GitAlias, GitConfig, GitConfigError, GitCredentialHelper, GitFolderIdentity, GitIdentity,
+    GitPullMode, GitSettings, GitSigning, GitSigningFormat, GitSystemEntry,
+    MAX_GIT_ALIAS_COMMAND_CHARS, MAX_GIT_ALIAS_NAME_CHARS, MAX_GIT_ALIASES,
+    MAX_GIT_FOLDER_IDENTITIES, MAX_GIT_VALUE_CHARS, is_valid_git_alias_command,
+    is_valid_git_alias_name, is_valid_git_branch_name, is_valid_git_editor, is_valid_git_folder,
+    is_valid_git_signing_key, is_valid_git_user_email, is_valid_git_user_name,
+};
 pub use live::{KeyView, LiveState, PageView};
 pub use machine::{
     MACHINE_SCHEMA_VERSION, MAX_ALIAS_COMMAND_CHARS, MAX_ALIAS_NAME_CHARS, MAX_ALIASES,
