@@ -14,8 +14,8 @@ use super::errors::client_message;
 use super::mouse_feed::{Failure, MouseFeed};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
-    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, GitConfig,
-    MachineConfig, ModuleKind, ServerMessage, UpdateSettings, UpdateStatus,
+    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ModuleKind,
+    ServerMessage, UpdateSettings, UpdateStatus,
 };
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -25,8 +25,8 @@ use tokio::time::Instant;
 use super::{AppState, SimulatedInput};
 use crate::device::DiscoveryEvent;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry, LiveSnapshot};
-use crate::machine::MachineSnapshot;
 use crate::machine::git::GitSnapshot;
+use crate::machine::{Feature, Hub, MachineSnapshot};
 use crate::module_host::{ModuleHost, ModuleViews, RadialReply, SettingsRefusal};
 
 /// Shortest delay between two `liveState` messages to a client: bursts of
@@ -126,6 +126,21 @@ async fn next_snapshot<T: Clone>(changes: &mut broadcast::Receiver<T>) -> T {
     }
 }
 
+fn machine_message(snapshot: &MachineSnapshot) -> ServerMessage {
+    ServerMessage::Machine {
+        config: snapshot.config.clone(),
+        system_aliases: snapshot.system_aliases.clone(),
+    }
+}
+
+fn git_message(snapshot: &GitSnapshot) -> ServerMessage {
+    ServerMessage::Git {
+        config: snapshot.config.clone(),
+        system_entries: snapshot.system_entries.clone(),
+        git_available: snapshot.git_available,
+    }
+}
+
 /// Serves one client until it disconnects or the server shuts down.
 pub(super) async fn run(socket: WebSocket, state: AppState) {
     let (devices, discovery) = state.context.discovery.subscribe();
@@ -218,8 +233,8 @@ impl Session {
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
                 Event::ApplicationChanged => self.send_application_modules_if_changed().await?,
-                Event::MachineChanged(snapshot) => self.send_machine(&snapshot).await?,
-                Event::GitChanged(snapshot) => self.send_git(&snapshot).await?,
+                Event::MachineChanged(snapshot) => self.send(&machine_message(&snapshot)).await?,
+                Event::GitChanged(snapshot) => self.send(&git_message(&snapshot)).await?,
                 Event::LockChanged => {
                     self.send_locked().await?;
                     if !*self.locked.borrow() {
@@ -340,10 +355,10 @@ impl Session {
             ClientMessage::UpdateModuleSettings { module, settings } => {
                 return self.update_module_settings(&module, &settings).await;
             }
-            ClientMessage::RefreshMachine => return self.refresh_machine().await,
-            ClientMessage::UpdateMachine { config } => return self.update_machine(config).await,
-            ClientMessage::RefreshGit => return self.refresh_git().await,
-            ClientMessage::UpdateGit { config } => return self.update_git(config).await,
+            ClientMessage::RefreshMachine
+            | ClientMessage::UpdateMachine { .. }
+            | ClientMessage::RefreshGit
+            | ClientMessage::UpdateGit { .. } => return self.on_machine_request(request).await,
             ClientMessage::SelectMouse { serial } => {
                 // The configuration, then what the mouse refused of it.
                 let selected = self.mouse.select(&serial).map(|config| {
@@ -474,10 +489,27 @@ impl Session {
         }
     }
 
-    /// Reads the machine now and tells this client only.
-    async fn refresh_machine(&mut self) -> Result<(), Closed> {
-        match self.state.context.machine.refresh().await {
-            Ok(snapshot) => self.send_machine(&snapshot).await,
+    /// What a client asks about the features of the machine.
+    async fn on_machine_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
+        let context = &self.state.context;
+        let (machine, git) = (context.machine.clone(), context.git.clone());
+        match request {
+            ClientMessage::RefreshMachine => self.refresh_feature(machine, machine_message).await,
+            ClientMessage::UpdateMachine { config } => self.update_feature(machine, config).await,
+            ClientMessage::RefreshGit => self.refresh_feature(git, git_message).await,
+            ClientMessage::UpdateGit { config } => self.update_feature(git, config).await,
+            _ => unreachable!("only the requests about the machine are routed here"),
+        }
+    }
+
+    /// Reads a feature of the machine now and tells this client only.
+    async fn refresh_feature<F: Feature>(
+        &mut self,
+        hub: Hub<F>,
+        message: fn(&F::Snapshot) -> ServerMessage,
+    ) -> Result<(), Closed> {
+        match hub.refresh().await {
+            Ok(snapshot) => self.send(&message(&snapshot)).await,
             Err(error) => {
                 self.send_error(error.error_code(), &error.to_string())
                     .await
@@ -485,58 +517,21 @@ impl Session {
         }
     }
 
-    /// Saves and applies a configuration of the machine. Every client, this
-    /// one included, hears the result as the machine changes; only a failure
-    /// is answered here.
-    async fn update_machine(&mut self, config: MachineConfig) -> Result<(), Closed> {
-        match self.state.context.machine.update(config).await {
+    /// Saves and applies a configuration of a feature of the machine. Every
+    /// client, this one included, hears the result as the feature changes;
+    /// only a failure is answered here.
+    async fn update_feature<F: Feature>(
+        &mut self,
+        hub: Hub<F>,
+        config: F::Config,
+    ) -> Result<(), Closed> {
+        match hub.update(config).await {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.send_error(error.error_code(), &error.to_string())
                     .await
             }
         }
-    }
-
-    async fn send_machine(&mut self, snapshot: &MachineSnapshot) -> Result<(), Closed> {
-        self.send(&ServerMessage::Machine {
-            config: snapshot.config.clone(),
-            system_aliases: snapshot.system_aliases.clone(),
-        })
-        .await
-    }
-
-    /// Reads the Git configuration now and tells this client only.
-    async fn refresh_git(&mut self) -> Result<(), Closed> {
-        match self.state.context.git.refresh().await {
-            Ok(snapshot) => self.send_git(&snapshot).await,
-            Err(error) => {
-                self.send_error(error.error_code(), &error.to_string())
-                    .await
-            }
-        }
-    }
-
-    /// Saves and applies the Git configuration. Every client, this one
-    /// included, hears the result as the configuration changes; only a failure
-    /// is answered here.
-    async fn update_git(&mut self, config: GitConfig) -> Result<(), Closed> {
-        match self.state.context.git.update(config).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                self.send_error(error.error_code(), &error.to_string())
-                    .await
-            }
-        }
-    }
-
-    async fn send_git(&mut self, snapshot: &GitSnapshot) -> Result<(), Closed> {
-        self.send(&ServerMessage::Git {
-            config: snapshot.config.clone(),
-            system_entries: snapshot.system_entries.clone(),
-            git_available: snapshot.git_available,
-        })
-        .await
     }
 
     /// What the modules of the application show now, if the manager has any.
