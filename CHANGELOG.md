@@ -11,8 +11,13 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Casque Sony WH-1000XM4, étape 0 : nouveau crate `hubergamof-headset` (trames MDR et acquittements, charges utiles du son ambiant, de la batterie et de l'égaliseur en lecture, connexion RFCOMM confiée à BlueZ par D-Bus, casque simulé pour les tests) et commande `hubergamof headset-test` (`list`, `info`, `watch`, `ambient`, `probe`) pour relever sur le vrai casque les valeurs que personne n'a documentées. Les relevés sur un vrai XM4 confirment le son ambiant (lecture, réglage, notifications), la batterie et la lecture de l'égaliseur ; `headset-test` gagne `equalizer preset|manual` et `probe --arg`, et dit clairement quand une autre appli a pris le canal. Pas encore branché au service ni à l'interface ; relevés et suite : `docs/headset-sony.md`.
 
+### Corrigé
+
+- Souris : une souris inactive (veille d'économie d'énergie) n'est plus déclarée éteinte puis revenue toutes les vingt secondes : chaque contrôle de présence envoie trois pings au lieu d'un, et quatre contrôles ratés d'affilée sont nécessaires (au lieu de deux).
+
 ### Modifié
 
+- Rubrique « Machine » : un `machine.json` invalide, mis de côté et remplacé par une configuration vide, retire aussi de l'ordinateur ce qu'il y avait appliqué (alias du fichier géré, lignes d'origine commentées rétablies), comme pour Git.
 - Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
 
 ### Ajouté

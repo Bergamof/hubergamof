@@ -2,11 +2,8 @@
 //! configuration (`config/machine.json`, for now the shell aliases) and the
 //! aliases already in the shell startup files.
 //!
-//! The computer is not watched: the aliases of the startup files are read when
-//! a client asks ([`MachineHub::refresh`]) and after an update, which every
-//! client hears through [`MachineHub::subscribe`].
-//!
-//! - [`git`]: the Git configuration, which has its own hub.
+//! - [`hub`]: what the features of the machine share, see [`Hub`].
+//! - [`git`]: the Git configuration, a feature of its own.
 //! - [`shell`]: the files, read without running a shell, written atomically.
 //! - [`aliases`]: parsing and quoting.
 //! - [`rc_block`]: the block that sources the managed file.
@@ -15,26 +12,23 @@ mod aliases;
 mod block;
 mod files;
 pub mod git;
+mod hub;
 mod rc_block;
 mod shell;
 
 use std::sync::Arc;
 
-use hubergamof_protocol::{ErrorCode, MachineConfig, SystemAlias};
-use thiserror::Error;
-use tokio::sync::{Semaphore, broadcast};
+use hubergamof_protocol::{MachineConfig, SystemAlias};
 
 pub use aliases::UnwritableAlias;
 pub use files::{FileError, MAX_TEXT_FILE_BYTES};
+pub use hub::{Feature, Hub, HubError};
 pub use shell::{MAX_SYSTEM_ALIASES, MachineShell, STARTUP_FILES, ShellError};
 
-use crate::config_store::{ConfigStore, ConfigStoreError};
+use crate::config_store::{ConfigStore, ConfigStoreError, Loaded};
 
 /// Aliases the demo's startup file holds, so that the interface has some to list.
 const DEMO_STARTUP_FILE: &str = "alias gs='git status'\nalias gl='git log --oneline'\n";
-
-/// Snapshots a slow client may miss before it is told only the latest one.
-const CHANGE_BACKLOG: usize = 8;
 
 /// The configuration of the machine and what the startup files hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,153 +40,38 @@ pub struct MachineSnapshot {
 }
 
 /// Why a request about the machine failed.
-#[derive(Debug, Error)]
-pub enum MachineError {
-    /// The configuration was refused or could not be stored.
-    #[error(transparent)]
-    Store(#[from] ConfigStoreError),
-    /// The configuration was saved but the shell files could not be written.
-    #[error("the configuration is saved but not applied: {0}")]
-    Shell(#[from] ShellError),
-    /// The home folder is unknown: nothing can be applied.
-    #[error("the home folder of the user is unknown: the aliases cannot be applied")]
-    NoHome,
-    /// The blocking task failed.
-    #[error("the task failed: {0}")]
-    Task(String),
-}
+pub type MachineError = HubError<ShellError>;
 
-impl MachineError {
-    /// Error code reported to the UI.
-    #[must_use]
-    pub fn error_code(&self) -> ErrorCode {
-        match self {
-            Self::Store(error) => error.error_code(),
-            Self::Shell(_) | Self::NoHome | Self::Task(_) => ErrorCode::Internal,
-        }
-    }
-}
+/// The shell aliases of the machine.
+pub struct ShellAliases;
 
-struct Inner {
-    store: ConfigStore,
-    /// The home folder of a demo, removed with the hub.
-    _demo_home: Option<tempfile::TempDir>,
-    /// `None` when the home folder is unknown.
-    shell: Option<MachineShell>,
-    changes: broadcast::Sender<Arc<MachineSnapshot>>,
-    /// One request at a time: what reaches the clients follows the order of
-    /// the revisions, and the blocking threads that the renderer and the store
-    /// share are not flooded by a client sending requests in a burst.
-    requests: Semaphore,
-}
+impl Feature for ShellAliases {
+    type Config = MachineConfig;
+    type Target = MachineShell;
+    type Snapshot = MachineSnapshot;
+    type ApplyError = ShellError;
 
-/// The one place that reads and changes the machine.
-#[derive(Clone)]
-pub struct MachineHub {
-    inner: Arc<Inner>,
-}
-
-impl MachineHub {
-    /// A hub saving in `store` and applying to `shell`.
-    #[must_use]
-    pub fn new(store: ConfigStore, shell: Option<MachineShell>) -> Self {
-        Self::build(store, shell, None)
+    fn load(store: &ConfigStore) -> Result<Loaded<MachineConfig>, ConfigStoreError> {
+        store.load_machine()
     }
 
-    fn build(
-        store: ConfigStore,
-        shell: Option<MachineShell>,
-        demo_home: Option<tempfile::TempDir>,
-    ) -> Self {
-        let (changes, _) = broadcast::channel(CHANGE_BACKLOG);
-        Self {
-            inner: Arc::new(Inner {
-                store,
-                _demo_home: demo_home,
-                shell,
-                changes,
-                requests: Semaphore::new(1),
-            }),
-        }
+    fn save(store: &ConfigStore, config: MachineConfig) -> Result<MachineConfig, ConfigStoreError> {
+        store.save_machine(config)
     }
 
-    /// A hub for `--demo`: the shell files are those of a temporary home
-    /// folder, which holds a few aliases, so that the real ones are never
-    /// read nor written.
-    ///
-    /// # Errors
-    /// The failure to create the folder or its startup file.
-    pub fn demo(store: ConfigStore) -> std::io::Result<Self> {
-        let home = tempfile::tempdir()?;
-        std::fs::write(home.path().join(".bashrc"), DEMO_STARTUP_FILE)?;
-        let shell = MachineShell::new(home.path().to_owned());
-        Ok(Self::build(store, Some(shell), Some(home)))
+    fn apply(shell: &MachineShell, config: &MachineConfig) -> Result<(), ShellError> {
+        shell.apply(&config.aliases)
     }
 
-    /// The snapshots sent after each update, to every subscriber.
-    #[must_use]
-    pub fn subscribe(&self) -> broadcast::Receiver<Arc<MachineSnapshot>> {
-        self.inner.changes.subscribe()
-    }
-
-    /// The saved configuration and the aliases of the startup files, read now.
-    ///
-    /// # Errors
-    /// [`MachineError::Store`] when the configuration cannot be read.
-    pub async fn refresh(&self) -> Result<MachineSnapshot, MachineError> {
-        let _request = self.request_slot().await;
-        let inner = Arc::clone(&self.inner);
-        run_blocking(move || {
-            let config = inner.store.load_machine()?.config;
-            Ok(inner.snapshot_of(config))
-        })
-        .await
-    }
-
-    /// Saves `config` (based on the current revision), puts its enabled
-    /// aliases on the machine and gives the result to every subscriber, the
-    /// author included. When the shell files cannot be written the
-    /// configuration stays saved and subscribers are told it all the same:
-    /// the revision moved.
-    ///
-    /// # Errors
-    /// [`MachineError::Store`] (stale revision, invalid configuration: nothing
-    /// changed), or [`MachineError::Shell`] / [`MachineError::NoHome`]
-    /// (saved, not applied).
-    pub async fn update(&self, config: MachineConfig) -> Result<(), MachineError> {
-        let _request = self.request_slot().await;
-        let inner = Arc::clone(&self.inner);
-        run_blocking(move || inner.update(config)).await
-    }
-
-    async fn request_slot(&self) -> tokio::sync::SemaphorePermit<'_> {
-        // The semaphore lives as long as the hub and is never closed.
-        self.inner
-            .requests
-            .acquire()
-            .await
-            .unwrap_or_else(|_| unreachable!("the request semaphore is never closed"))
-    }
-}
-
-impl Inner {
-    fn update(&self, config: MachineConfig) -> Result<(), MachineError> {
-        let saved = self.store.save_machine(config)?;
-        let applied = match &self.shell {
-            Some(shell) => shell.apply(&saved.aliases).map_err(MachineError::from),
-            None => Err(MachineError::NoHome),
+    async fn snapshot(shell: Option<Arc<MachineShell>>, config: MachineConfig) -> MachineSnapshot {
+        // The startup files are read on a blocking thread, which the hub
+        // does not hold while it waits for a request slot.
+        let system_aliases = match shell {
+            Some(shell) => tokio::task::spawn_blocking(move || shell.read_system_aliases())
+                .await
+                .unwrap_or_default(),
+            None => Vec::new(),
         };
-        // Nobody listening is fine.
-        let _ = self.changes.send(Arc::new(self.snapshot_of(saved)));
-        applied
-    }
-
-    fn snapshot_of(&self, config: MachineConfig) -> MachineSnapshot {
-        let system_aliases = self
-            .shell
-            .as_ref()
-            .map(MachineShell::read_system_aliases)
-            .unwrap_or_default();
         MachineSnapshot {
             config,
             system_aliases,
@@ -200,19 +79,29 @@ impl Inner {
     }
 }
 
-async fn run_blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, MachineError> + Send + 'static,
-) -> Result<T, MachineError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|error| MachineError::Task(error.to_string()))?
+/// The one place that reads and changes the shell aliases of the machine.
+pub type MachineHub = Hub<ShellAliases>;
+
+impl MachineHub {
+    /// A hub for `--demo`: the shell files are those of a temporary home
+    /// folder, which holds a few aliases, so that the real ones are never
+    /// read nor written.
+    ///
+    /// # Errors
+    /// The failure to create the folder or its startup file.
+    pub fn demo(store: ConfigStore) -> std::io::Result<Self> {
+        Self::with_demo_home(store, |home| {
+            std::fs::write(home.join(".bashrc"), DEMO_STARTUP_FILE)?;
+            Ok(MachineShell::new(home.to_owned()))
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
 
-    use hubergamof_protocol::ShellAlias;
+    use hubergamof_protocol::{ErrorCode, ShellAlias};
 
     use super::*;
     use crate::testing::builtin_registry;
@@ -291,24 +180,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_stale_or_invalid_update_changes_nothing() {
-        let fixture = fixture();
-        let mut changes = fixture.hub.subscribe();
-        let first = with_alias(MachineConfig::empty(), "ll", true);
-        fixture.hub.update(first.clone()).await.unwrap();
-        changes.recv().await.unwrap();
-
-        let stale = fixture.hub.update(first).await.unwrap_err();
-        assert_eq!(stale.error_code(), ErrorCode::StaleRevision);
-
-        let current = fixture.hub.refresh().await.unwrap().config;
-        let invalid = with_alias(current, "ll", true);
-        let refused = fixture.hub.update(invalid).await.unwrap_err();
-        assert_eq!(refused.error_code(), ErrorCode::InvalidConfig);
-        assert!(changes.try_recv().is_err(), "nothing was told");
-    }
-
-    #[tokio::test]
     async fn a_failure_to_apply_keeps_the_saved_configuration_and_tells_it() {
         let fixture = fixture();
         fs::write(
@@ -319,59 +190,33 @@ mod tests {
         let mut changes = fixture.hub.subscribe();
         let config = with_alias(MachineConfig::empty(), "ll", true);
         let error = fixture.hub.update(config).await.unwrap_err();
-        assert!(matches!(error, MachineError::Shell(_)));
+        assert!(matches!(error, HubError::Apply(_)));
         assert_eq!(error.error_code(), ErrorCode::Internal);
         assert_eq!(changes.recv().await.unwrap().config.revision, 1);
         assert_eq!(fixture.hub.refresh().await.unwrap().config.revision, 1);
     }
 
     #[tokio::test]
-    async fn without_a_home_folder_the_configuration_is_saved_but_not_applied() {
-        let config_dir = tempfile::tempdir().unwrap();
-        let store = ConfigStore::new(config_dir.path(), Arc::new(builtin_registry()));
-        let hub = MachineHub::new(store, None);
-        let error = hub
+    async fn an_invalid_saved_configuration_takes_the_aliases_it_had_applied_with_it() {
+        let fixture = fixture();
+        let bashrc = fixture.home.path().join(".bashrc");
+        fs::write(&bashrc, "alias ll='ls'\n").unwrap();
+        fixture
+            .hub
             .update(with_alias(MachineConfig::empty(), "ll", true))
             .await
-            .unwrap_err();
-        assert!(matches!(error, MachineError::NoHome));
-        let snapshot = hub.refresh().await.unwrap();
-        assert_eq!(snapshot.config.revision, 1);
-        assert_eq!(snapshot.system_aliases, []);
-    }
+            .unwrap();
+        assert!(!fs::read_to_string(&bashrc).unwrap().starts_with("alias ll"));
 
-    #[tokio::test]
-    async fn two_updates_of_the_same_revision_let_only_one_through() {
-        let fixture = fixture();
-        let config = with_alias(MachineConfig::empty(), "ll", true);
-        let (first, second) = tokio::join!(
-            fixture.hub.update(config.clone()),
-            fixture.hub.update(config)
+        fs::write(fixture.config_dir.path().join("machine.json"), "{ broken").unwrap();
+        fixture.hub.refresh().await.unwrap();
+        assert_eq!(fs::read_to_string(&bashrc).unwrap(), "alias ll='ls'\n");
+        assert!(
+            !fixture
+                .home
+                .path()
+                .join(".config/hubergamof/aliases.sh")
+                .exists()
         );
-        let outcomes = [first, second];
-        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
-        let refused = outcomes.into_iter().find_map(Result::err).unwrap();
-        assert_eq!(refused.error_code(), ErrorCode::StaleRevision);
-    }
-
-    #[tokio::test]
-    async fn a_slow_subscriber_still_gets_the_last_configuration() {
-        let fixture = fixture();
-        let mut changes = fixture.hub.subscribe();
-        let mut config = MachineConfig::empty();
-        for round in 0..=CHANGE_BACKLOG {
-            config = with_alias(config, &format!("a{round}"), true);
-            fixture.hub.update(config.clone()).await.unwrap();
-            config = fixture.hub.refresh().await.unwrap().config;
-        }
-        let mut last = None;
-        loop {
-            match changes.try_recv() {
-                Ok(snapshot) => last = Some(snapshot),
-                Err(broadcast::error::TryRecvError::Lagged(_)) => {}
-                Err(_) => break,
-            }
-        }
-        assert_eq!(last.unwrap().config, config);
     }
 }

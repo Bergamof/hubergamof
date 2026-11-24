@@ -46,6 +46,8 @@ const THUMB_INVERT_BIT: u8 = 0x01;
 /// How many times [`MouseLink::wake`] asks: long enough for a sleeping mouse,
 /// short enough not to hold up the stop for one that is gone.
 const WAKE_ATTEMPTS: u32 = 3;
+/// Pings of one liveness check: the time a sleeping mouse needs to wake up.
+const LIVENESS_PING_ATTEMPTS: u32 = 3;
 
 /// Unit id of a device: four bytes that tell two mice of one model apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -575,14 +577,16 @@ impl<C: Channel> MouseLink<C> {
         }
     }
 
-    /// Whether the mouse answers one ping now, without waiting for a sleeper
-    /// as [`MouseLink::wake`] does. A receiver that says there is no such
-    /// device any more (a mouse switched off) counts as no answer.
+    /// Whether the mouse answers a few pings now, a short wait rather than the
+    /// long one of [`MouseLink::wake`]: an idle mouse in power saving misses
+    /// the first ping while it wakes up, and must not pass for switched off.
+    /// A receiver that says there is no such device any more (a mouse
+    /// switched off) counts as no answer at once.
     ///
     /// # Errors
     /// [`HidppError::Channel`] when the interface fails.
     pub fn answers(&mut self) -> Result<bool, HidppError> {
-        match ping_attempts(&mut self.hidpp, self.device, 1) {
+        match ping_attempts(&mut self.hidpp, self.device, LIVENESS_PING_ATTEMPTS) {
             Ok(_) | Err(Miss::WrongEcho) => Ok(true),
             Err(Miss::Silent { .. } | Miss::Refused(_)) => Ok(false),
             Err(Miss::Interface(message)) => Err(HidppError::Channel(ChannelError(message))),

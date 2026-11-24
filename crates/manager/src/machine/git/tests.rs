@@ -111,7 +111,7 @@ async fn the_demo_works_in_a_temporary_home_and_never_touches_the_real_one() {
     let mut config = snapshot.config;
     config.identity.name = "Grace Hopper".into();
     hub.update(config).await.unwrap();
-    let demo_home = hub.inner.files.as_ref().unwrap().home().to_owned();
+    let demo_home = hub.target().unwrap().home().to_owned();
     assert!(demo_home.starts_with(std::env::temp_dir()));
     assert_ne!(Some(demo_home.clone()), std::env::home_dir());
     assert!(read(&demo_home, ".config/hubergamof/gitconfig").contains("Grace Hopper"));
@@ -307,7 +307,7 @@ async fn a_dangling_link_is_refused_not_replaced() {
     let mut config = fixture.hub.refresh().await.unwrap().config;
     config.identity.name = "Ada".into();
     let error = fixture.hub.update(config).await.unwrap_err();
-    assert!(matches!(error, GitError::Files(_)), "{error}");
+    assert!(matches!(error, GitError::Apply(_)), "{error}");
     assert!(
         fs::symlink_metadata(home.join(".gitconfig"))
             .unwrap()
@@ -380,7 +380,7 @@ async fn a_folder_that_is_a_link_is_refused() {
     config.folder_identities = vec![folder_rule("~/work/clients", "A", "a@x.org")];
     let error = fixture.hub.update(config).await.unwrap_err();
     assert!(
-        matches!(error, GitError::Files(GitFilesError::LinkedFolder(_))),
+        matches!(error, GitError::Apply(GitFilesError::LinkedFolder(_))),
         "{error}"
     );
     assert!(!home.join(".config/hubergamof/gitconfig").exists());
@@ -415,8 +415,8 @@ async fn a_damaged_block_is_left_untouched_and_the_configuration_stays_saved() {
     let mut config = fixture.hub.refresh().await.unwrap().config;
     config.identity.name = "Ada".into();
     let error = fixture.hub.update(config).await.unwrap_err();
-    assert!(matches!(error, GitError::Files(_)), "{error}");
-    assert_eq!(error.error_code(), ErrorCode::Internal);
+    assert!(matches!(error, GitError::Apply(_)), "{error}");
+    assert_eq!(error.error_code(), hubergamof_protocol::ErrorCode::Internal);
     assert_eq!(
         read(home, ".gitconfig"),
         "# >>> hubergamof git >>>\n[user]\n"
@@ -445,26 +445,6 @@ async fn an_update_is_saved_applied_and_told_to_subscribers() {
 }
 
 #[tokio::test]
-async fn a_stale_or_invalid_update_changes_nothing() {
-    let fixture = fixture();
-    let mut changes = fixture.hub.subscribe();
-    let mut first = GitConfig::empty();
-    first.identity.name = "Ada".into();
-    fixture.hub.update(first.clone()).await.unwrap();
-    changes.recv().await.unwrap();
-
-    let stale = fixture.hub.update(first).await.unwrap_err();
-    assert_eq!(stale.error_code(), ErrorCode::StaleRevision);
-
-    let mut shell = fixture.hub.refresh().await.unwrap().config;
-    shell.aliases.push(alias("pwn", "!rm -rf ~", true));
-    let refused = fixture.hub.update(shell).await.unwrap_err();
-    assert_eq!(refused.error_code(), ErrorCode::InvalidConfig);
-    assert!(changes.try_recv().is_err(), "nothing was told");
-    assert!(!read(fixture.home.path(), ".config/hubergamof/gitconfig").contains("pwn"));
-}
-
-#[tokio::test]
 async fn without_a_home_folder_the_configuration_is_saved_but_not_applied() {
     let config_dir = tempfile::tempdir().unwrap();
     let store = ConfigStore::new(config_dir.path(), Arc::new(builtin_registry()));
@@ -477,44 +457,6 @@ async fn without_a_home_folder_the_configuration_is_saved_but_not_applied() {
     assert_eq!(snapshot.config.revision, 1);
     assert_eq!(snapshot.system_entries, []);
     assert!(snapshot.git_available, "no home is not a missing git");
-}
-
-#[tokio::test]
-async fn two_updates_of_the_same_revision_let_only_one_through() {
-    let fixture = fixture();
-    let mut config = GitConfig::empty();
-    config.identity.name = "Ada".into();
-    let (first, second) = tokio::join!(
-        fixture.hub.update(config.clone()),
-        fixture.hub.update(config)
-    );
-    let outcomes = [first, second];
-    assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
-    let refused = outcomes.into_iter().find_map(Result::err).unwrap();
-    assert_eq!(refused.error_code(), ErrorCode::StaleRevision);
-}
-
-#[tokio::test]
-async fn a_slow_subscriber_still_gets_the_last_configuration() {
-    let fixture = fixture();
-    let mut changes = fixture.hub.subscribe();
-    let mut config = GitConfig::empty();
-    for round in 0..=CHANGE_BACKLOG {
-        config
-            .aliases
-            .push(alias(&format!("a{round}"), "status", true));
-        fixture.hub.update(config.clone()).await.unwrap();
-        config = fixture.hub.refresh().await.unwrap().config;
-    }
-    let mut last = None;
-    loop {
-        match changes.try_recv() {
-            Ok(snapshot) => last = Some(snapshot),
-            Err(broadcast::error::TryRecvError::Lagged(_)) => {}
-            Err(_) => break,
-        }
-    }
-    assert_eq!(last.unwrap().config, config);
 }
 
 #[tokio::test]
@@ -629,7 +571,7 @@ async fn a_gitconfig_that_cannot_be_rewritten_is_left_untouched_and_the_error_sa
 
         let error = fixture.hub.update(config).await.unwrap_err();
         assert!(
-            matches!(error, GitError::Files(GitFilesError::File(_))),
+            matches!(error, GitError::Apply(GitFilesError::File(_))),
             "{what}: {error}"
         );
         assert_eq!(fs::read(home.join(".gitconfig")).unwrap(), before, "{what}");
@@ -675,7 +617,7 @@ async fn the_folder_of_hubergamof_is_tightened_and_a_file_in_its_place_is_refuse
     fs::write(other.home.path().join(".config/hubergamof"), "x").unwrap();
     let error = other.hub.update(config).await.unwrap_err();
     assert!(
-        matches!(error, GitError::Files(GitFilesError::File(_))),
+        matches!(error, GitError::Apply(GitFilesError::File(_))),
         "{error}"
     );
 }
@@ -794,7 +736,7 @@ async fn a_folder_that_is_or_goes_through_a_link_is_refused_and_a_rule_that_is_o
         config.folder_identities = vec![rule];
         let error = fixture.hub.update(config).await.unwrap_err();
         assert!(
-            matches!(error, GitError::Files(GitFilesError::LinkedFolder(_))),
+            matches!(error, GitError::Apply(GitFilesError::LinkedFolder(_))),
             "{rule_folder} {enabled}: {error}"
         );
     }
@@ -989,7 +931,7 @@ async fn a_gitconfig_that_cannot_be_rewritten_leaves_its_aliases_alone_and_the_e
     config.aliases = vec![alias("co", "mine", false)];
     let error = fixture.hub.update(config).await.unwrap_err();
     assert!(
-        matches!(error, GitError::Files(GitFilesError::File(_))),
+        matches!(error, GitError::Apply(GitFilesError::File(_))),
         "{error}"
     );
     assert_eq!(fs::read(home.join(".gitconfig")).unwrap(), [0xff, 0xfe]);
