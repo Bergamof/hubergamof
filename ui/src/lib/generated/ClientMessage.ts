@@ -6,6 +6,7 @@ import type { MachineConfig } from "./MachineConfig";
 import type { ModuleKind } from "./ModuleKind";
 import type { MouseConfig } from "./MouseConfig";
 import type { RadialMenuConfig } from "./RadialMenuConfig";
+import type { SshConfig } from "./SshConfig";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
@@ -103,7 +104,11 @@ config: MachineConfig, } | { "type": "refreshGit" } | { "type": "updateGit",
 /**
  * The new configuration, based on the current revision.
  */
-config: GitConfig, } | { "type": "checkForUpdates" } | { "type": "installUpdate" } | { "type": "setAutoInstall", 
+config: GitConfig, } | { "type": "refreshSsh" } | { "type": "updateSsh", 
+/**
+ * The new configuration, based on the current revision.
+ */
+config: SshConfig, } | { "type": "checkForUpdates" } | { "type": "installUpdate" } | { "type": "setAutoInstall", 
 /**
  * Install automatically.
  */

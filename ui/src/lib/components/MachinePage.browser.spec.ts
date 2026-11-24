@@ -30,6 +30,13 @@ describe('MachinePage', () => {
 			.toBeVisible();
 	});
 
+	it('shows SSH when it is chosen, and reads the computer for it at the start', async () => {
+		const { connection } = await renderPage();
+		expect(connection.sent).toContainEqual({ type: 'refreshSsh' });
+		await page.getByRole('radio', { name: 'SSH' }).click({ force: true });
+		await expect.element(page.getByRole('heading', { name: 'Serveurs SSH' })).toBeVisible();
+	});
+
 	it('keeps what was typed in one topic while the other is shown', async () => {
 		const { connection } = await renderPage();
 		connection.receive({

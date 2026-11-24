@@ -23,6 +23,7 @@ use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFi
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
+use hubergamof_manager::machine::ssh::{SshConfigHub, SshFiles};
 use hubergamof_manager::machine::{MachineHub, MachineShell};
 use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_actions::ButtonActions;
@@ -621,6 +622,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         application: Some(host.clone()),
         machine: start_machine(cli.demo, store.clone())?,
         git: start_git(cli.demo, store.clone())?,
+        ssh: start_ssh(cli.demo, store.clone())?,
         screen_lock,
     };
     let server = match Server::bind(
@@ -871,6 +873,16 @@ fn start_git(demo: bool, store: ConfigStore) -> Result<GitConfigHub> {
         GitConfigHub::demo(store).context("cannot create the demo home folder")
     } else {
         Ok(GitConfigHub::new(store, GitFiles::of_current_user()))
+    }
+}
+
+/// The SSH hosts: the files of the user, or with `--demo` those of a temporary
+/// home folder, so that the real ones are never touched.
+fn start_ssh(demo: bool, store: ConfigStore) -> Result<SshConfigHub> {
+    if demo {
+        SshConfigHub::demo(store).context("cannot create the demo home folder")
+    } else {
+        Ok(SshConfigHub::new(store, SshFiles::of_current_user()))
     }
 }
 

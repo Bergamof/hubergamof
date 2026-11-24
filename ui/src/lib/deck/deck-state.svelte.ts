@@ -18,6 +18,7 @@ import { browserDevicePreference, type DevicePreference } from './device-prefere
 import { ApplicationState } from './application-state.svelte.js';
 import { GitState } from './git-state.svelte.js';
 import { MachineState } from './machine-state.svelte.js';
+import { SshState } from './ssh-state.svelte.js';
 import { MouseState } from './mouse-state.svelte.js';
 import { problemOf, type Problem } from './problems.js';
 
@@ -64,6 +65,8 @@ export class DeckState {
 	readonly machine: MachineState;
 	/** The Git configuration of the machine, managed and found. */
 	readonly git: GitState;
+	/** The SSH hosts of the machine, managed and found. */
+	readonly ssh: SshState;
 
 	readonly #edits = new EditQueue<DeviceConfig>({
 		send: (config) =>
@@ -92,6 +95,7 @@ export class DeckState {
 		this.application = new ApplicationState(connection);
 		this.machine = new MachineState(connection, (problem) => this.report(problem));
 		this.git = new GitState(connection, (problem) => this.report(problem));
+		this.ssh = new SshState(connection, (problem) => this.report(problem));
 	}
 
 	/** Starts following the manager messages; returns the function that stops it. */
@@ -142,7 +146,7 @@ export class DeckState {
 				this.#edits.dropPending(CONNECTION_LOST);
 				this.mice.dropPending(CONNECTION_LOST);
 				this.application.dropPending(CONNECTION_LOST);
-				for (const state of [this.machine, this.git]) {
+				for (const state of [this.machine, this.git, this.ssh]) {
 					state.dropPending(CONNECTION_LOST);
 					state.reconnected();
 				}
@@ -178,6 +182,9 @@ export class DeckState {
 				break;
 			case 'git':
 				this.git.handle(message);
+				break;
+			case 'ssh':
+				this.ssh.handle(message);
 				break;
 			case 'applicationModules':
 			case 'locked':
@@ -219,10 +226,10 @@ export class DeckState {
 
 	/**
 	 * Errors are not tied to requests: one arriving while an update is in flight answers it
-	 * (of the deck, the mice, the machine or Git alike), else it is only shown.
+	 * (of the deck, the mice, the machine, Git or SSH alike), else it is only shown.
 	 */
 	#receiveError(problem: Problem): void {
-		const waiting = [this.#edits, this.mice, this.machine, this.git].filter(
+		const waiting = [this.#edits, this.mice, this.machine, this.git, this.ssh].filter(
 			(edits) => edits.pending
 		);
 		if (waiting.length === 0) {

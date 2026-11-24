@@ -21,6 +21,7 @@ mod machine;
 mod messages;
 mod mouse;
 mod radial;
+mod ssh;
 mod text;
 mod update;
 
@@ -63,6 +64,11 @@ pub use mouse::{
 pub use radial::{
     DEFAULT_HOLD_MS, HOLD_RANGE, MAX_LISTED_ENTRIES, MAX_SHOWN_ENTRIES, MIN_SHOWN_ENTRIES,
     RADIAL_SCHEMA_VERSION, RadialConfigError, RadialEntryConfig, RadialMenuConfig, RadialPrimary,
+};
+pub use ssh::{
+    MAX_SSH_HOSTS, MAX_SSH_JUMPS, MAX_SSH_NAME_CHARS, MAX_SSH_VALUE_CHARS, SSH_FOLDER,
+    SSH_SCHEMA_VERSION, SshConfig, SshConfigError, SshHost, SshSystemHost, is_valid_ssh_alias,
+    is_valid_ssh_host_name, is_valid_ssh_identity_file, is_valid_ssh_proxy_jump, is_valid_ssh_user,
 };
 pub use update::{InstallSupport, UpdateSettings, UpdateStatus};
 

@@ -9,6 +9,7 @@
 //! radial-menu.json               RadialMenuConfig (`mouse.rs`)
 //! machine.json                   MachineConfig, the shell aliases (`machine.rs`)
 //! git.json                       GitConfig, the Git configuration (`git.rs`)
+//! ssh.json                       SshConfig, the SSH hosts (`ssh.rs`)
 //! ```
 //!
 //! Writes are atomic (temporary file + `rename`) and guarded by the
@@ -25,6 +26,7 @@ mod files;
 mod git;
 mod machine;
 mod mouse;
+mod ssh;
 pub(crate) use files::write_bytes_atomically;
 mod migration;
 
@@ -39,7 +41,7 @@ use hubergamof_module_api::{ImageData, ImageLibrary, ModuleDescriptor};
 use hubergamof_protocol::{
     AppModulesConfigError, ConfigError, DeviceConfig, DeviceInfo, DialAssignment, ErrorCode,
     GitConfigError, MachineConfigError, ModuleInstance, ModuleInstanceId, MouseConfigError,
-    MouseModel, RadialConfigError, is_safe_image_name,
+    MouseModel, RadialConfigError, SshConfigError, is_safe_image_name,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -78,6 +80,9 @@ pub const MACHINE_FILE: &str = "machine.json";
 
 /// File name, at the root, of the Git configuration.
 pub const GIT_FILE: &str = "git.json";
+
+/// File name, at the root, of the SSH configuration.
+pub const SSH_FILE: &str = "ssh.json";
 
 /// Most images a device stores: far more than its keys use, bounding what
 /// uploads may pile up before unused ones are removed at the next load.
@@ -184,6 +189,9 @@ pub enum ConfigStoreError {
     /// The Git configuration is inconsistent.
     #[error("invalid git configuration: {0}")]
     InvalidGit(#[from] GitConfigError),
+    /// The SSH configuration is inconsistent.
+    #[error("invalid ssh configuration: {0}")]
+    InvalidSsh(#[from] SshConfigError),
     /// The archive cannot be read.
     #[error(transparent)]
     Archive(#[from] ArchiveError),
@@ -206,6 +214,7 @@ impl ConfigStoreError {
             | Self::InvalidAppModules(_)
             | Self::InvalidMachine(_)
             | Self::InvalidGit(_)
+            | Self::InvalidSsh(_)
             | Self::DialCountMismatch { .. }
             | Self::SerialMismatch { .. }
             | Self::InvalidImageName(_) => ErrorCode::InvalidConfig,
