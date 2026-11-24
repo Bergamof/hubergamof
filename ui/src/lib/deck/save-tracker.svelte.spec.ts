@@ -33,4 +33,18 @@ describe('SaveTracker', () => {
 		const tracker = new SaveTracker();
 		expect([tracker.status, tracker.spoken]).toEqual(['idle', '']);
 	});
+
+	it('empties the spoken text before repeating a message so that it is read again', async () => {
+		const tracker = new SaveTracker();
+		await tracker.track(Promise.resolve({ saved: true } as EditOutcome));
+		expect(tracker.spoken).toBe(SAVE_STATUS_TEXT.saved);
+
+		const edit = pending();
+		const tracking = tracker.track(edit.outcome);
+		edit.settle({ saved: true } as EditOutcome);
+		await Promise.resolve();
+		expect(tracker.spoken).toBe('');
+		await tracking;
+		expect(tracker.spoken).toBe(SAVE_STATUS_TEXT.saved);
+	});
 });

@@ -5,8 +5,8 @@ use ts_rs::TS;
 
 use crate::{
     ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, HapticWaveform, LiveState,
-    ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig,
-    UpdateSettings, UpdateStatus,
+    MachineConfig, ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem,
+    RadialMenuConfig, SystemAlias, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -124,6 +124,19 @@ pub enum ClientMessage {
         /// Its new settings, as described by its catalog entry.
         settings: serde_json::Value,
     },
+    /// Read the machine again: its configuration and the aliases found on the
+    /// computer. Sent when the machine page is shown, the only time the
+    /// computer is looked at. Answered by `machine`.
+    RefreshMachine,
+    /// Replace the configuration of the machine, like
+    /// [`ClientMessage::UpdateRadialMenu`]; the aliases enabled are written on
+    /// the computer, the others removed from it. Answered by `machine` to
+    /// every client; refused with [`ErrorCode::Locked`] while the computer is
+    /// locked, [`ErrorCode::InvalidConfig`] or [`ErrorCode::StaleRevision`].
+    UpdateMachine {
+        /// The new configuration, based on the current revision.
+        config: MachineConfig,
+    },
     /// Check for a newer release now, instead of waiting for the next
     /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
     CheckForUpdates,
@@ -197,6 +210,15 @@ pub enum ServerMessage {
     ApplicationModules {
         /// One entry per module.
         modules: Vec<ApplicationModuleView>,
+    },
+    /// The configuration of the machine and the aliases found on the computer
+    /// that it does not manage: sent after `refreshMachine` and `updateMachine`
+    /// (never otherwise: the computer is not watched).
+    Machine {
+        /// Current configuration.
+        config: MachineConfig,
+        /// Aliases of the shell startup files, not managed by HuBergamof.
+        system_aliases: Vec<SystemAlias>,
     },
     /// Whether the computer is locked: sent after `moduleCatalog`, then at
     /// every change. While it is, the manager refuses everything that acts or

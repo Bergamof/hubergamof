@@ -2,9 +2,11 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use hubergamof_module_api::RadialItem;
 use hubergamof_protocol::{DeviceConfig, DeviceInfo, ModuleKind};
 use tokio::sync::{mpsc, oneshot, watch};
 
+use super::radial_items::RadialItemsByKind;
 use super::{EngineError, LiveSnapshot};
 use crate::device::{DeviceError, InputEvent};
 
@@ -36,6 +38,7 @@ pub struct EngineHandle {
     requests: mpsc::Sender<Request>,
     live: watch::Receiver<LiveSnapshot>,
     config: watch::Receiver<DeviceConfig>,
+    radial_items: watch::Receiver<RadialItemsByKind>,
 }
 
 impl EngineHandle {
@@ -44,6 +47,7 @@ impl EngineHandle {
         requests: mpsc::Sender<Request>,
         live: watch::Receiver<LiveSnapshot>,
         config: watch::Receiver<DeviceConfig>,
+        radial_items: watch::Receiver<RadialItemsByKind>,
     ) -> Self {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         Self {
@@ -52,6 +56,7 @@ impl EngineHandle {
             requests,
             live,
             config,
+            radial_items,
         }
     }
 
@@ -77,6 +82,19 @@ impl EngineHandle {
     #[must_use]
     pub fn config(&self) -> watch::Receiver<DeviceConfig> {
         self.config.clone()
+    }
+
+    /// The actions shown around the petal of `module` now, when the device
+    /// holds it: those of its first instance as of the last redraw, `None`
+    /// when it holds no such module (or the module has no radial action).
+    #[must_use]
+    pub fn radial_items(&self, module: &ModuleKind) -> Option<Vec<RadialItem>> {
+        self.radial_items.borrow().get(module).cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn radial_items_watch(&self) -> watch::Receiver<RadialItemsByKind> {
+        self.radial_items.clone()
     }
 
     /// Simulates a press of key `index`, handled like a hardware press; returns

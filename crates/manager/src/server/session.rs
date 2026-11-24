@@ -7,14 +7,15 @@
 //! [`MIN_LIVE_STATE_INTERVAL`]. The subscription ends with the engine
 //! (device detached); the UI selects again from the new `devices` list.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::errors::client_message;
 use super::mouse_feed::{Failure, MouseFeed};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
-    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, ModuleKind,
-    ServerMessage, UpdateSettings, UpdateStatus,
+    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, MachineConfig,
+    ModuleKind, ServerMessage, UpdateSettings, UpdateStatus,
 };
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -24,6 +25,7 @@ use tokio::time::Instant;
 use super::{AppState, SimulatedInput};
 use crate::device::DiscoveryEvent;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry, LiveSnapshot};
+use crate::machine::MachineSnapshot;
 use crate::module_host::{ModuleHost, ModuleViews, RadialReply, SettingsRefusal};
 
 /// Shortest delay between two `liveState` messages to a client: bursts of
@@ -72,6 +74,7 @@ enum Event {
     UpdateChanged(Result<(), watch::error::RecvError>),
     SettingsChanged(Result<(), watch::error::RecvError>),
     ApplicationChanged,
+    MachineChanged(Arc<MachineSnapshot>),
     LockChanged,
     Mouse(Option<ServerMessage>),
     Shutdown,
@@ -109,6 +112,20 @@ async fn application_changed(views: Option<&mut watch::Receiver<ModuleViews>>) {
     std::future::pending::<()>().await;
 }
 
+/// Resolves with the next snapshot of the machine, never when the hub is gone
+/// (a client that missed some is told the latest one).
+async fn machine_changed(
+    changes: &mut broadcast::Receiver<Arc<MachineSnapshot>>,
+) -> Arc<MachineSnapshot> {
+    loop {
+        match changes.recv().await {
+            Ok(snapshot) => return snapshot,
+            Err(RecvError::Lagged(_)) => {}
+            Err(RecvError::Closed) => std::future::pending::<()>().await,
+        }
+    }
+}
+
 /// Serves one client until it disconnects or the server shuts down.
 pub(super) async fn run(socket: WebSocket, state: AppState) {
     let (devices, discovery) = state.context.discovery.subscribe();
@@ -118,6 +135,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let update_settings = state.context.updates.subscribe_settings();
     let mouse = MouseFeed::new(&state.context.mice);
     let application = state.context.application.as_ref().map(ModuleHost::views);
+    let machine = state.context.machine.subscribe();
     let locked = state.context.screen_lock.watch();
     let mut session = Session {
         socket,
@@ -128,6 +146,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         update_settings,
         mouse,
         application,
+        machine,
         locked,
         shutdown,
         selection: Selection::None,
@@ -145,6 +164,8 @@ struct Session {
     mouse: MouseFeed,
     /// What the modules of the application show, when the manager has them.
     application: Option<watch::Receiver<ModuleViews>>,
+    /// The machine as updates leave it, from any client.
+    machine: broadcast::Receiver<Arc<MachineSnapshot>>,
     /// Whether the computer is locked.
     locked: watch::Receiver<bool>,
     shutdown: watch::Receiver<bool>,
@@ -189,6 +210,7 @@ impl Session {
                 Event::UpdateChanged(Ok(())) => self.send_update_status().await?,
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
                 Event::ApplicationChanged => self.send_application_modules().await?,
+                Event::MachineChanged(snapshot) => self.send_machine(&snapshot).await?,
                 Event::LockChanged => {
                     self.send_locked().await?;
                     if !*self.locked.borrow() {
@@ -241,6 +263,7 @@ impl Session {
             result = self.update_settings.changed() => Event::SettingsChanged(result),
             message = self.mouse.next_change() => Event::Mouse(message),
             () = application_changed(self.application.as_mut()) => Event::ApplicationChanged,
+            snapshot = machine_changed(&mut self.machine) => Event::MachineChanged(snapshot),
             Ok(()) = self.locked.changed() => Event::LockChanged,
         }
     }
@@ -307,6 +330,8 @@ impl Session {
             ClientMessage::UpdateModuleSettings { module, settings } => {
                 return self.update_module_settings(&module, &settings).await;
             }
+            ClientMessage::RefreshMachine => return self.refresh_machine().await,
+            ClientMessage::UpdateMachine { config } => return self.update_machine(config).await,
             ClientMessage::SelectMouse { serial } => {
                 // The configuration, then what the mouse refused of it.
                 let selected = self.mouse.select(&serial).map(|config| {
@@ -435,6 +460,38 @@ impl Session {
                     .await
             }
         }
+    }
+
+    /// Reads the machine now and tells this client only.
+    async fn refresh_machine(&mut self) -> Result<(), Closed> {
+        match self.state.context.machine.refresh().await {
+            Ok(snapshot) => self.send_machine(&snapshot).await,
+            Err(error) => {
+                self.send_error(error.error_code(), &error.to_string())
+                    .await
+            }
+        }
+    }
+
+    /// Saves and applies a configuration of the machine. Every client, this
+    /// one included, hears the result as the machine changes; only a failure
+    /// is answered here.
+    async fn update_machine(&mut self, config: MachineConfig) -> Result<(), Closed> {
+        match self.state.context.machine.update(config).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.send_error(error.error_code(), &error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn send_machine(&mut self, snapshot: &MachineSnapshot) -> Result<(), Closed> {
+        self.send(&ServerMessage::Machine {
+            config: snapshot.config.clone(),
+            system_aliases: snapshot.system_aliases.clone(),
+        })
+        .await
     }
 
     /// What the modules of the application show now, if the manager has any.

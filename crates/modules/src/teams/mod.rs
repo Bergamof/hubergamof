@@ -22,8 +22,8 @@ use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
     ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
-    Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor, Rgb,
-    ScreenLockState,
+    Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor,
+    RadialGlyph, RadialItem, RadialItemState, Rgb, ScreenLockState,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
@@ -181,6 +181,12 @@ fn launch() -> Launch {
 const RADIAL_MUTE: &str = "mute";
 const RADIAL_CAMERA: &str = "camera";
 const RADIAL_HANG_UP: &str = "hang-up";
+const RADIAL_CONVERSATIONS: &str = "conversations";
+const RADIAL_ACTIVITY: &str = "activity";
+const RADIAL_RETURN_TO_CALL: &str = "return-to-call";
+
+/// Largest count written in full on a badge: the badge holds three characters.
+const BADGE_MAX_COUNT: u32 = 99;
 
 /// Haptic events of the module.
 const HAPTIC_INCOMING_CALL: &str = "incoming-call";
@@ -249,6 +255,21 @@ impl ModuleFactory for TeamsFactory {
                 RADIAL_HANG_UP,
                 "Raccrocher",
                 "Met fin à l'appel Teams en cours.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_CONVERSATIONS,
+                "Conversations Teams",
+                "Affiche les conversations dans Teams et le met au premier plan.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_ACTIVITY,
+                "Activité Teams",
+                "Affiche l'activité dans Teams et le met au premier plan.",
+            ),
+            RadialActionDescriptor::new(
+                RADIAL_RETURN_TO_CALL,
+                "Revenir à l'appel Teams",
+                "Ramène l'appel Teams en cours au premier plan.",
             ),
         ]
     }
@@ -610,6 +631,65 @@ fn camera_key(camera_on: Option<bool>) -> KeyContent {
     }
 }
 
+/// The actions around the petal: the rail's panels while the extension
+/// answers (without it nothing would happen), then the call controls during a
+/// call only (not while it rings: answering belongs to the notification).
+fn radial_items(state: &TeamsState) -> Vec<RadialItem> {
+    if !state.connected {
+        return Vec::new();
+    }
+    let mut items = vec![
+        counted(
+            RadialItem::new(RADIAL_CONVERSATIONS, "Conversations", RadialGlyph::Chat),
+            state.unread_chats(),
+        ),
+        counted(
+            RadialItem::new(RADIAL_ACTIVITY, "Activités", RadialGlyph::Bell),
+            state.activity(),
+        ),
+    ];
+    if state.call.phase == CallPhase::InCall {
+        let call = &state.call;
+        items.extend([
+            toggle_item(
+                RadialItem::new(RADIAL_MUTE, "Couper le micro", RadialGlyph::Microphone),
+                "Rétablir le micro",
+                call.muted == Some(true),
+            ),
+            toggle_item(
+                RadialItem::new(RADIAL_CAMERA, "Couper la caméra", RadialGlyph::Camera),
+                "Activer la caméra",
+                call.camera_on == Some(false),
+            ),
+            RadialItem::new(RADIAL_HANG_UP, "Raccrocher", RadialGlyph::HangUp),
+            RadialItem::new(
+                RADIAL_RETURN_TO_CALL,
+                "Retour à l'appel",
+                RadialGlyph::ReturnToCall,
+            ),
+        ]);
+    }
+    items
+}
+
+/// `item` with a badge when `count` is above zero.
+fn counted(item: RadialItem, count: u32) -> RadialItem {
+    match count {
+        0 => item,
+        1..=BADGE_MAX_COUNT => item.with_badge(count.to_string()),
+        _ => item.with_badge(format!("{BADGE_MAX_COUNT}+")),
+    }
+}
+
+/// `item`, relabelled and crossed out once what it controls is `off`.
+fn toggle_item(mut item: RadialItem, off_label: &str, off: bool) -> RadialItem {
+    if off {
+        off_label.clone_into(&mut item.label);
+        item = item.with_state(RadialItemState::Off);
+    }
+    item
+}
+
 #[async_trait]
 impl Module for Teams {
     fn key(&self) -> KeyContent {
@@ -711,8 +791,17 @@ impl Module for Teams {
             RADIAL_MUTE => self.ask(CallAction::ToggleMute),
             RADIAL_CAMERA => self.ask(CallAction::ToggleCamera),
             RADIAL_HANG_UP => self.ask(CallAction::HangUp),
+            // The menu has no key to mark a failure on: the home key is the
+            // surface, and Teams comes forward since the user is at the screen.
+            RADIAL_CONVERSATIONS => self.show_panel(Panel::Chat, Some(ModuleSurface::HomeKey)),
+            RADIAL_ACTIVITY => self.show_panel(Panel::Activity, Some(ModuleSurface::HomeKey)),
+            RADIAL_RETURN_TO_CALL => self.return_to_call(ModuleSurface::HomeKey),
             _ => Vec::new(),
         }
+    }
+
+    fn radial_items(&self) -> Vec<RadialItem> {
+        radial_items(&self.changes.borrow())
     }
 
     async fn on_event(&mut self, event: ModuleEvent) -> Vec<Command> {

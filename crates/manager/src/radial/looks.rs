@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use hubergamof_module_api::{MAX_RADIAL_ITEMS, RadialItem};
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{ImageSize, ModuleKind};
 use image::RgbaImage;
@@ -69,11 +70,13 @@ impl Looks {
                 label: look.name.clone(),
                 icon: look.icon.clone(),
                 status,
+                items: Vec::new(),
             },
             None => Petal {
                 label: title_case(&module.0),
                 icon: None,
                 status,
+                items: Vec::new(),
             },
         }
     }
@@ -105,6 +108,38 @@ impl Statuses {
 impl std::fmt::Debug for Statuses {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Statuses").field(&self.0.is_some()).finish()
+    }
+}
+
+/// The actions each module offers around its petal now (the controls of a
+/// call during a call), read when the menu opens and again while it stays
+/// open: they come and go, unlike what [`Looks`] knows.
+#[derive(Clone, Default)]
+pub struct Items(Option<ItemReader>);
+
+/// Reads the actions a module offers now.
+type ItemReader = Arc<dyn Fn(&ModuleKind) -> Vec<RadialItem> + Send + Sync>;
+
+impl Items {
+    /// The items read by `read`.
+    #[must_use]
+    pub fn new(read: impl Fn(&ModuleKind) -> Vec<RadialItem> + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(read)))
+    }
+
+    /// What `module` offers now, at most [`MAX_RADIAL_ITEMS`]: the arc has no
+    /// room for more.
+    #[must_use]
+    pub fn of(&self, module: &ModuleKind) -> Vec<RadialItem> {
+        let mut items = self.0.as_ref().map(|read| read(module)).unwrap_or_default();
+        items.truncate(MAX_RADIAL_ITEMS);
+        items
+    }
+}
+
+impl std::fmt::Debug for Items {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Items").field(&self.0.is_some()).finish()
     }
 }
 
@@ -153,5 +188,38 @@ mod status_tests {
         let statuses = Statuses::new(|kind| (kind.0 == "pomodoro").then(|| "Focus".to_owned()));
         assert_eq!(statuses.of(&"pomodoro".into()).as_deref(), Some("Focus"));
         assert_eq!(statuses.of(&"audio".into()), None);
+    }
+}
+
+#[cfg(test)]
+mod item_tests {
+    use hubergamof_module_api::RadialGlyph;
+
+    use super::*;
+
+    fn item(id: &str) -> RadialItem {
+        RadialItem::new(id, id, RadialGlyph::Play)
+    }
+
+    #[test]
+    fn items_are_what_the_reader_says_and_none_by_default() {
+        assert_eq!(Items::default().of(&"teams".into()), Vec::new());
+        let items = Items::new(|kind| {
+            if kind.0 == "teams" {
+                vec![item("mute")]
+            } else {
+                Vec::new()
+            }
+        });
+        assert_eq!(items.of(&"teams".into()), [item("mute")]);
+        assert_eq!(items.of(&"audio".into()), Vec::new());
+    }
+
+    #[test]
+    fn a_module_that_offers_too_many_is_cut_at_the_room_of_the_arc() {
+        let items = Items::new(|_| (0..10).map(|n| item(&n.to_string())).collect());
+        let read = items.of(&"teams".into());
+        assert_eq!(read.len(), MAX_RADIAL_ITEMS);
+        assert_eq!(read[0].id, "0", "the first ones are kept");
     }
 }

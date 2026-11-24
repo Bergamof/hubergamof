@@ -295,6 +295,8 @@ async fn the_project_page_shows_its_actions_then_its_containers() {
     let harness = Harness::start(&json!({})).await;
     let page = harness.page(SHOP).unwrap();
     assert_eq!(page.title, "boutique");
+    // The four action keys stay in place while the containers scroll.
+    assert_eq!(page.pinned_items, 4);
     let items: Vec<_> = harness
         .items(SHOP)
         .into_iter()
@@ -1019,7 +1021,7 @@ async fn services_without_container_show_beside_the_containers_and_apart_from_st
             "service/boutique/db",
             "service/boutique/web"
         ],
-        "after the actions, sorted by name like containers"
+        "after the actions, sorted by name"
     );
     let planned = harness.item(SHOP, WEB_PLANNED);
     assert_eq!(planned.image, Some(icons::SERVICE_PLANNED.clone()));
@@ -1031,6 +1033,24 @@ async fn services_without_container_show_beside_the_containers_and_apart_from_st
     let created = harness.item(SHOP, WEB);
     assert_eq!(created.image, Some(icons::STOPPED.clone()));
     assert!(harness.page(WEB_PLANNED).is_none(), "its page is gone");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_built_service_comes_before_the_services_without_container() {
+    let mut harness = shop_taken_down().await;
+    harness.press(WEB_PLANNED, "up").await;
+    harness.press(WEB_UP, "up-build").await;
+    harness.settle().await;
+    let ids: Vec<_> = harness
+        .items(SHOP)
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+    assert_eq!(
+        ids[4..],
+        [WEB, "service/boutique/api", "service/boutique/db"],
+        "by state first: `web` sorts after the others by name"
+    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -30,6 +30,7 @@ mod navigation;
 mod notifications;
 mod painter;
 mod placement_notice;
+mod radial_items;
 mod supervisor;
 mod validation;
 
@@ -43,6 +44,7 @@ use thiserror::Error;
 pub use device_engine::DeviceEngine;
 pub use handle::EngineHandle;
 pub use live::{LiveKey, LiveSnapshot, LiveStrip, PageSummary};
+pub use radial_items::first_radial_items;
 pub use supervisor::{EngineRegistry, Supervisor};
 
 pub(crate) use device_engine::MODULE_EVENT_CAPACITY;

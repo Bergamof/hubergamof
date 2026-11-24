@@ -183,7 +183,10 @@ pub use notification::{
     UnreadNotifications,
 };
 pub use paths::{expand_home, is_setting_path};
-pub use radial::RadialActionDescriptor;
+pub use radial::{
+    MAX_BADGE_CHARS, MAX_RADIAL_ITEMS, RadialActionDescriptor, RadialGlyph, RadialItem,
+    RadialItemState,
+};
 pub use strip::{
     ContextDial, DialHint, MAX_POPUP_ENTRIES, PomodoroState, PomodoroWidget, PopupEntry, PopupIcon,
     StripPopup, StripWidget, VolumeWidget,

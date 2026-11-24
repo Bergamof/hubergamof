@@ -834,6 +834,29 @@ test('enregistre les réglages du pomodoro, pour toute l’application', async (
 	await expect(other.getByLabel('Durée du travail')).toHaveValue('30');
 });
 
+// The machine: the aliases the demo manager finds in its own startup file (`MachineHub::demo`).
+
+test('intègre un alias du système, qui reste après un rechargement', async ({ page }) => {
+	await open(page);
+	await page.getByRole('button', { name: 'Machine' }).click();
+	const system = page.getByRole('list', { name: 'Alias du système, non gérés' });
+	const managed = page.getByRole('list', { name: 'Alias gérés' });
+	await expect(system.getByText('git status', { exact: true })).toBeVisible();
+	await expect(system.getByText('git log --oneline', { exact: true })).toBeVisible();
+	await expect(page.getByText('Aucun alias géré pour l’instant.')).toBeVisible();
+
+	await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
+	await expect(managed.getByText('git status', { exact: true })).toBeVisible();
+	await expect(system.getByText('git status', { exact: true })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Intégrer l’alias gl' })).toBeFocused();
+
+	await page.reload();
+	await page.getByRole('button', { name: 'Machine' }).click();
+	await expect(managed.getByText('git status', { exact: true })).toBeVisible();
+	await expect(system.getByText('git status', { exact: true })).toHaveCount(0);
+	await expect(system.getByText('git log --oneline', { exact: true })).toBeVisible();
+});
+
 test('la page Modules reste accessible', async ({ page }) => {
 	await openModules(page);
 	await expectAccessible(page, 'page des modules');
