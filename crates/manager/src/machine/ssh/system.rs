@@ -7,7 +7,7 @@
 use hubergamof_protocol::SshSystemHost;
 
 use super::apply::SshFiles;
-use super::sections::{Header, lines_of, option_of, sections};
+use super::sections::{Header, lines_of, option_of, sections, unmanaged_options};
 use crate::machine::files::{FileError, read_text_file};
 
 /// Most hosts listed.
@@ -49,8 +49,11 @@ fn parse_hosts(content: &str) -> Vec<SshSystemHost> {
         if patterns.len() != 1 || patterns.iter().any(|name| name.contains(['*', '?', '!'])) {
             host.other_options.push(SEVERAL_PATTERNS.to_owned());
         }
+        let body = &lines[section.lines.clone()];
+        host.other_options
+            .extend(unmanaged_options(body.iter().copied()));
         let mut seen: Vec<String> = Vec::new();
-        for line in &lines[section.lines.start + 1..section.lines.end] {
+        for line in &body[1..] {
             let Some((keyword, value)) = option_of(line) else {
                 continue;
             };
@@ -62,14 +65,11 @@ fn parse_hosts(content: &str) -> Vec<SshSystemHost> {
             match keyword.as_str() {
                 "hostname" => host.host_name = shown(&value),
                 "user" => host.user = shown(&value),
-                "port" => match value.parse::<u16>() {
-                    Ok(port) => host.port = Some(port),
-                    Err(_) => host.other_options.push(keyword),
-                },
+                "port" => host.port = value.parse::<u16>().ok(),
                 "identityfile" => host.identity_file = shown(&value),
                 "proxyjump" => host.proxy_jump = shown(&value),
                 "forwardagent" => host.forward_agent = value.eq_ignore_ascii_case("yes"),
-                _ => host.other_options.push(keyword),
+                _ => {}
             }
         }
         found.push(host);
@@ -158,6 +158,58 @@ mod tests {
         let hosts = parse_hosts(content);
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].alias, "b");
+    }
+
+    #[test]
+    fn what_ssh_adds_up_or_reads_otherwise_than_yes_or_no_cannot_be_taken_without_loss() {
+        let hosts = parse_hosts("Host a\n\tIdentityFile k1\n\tIdentityFile k2\n");
+        assert_eq!(hosts[0].other_options, ["identityfile"]);
+        assert_eq!(hosts[0].identity_file, "k1");
+
+        for value in ["/tmp/agent.sock", "${SSH_AUTH_SOCK}", "maybe"] {
+            let hosts = parse_hosts(&format!("Host a\n\tForwardAgent {value}\n"));
+            assert_eq!(hosts[0].other_options, ["forwardagent"], "{value}");
+            assert!(!hosts[0].forward_agent);
+        }
+        for (value, on) in [
+            ("yes", true),
+            ("YES", true),
+            ("\"yes\"", true),
+            ("no", false),
+        ] {
+            let hosts = parse_hosts(&format!("Host a\n\tForwardAgent {value}\n"));
+            assert_eq!(hosts[0].other_options, Vec::<String>::new(), "{value}");
+            assert_eq!(hosts[0].forward_agent, on, "{value}");
+        }
+    }
+
+    #[test]
+    fn quoted_values_tabs_and_upper_case_keywords_are_read() {
+        let hosts = parse_hosts("HOST a\n\tPORT \"22\"\n\tUser\t\"ada\"\n");
+        assert_eq!(hosts[0].alias, "a");
+        assert_eq!(hosts[0].port, Some(22));
+        assert_eq!(hosts[0].user, "ada");
+        assert_eq!(hosts[0].other_options, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_host_with_a_comment_after_its_name_is_one_host() {
+        let hosts = parse_hosts("Host a # note\n\tUser u\n");
+        assert_eq!(hosts[0].alias, "a");
+        assert_eq!(hosts[0].other_options, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_value_is_cut_to_its_limit_and_a_file_that_is_not_text_is_still_read() {
+        let long = "x".repeat(MAX_OPTION_CHARS + 50);
+        let hosts = parse_hosts(&format!("Host a\n\tHostName {long}\n"));
+        assert_eq!(hosts[0].host_name.chars().count(), MAX_OPTION_CHARS);
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".ssh")).unwrap();
+        std::fs::write(home.path().join(".ssh/config"), b"Host a\n\tUser \xff\n").unwrap();
+        let files = SshFiles::new(home.path().to_owned());
+        assert_eq!(files.read_system_hosts()[0].alias, "a");
     }
 
     #[test]

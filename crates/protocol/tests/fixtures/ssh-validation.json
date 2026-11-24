@@ -258,11 +258,11 @@
   },
   {
    "value": "[::1]:22",
-   "valid": false
+   "valid": true
   },
   {
    "value": "2001:db8::1",
-   "valid": true
+   "valid": false
   },
   {
    "value": "bastion:+22",
@@ -282,6 +282,66 @@
   },
   {
    "value": "u@:22",
+   "valid": false
+  },
+  {
+   "value": "[2001:db8::1]",
+   "valid": true
+  },
+  {
+   "value": "[2001:db8::1]:2222",
+   "valid": true
+  },
+  {
+   "value": "u@[::1]",
+   "valid": true
+  },
+  {
+   "value": "u@[::1]:22",
+   "valid": true
+  },
+  {
+   "value": "::1",
+   "valid": false
+  },
+  {
+   "value": "u@::1",
+   "valid": false
+  },
+  {
+   "value": "a:b:c",
+   "valid": false
+  },
+  {
+   "value": "[::1",
+   "valid": false
+  },
+  {
+   "value": "[]:22",
+   "valid": false
+  },
+  {
+   "value": "[abc]:22",
+   "valid": false
+  },
+  {
+   "value": "[::1]x",
+   "valid": false
+  },
+  {
+   "value": "[::1]:0",
+   "valid": false
+  },
+  {
+   "value": "[::g]",
+   "valid": false
+  },
+  {
+   "value": "[::1]:",
+   "valid": false
+  },
+  {
+   "value": "a:22:3",
    "valid": false
   }
  ]

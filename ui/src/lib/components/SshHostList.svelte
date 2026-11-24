@@ -92,7 +92,8 @@ one) after a removal.
 		return [
 			target,
 			host.proxyJump && `via ${host.proxyJump}`,
-			host.identityFile && `clé ${host.identityFile}`
+			host.identityFile && `clé ${host.identityFile}`,
+			host.forwardAgent && 'agent transmis'
 		]
 			.filter(Boolean)
 			.join(' · ');
@@ -112,6 +113,7 @@ one) after a removal.
 							takenAliases={hosts
 								.filter(({ alias }) => alias !== host.alias)
 								.map(({ alias }) => alias)}
+							label="Modifier le serveur {host.alias}"
 							submitLabel="Enregistrer"
 							onsubmit={(changed) => replace(host.alias, changed)}
 							oncancel={closeEditor}

@@ -140,8 +140,33 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_block_takes_the_blank_line_before_it_or_after_it_when_it_is_first_and_no_other() {
+        let block = GIT.text();
+        let remove = |content: String| GIT.remove(&content).unwrap();
+        // In the middle: the blank line before goes, the one after stays.
+        assert_eq!(remove(format!("a\n\n{block}\nb\n")), "a\n\nb\n");
+        assert_eq!(remove(format!("a\n{block}b\n")), "a\nb\n");
+        // First: the blank line after goes, and only one.
+        assert_eq!(remove(format!("{block}\nrest")), "rest");
+        assert_eq!(remove(format!("{block}\n\nrest")), "\nrest");
+        assert_eq!(remove(format!("{block}rest")), "rest");
+        // Alone.
+        assert_eq!(remove(block.clone()), "");
+        // The blank line after a block that is not first is the person's.
+        assert_eq!(remove(format!("a\n{block}\nb\n")), "a\n\nb\n");
+    }
+
+    #[test]
     fn a_block_placed_first_comes_before_everything_and_goes_back_to_the_original() {
-        for original in ["Host a\n\tUser u\n", "", "# c\n\nHost a\n"] {
+        for original in [
+            "Host a\n\tUser u\n",
+            "",
+            "# c\n\nHost a\n",
+            "\nHost a\n",
+            "Host a",
+            "\n",
+            "Host a\r\n\tUser u\r\n",
+        ] {
             let placed = GIT.place_first(original).unwrap();
             assert!(placed.starts_with(&GIT.text()), "{original:?}");
             assert_eq!(
@@ -151,6 +176,12 @@ mod tests {
             );
             assert_eq!(GIT.remove(&placed).unwrap(), original, "{original:?}");
         }
+    }
+
+    #[test]
+    fn a_block_without_its_end_is_refused_when_placed_first() {
+        let broken = format!("{}\nInclude x\n", GIT.start);
+        assert_eq!(GIT.place_first(&broken), Err(UnterminatedBlock));
     }
 
     #[test]

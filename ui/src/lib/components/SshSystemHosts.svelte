@@ -49,7 +49,13 @@ them from the managed ones. Once one is taken, the focus goes to the next « Rep
 	/** What the host stands for, in words. */
 	function summary(host: SshSystemHost): string {
 		const target = `${host.user ? `${host.user}@` : ''}${host.hostName || host.alias}${host.port === null ? '' : `:${host.port}`}`;
-		return [target, host.proxyJump && `via ${host.proxyJump}`].filter(Boolean).join(' · ');
+		return [
+			target,
+			host.proxyJump && `via ${host.proxyJump}`,
+			host.forwardAgent && 'agent transmis'
+		]
+			.filter(Boolean)
+			.join(' · ');
 	}
 </script>
 
@@ -69,7 +75,7 @@ them from the managed ones. Once one is taken, the focus goes to the next « Rep
 				<div class="flex min-w-0 flex-1 basis-60 flex-col">
 					<code class="font-mono font-semibold break-all">{host.alias}</code>
 					<span class="text-sm break-all">{summary(host)}</span>
-					<span class="text-sm text-muted">Non géré · lu dans ~/.ssh/config</span>
+					<span class="text-sm text-muted">Non géré</span>
 				</div>
 				<div class="flex flex-col items-end gap-1">
 					<button

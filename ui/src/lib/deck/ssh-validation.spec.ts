@@ -91,6 +91,16 @@ describe('validateHost', () => {
 		expect(validateHost(draft({}), ['other']).alias).toBeUndefined();
 	});
 
+	it('names the jump that is wrong and says how to write an IPv6 address', () => {
+		const message = validateHost(draft({ proxyJump: 'a,2001:db8::1' }), []).proxyJump;
+		expect(message).toMatch(/« 2001:db8::1 » n’est pas valide/);
+		expect(message).toMatch(/entre crochets/);
+		expect(validateHost(draft({ proxyJump: 'a,b,c,d,e,f' }), []).proxyJump).toMatch(
+			/5 rebonds au plus/
+		);
+		expect(validateHost(draft({ proxyJump: '[2001:db8::1]:22' }), []).proxyJump).toBeUndefined();
+	});
+
 	it('checks the port as an integer from 1 to 65535', () => {
 		for (const port of ['1', '22', '65535', '+22']) {
 			expect(validateHost(draft({ port }), []).port, port).toBeUndefined();
@@ -139,14 +149,14 @@ describe('takeOverObstacle', () => {
 
 	it('names the options that would be lost', () => {
 		expect(takeOverObstacle(found({ otherOptions: ['proxycommand', 'compression'] }), [])).toMatch(
-			/proxycommand, compression/
+			/ProxyCommand, Compression/
 		);
 	});
 
 	it('refuses a host whose values do not follow the rules', () => {
 		expect(takeOverObstacle(found({ identityFile: '/home/ada/key' }), [])).toMatch(
-			/ne respecte pas les règles/
+			/Ne respecte pas les règles/
 		);
-		expect(takeOverObstacle(found({ alias: 'a b' }), [])).toMatch(/ne respecte pas les règles/);
+		expect(takeOverObstacle(found({ alias: 'a b' }), [])).toMatch(/Ne respecte pas les règles/);
 	});
 });

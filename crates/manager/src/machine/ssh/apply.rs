@@ -14,12 +14,12 @@ use std::path::{Path, PathBuf};
 use hubergamof_protocol::SshConfig;
 use thiserror::Error;
 
-use super::claim::claim_originals;
+use super::claim::{claim_originals, untakeable_names};
 use super::render::{MANAGED_DIR, MANAGED_FILE, UnwritableHost, render};
 use crate::machine::block::Block;
 use crate::machine::files::{
-    FileError, PRIVATE_FILE_MODE, ensure_private_dir, io_error, remove_file_if_present,
-    update_text_file, write_replacing,
+    FileError, PRIVATE_FILE_MODE, ensure_private_dir, io_error, read_text_file,
+    remove_file_if_present, update_text_file, write_replacing,
 };
 
 /// The folder of the SSH files of the user, relative to the home folder.
@@ -43,6 +43,18 @@ pub enum SshFilesError {
     /// A host that cannot be written safely.
     #[error(transparent)]
     Unwritable(#[from] UnwritableHost),
+    /// A name of the configuration is used in `~/.ssh/config` by a host with
+    /// options HuBergamof does not manage: it can neither take that host over
+    /// without losing them, nor leave it next to the new one.
+    #[error("{} already used in ~/.ssh/config by hosts with options HuBergamof does not manage", names_in_use(.0))]
+    NameInUse(Vec<String>),
+}
+
+fn names_in_use(names: &[String]) -> String {
+    match names {
+        [one] => format!("the name `{one}` is"),
+        _ => format!("the names `{}` are", names.join("`, `")),
+    }
 }
 
 /// The SSH files of one user, under `home`.
@@ -106,19 +118,42 @@ impl SshFiles {
     /// [`SshFilesError`] for the first file that cannot be written; each write
     /// is atomic, so no file is left half written.
     pub fn apply(&self, config: &SshConfig) -> Result<(), SshFilesError> {
+        self.check_names(config)?;
         if let Some(content) = render(config)? {
             let dir = self.home.join(MANAGED_DIR);
             ensure_private_dir(&dir)?;
             write_replacing(&self.managed_file(), content.as_bytes(), PRIVATE_FILE_MODE)?;
             self.include()?;
         } else {
-            // The include first: a configuration that cannot be rewritten must
-            // not keep loading what is removed.
-            self.exclude()?;
+            // The file first: `ssh` ignores an `Include` of a file that is not
+            // there, so a `~/.ssh/config` that cannot be rewritten does not keep
+            // loading what is removed (a host switched off is really off).
             remove_file_if_present(&self.managed_file())?;
+            self.exclude()?;
         }
         // After the file of HuBergamof, so that an enabled host is never missing.
         self.claim_originals(config)
+    }
+
+    /// Refuses a configuration that names a host of `~/.ssh/config` that cannot
+    /// be taken over, before anything is written.
+    fn check_names(&self, config: &SshConfig) -> Result<(), SshFilesError> {
+        let Some(bytes) = read_text_file(&self.config_file())? else {
+            return Ok(());
+        };
+        let aliases: HashSet<&str> = config
+            .hosts
+            .iter()
+            .map(|host| host.alias.as_str())
+            .collect();
+        let in_use = untakeable_names(&String::from_utf8_lossy(&bytes), &aliases);
+        if in_use.is_empty() {
+            Ok(())
+        } else {
+            Err(SshFilesError::NameInUse(
+                in_use.into_iter().map(str::to_owned).collect(),
+            ))
+        }
     }
 
     fn claim_originals(&self, config: &SshConfig) -> Result<(), SshFilesError> {

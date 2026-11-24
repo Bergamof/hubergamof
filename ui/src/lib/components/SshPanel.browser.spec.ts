@@ -75,8 +75,8 @@ describe('SshPanel', () => {
 	describe('adding a host', () => {
 		it('sends the whole configuration on its revision', async () => {
 			const { connection } = await renderPanel();
-			await addForm().getByRole('textbox', { name: 'Nom' }).fill('prod');
-			await addForm().getByRole('textbox', { name: 'Machine' }).fill('10.0.0.1');
+			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
+			await addForm().getByRole('textbox', { name: 'Adresse de la machine' }).fill('10.0.0.1');
 			await addForm().getByRole('textbox', { name: 'Utilisateur' }).fill('deploy');
 			await addForm().getByRole('textbox', { name: 'Port' }).fill('2222');
 			await addForm().getByRole('textbox', { name: 'Clé privée' }).fill('~/.ssh/id_ed25519');
@@ -106,7 +106,7 @@ describe('SshPanel', () => {
 			const { connection } = await renderPanel();
 			const before = connection.sent.length;
 			await addForm().getByRole('button', { name: 'Ajouter' }).click();
-			const name = addForm().getByRole('textbox', { name: 'Nom' });
+			const name = addForm().getByRole('textbox', { name: 'Nom du serveur' });
 			await expect.element(name).toHaveFocus();
 			await expect.element(page.getByText('Saisissez le nom du serveur.')).toBeVisible();
 			expect(connection.sent).toHaveLength(before);
@@ -121,18 +121,29 @@ describe('SshPanel', () => {
 		it('refuses a key outside ~/.ssh and a port out of range', async () => {
 			const { connection } = await renderPanel();
 			const before = connection.sent.length;
-			await addForm().getByRole('textbox', { name: 'Nom' }).fill('prod');
+			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
 			await addForm().getByRole('textbox', { name: 'Clé privée' }).fill('/etc/shadow');
 			await addForm().getByRole('textbox', { name: 'Port' }).fill('70000');
 			await addForm().getByRole('button', { name: 'Ajouter' }).click();
-			await expect.element(page.getByText(/commence par ~\/\.ssh\//)).toBeVisible();
+			await expect
+				.element(addForm().getByRole('textbox', { name: 'Clé privée' }))
+				.toHaveAccessibleDescription(/chaque nom : lettres, chiffres/);
 			await expect.element(page.getByText(/nombre entier de 1 à 65535/)).toBeVisible();
 			expect(connection.sent).toHaveLength(before);
 		});
 
+		it('says which jump is wrong, and that an IPv6 address goes between brackets', async () => {
+			await renderPanel();
+			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
+			await addForm().getByRole('textbox', { name: 'Rebonds' }).fill('bastion,2001:db8::1');
+			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await expect.element(page.getByText(/« 2001:db8::1 » n’est pas valide/)).toBeVisible();
+			await expect.element(page.getByText(/entre crochets/)).toBeVisible();
+		});
+
 		it('refuses a name that is taken', async () => {
 			await renderPanel(ssh(1, host('prod')));
-			await addForm().getByRole('textbox', { name: 'Nom' }).fill('prod');
+			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
 			await addForm().getByRole('button', { name: 'Ajouter' }).click();
 			await expect.element(page.getByText('Un serveur porte déjà ce nom.')).toBeVisible();
 		});
@@ -159,6 +170,28 @@ describe('SshPanel', () => {
 			expect(connection.lastSent()).toMatchObject({
 				config: { hosts: [{ alias: 'prod', enabled: false }] }
 			});
+		});
+
+		it('names the form that changes a host', async () => {
+			await renderPanel(ssh(1, host('prod')));
+			await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
+			await expect
+				.element(page.getByRole('form', { name: 'Modifier le serveur prod' }))
+				.toBeVisible();
+		});
+
+		it('shows that a host forwards the agent, in the list and in the hosts found', async () => {
+			await renderPanel(ssh(1, host('prod', { forwardAgent: true })), [
+				found('far-away', { forwardAgent: true })
+			]);
+			await expect.element(managed().getByText(/agent transmis/)).toBeVisible();
+			await expect
+				.element(
+					page
+						.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' })
+						.getByText(/agent transmis/)
+				)
+				.toBeVisible();
 		});
 
 		it('changes a host and gives the focus back to its button', async () => {
@@ -211,7 +244,7 @@ describe('SshPanel', () => {
 			const tunnel = page.getByRole('button', { name: 'Reprendre le serveur tunnel' });
 			await expect.element(tunnel).toHaveAttribute('aria-disabled', 'true');
 			await expect
-				.element(page.getByText(/options que HuBergamof ne gère pas \(proxycommand\)/))
+				.element(page.getByText(/Utilise ProxyCommand, que HuBergamof ne gère pas/))
 				.toBeVisible();
 			const before = connection.sent.length;
 			await tunnel.click({ force: true });

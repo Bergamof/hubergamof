@@ -116,8 +116,8 @@ test('ajoute un serveur, le désactive, le modifie et le supprime', async ({ pag
 	await openSsh(page);
 	await expect(page.getByText('Aucun serveur géré pour l’instant.')).toBeVisible();
 
-	await addForm(page).getByRole('textbox', { name: 'Nom' }).fill('prod');
-	await addForm(page).getByRole('textbox', { name: 'Machine' }).fill('10.0.0.1');
+	await addForm(page).getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
+	await addForm(page).getByRole('textbox', { name: 'Adresse de la machine' }).fill('10.0.0.1');
 	await addForm(page).getByRole('textbox', { name: 'Port' }).fill('2222');
 	await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
@@ -150,7 +150,7 @@ test('ajoute un serveur, le désactive, le modifie et le supprime', async ({ pag
 test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page }) => {
 	const manager = await playManager(page);
 	await openSsh(page);
-	await addForm(page).getByRole('textbox', { name: 'Nom' }).fill('pwn');
+	await addForm(page).getByRole('textbox', { name: 'Nom du serveur' }).fill('pwn');
 	await addForm(page).getByRole('textbox', { name: 'Rebonds' }).fill('-oProxyCommand=evil');
 	await page.keyboard.press('Enter');
 	const jumps = addForm(page).getByRole('textbox', { name: 'Rebonds' });
@@ -179,7 +179,7 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	const manager = await playManager(page);
 	await openSsh(page);
 	manager.config.revision = 7;
-	await addForm(page).getByRole('textbox', { name: 'Nom' }).fill('prod');
+	await addForm(page).getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
 	await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
 	await expect(page.getByRole('alert')).toContainText('modifiée ailleurs');
 });

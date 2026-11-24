@@ -1,8 +1,8 @@
 <!--
 @component
 The machine: what HuBergamof sets up on the computer of the person. A choice at the top picks the
-topic (the shell aliases, Git, SSH). Both topics stay in the page, so what is typed in one survives a look
-at the other; both read the computer when the page opens, and never watch it.
+topic (the shell aliases, Git, SSH). All the topics stay in the page, so what is typed in one survives a look
+at the other; they all read the computer when the page opens, and never watch it.
 -->
 <script lang="ts">
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';

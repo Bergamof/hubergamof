@@ -38,9 +38,11 @@ the focus goes to the first one.
 		oncancel?: () => void;
 		/** Id of what names the form (a heading). */
 		labelledby?: string;
+		/** What names the form when there is no heading for it (a form that changes a host). */
+		label?: string;
 	}
 
-	let { initial, takenAliases, submitLabel, onsubmit, ondone, oncancel, labelledby }: Props =
+	let { initial, takenAliases, submitLabel, onsubmit, ondone, oncancel, labelledby, label }: Props =
 		$props();
 
 	const uid = $props.id();
@@ -108,10 +110,16 @@ the focus goes to the first one.
 	});
 </script>
 
-<form novalidate aria-labelledby={labelledby} class="grid gap-3 sm:grid-cols-2" onsubmit={submit}>
+<form
+	novalidate
+	aria-labelledby={labelledby}
+	aria-label={label}
+	class="grid gap-3 sm:grid-cols-2"
+	onsubmit={submit}
+>
 	<TextField
 		bind:this={aliasField}
-		label="Nom"
+		label="Nom du serveur"
 		mono
 		value={draft.alias}
 		oninput={(alias) => (draft.alias = alias)}
@@ -121,7 +129,7 @@ the focus goes to the first one.
 	/>
 	<TextField
 		bind:this={hostNameField}
-		label="Machine"
+		label="Adresse de la machine"
 		mono
 		value={draft.hostName}
 		oninput={(hostName) => (draft.hostName = hostName)}
@@ -184,8 +192,8 @@ the focus goes to the first one.
 			Transmettre l’agent SSH
 		</Switch>
 		<p id="{uid}-agent" class="text-sm text-danger">
-			Qui contrôle la machine distante peut utiliser vos clés pendant la connexion : à réserver aux
-			serveurs de confiance.
+			Attention : qui contrôle la machine distante peut utiliser vos clés pendant la connexion. À
+			réserver aux serveurs de confiance.
 		</p>
 	</div>
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2">

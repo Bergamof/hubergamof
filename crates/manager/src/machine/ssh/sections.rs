@@ -9,6 +9,45 @@ use std::ops::Range;
 /// tells it from a comment of the user, so that it can be given back.
 pub(super) const CLAIMED_MARKER: &str = "#hubergamof-off# ";
 
+/// `word` as `ssh` reads it: its quotes taken off, wherever they are (`"Proxy"Command`
+/// is `ProxyCommand` for it).
+fn dequoted(word: &str) -> String {
+    word.chars().filter(|c| !matches!(c, '"' | '\'')).collect()
+}
+
+/// What of a section HuBergamof cannot represent, by option name (lowercase,
+/// once each, in order): the options it does not manage, and the managed ones
+/// whose value it could not give back as it is. `lines` are the lines of one
+/// section, the header included, without the marker of a commented-out line.
+///
+/// `ssh` takes the first value of an option, except `IdentityFile`, which
+/// adds up: a second one would be lost. `ForwardAgent` is `yes` or `no` for
+/// HuBergamof, where `ssh` also takes a socket path or a variable. A port is
+/// a number.
+pub(super) fn unmanaged_options<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut identity_files = 0;
+    for line in lines {
+        let Some((keyword, value)) = option_of(line) else {
+            continue;
+        };
+        let unmanaged = match keyword.as_str() {
+            "host" | "hostname" | "user" | "proxyjump" => false,
+            "port" => value.parse::<u16>().is_err(),
+            "identityfile" => {
+                identity_files += 1;
+                identity_files > 1
+            }
+            "forwardagent" => !matches!(value.to_ascii_lowercase().as_str(), "yes" | "no"),
+            _ => true,
+        };
+        if unmanaged && !found.contains(&keyword) {
+            found.push(keyword);
+        }
+    }
+    found
+}
+
 /// How a section starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Header {
@@ -40,7 +79,10 @@ pub(super) fn option_of(line: &str) -> Option<(String, String)> {
         .find(|c: char| c.is_whitespace() || c == '=')
         .unwrap_or(text.len());
     let value = text[end..].trim_start_matches(|c: char| c.is_whitespace() || c == '=');
-    Some((text[..end].to_ascii_lowercase(), unquoted(value.trim_end())))
+    Some((
+        dequoted(&text[..end]).to_ascii_lowercase(),
+        unquoted(value.trim_end()),
+    ))
 }
 
 /// `value` without the double quotes that surround it.
@@ -61,7 +103,14 @@ fn header_of(line: &str) -> Option<(Header, bool)> {
     let (keyword, value) = option_of(text)?;
     match keyword.as_str() {
         "host" => Some((
-            Header::Host(value.split_whitespace().map(str::to_owned).collect()),
+            Header::Host(
+                value
+                    .split_whitespace()
+                    // What follows a word starting with `#` is a comment.
+                    .take_while(|word| !word.starts_with('#'))
+                    .map(dequoted)
+                    .collect(),
+            ),
             marked,
         )),
         "match" => Some((Header::Match, marked)),
@@ -151,6 +200,37 @@ mod tests {
             [
                 (Header::Preamble, false, 0..0),
                 (Header::Host(vec!["a".into()]), true, 0..3),
+            ]
+        );
+    }
+
+    #[test]
+    fn quotes_are_taken_off_like_ssh_does_in_keywords_and_names() {
+        assert_eq!(
+            option_of("\"ProxyCommand\" nc"),
+            Some(("proxycommand".into(), "nc".into()))
+        );
+        assert_eq!(
+            option_of("Proxy\"Command\" nc"),
+            Some(("proxycommand".into(), "nc".into()))
+        );
+        assert_eq!(
+            headers("\"Host\" \"a\"\n"),
+            [
+                (Header::Preamble, false, 0..0),
+                (Header::Host(vec!["a".into()]), false, 0..1)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_comment_after_the_names_is_not_a_name() {
+        let content = "Host prod #the production one\n\tUser u\n";
+        assert_eq!(
+            headers(content),
+            [
+                (Header::Preamble, false, 0..0),
+                (Header::Host(vec!["prod".into()]), false, 0..2)
             ]
         );
     }

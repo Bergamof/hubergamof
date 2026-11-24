@@ -29,7 +29,7 @@ port: number | null,
 identityFile: string, 
 /**
  * The machines to go through (`ProxyJump`), `[user@]host[:port]` joined
- * by `,`; empty is a direct connection.
+ * by `,` (an IPv6 address between brackets); empty is a direct connection.
  */
 proxyJump: string, 
 /**

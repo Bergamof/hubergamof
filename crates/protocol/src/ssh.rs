@@ -27,6 +27,9 @@ pub const MAX_SSH_VALUE_CHARS: usize = 255;
 /// Most hops a jump list holds.
 pub const MAX_SSH_JUMPS: usize = 5;
 
+/// Longest IPv6 address, in characters.
+const MAX_IPV6_CHARS: usize = 45;
+
 /// Where the identity files are kept: nothing outside this folder can be named.
 pub const SSH_FOLDER: &str = "~/.ssh/";
 
@@ -49,7 +52,7 @@ pub struct SshHost {
     /// at the usual ones.
     pub identity_file: String,
     /// The machines to go through (`ProxyJump`), `[user@]host[:port]` joined
-    /// by `,`; empty is a direct connection.
+    /// by `,` (an IPv6 address between brackets); empty is a direct connection.
     pub proxy_jump: String,
     /// Whether the agent of the local machine is reachable from the remote one
     /// (`ForwardAgent`): whoever controls the remote machine can use its keys
@@ -180,16 +183,46 @@ pub fn is_valid_ssh_identity_file(path: &str) -> bool {
             .all(|part| is_word(part, MAX_SSH_NAME_CHARS) && part != "." && part != "..")
 }
 
+/// Whether `address` can stand between the brackets of an IPv6 hop: hexadecimal
+/// digits, `:` and `.`, with at least one `:`.
+fn is_ipv6_address(address: &str) -> bool {
+    address.contains(':')
+        && address.chars().count() <= MAX_IPV6_CHARS
+        && address
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.'))
+}
+
+/// The machine and the port of a hop, once its user is taken off: `host`,
+/// `host:port`, `[ipv6]` or `[ipv6]:port`. `ssh` refuses a whole configuration
+/// for a jump it cannot read, so an address with `:` is accepted only between
+/// brackets.
+fn machine_and_port(rest: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(inner) = rest.strip_prefix('[') {
+        let (address, after) = inner.split_once(']')?;
+        if !is_ipv6_address(address) {
+            return None;
+        }
+        return match after {
+            "" => Some((address, None)),
+            _ => Some((address, Some(after.strip_prefix(':')?))),
+        };
+    }
+    let (host, port) = match rest.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (rest, None),
+    };
+    (is_valid_ssh_host_name(host) && !host.contains(':')).then_some((host, port))
+}
+
 /// Whether `entry` is a hop: `[user@]host[:port]`.
 fn is_valid_jump(entry: &str) -> bool {
     let (user, rest) = entry.split_once('@').unwrap_or(("", entry));
-    let (host, port) = match rest.rsplit_once(':') {
-        Some((host, port)) if !host.contains(':') => (host, Some(port)),
-        _ => (rest, None),
-    };
-    (user.is_empty() && !entry.contains('@') || is_valid_ssh_user(user))
-        && is_valid_ssh_host_name(host)
-        && port.is_none_or(|port| port.parse::<u16>().is_ok_and(|port| port != 0))
+    let user_ok = !entry.contains('@') || is_valid_ssh_user(user);
+    user_ok
+        && machine_and_port(rest).is_some_and(|(_, port)| {
+            port.is_none_or(|port| port.parse::<u16>().is_ok_and(|port| port != 0))
+        })
 }
 
 /// Whether `jumps` can be `ProxyJump`: hops joined by `,`.

@@ -220,6 +220,13 @@ async fn an_empty_configuration_of_the_user_is_never_removed() {
     fs::write(home.join(".ssh/config"), "").unwrap();
     saved(&fixture, |_| ()).await;
     assert!(home.join(".ssh/config").is_file());
+
+    // Written then switched off: an empty file and no file are the same to
+    // `ssh`, so the file may go with the block, but never keeps it.
+    saved(&fixture, |config| config.hosts = vec![host("a")]).await;
+    saved(&fixture, |config| config.hosts.clear()).await;
+    let left = fs::read_to_string(home.join(".ssh/config")).unwrap_or_default();
+    assert_eq!(left.trim(), "");
 }
 
 #[tokio::test]
@@ -353,21 +360,41 @@ async fn the_hosts_found_are_listed_and_what_hubergamof_wrote_is_not() {
 }
 
 #[tokio::test]
-async fn a_dangling_link_a_hard_link_and_a_file_that_is_not_text_are_refused_and_left_alone() {
+async fn a_configuration_that_cannot_be_rewritten_is_refused_by_its_reason_and_left_alone() {
     type Prepare = fn(&Path);
-    let cases: [(&str, Prepare); 3] = [
-        ("dangling link", |home| {
-            symlink(home.join("nowhere"), home.join(".ssh/config")).unwrap();
-        }),
-        ("hard link", |home| {
-            fs::write(home.join("other"), "Host x\n").unwrap();
-            fs::hard_link(home.join("other"), home.join(".ssh/config")).unwrap();
-        }),
-        ("not text", |home| {
-            fs::write(home.join(".ssh/config"), [0xff, 0xfe]).unwrap();
-        }),
+    type Expected = fn(&FileError) -> bool;
+    let cases: [(&str, Prepare, Expected); 4] = [
+        (
+            "dangling link",
+            |home| symlink(home.join("nowhere"), home.join(".ssh/config")).unwrap(),
+            |error| matches!(error, FileError::DanglingLink(_)),
+        ),
+        (
+            "hard link",
+            |home| {
+                fs::write(home.join("other"), "Host x\n").unwrap();
+                fs::hard_link(home.join("other"), home.join(".ssh/config")).unwrap();
+            },
+            |error| matches!(error, FileError::HardLinked(_)),
+        ),
+        (
+            "not text",
+            |home| fs::write(home.join(".ssh/config"), [0xff, 0xfe]).unwrap(),
+            |error| matches!(error, FileError::NotUtf8(_)),
+        ),
+        (
+            "damaged block",
+            |home| {
+                fs::write(
+                    home.join(".ssh/config"),
+                    "# >>> hubergamof ssh >>>\nInclude x\n",
+                )
+                .unwrap();
+            },
+            |error| matches!(error, FileError::BrokenBlock(_)),
+        ),
     ];
-    for (what, prepare) in cases {
+    for (what, prepare, expected) in cases {
         let fixture = fixture();
         let home = fixture.home.path();
         fs::create_dir_all(home.join(".ssh")).unwrap();
@@ -377,7 +404,7 @@ async fn a_dangling_link_a_hard_link_and_a_file_that_is_not_text_are_refused_and
         config.hosts = vec![host("a")];
         let error = fixture.hub.update(config).await.unwrap_err();
         assert!(
-            matches!(error, SshError::Apply(SshFilesError::File(_))),
+            matches!(&error, SshError::Apply(SshFilesError::File(reason)) if expected(reason)),
             "{what}: {error}"
         );
         assert_eq!(fs::read(home.join(".ssh/config")).ok(), before, "{what}");
@@ -387,6 +414,95 @@ async fn a_dangling_link_a_hard_link_and_a_file_that_is_not_text_are_refused_and
             "{what}: saved all the same"
         );
     }
+}
+
+#[tokio::test]
+async fn a_configuration_linked_to_a_dotfiles_repository_keeps_its_link() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let dotfiles = tempfile::tempdir().unwrap();
+    let real = dotfiles.path().join("ssh_config");
+    let original = "Host web\n\tUser w\n";
+    fs::write(&real, original).unwrap();
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    symlink(&real, home.join(".ssh/config")).unwrap();
+
+    saved(&fixture, |config| config.hosts = vec![host("a")]).await;
+    assert!(
+        fs::symlink_metadata(home.join(".ssh/config"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        fs::read_to_string(&real)
+            .unwrap()
+            .starts_with("# >>> hubergamof ssh >>>")
+    );
+
+    saved(&fixture, |config| config.hosts.clear()).await;
+    assert!(
+        fs::symlink_metadata(home.join(".ssh/config"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_to_string(&real).unwrap(), original);
+}
+
+#[tokio::test]
+async fn a_ssh_folder_that_is_a_link_is_followed_when_it_holds_a_configuration_and_refused_when_not()
+ {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let elsewhere = tempfile::tempdir().unwrap();
+    fs::write(elsewhere.path().join("config"), "Host web\n").unwrap();
+    symlink(elsewhere.path(), home.join(".ssh")).unwrap();
+    saved(&fixture, |config| config.hosts = vec![host("a")]).await;
+    assert!(
+        fs::read_to_string(elsewhere.path().join("config"))
+            .unwrap()
+            .contains("hubergamof ssh")
+    );
+
+    let other = self::fixture();
+    symlink(
+        tempfile::tempdir().unwrap().path(),
+        other.home.path().join(".ssh"),
+    )
+    .unwrap();
+    let mut config = other.hub.refresh().await.unwrap().config;
+    config.hosts = vec![host("a")];
+    let error = other.hub.update(config).await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            SshError::Apply(SshFilesError::File(FileError::NotRegular(_)))
+        ),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_ssh_folder_that_is_a_file_is_refused_and_the_file_left_alone() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join(".ssh"), "not a folder").unwrap();
+    let mut config = fixture.hub.refresh().await.unwrap().config;
+    config.hosts = vec![host("a")];
+    assert!(fixture.hub.update(config).await.is_err());
+    assert_eq!(read(home, ".ssh"), "not a folder");
+    assert_eq!(fixture.hub.refresh().await.unwrap().config.revision, 1);
+}
+
+#[tokio::test]
+async fn a_ssh_folder_that_is_too_open_is_tightened_when_the_configuration_is_created() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::set_permissions(home.join(".ssh"), fs::Permissions::from_mode(0o755)).unwrap();
+    saved(&fixture, |config| config.hosts = vec![host("a")]).await;
+    assert_eq!(mode(&home.join(".ssh")), 0o700);
 }
 
 #[tokio::test]
@@ -446,4 +562,154 @@ async fn the_demo_works_in_a_temporary_home_and_lists_its_hosts() {
     config.hosts = vec![host("mine")];
     hub.update(config).await.unwrap();
     assert!(read(&home, ".ssh/config").contains("hubergamof ssh"));
+}
+
+#[derive(serde::Deserialize)]
+struct Case {
+    value: String,
+    valid: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct Cases {
+    aliases: Vec<Case>,
+    users: Vec<Case>,
+    #[serde(rename = "hostNames")]
+    host_names: Vec<Case>,
+    #[serde(rename = "identityFiles")]
+    identity_files: Vec<Case>,
+    #[serde(rename = "proxyJumps")]
+    proxy_jumps: Vec<Case>,
+}
+
+/// What the contract accepts must not make `ssh` refuse the configuration: it
+/// is read for every connection of the computer, an included file with one bad
+/// option stops them all.
+#[tokio::test]
+async fn every_value_the_contract_accepts_is_read_by_ssh_without_an_error() {
+    let cases: Cases = serde_json::from_str(include_str!(
+        "../../../../protocol/tests/fixtures/ssh-validation.json"
+    ))
+    .unwrap();
+    let valid = |cases: &[Case]| -> Vec<String> {
+        cases
+            .iter()
+            .filter(|case| case.valid)
+            .map(|case| case.value.clone())
+            .collect()
+    };
+    let mut hosts = Vec::new();
+    for alias in valid(&cases.aliases) {
+        hosts.push(host(&alias));
+    }
+    for (index, user) in valid(&cases.users).into_iter().enumerate() {
+        let mut found = host(&format!("user{index}"));
+        found.user = user;
+        hosts.push(found);
+    }
+    for (index, name) in valid(&cases.host_names).into_iter().enumerate() {
+        let mut found = host(&format!("name{index}"));
+        found.host_name = name;
+        hosts.push(found);
+    }
+    for (index, path) in valid(&cases.identity_files).into_iter().enumerate() {
+        let mut found = host(&format!("key{index}"));
+        found.identity_file = path;
+        hosts.push(found);
+    }
+    for (index, jumps) in valid(&cases.proxy_jumps).into_iter().enumerate() {
+        let mut found = host(&format!("jump{index}"));
+        found.proxy_jump = jumps;
+        hosts.push(found);
+    }
+    assert!(hosts.len() <= hubergamof_protocol::MAX_SSH_HOSTS);
+
+    let fixture = fixture();
+    let config = saved(&fixture, |config| config.hosts = hosts).await;
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    // `ssh -G` fails on a configuration it cannot read, for any host.
+    let options = ssh_reads(&managed, "unrelated");
+    assert_eq!(first(&options, "hostname").as_deref(), Some("unrelated"));
+    assert_eq!(
+        config.hosts.len(),
+        fixture.hub.refresh().await.unwrap().config.hosts.len()
+    );
+}
+
+#[tokio::test]
+async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refused_and_nothing_is_lost()
+ {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let original = "Host work\n\tHostName w.example.org\n\tProxyCommand nc -X 5 %h %p\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), original).unwrap();
+
+    let mut config = fixture.hub.refresh().await.unwrap().config;
+    config.hosts = vec![host("work")];
+    let error = fixture.hub.update(config).await.unwrap_err();
+    assert!(
+        matches!(error, SshError::Apply(SshFilesError::NameInUse(ref names)) if *names == ["work"]),
+        "{error}"
+    );
+    assert!(error.to_string().contains("`work`"));
+    assert_eq!(
+        read(home, ".ssh/config"),
+        original,
+        "its ProxyCommand is not lost"
+    );
+    assert!(
+        !home.join(".config/hubergamof/ssh_config").exists(),
+        "nothing was written"
+    );
+
+    // Another name is fine, and the host stays listed as one that cannot be taken.
+    saved(&fixture, |config| config.hosts = vec![host("other")]).await;
+    let snapshot = fixture.hub.refresh().await.unwrap();
+    assert_eq!(snapshot.system_hosts[0].other_options, ["proxycommand"]);
+    assert!(read(home, ".ssh/config").ends_with(original));
+}
+
+#[tokio::test]
+async fn a_host_switched_off_is_removed_even_when_the_configuration_of_the_user_cannot_be_rewritten()
+ {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| config.hosts = vec![host("prod")]).await;
+    let managed = home.join(".config/hubergamof/ssh_config");
+    assert!(managed.is_file());
+
+    fs::write(home.join(".ssh/config"), [0xff, 0xfe]).unwrap();
+    let mut config = fixture.hub.refresh().await.unwrap().config;
+    config.hosts[0].enabled = false;
+    let error = fixture.hub.update(config).await.unwrap_err();
+    assert!(
+        matches!(error, SshError::Apply(SshFilesError::File(_))),
+        "{error}"
+    );
+    assert!(
+        !managed.exists(),
+        "the Include of a missing file does nothing: the host is off"
+    );
+}
+
+#[tokio::test]
+async fn a_host_with_a_comment_after_its_name_is_taken_over_and_really_switches_off() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let original = "Host prod # the production one\n\tHostName old.example.org\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), original).unwrap();
+    saved(&fixture, |config| {
+        let mut off = host("prod");
+        off.enabled = false;
+        config.hosts = vec![off];
+    })
+    .await;
+    assert_eq!(
+        first(&ssh_reads_home(home, "prod"), "hostname").as_deref(),
+        Some("prod")
+    );
+    saved(&fixture, |config| config.hosts.clear()).await;
+    assert_eq!(read(home, ".ssh/config"), original);
 }
