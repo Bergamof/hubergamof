@@ -47,6 +47,7 @@ use crate::engine::EngineRegistry;
 use crate::file_chooser::FilePicker;
 use crate::machine::MachineHub;
 use crate::machine::git::GitConfigHub;
+use crate::machine::ssh::SshConfigHub;
 use crate::module_host::ModuleHost;
 use crate::mouse_hub::MouseHub;
 use crate::render::Renderer;
@@ -105,6 +106,8 @@ pub struct ServerContext {
     pub machine: MachineHub,
     /// The Git configuration of the computer and what Git finds besides.
     pub git: GitConfigHub,
+    /// The SSH hosts of the computer and what `~/.ssh/config` holds besides.
+    pub ssh: SshConfigHub,
     /// Whether the computer is locked: nothing is done from the interface then.
     pub screen_lock: Arc<dyn ScreenLock>,
 }

@@ -888,6 +888,32 @@ test('Git : lit la configuration trouvée, enregistre l’identité et refuse un
 	await expect(form.getByRole('textbox', { name: 'Nom' })).toHaveValue('Grace Hopper');
 });
 
+// SSH: the demo manager reads the `~/.ssh/config` of its own home folder (`SshConfigHub::demo`: a host
+// that can be taken over and one that uses a ProxyCommand).
+
+test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le retrouve après un rechargement', async ({
+	page
+}) => {
+	await open(page);
+	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('radio', { name: 'SSH' }).check({ force: true });
+	const found = page.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' });
+	const managed = page.getByRole('list', { name: 'Serveurs SSH gérés' });
+	await expect(found.getByText('ada@192.0.2.10:2222')).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: 'Reprendre le serveur demo-tunnel' })
+	).toHaveAttribute('aria-disabled', 'true');
+
+	await page.getByRole('button', { name: 'Reprendre le serveur demo-server' }).click();
+	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
+
+	await page.reload();
+	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('radio', { name: 'SSH' }).check({ force: true });
+	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
+	await expect(found.getByText('ada@192.0.2.10:2222')).toHaveCount(0);
+});
+
 test('la page Modules reste accessible', async ({ page }) => {
 	await openModules(page);
 	await expectAccessible(page, 'page des modules');

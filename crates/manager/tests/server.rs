@@ -17,6 +17,7 @@ use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virt
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
 use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
+use hubergamof_manager::machine::ssh::{SshConfigHub, SshFiles};
 use hubergamof_manager::machine::{MachineHub, MachineShell};
 use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_hub::MouseHub;
@@ -40,7 +41,8 @@ use hubergamof_protocol::{
     AmbientMode, AmbientSound, ClientMessage, DeviceConfig, EqualizerChange, EqualizerPreset,
     ErrorCode, GitAlias, GitConfig, GitSystemEntry, InstallSupport, LiveState, MachineConfig,
     ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem, RadialMenuConfig,
-    ServerMessage, ShellAlias, SystemAlias, UpdateSettings, UpdateStatus,
+    ServerMessage, ShellAlias, SshConfig, SshHost, SshSystemHost, SystemAlias, UpdateSettings,
+    UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -183,6 +185,7 @@ impl Devices {
             store.clone(),
             Some(GitFiles::new(home.path().to_owned(), false)),
         );
+        let ssh = SshConfigHub::new(store.clone(), Some(SshFiles::new(home.path().to_owned())));
         let context = ServerContext {
             discovery: discovery.clone(),
             engines: supervisor.engines(),
@@ -196,6 +199,7 @@ impl Devices {
             application: None,
             machine,
             git,
+            ssh,
             screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
         };
         Self {
@@ -1487,6 +1491,81 @@ async fn a_git_configuration_that_cannot_be_applied_is_saved_and_told_to_everyon
     server.stop().await;
 }
 
+/// The next `ssh` message: its configuration and the hosts found elsewhere.
+async fn next_ssh(client: &mut Client) -> (SshConfig, Vec<SshSystemHost>) {
+    client
+        .receive_until(|message| match message {
+            ServerMessage::Ssh {
+                config,
+                system_hosts,
+            } => Some((config, system_hosts)),
+            _ => None,
+        })
+        .await
+}
+
+fn ssh_host(alias: &str, proxy_jump: &str) -> SshHost {
+    SshHost {
+        alias: alias.into(),
+        host_name: "192.0.2.1".into(),
+        user: String::new(),
+        port: None,
+        identity_file: String::new(),
+        proxy_jump: proxy_jump.into(),
+        forward_agent: false,
+        enabled: true,
+    }
+}
+
+#[tokio::test]
+async fn the_ssh_hosts_are_read_on_request_and_updates_reach_every_client() {
+    let server = Running::start().await;
+    let home = server.devices.home.path().to_owned();
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    std::fs::write(home.join(".ssh/config"), "Host old\n\tUser u\n").unwrap();
+    let mut author = server.connect().await;
+    let mut other = server.connect().await;
+
+    author.send(&ClientMessage::RefreshSsh).await;
+    let (config, found) = next_ssh(&mut author).await;
+    assert_eq!(config, SshConfig::empty());
+    assert_eq!(found[0].alias, "old");
+
+    let mut wanted = config.clone();
+    wanted.hosts.push(ssh_host("prod", ""));
+    author
+        .send(&ClientMessage::UpdateSsh {
+            config: wanted.clone(),
+        })
+        .await;
+    for client in [&mut author, &mut other] {
+        let (saved, found) = next_ssh(client).await;
+        assert_eq!(saved.revision, 1);
+        assert_eq!(saved.hosts, wanted.hosts);
+        assert_eq!(found.len(), 1, "what was written is not a host found");
+    }
+    let managed = std::fs::read_to_string(home.join(".config/hubergamof/ssh_config")).unwrap();
+    assert!(managed.contains("Host prod\n\tHostName 192.0.2.1"));
+
+    // Based on the old revision: refused, nothing told.
+    author
+        .send(&ClientMessage::UpdateSsh { config: wanted })
+        .await;
+    assert_eq!(expect_error(&mut author).await, ErrorCode::StaleRevision);
+
+    // A jump that would be an option for `ssh`: refused.
+    author.send(&ClientMessage::RefreshSsh).await;
+    let mut hostile = next_ssh(&mut author).await.0;
+    hostile.hosts.push(ssh_host("pwn", "-oProxyCommand=evil"));
+    author
+        .send(&ClientMessage::UpdateSsh { config: hostile })
+        .await;
+    assert_eq!(expect_error(&mut author).await, ErrorCode::InvalidConfig);
+    let managed = std::fs::read_to_string(home.join(".config/hubergamof/ssh_config")).unwrap();
+    assert!(!managed.contains("pwn"));
+    server.stop().await;
+}
+
 /// The saved configuration, read back by a refresh.
 async fn next_revision(client: &mut Client) -> MachineConfig {
     client.send(&ClientMessage::RefreshMachine).await;
@@ -1673,6 +1752,10 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
         ClientMessage::RefreshGit,
         ClientMessage::UpdateGit {
             config: GitConfig::empty(),
+        },
+        ClientMessage::RefreshSsh,
+        ClientMessage::UpdateSsh {
+            config: SshConfig::empty(),
         },
         ClientMessage::CheckForUpdates,
         ClientMessage::SelectHeadset {

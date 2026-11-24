@@ -9,8 +9,8 @@ use hubergamof_protocol::{
     GitSystemEntry, HapticEventDescriptor, HapticWaveform, HeadsetBattery, HeadsetInfo,
     HeadsetLink, HeadsetState, ImageSize, InstallSupport, KeyState, KeyView, LiveState,
     ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem, PageView,
-    RadialActionDescriptor, ServerMessage, SettingField, SettingKind, StripConfig, UpdateSettings,
-    UpdateStatus,
+    RadialActionDescriptor, ServerMessage, SettingField, SettingKind, SshConfig, SshHost,
+    SshSystemHost, StripConfig, UpdateSettings, UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -845,4 +845,59 @@ fn an_equalizer_with_the_wrong_number_of_bands_is_not_a_message() {
         "equalizer": { "type": "manual", "clearBass": 0, "bands": [0, 0, 0, 0] }
     });
     assert!(serde_json::from_value::<ClientMessage>(bad).is_err());
+}
+
+#[test]
+fn ssh_messages_and_configuration() {
+    assert_wire_format(&ClientMessage::RefreshSsh, &json!({ "type": "refreshSsh" }));
+
+    let mut config = SshConfig::empty();
+    config.hosts.push(SshHost {
+        alias: "prod".into(),
+        host_name: "10.0.0.1".into(),
+        user: "deploy".into(),
+        port: Some(2222),
+        identity_file: "~/.ssh/id".into(),
+        proxy_jump: String::new(),
+        forward_agent: true,
+        enabled: true,
+    });
+    let expected = json!({
+        "schemaVersion": 1,
+        "hosts": [{
+            "alias": "prod", "hostName": "10.0.0.1", "user": "deploy", "port": 2222,
+            "identityFile": "~/.ssh/id", "proxyJump": "", "forwardAgent": true, "enabled": true
+        }],
+        "revision": 0
+    });
+    assert_wire_format(
+        &ClientMessage::UpdateSsh {
+            config: config.clone(),
+        },
+        &json!({ "type": "updateSsh", "config": expected }),
+    );
+    assert_wire_format(
+        &ServerMessage::Ssh {
+            config,
+            system_hosts: vec![SshSystemHost {
+                alias: "web".into(),
+                host_name: String::new(),
+                user: String::new(),
+                port: None,
+                identity_file: String::new(),
+                proxy_jump: String::new(),
+                forward_agent: false,
+                other_options: vec!["proxycommand".into()],
+            }],
+        },
+        &json!({
+            "type": "ssh",
+            "config": expected,
+            "systemHosts": [{
+                "alias": "web", "hostName": "", "user": "", "port": null,
+                "identityFile": "", "proxyJump": "", "forwardAgent": false,
+                "otherOptions": ["proxycommand"]
+            }]
+        }),
+    );
 }

@@ -15,6 +15,8 @@ import type { MouseConfig } from "./MouseConfig";
 import type { MouseInfo } from "./MouseInfo";
 import type { MouseProblem } from "./MouseProblem";
 import type { RadialMenuConfig } from "./RadialMenuConfig";
+import type { SshConfig } from "./SshConfig";
+import type { SshSystemHost } from "./SshSystemHost";
 import type { SystemAlias } from "./SystemAlias";
 import type { UpdateSettings } from "./UpdateSettings";
 import type { UpdateStatus } from "./UpdateStatus";
@@ -95,7 +97,15 @@ systemEntries: Array<GitSystemEntry>,
  * Whether the `git` program was found: without it nothing can be read
  * from the computer.
  */
-gitAvailable: boolean, } | { "type": "locked", 
+gitAvailable: boolean, } | { "type": "ssh", 
+/**
+ * Current configuration.
+ */
+config: SshConfig, 
+/**
+ * Hosts of `~/.ssh/config` that HuBergamof does not manage.
+ */
+systemHosts: Array<SshSystemHost>, } | { "type": "locked", 
 /**
  * `true` while the computer is locked.
  */

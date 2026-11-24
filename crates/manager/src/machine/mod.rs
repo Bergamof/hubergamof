@@ -4,6 +4,7 @@
 //!
 //! - [`hub`]: what the features of the machine share, see [`Hub`].
 //! - [`git`]: the Git configuration, a feature of its own.
+//! - [`ssh`]: the SSH hosts, another.
 //! - [`shell`]: the files, read without running a shell, written atomically.
 //! - [`aliases`]: parsing and quoting.
 //! - [`rc_block`]: the block that sources the managed file.
@@ -15,6 +16,7 @@ pub mod git;
 mod hub;
 mod rc_block;
 mod shell;
+pub mod ssh;
 
 use std::sync::Arc;
 

@@ -17,6 +17,7 @@ const SERVER_MESSAGE_TYPES = {
 	applicationModules: true,
 	machine: true,
 	git: true,
+	ssh: true,
 	locked: true,
 	config: true,
 	liveState: true,

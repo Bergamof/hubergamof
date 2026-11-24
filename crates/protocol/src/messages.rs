@@ -6,8 +6,8 @@ use ts_rs::TS;
 use crate::{
     AmbientSound, ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, EqualizerChange,
     GitConfig, GitSystemEntry, HapticWaveform, HeadsetInfo, HeadsetState, LiveState, MachineConfig,
-    ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, SystemAlias,
-    UpdateSettings, UpdateStatus,
+    ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, SshConfig,
+    SshSystemHost, SystemAlias, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -193,6 +193,19 @@ pub enum ClientMessage {
         /// The new configuration, based on the current revision.
         config: GitConfig,
     },
+    /// Read the SSH configuration again: what HuBergamof saved and the hosts
+    /// the computer holds besides. Sent when the SSH page is shown, the only
+    /// time the computer is looked at. Answered by `ssh`.
+    RefreshSsh,
+    /// Replace the SSH configuration, like [`ClientMessage::UpdateGit`]: the
+    /// hosts that are enabled are written on the computer, the rest removed
+    /// from it. Answered by `ssh` to every client; refused with
+    /// [`ErrorCode::Locked`], [`ErrorCode::InvalidConfig`] or
+    /// [`ErrorCode::StaleRevision`].
+    UpdateSsh {
+        /// The new configuration, based on the current revision.
+        config: SshConfig,
+    },
     /// Check for a newer release now, instead of waiting for the next
     /// periodic check. The outcome arrives as [`ServerMessage::UpdateStatus`].
     CheckForUpdates,
@@ -302,6 +315,15 @@ pub enum ServerMessage {
         /// Whether the `git` program was found: without it nothing can be read
         /// from the computer.
         git_available: bool,
+    },
+    /// The SSH configuration and the hosts the computer holds besides: sent
+    /// after `refreshSsh` and `updateSsh` (never otherwise: the computer is not
+    /// watched).
+    Ssh {
+        /// Current configuration.
+        config: SshConfig,
+        /// Hosts of `~/.ssh/config` that HuBergamof does not manage.
+        system_hosts: Vec<SshSystemHost>,
     },
     /// Whether the computer is locked: sent after `moduleCatalog`, then at
     /// every change. While it is, the manager refuses everything that acts or

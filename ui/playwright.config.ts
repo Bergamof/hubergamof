@@ -22,7 +22,7 @@ export default defineConfig({
 		},
 		{
 			name: 'machine',
-			testMatch: ['**/machine.e2e.ts', '**/git.e2e.ts'],
+			testMatch: ['**/machine.e2e.ts', '**/git.e2e.ts', '**/ssh.e2e.ts'],
 			use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${PREVIEW_PORT}` }
 		},
 		{

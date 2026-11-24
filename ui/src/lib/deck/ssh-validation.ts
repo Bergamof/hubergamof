@@ -1,0 +1,204 @@
+import type { SshHost, SshSystemHost } from '#lib/generated/index.js';
+import { lengthOf } from './alias-validation.js';
+
+/** Limits of the manager (`MAX_SSH_*`, `SSH_FOLDER` in `ssh.rs`). */
+export const SSH_HOSTS_MAX = 128;
+export const SSH_NAME_MAX = 64;
+export const SSH_VALUE_MAX = 255;
+export const SSH_JUMPS_MAX = 5;
+export const SSH_FOLDER = '~/.ssh/';
+/** What a field of text accepts to be typed: twice what is valid, so that the check says why. */
+export const SSH_INPUT_MAX = SSH_VALUE_MAX * 2;
+
+const WORD = /^[A-Za-z0-9._-]+$/;
+const HOST_NAME = /^[A-Za-z0-9._:-]+$/;
+const PORT = /^\+?[0-9]+$/;
+
+function isWord(text: string, max: number): boolean {
+	return text !== '' && lengthOf(text) <= max && WORD.test(text) && !text.startsWith('-');
+}
+
+/** The name of a host: a word, so no joker and no space. */
+export function isValidAlias(alias: string): boolean {
+	return isWord(alias, SSH_NAME_MAX);
+}
+
+export function isValidUser(user: string): boolean {
+	return isWord(user, SSH_NAME_MAX);
+}
+
+/** `HostName`: a name or an address, IPv6 included. */
+export function isValidHostName(host: string): boolean {
+	return (
+		host !== '' && lengthOf(host) <= SSH_VALUE_MAX && HOST_NAME.test(host) && !host.startsWith('-')
+	);
+}
+
+/** `IdentityFile`: `~/.ssh/` and names (no `.` nor `..`) joined by `/`. */
+export function isValidIdentityFile(path: string): boolean {
+	if (!path.startsWith(SSH_FOLDER)) return false;
+	const relative = path.slice(SSH_FOLDER.length);
+	return (
+		lengthOf(path) <= SSH_VALUE_MAX &&
+		relative !== '' &&
+		relative.split('/').every((part) => isWord(part, SSH_NAME_MAX) && part !== '.' && part !== '..')
+	);
+}
+
+/** A port as typed: an integer from 1 to 65535. */
+function isValidPortText(text: string): boolean {
+	return PORT.test(text) && Number(text) >= 1 && Number(text) <= 65_535;
+}
+
+const MAX_IPV6_CHARS = 45;
+
+/** An IPv6 address between brackets: hexadecimal digits, `:` and `.`, with at least one `:`. */
+function isIpv6Address(address: string): boolean {
+	return (
+		address.includes(':') && lengthOf(address) <= MAX_IPV6_CHARS && /^[0-9A-Fa-f:.]+$/.test(address)
+	);
+}
+
+/**
+ * The port of a hop once its user is taken off, or `undefined` when the rest is not `host`,
+ * `host:port`, `[ipv6]` or `[ipv6]:port`. `ssh` refuses a whole configuration for a jump it cannot
+ * read, so an address with `:` is accepted only between brackets. `null`: no port.
+ */
+function portOfHop(rest: string): string | null | undefined {
+	if (rest.startsWith('[')) {
+		const close = rest.indexOf(']');
+		if (close < 0 || !isIpv6Address(rest.slice(1, close))) return undefined;
+		const after = rest.slice(close + 1);
+		if (after === '') return null;
+		return after.startsWith(':') ? after.slice(1) : undefined;
+	}
+	const colon = rest.indexOf(':');
+	const host = colon < 0 ? rest : rest.slice(0, colon);
+	if (!isValidHostName(host) || host.includes(':')) return undefined;
+	return colon < 0 ? null : rest.slice(colon + 1);
+}
+
+/** One hop: `[user@]host[:port]`. */
+function isValidJump(entry: string): boolean {
+	const at = entry.indexOf('@');
+	const rest = at < 0 ? entry : entry.slice(at + 1);
+	if (at >= 0 && !isValidUser(entry.slice(0, at))) return false;
+	const port = portOfHop(rest);
+	return port !== undefined && (port === null || isValidPortText(port));
+}
+
+/** `ProxyJump`: hops joined by `,`. */
+export function isValidProxyJump(jumps: string): boolean {
+	if (jumps === '' || lengthOf(jumps) > SSH_VALUE_MAX) return false;
+	const hops = jumps.split(',');
+	return hops.length <= SSH_JUMPS_MAX && hops.every(isValidJump);
+}
+
+/** What is wrong with a list of jumps, in French; `undefined` when it is fine. */
+function proxyJumpError(jumps: string): string | undefined {
+	if (isValidProxyJump(jumps)) return undefined;
+	if (jumps.split(',').length > SSH_JUMPS_MAX) return `${SSH_JUMPS_MAX} rebonds au plus.`;
+	const wrong = jumps.split(',').find((hop) => !isValidJump(hop));
+	const which = wrong === undefined || wrong === '' ? '' : `« ${wrong} » n’est pas valide : `;
+	return `${which}chaque rebond s’écrit [utilisateur@]machine[:port], séparés par « , » ; une adresse IPv6 s’écrit entre crochets, [::1]:22 ; ni espace ni « - » au début.`;
+}
+
+/** What is wrong with the fields of a host, in French; a field without a problem is absent. */
+export interface HostErrors {
+	alias?: string;
+	hostName?: string;
+	user?: string;
+	port?: string;
+	identityFile?: string;
+	proxyJump?: string;
+}
+
+/** A host as typed: the port is text until it is checked. */
+export interface HostDraft {
+	alias: string;
+	hostName: string;
+	user: string;
+	port: string;
+	identityFile: string;
+	proxyJump: string;
+	forwardAgent: boolean;
+	enabled: boolean;
+}
+
+export function draftOf(host: SshHost): HostDraft {
+	return { ...host, port: host.port === null ? '' : String(host.port) };
+}
+
+export const BLANK_HOST: HostDraft = {
+	alias: '',
+	hostName: '',
+	user: '',
+	port: '',
+	identityFile: '',
+	proxyJump: '',
+	forwardAgent: false,
+	enabled: true
+};
+
+/** The host a draft stands for, once it has no error (see {@link validateHost}). */
+export function hostOf(draft: HostDraft): SshHost {
+	return { ...draft, port: draft.port === '' ? null : Number(draft.port) };
+}
+
+export function validateHost(draft: HostDraft, takenAliases: readonly string[]): HostErrors {
+	const found: HostErrors = {};
+	if (draft.alias === '') found.alias = 'Saisissez le nom du serveur.';
+	else if (!isValidAlias(draft.alias))
+		found.alias = `Le nom tient en ${SSH_NAME_MAX} caractères au plus : lettres, chiffres, « . », « _ » et « - », sans espace ni joker, et ne commence pas par « - ».`;
+	else if (takenAliases.includes(draft.alias)) found.alias = 'Un serveur porte déjà ce nom.';
+	if (draft.hostName !== '' && !isValidHostName(draft.hostName))
+		found.hostName =
+			'Un nom de machine ou une adresse (IPv4, IPv6) de 255 caractères au plus : lettres, chiffres, « . », « _ », « - » et « : », sans espace, et ne commence pas par « - ».';
+	if (draft.user !== '' && !isValidUser(draft.user))
+		found.user = `${SSH_NAME_MAX} caractères au plus : lettres, chiffres, « . », « _ » et « - », sans espace, et ne commence pas par « - ».`;
+	if (draft.port !== '' && !isValidPortText(draft.port))
+		found.port = 'Le port est un nombre entier de 1 à 65535.';
+	if (draft.identityFile !== '' && !isValidIdentityFile(draft.identityFile))
+		found.identityFile = `Le chemin de la clé commence par ${SSH_FOLDER} (par exemple ${SSH_FOLDER}id_ed25519) ; chaque nom : lettres, chiffres, « . », « _ » et « - », sans « .. » ni espace.`;
+	if (draft.proxyJump !== '') {
+		const jumpError = proxyJumpError(draft.proxyJump);
+		if (jumpError) found.proxyJump = jumpError;
+	}
+	return found;
+}
+
+export function hasHostErrors(errors: HostErrors): boolean {
+	return Object.keys(errors).length > 0;
+}
+
+/** The name `ssh` documents for an option, from the lowercase one the manager gives. */
+const OPTION_NAMES: Record<string, string> = {
+	proxycommand: 'ProxyCommand',
+	localcommand: 'LocalCommand',
+	identityfile: 'IdentityFile (plusieurs clés)',
+	forwardagent: 'ForwardAgent (une valeur autre que yes ou no)',
+	port: 'Port (une valeur qui n’est pas un nombre)',
+	compression: 'Compression',
+	serveraliveinterval: 'ServerAliveInterval',
+	identitiesonly: 'IdentitiesOnly',
+	include: 'Include',
+	match: 'Match'
+};
+
+function optionName(option: string): string {
+	return OPTION_NAMES[option] ?? option;
+}
+
+/** Why a host found in `~/.ssh/config` cannot be taken over, if it cannot. */
+export function takeOverObstacle(
+	host: SshSystemHost,
+	takenAliases: readonly string[]
+): string | undefined {
+	if (host.otherOptions.length > 0) {
+		const names = host.otherOptions.map(optionName).join(', ');
+		return `Utilise ${names}, que HuBergamof ne gère pas ou ne sait pas reprendre tel quel : le reprendre ferait perdre ce réglage.`;
+	}
+	const draft = draftOf({ ...host, enabled: true });
+	const [problem] = Object.values(validateHost(draft, takenAliases));
+	return problem ? `Ne respecte pas les règles de HuBergamof : ${problem}` : undefined;
+}
