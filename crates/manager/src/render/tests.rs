@@ -112,33 +112,39 @@ fn label_changes_the_image() {
 }
 
 #[test]
-fn a_caption_is_drawn_at_the_top_and_the_image_makes_room_for_it() {
+fn a_caption_is_drawn_over_the_top_of_the_image_which_keeps_its_size() {
     let source = png(120, 120, RED);
     let subject = renderer();
     let plain = subject
-        .render_key(&KeyRequest::new(KEY, Some(&source), None))
+        .render_key(&KeyRequest::new(KEY, Some(&source), Some("Raccrocher")))
         .unwrap();
     let captioned = subject
-        .render_key(&KeyRequest::new(KEY, Some(&source), None).captioned(Some("12:34")))
+        .render_key(
+            &KeyRequest::new(KEY, Some(&source), Some("Raccrocher")).captioned(Some("12:34")),
+        )
         .unwrap();
-    assert_ne!(plain.image(), captioned.image());
-    let image = captioned.image();
-    let is_text = |pixel: &Rgba<u8>| pixel.0[1] > 200;
-    // Text is white: some in the top strip, none below it, and the image
-    // keeps its centre whole under the caption.
+    let (plain, captioned) = (plain.image(), captioned.image());
+    assert_ne!(plain, captioned);
+    // The image is not shrunk: below the caption it is exactly what it was.
+    let below = 40;
     assert!(
-        image
+        captioned
             .enumerate_pixels()
-            .any(|(_, y, pixel)| y < 24 && is_text(pixel))
+            .filter(|(_, y, _)| *y >= below)
+            .all(|(x, y, pixel)| pixel == plain.get_pixel(x, y))
+    );
+    // The caption is white on a darkened band over the image.
+    assert_eq!(*plain.get_pixel(60, 2), RED);
+    assert!(
+        captioned.get_pixel(60, 2).0[0] < 150,
+        "the band darkens the image"
     );
     assert!(
-        image
+        captioned
             .enumerate_pixels()
-            .filter(|(_, y, _)| *y >= 30)
-            .all(|(_, _, pixel)| !is_text(pixel))
+            .any(|(_, y, pixel)| y < below && pixel.0[..3] == [255, 255, 255])
     );
-    assert_eq!(*image.get_pixel(60, 70), RED);
-    assert!(image.pixels().all(|pixel| pixel.0[3] == 255));
+    assert!(captioned.pixels().all(|pixel| pixel.0[3] == 255));
 }
 
 #[test]

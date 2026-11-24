@@ -55,8 +55,8 @@ pub struct KeyContent {
     pub image: Option<ImageData>,
     /// Text drawn at the bottom of the key.
     pub label: Option<String>,
-    /// Short text drawn at the top of the key, over the image (a duration, a
-    /// count).
+    /// Short text drawn at the top of the key, over the image, which keeps its
+    /// size (a duration, a count).
     pub caption: Option<String>,
     /// Visual state.
     pub state: KeyState,
