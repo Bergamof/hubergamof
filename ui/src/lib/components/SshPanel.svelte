@@ -123,18 +123,12 @@ sent at once; the line under the title says whether the manager has saved it.
 				<code class="font-mono">~/.ssh/config</code>, et l’emportent donc sur les mêmes options
 				qu’il contient.
 			</p>
-			<p class="rounded-xl border border-line bg-sunken p-3 text-sm">
-				<strong>Attention :</strong> une option est écrite telle quelle, sans autre contrôle que sa
-				forme. Certaines lancent un programme (<code class="font-mono">ProxyCommand</code>,
-				<code class="font-mono">LocalCommand</code>…) ou affaiblissent la connexion (<code
-					class="font-mono">StrictHostKeyChecking no</code
-				>) : n’ajoutez que ce que vous comprenez. Avant de l’appliquer, ssh lit le fichier : une
-				option qu’il refuse n’est pas appliquée, et son message s’affiche ; corrigez-la ou
-				supprimez-la, sinon plus aucun changement ne passe.
-			</p>
 			<AdvancedSettings
 				settings={config.commonOptions}
 				rules={SSH_OPTION_ALIAS_RULES}
+				tool="ssh"
+				label="Options communes"
+				suffix=" commune"
 				addLabel="Ajouter une option commune"
 				onchange={(change) => edit(editCommonOptions(change))}
 			/>

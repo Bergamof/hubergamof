@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::advanced::{AdvancedSetting, check_settings, is_one_line_value};
+use crate::advanced::{AdvancedSetting, SettingsFault, check_settings, is_one_line_value};
 use crate::text::{is_blank, is_invisible};
 
 /// Git configuration schema version produced and understood by this crate.
@@ -281,10 +281,12 @@ pub enum GitConfigError {
     /// Two identities share a folder.
     #[error("duplicate folder {0:?}")]
     DuplicateFolder(String),
-    /// A setting written by the person is not valid, or written twice, or the
-    /// list is too long (the key is then empty).
+    /// A setting written by the person is not valid, or written twice.
     #[error("invalid git setting {0:?}")]
     InvalidSetting(String),
+    /// More settings than the list holds.
+    #[error("too many git settings")]
+    TooManySettings,
 }
 
 fn is_plain_text(text: &str) -> bool {
@@ -533,7 +535,10 @@ impl GitConfig {
             is_valid_git_setting_value,
             fold_git_key,
         )
-        .map_err(|key| GitConfigError::InvalidSetting(key.unwrap_or_default()))
+        .map_err(|fault| match fault {
+            SettingsFault::TooMany => GitConfigError::TooManySettings,
+            SettingsFault::Invalid(key) => GitConfigError::InvalidSetting(key),
+        })
     }
 
     fn validate_values(&self) -> Result<(), GitConfigError> {
@@ -817,6 +822,19 @@ mod tests {
                 "{key}"
             );
         }
+    }
+
+    #[test]
+    fn too_many_settings_are_refused() {
+        let mut config = GitConfig::empty();
+        config.extra_settings = (0..=crate::MAX_ADVANCED_SETTINGS)
+            .map(|i| AdvancedSetting {
+                key: format!("a.k{i}"),
+                value: "v".into(),
+                enabled: true,
+            })
+            .collect();
+        assert_eq!(config.validate(), Err(GitConfigError::TooManySettings));
     }
 
     #[test]

@@ -110,7 +110,7 @@ impl Failure {
             ErrorCode::UnknownDevice => StatusCode::NOT_FOUND,
             ErrorCode::Locked => StatusCode::LOCKED,
             ErrorCode::StaleRevision | ErrorCode::Busy => StatusCode::CONFLICT,
-            ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::Internal | ErrorCode::NotApplied => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::InvalidMessage
             | ErrorCode::InvalidConfig

@@ -17,22 +17,29 @@ configuration.
 		setSettingEnabled,
 		type SettingsEdit
 	} from '#lib/deck/advanced-edits.js';
-	import type { AliasRules } from '#lib/deck/alias-rules.js';
+	import type { EntryRules } from '#lib/deck/alias-rules.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { AdvancedSetting } from '#lib/generated/index.js';
+	import AdvancedWarning from './AdvancedWarning.svelte';
 	import AliasForm from './AliasForm.svelte';
 	import AliasList from './AliasList.svelte';
 
 	interface Props {
 		settings: readonly AdvancedSetting[];
 		/** What the keys and values must follow, and what names them. */
-		rules: AliasRules;
+		rules: EntryRules;
+		/** The program that reads the settings, for the warning. */
+		tool: 'ssh' | 'git';
 		onchange: (change: SettingsEdit) => Promise<EditOutcome>;
+		/** What names the list (« Options du serveur prod »). */
+		label: string;
 		/** What names the form that adds one (« Ajouter une option à prod »). */
 		addLabel: string;
+		/** Where the settings belong, for the names of their buttons (« du serveur prod »). */
+		suffix?: string;
 	}
 
-	let { settings, rules, onchange, addLabel }: Props = $props();
+	let { settings, rules, tool, onchange, label, addLabel, suffix = '' }: Props = $props();
 
 	const uid = $props.id();
 	let addForm: ReturnType<typeof AliasForm> | undefined = $state();
@@ -41,8 +48,11 @@ configuration.
 </script>
 
 <div class="flex flex-col gap-3">
+	<AdvancedWarning id="{uid}-warning" {tool} />
 	<AliasList
 		{rules}
+		{label}
+		{suffix}
 		{aliases}
 		onreplace={(key, alias) => onchange(replaceSetting(key, fromAlias(alias)))}
 		ontoggle={(key, enabled) => void onchange(setSettingEnabled(key, enabled))}
@@ -66,6 +76,7 @@ configuration.
 			bind:this={addForm}
 			{rules}
 			labelledby="{uid}-add"
+			describedby="{uid}-warning"
 			takenNames={settings.map(({ key }) => key)}
 			submitLabel="Ajouter"
 			onsubmit={(alias) => onchange(addSetting(fromAlias(alias)))}

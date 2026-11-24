@@ -417,7 +417,10 @@ async fn a_damaged_block_is_left_untouched_and_the_configuration_stays_saved() {
     config.identity.name = "Ada".into();
     let error = fixture.hub.update(config).await.unwrap_err();
     assert!(matches!(error, GitError::Apply(_)), "{error}");
-    assert_eq!(error.error_code(), hubergamof_protocol::ErrorCode::Internal);
+    assert_eq!(
+        error.error_code(),
+        hubergamof_protocol::ErrorCode::NotApplied
+    );
     assert_eq!(
         read(home, ".gitconfig"),
         "# >>> hubergamof git >>>\n[user]\n"
@@ -1047,5 +1050,81 @@ async fn a_setting_cannot_be_an_alias_a_managed_key_or_an_include() {
         config.extra_settings = vec![setting(key, "!rm -rf ~", true)];
         let error = fixture.hub.update(config).await.unwrap_err();
         assert!(matches!(error, GitError::Store(_)), "{key}: {error}");
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Case {
+    value: String,
+    valid: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct SettingCases {
+    #[serde(rename = "settingKeys")]
+    setting_keys: Vec<Case>,
+    #[serde(rename = "settingValues")]
+    setting_values: Vec<Case>,
+}
+
+/// What the contract accepts must be read back by Git as it was written.
+#[tokio::test]
+async fn git_reads_back_every_key_and_value_the_contract_accepts() {
+    let cases: SettingCases = serde_json::from_str(include_str!(
+        "../../../../protocol/tests/fixtures/git-validation.json"
+    ))
+    .unwrap();
+    let fixture = fixture();
+    let home = fixture.home.path();
+    // Two spellings of one key are one key: the list holds the first.
+    let mut seen = std::collections::HashSet::new();
+    let keys: Vec<String> = cases
+        .setting_keys
+        .iter()
+        .filter(|case| case.valid && seen.insert(hubergamof_protocol::fold_git_key(&case.value)))
+        .map(|case| case.value.clone())
+        .collect();
+    let values: Vec<String> = cases
+        .setting_values
+        .iter()
+        .filter(|case| case.valid)
+        .map(|case| case.value.clone())
+        .collect();
+    assert!(keys.len() + values.len() <= hubergamof_protocol::MAX_ADVANCED_SETTINGS);
+    saved(&fixture, |config| {
+        for key in &keys {
+            config.extra_settings.push(setting(key, "x", true));
+        }
+        for (index, value) in values.iter().enumerate() {
+            config
+                .extra_settings
+                .push(setting(&format!("value.n{index}"), value, true));
+        }
+    })
+    .await;
+    for key in &keys {
+        assert_eq!(
+            git_get(home, home, &key.to_ascii_lowercase_git()).as_deref(),
+            Some("x"),
+            "{key}"
+        );
+    }
+    for (index, value) in values.iter().enumerate() {
+        assert_eq!(
+            git_get(home, home, &format!("value.n{index}")).as_deref(),
+            Some(value.as_str()),
+            "{value:?}"
+        );
+    }
+}
+
+/// Git compares the section and the name without regard to case, not the sub-section.
+trait GitKey {
+    fn to_ascii_lowercase_git(&self) -> String;
+}
+
+impl GitKey for String {
+    fn to_ascii_lowercase_git(&self) -> String {
+        hubergamof_protocol::fold_git_key(self)
     }
 }

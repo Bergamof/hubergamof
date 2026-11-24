@@ -6,6 +6,7 @@ person works: back to « Modifier » after a change, on the neighbour (or `fallb
 one) after a removal.
 -->
 <script lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { SettingsEdit } from '#lib/deck/advanced-edits.js';
 	import { SSH_OPTION_ALIAS_RULES } from '#lib/deck/alias-rules.js';
@@ -33,6 +34,14 @@ one) after a removal.
 	let editingAlias: string | undefined = $state();
 	/** The host whose « Modifier » button takes the focus as soon as it is displayed. */
 	let editFocusAlias: string | undefined = $state();
+	/** The hosts whose options are shown: the row is rebuilt when its form closes, the choice stays. */
+	const optionsOpen = new SvelteSet<string>();
+
+	function setOptionsOpen(alias: string, open: boolean) {
+		if (open) optionsOpen.add(alias);
+		else optionsOpen.delete(alias);
+	}
+
 	/** The host waiting for the person to confirm its removal. */
 	let removing: SshHost | undefined = $state();
 
@@ -162,19 +171,23 @@ one) after a removal.
 								Supprimer
 							</button>
 						</div>
-						<details class="basis-full" data-options>
-							<summary class="cursor-pointer text-sm font-medium">
+						<details
+							class="basis-full"
+							data-options
+							open={optionsOpen.has(host.alias)}
+							ontoggle={(event) => setOptionsOpen(host.alias, event.currentTarget.open)}
+						>
+							<summary class="cursor-pointer py-1 text-sm font-medium">
 								Options avancées{host.options.length > 0 ? ` (${host.options.length})` : ''}
 								<span class="sr-only">du serveur {host.alias}</span>
 							</summary>
-							<div class="mt-3 flex flex-col gap-3">
-								<p class="text-sm text-muted">
-									Écrites telles quelles sous ce serveur : ssh vérifie qu’il les comprend avant
-									qu’elles soient enregistrées sur l’ordinateur.
-								</p>
+							<div class="mt-3">
 								<AdvancedSettings
 									settings={host.options}
 									rules={SSH_OPTION_ALIAS_RULES}
+									tool="ssh"
+									label="Options du serveur {host.alias}"
+									suffix=" du serveur {host.alias}"
 									addLabel="Ajouter une option à {host.alias}"
 									onchange={(change) => onoptions(host.alias, change)}
 								/>

@@ -15,6 +15,7 @@ const KEEPS_DETAILS = {
 	unavailable: false,
 	busy: false,
 	locked: false,
+	notApplied: true,
 	internal: true
 } as const satisfies Record<ErrorCode, boolean>;
 

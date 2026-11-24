@@ -66,6 +66,8 @@ interface FakeManager {
 	sockets: WebSocketRoute[];
 	received: string[];
 	config: FakeConfig;
+	/** What the manager answers after saving, when it cannot apply: an error as the real one sends it. */
+	notApplied?: string;
 }
 
 function host(alias: string, change: Partial<SshHost> = {}): SshHost {
@@ -105,6 +107,11 @@ async function playManager(
 			}
 			manager.config = { ...message.config, revision: manager.config.revision + 1 };
 			sendSsh(socket);
+			if (manager.notApplied) {
+				socket.send(
+					JSON.stringify({ type: 'error', code: 'notApplied', message: manager.notApplied })
+				);
+			}
 		});
 	});
 	return manager;
@@ -168,15 +175,15 @@ test('ajoute des options communes et des options d’un serveur, refuse « Host 
 	await openSsh(page);
 
 	const common = page.getByRole('form', { name: 'Ajouter une option commune' });
-	await common.getByRole('textbox', { name: 'Option' }).fill('Host');
+	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('Host');
 	await common.getByRole('textbox', { name: 'Valeur' }).fill('evil');
 	await page.keyboard.press('Enter');
-	await expect(common.getByRole('textbox', { name: 'Option' })).toHaveAccessibleDescription(
-		/autre section/
-	);
+	await expect(
+		common.getByRole('textbox', { name: 'Nom de l’option' })
+	).toHaveAccessibleDescription(/autre section/);
 	expect(manager.received).not.toContain('updateSsh');
 
-	await common.getByRole('textbox', { name: 'Option' }).fill('ServerAliveInterval');
+	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('ServerAliveInterval');
 	await common.getByRole('textbox', { name: 'Valeur' }).fill('30');
 	await page.keyboard.press('Enter');
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
@@ -186,13 +193,30 @@ test('ajoute des options communes et des options d’un serveur, refuse « Host 
 
 	await page.getByText(/^Options avancées/).click();
 	const own = page.getByRole('form', { name: 'Ajouter une option à prod' });
-	await own.getByRole('textbox', { name: 'Option' }).fill('Compression');
+	await own.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
 	await own.getByRole('textbox', { name: 'Valeur' }).fill('yes');
 	await page.keyboard.press('Enter');
 	await expect(page.getByText(/^Options avancées \(1\)/)).toBeVisible();
 	expect(manager.config.hosts[0].options).toEqual([
 		{ key: 'Compression', value: 'yes', enabled: true }
 	]);
+});
+
+test('montre à l’écran, en français, qu’une option enregistrée n’est pas appliquée', async ({
+	page
+}) => {
+	const manager = await playManager(page);
+	manager.notApplied = 'ssh refuses the options of *: Bad configuration option: Nope';
+	await openSsh(page);
+	const common = page.getByRole('form', { name: 'Ajouter une option commune' });
+	await common.scrollIntoViewIfNeeded();
+	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('Nope');
+	await common.getByRole('textbox', { name: 'Valeur' }).fill('1');
+	await page.keyboard.press('Enter');
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText('Enregistré, mais pas appliqué à l’ordinateur');
+	await expect(alert).toContainText('Bad configuration option: Nope');
+	await expect(alert).toBeInViewport();
 });
 
 test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page }) => {

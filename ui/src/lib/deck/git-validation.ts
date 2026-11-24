@@ -268,7 +268,8 @@ const MANAGED_KEYS: readonly string[] = [
 const RESERVED_SECTIONS: readonly string[] = ['alias', 'include', 'includeif'];
 
 const KEY_WORD = /^[A-Za-z][A-Za-z0-9-]*$/;
-const SUBSECTION_MAX = 128;
+/** The longest sub-section of a key (`MAX_GIT_SUBSECTION_CHARS`). */
+export const GIT_SUBSECTION_MAX = 128;
 const SUBSECTION_CHARACTERS = /^[A-Za-z0-9._/:@*~+-]+$/;
 
 /** `section`, `subsection` (`null` for none) and `name` of a key: the sub-section is between the first and the last `.`. */
@@ -305,7 +306,7 @@ export function isValidSettingKey(key: string): boolean {
 	const [section, subsection, name] = parts;
 	const subsectionOk =
 		subsection === null ||
-		(lengthOf(subsection) <= SUBSECTION_MAX && SUBSECTION_CHARACTERS.test(subsection));
+		(lengthOf(subsection) <= GIT_SUBSECTION_MAX && SUBSECTION_CHARACTERS.test(subsection));
 	return (
 		isKeyWord(section) &&
 		isKeyWord(name) &&

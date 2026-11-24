@@ -509,4 +509,69 @@ mod tests {
         }];
         assert_eq!(rendered(&config).folders.len(), 1);
     }
+
+    fn setting(key: &str, value: &str, enabled: bool) -> hubergamof_protocol::AdvancedSetting {
+        hubergamof_protocol::AdvancedSetting {
+            key: key.into(),
+            value: value.into(),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn the_settings_of_the_person_become_one_section_each_after_the_aliases() {
+        let mut config = GitConfig::empty();
+        config.aliases = vec![GitAlias {
+            name: "co".into(),
+            command: "checkout".into(),
+            enabled: true,
+        }];
+        config.extra_settings = vec![
+            setting("push.default", "current", true),
+            setting("core.autocrlf", "input", false),
+            setting("url.https://example.org/.insteadOf", "ex:", true),
+        ];
+        let content = rendered(&config).main.content;
+        assert!(
+            content.ends_with(
+                "[alias]\n\tco = \"checkout\"\n[push]\n\tdefault = \"current\"\n\
+             [url \"https://example.org/\"]\n\tinsteadOf = \"ex:\"\n"
+            ),
+            "{content}"
+        );
+        assert!(!content.contains("autocrlf"));
+    }
+
+    #[test]
+    fn settings_alone_are_enough_to_write_a_file() {
+        let mut config = GitConfig::empty();
+        config.extra_settings = vec![setting("push.default", "current", true)];
+        assert!(render(&config).unwrap().is_some());
+        config.extra_settings = vec![setting("push.default", "current", false)];
+        assert_eq!(render(&config), Ok(None));
+    }
+
+    #[test]
+    fn a_setting_the_contract_would_refuse_is_refused_even_when_it_is_off() {
+        for (key, value) in [
+            ("alias.x", "!rm"),
+            ("user.email", "a@b.c"),
+            ("include.path", "/etc/x"),
+            ("push.default", "a\nb"),
+            ("a.b\"c", "x"),
+            ("nodot", "x"),
+        ] {
+            for enabled in [true, false] {
+                let mut config = GitConfig::empty();
+                config.extra_settings = vec![setting(key, value, enabled)];
+                if enabled {
+                    assert_eq!(
+                        render(&config),
+                        Err(UnwritableValue { key: key.into() }),
+                        "{key}"
+                    );
+                }
+            }
+        }
+    }
 }

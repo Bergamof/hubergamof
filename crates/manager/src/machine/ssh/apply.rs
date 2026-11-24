@@ -15,6 +15,7 @@ use hubergamof_protocol::SshConfig;
 use thiserror::Error;
 
 use super::claim::{claim_originals, untakeable_names};
+use super::preflight::SshProbe;
 use super::render::{MANAGED_DIR, MANAGED_FILE, UnwritableHost, render};
 use crate::machine::block::Block;
 use crate::machine::files::{
@@ -71,6 +72,7 @@ fn names_in_use(names: &[String]) -> String {
 #[derive(Debug, Clone)]
 pub struct SshFiles {
     pub(super) home: PathBuf,
+    pub(super) probe: SshProbe,
 }
 
 /// What the block holds: the include of the managed file.
@@ -90,7 +92,10 @@ impl SshFiles {
     /// The SSH files under `home` (a test or demo folder, or the real one).
     #[must_use]
     pub fn new(home: PathBuf) -> Self {
-        Self { home }
+        Self {
+            home,
+            probe: SshProbe::default(),
+        }
     }
 
     /// The SSH files of the user running the manager, when its home folder is

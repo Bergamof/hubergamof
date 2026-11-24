@@ -193,7 +193,7 @@ mod tests {
         let config = with_alias(MachineConfig::empty(), "ll", true);
         let error = fixture.hub.update(config).await.unwrap_err();
         assert!(matches!(error, HubError::Apply(_)));
-        assert_eq!(error.error_code(), ErrorCode::Internal);
+        assert_eq!(error.error_code(), ErrorCode::NotApplied);
         assert_eq!(changes.recv().await.unwrap().config.revision, 1);
         assert_eq!(fixture.hub.refresh().await.unwrap().config.revision, 1);
     }

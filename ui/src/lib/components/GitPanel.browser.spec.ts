@@ -495,11 +495,11 @@ describe('GitPanel', () => {
 	});
 
 	describe('the settings written by the person', () => {
-		const form = () => page.getByRole('form', { name: 'Ajouter un réglage' });
+		const form = () => page.getByRole('form', { name: 'Ajouter une option Git' });
 
 		it('adds a setting and keeps the focus on the key for the next one', async () => {
 			const { connection } = await renderPanel();
-			await form().getByRole('textbox', { name: 'Clé' }).fill('push.default');
+			await form().getByRole('textbox', { name: 'Clé Git' }).fill('push.default');
 			await form().getByRole('textbox', { name: 'Valeur' }).fill('current');
 			await form().getByRole('button', { name: 'Ajouter' }).click();
 			expect(connection.lastSent()).toMatchObject({
@@ -510,13 +510,13 @@ describe('GitPanel', () => {
 				}
 			});
 			confirm(connection, () => undefined);
-			await expect.element(form().getByRole('textbox', { name: 'Clé' })).toHaveFocus();
+			await expect.element(form().getByRole('textbox', { name: 'Clé Git' })).toHaveFocus();
 		});
 
 		it('refuses an alias, a managed key and a malformed key, and says why', async () => {
 			const { connection } = await renderPanel();
 			const before = connection.sent.length;
-			const key = form().getByRole('textbox', { name: 'Clé' });
+			const key = form().getByRole('textbox', { name: 'Clé Git' });
 			await form().getByRole('textbox', { name: 'Valeur' }).fill('!rm -rf ~');
 			for (const [text, message] of [
 				['alias.x', /propre place/],
@@ -536,14 +536,14 @@ describe('GitPanel', () => {
 					config.extraSettings = [{ key: 'core.autocrlf', value: 'input', enabled: false }];
 				})
 			);
-			const list = page.getByRole('list', { name: 'Option Git gérés' });
+			const list = page.getByRole('list', { name: 'Autres options Git' });
 			await expect.element(list.getByText('core.autocrlf')).toBeVisible();
 			await expect.element(list.getByText('Désactivé')).toBeVisible();
 		});
 
 		it('warns that a setting is written as it is', async () => {
 			await renderPanel();
-			await expect.element(page.getByText(/un réglage est écrit tel quel/)).toBeVisible();
+			await expect.element(page.getByText(/une option est écrite telle quelle/)).toBeVisible();
 		});
 	});
 });

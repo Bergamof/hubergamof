@@ -220,16 +220,16 @@ test('ajoute un réglage libre, refuse un alias déguisé, au clavier', async ({
 	const manager = await playManager(page);
 	await openGit(page);
 
-	const form = page.getByRole('form', { name: 'Ajouter un réglage' });
-	await form.getByRole('textbox', { name: 'Clé' }).fill('alias.pwn');
+	const form = page.getByRole('form', { name: 'Ajouter une option Git' });
+	await form.getByRole('textbox', { name: 'Clé Git' }).fill('alias.pwn');
 	await form.getByRole('textbox', { name: 'Valeur' }).fill('!rm -rf ~');
 	await page.keyboard.press('Enter');
-	await expect(form.getByRole('textbox', { name: 'Clé' })).toHaveAccessibleDescription(
+	await expect(form.getByRole('textbox', { name: 'Clé Git' })).toHaveAccessibleDescription(
 		/propre place/
 	);
 	expect(manager.received).not.toContain('updateGit');
 
-	await form.getByRole('textbox', { name: 'Clé' }).fill('push.default');
+	await form.getByRole('textbox', { name: 'Clé Git' }).fill('push.default');
 	await form.getByRole('textbox', { name: 'Valeur' }).fill('current');
 	await page.keyboard.press('Enter');
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
@@ -239,7 +239,7 @@ test('ajoute un réglage libre, refuse un alias déguisé, au clavier', async ({
 
 	await page.getByRole('switch', { name: 'Option Git push.default' }).uncheck();
 	await expect(
-		page.getByRole('list', { name: 'Option Git gérés' }).getByText('Désactivé')
+		page.getByRole('list', { name: 'Autres options Git' }).getByText('Désactivé')
 	).toBeVisible();
 	expect(manager.config.extraSettings[0].enabled).toBe(false);
 });

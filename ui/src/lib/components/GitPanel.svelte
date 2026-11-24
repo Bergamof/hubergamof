@@ -230,28 +230,21 @@ Each form is sent as a whole; the line under the title says whether the manager 
 		</section>
 
 		<section aria-labelledby="{uid}-extra" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-extra" class="font-display text-xl font-semibold">Autres réglages</h2>
+			<h2 id="{uid}-extra" class="font-display text-xl font-semibold">Autres options Git</h2>
 			<p class="text-sm text-muted">
-				Tout réglage de Git que les formulaires ci-dessus ne couvrent pas, sous la forme
+				Toute option de Git que les formulaires ci-dessus ne couvrent pas, sous la forme
 				<code class="font-mono">section.nom</code> et sa valeur : par exemple
 				<code class="font-mono">push.default</code> à <code class="font-mono">current</code>. Écrits
 				dans le fichier de HuBergamof, ils l’emportent sur les mêmes clés de
-				<code class="font-mono">~/.gitconfig</code>, qui reste tel qu’il est : un réglage désactivé
-				ici laisse la valeur de ce fichier.
-			</p>
-			<p class="rounded-xl border border-line bg-sunken p-3 text-sm">
-				<strong>Attention :</strong> un réglage est écrit tel quel, sans autre contrôle que sa
-				forme. Certaines clés font exécuter un programme à Git (<code class="font-mono"
-					>core.pager</code
-				>,
-				<code class="font-mono">core.sshCommand</code>, <code class="font-mono">diff.tool</code>…) :
-				n’ajoutez que ce que vous comprenez. Les alias (<code class="font-mono">alias.*</code>) et
-				les inclusions ont leur propre place et sont refusés ici.
+				<code class="font-mono">~/.gitconfig</code>, qui reste tel qu’il est : une option désactivée
+				ici laisse la valeur de ce fichier. Une clé ne figure qu’une fois dans la liste.
 			</p>
 			<AdvancedSettings
 				settings={config.extraSettings}
 				rules={GIT_SETTING_ALIAS_RULES}
-				addLabel="Ajouter un réglage"
+				tool="git"
+				label="Autres options Git"
+				addLabel="Ajouter une option Git"
 				onchange={(change) => edit(editExtraSettings(change))}
 			/>
 		</section>

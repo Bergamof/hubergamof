@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::advanced::{AdvancedSetting, check_settings, has_paired_quotes, is_one_line_value};
+use crate::advanced::{
+    AdvancedSetting, SettingsFault, check_settings, has_paired_quotes, is_one_line_value,
+};
 
 /// SSH configuration schema version produced and understood by this crate.
 pub const SSH_SCHEMA_VERSION: u32 = 1;
@@ -146,8 +148,14 @@ pub enum SshConfigError {
     InvalidOption {
         /// The alias of the host, or `*`.
         scope: String,
-        /// The key of the option, empty when the list is too long.
+        /// The key of the option.
         option: String,
+    },
+    /// A host, or the common options, has more options than a list holds.
+    #[error("too many options for ssh host `{scope}`")]
+    TooManyOptions {
+        /// The alias of the host, or `*`.
+        scope: String,
     },
 }
 
@@ -338,9 +346,14 @@ fn check_options(scope: &str, options: &[AdvancedSetting]) -> Result<(), SshConf
         is_valid_ssh_option_value,
         str::to_ascii_lowercase,
     )
-    .map_err(|option| SshConfigError::InvalidOption {
-        scope: scope.to_owned(),
-        option: option.unwrap_or_default(),
+    .map_err(|fault| match fault {
+        SettingsFault::TooMany => SshConfigError::TooManyOptions {
+            scope: scope.to_owned(),
+        },
+        SettingsFault::Invalid(option) => SshConfigError::InvalidOption {
+            scope: scope.to_owned(),
+            option,
+        },
     })
 }
 
@@ -535,10 +548,19 @@ mod tests {
             .collect();
         assert_eq!(
             common.validate(),
-            Err(SshConfigError::InvalidOption {
-                scope: "*".into(),
-                option: String::new()
-            })
+            Err(SshConfigError::TooManyOptions { scope: "*".into() })
+        );
+    }
+
+    #[test]
+    fn a_host_with_too_many_options_is_refused() {
+        let mut crowded = host("a");
+        crowded.options = (0..=crate::MAX_ADVANCED_SETTINGS)
+            .map(|i| option(&format!("K{i}"), "v"))
+            .collect();
+        assert_eq!(
+            config(vec![crowded]).validate(),
+            Err(SshConfigError::TooManyOptions { scope: "a".into() })
         );
     }
 

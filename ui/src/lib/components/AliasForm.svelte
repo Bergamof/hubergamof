@@ -6,7 +6,7 @@ the field once the form was sent, and the focus goes to the first one.
 -->
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { SHELL_ALIAS_RULES, type AliasRules } from '#lib/deck/alias-rules.js';
+	import { SHELL_ALIAS_RULES, type EntryRules } from '#lib/deck/alias-rules.js';
 	import { hasErrors, trimCommand } from '#lib/deck/alias-validation.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { ShellAlias } from '#lib/generated/index.js';
@@ -27,7 +27,9 @@ the field once the form was sent, and the focus goes to the first one.
 		/** Id of what names the form (a heading). */
 		labelledby?: string;
 		/** What the aliases must follow; the shell's by default. */
-		rules?: AliasRules;
+		rules?: EntryRules;
+		/** Id of what describes the form for those who reach it (a warning). */
+		describedby?: string;
 	}
 
 	let {
@@ -38,6 +40,7 @@ the field once the form was sent, and the focus goes to the first one.
 		ondone,
 		oncancel,
 		labelledby,
+		describedby,
 		rules = SHELL_ALIAS_RULES
 	}: Props = $props();
 
@@ -92,6 +95,7 @@ the field once the form was sent, and the focus goes to the first one.
 <form
 	novalidate
 	aria-labelledby={labelledby}
+	aria-describedby={describedby}
 	class="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]"
 	onsubmit={submit}
 >
@@ -105,6 +109,7 @@ the field once the form was sent, and the focus goes to the first one.
 			autocomplete="off"
 			autocapitalize="off"
 			spellcheck="false"
+			placeholder={rules.nameHint}
 			maxlength={rules.nameMax * 2}
 			aria-invalid={errors.name !== undefined}
 			aria-describedby={errors.name ? `${uid}-name-error` : undefined}

@@ -247,6 +247,12 @@ mod tests {
         let mut bad = host("a");
         bad.options = vec![option("Host", "evil", true)];
         assert_eq!(render(&config(vec![bad])).unwrap_err().field, "options");
+        let mut off = host("c");
+        off.options = vec![AdvancedSetting {
+            enabled: false,
+            ..option("Host", "evil", true)
+        }];
+        assert_eq!(render(&config(vec![off])).unwrap_err().field, "options");
         let mut newline = config(vec![]);
         newline.common_options = vec![option("A", "x\nProxyCommand evil", true)];
         let error = render(&newline).unwrap_err();

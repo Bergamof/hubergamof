@@ -581,6 +581,8 @@ struct Cases {
     identity_files: Vec<Case>,
     #[serde(rename = "proxyJumps")]
     proxy_jumps: Vec<Case>,
+    #[serde(rename = "optionValues")]
+    option_values: Vec<Case>,
 }
 
 /// What the contract accepts must not make `ssh` refuse the configuration: it
@@ -621,6 +623,11 @@ async fn every_value_the_contract_accepts_is_read_by_ssh_without_an_error() {
     for (index, jumps) in valid(&cases.proxy_jumps).into_iter().enumerate() {
         let mut found = host(&format!("jump{index}"));
         found.proxy_jump = jumps;
+        hosts.push(found);
+    }
+    for (index, value) in valid(&cases.option_values).into_iter().enumerate() {
+        let mut found = host(&format!("option{index}"));
+        found.options = vec![option("SendEnv", &value)];
         hosts.push(found);
     }
     assert!(hosts.len() <= hubergamof_protocol::MAX_SSH_HOSTS);
@@ -862,4 +869,74 @@ async fn common_options_alone_are_written_and_removed_with_the_include() {
     saved(&fixture, |config| config.common_options.clear()).await;
     assert!(!home.join(".config/hubergamof/ssh_config").exists());
     assert!(!home.join(".ssh/config").exists());
+}
+
+/// What the contract refuses for its quotes is what `ssh` refuses the whole
+/// configuration for: the rule is not stricter than it must be, except for the
+/// two cases the contract keeps out on purpose.
+#[tokio::test]
+async fn a_value_with_quotes_that_do_not_pair_up_is_refused_by_ssh_itself() {
+    require_ssh();
+    let dir = tempfile::tempdir().unwrap();
+    let cases: Cases = serde_json::from_str(include_str!(
+        "../../../../protocol/tests/fixtures/ssh-validation.json"
+    ))
+    .unwrap();
+    for case in cases
+        .option_values
+        .iter()
+        .filter(|case| !case.valid && case.value.matches(['"', '\'']).count() % 2 == 1)
+    {
+        let file = dir.path().join("config");
+        fs::write(&file, format!("Host a\n\tSendEnv {}\n", case.value)).unwrap();
+        let output = Command::new("ssh")
+            .arg("-F")
+            .arg(&file)
+            .args(["-G", "a"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{:?}", case.value);
+    }
+}
+
+#[tokio::test]
+async fn a_refused_option_stays_saved_and_blocks_every_later_change_until_it_is_removed() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.hosts = vec![server("a", "a.example.org", "u")];
+    })
+    .await;
+    let managed = home.join(".config/hubergamof/ssh_config");
+    let applied = fs::read_to_string(&managed).unwrap();
+
+    let mut broken = fixture.hub.refresh().await.unwrap().config;
+    broken.common_options = vec![option("Nope", "1")];
+    let error = fixture.hub.update(broken).await.unwrap_err();
+    assert!(matches!(
+        error,
+        SshError::Apply(SshFilesError::Rejected { .. })
+    ));
+    assert_eq!(
+        error.error_code(),
+        hubergamof_protocol::ErrorCode::NotApplied
+    );
+    let after = fixture.hub.refresh().await.unwrap().config;
+    assert_eq!(after.revision, 2, "saved all the same");
+    assert_eq!(after.common_options.len(), 1);
+    assert_eq!(fs::read_to_string(&managed).unwrap(), applied);
+
+    // A change that has nothing to do with it is saved but not applied either.
+    let mut unrelated = after.clone();
+    unrelated.hosts.push(host("b"));
+    assert!(fixture.hub.update(unrelated).await.is_err());
+    assert_eq!(fs::read_to_string(&managed).unwrap(), applied);
+
+    // Removing it puts everything on the computer.
+    let mut fixed = fixture.hub.refresh().await.unwrap().config;
+    fixed.common_options.clear();
+    fixture.hub.update(fixed).await.unwrap();
+    assert!(fs::read_to_string(&managed).unwrap().contains("Host b\n"));
 }

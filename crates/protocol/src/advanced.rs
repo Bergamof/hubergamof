@@ -56,27 +56,37 @@ pub fn has_paired_quotes(value: &str) -> bool {
     value.matches('"').count().is_multiple_of(2) && value.matches('\'').count().is_multiple_of(2)
 }
 
+/// What is wrong with a list of settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsFault {
+    /// More than [`MAX_ADVANCED_SETTINGS`].
+    TooMany,
+    /// The setting of this key is not valid, or its key is repeated.
+    Invalid(String),
+}
+
 /// Whether `settings` is a list the contract accepts: at most
 /// [`MAX_ADVANCED_SETTINGS`], each key valid by `key_ok` and each value by
 /// `value_ok`, and no key twice (compared by `fold`, which says which keys are
 /// the same). The key of the first fault is given.
 ///
 /// # Errors
-/// The key of the first setting that is wrong or repeated, or `None` for the list
-/// being too long.
+/// [`SettingsFault::TooMany`] for a list that is too long, or
+/// [`SettingsFault::Invalid`] with the key of the first setting that is wrong
+/// or repeated.
 pub fn check_settings(
     settings: &[AdvancedSetting],
     key_ok: impl Fn(&str) -> bool,
     value_ok: impl Fn(&str) -> bool,
     fold: impl Fn(&str) -> String,
-) -> Result<(), Option<String>> {
+) -> Result<(), SettingsFault> {
     if settings.len() > MAX_ADVANCED_SETTINGS {
-        return Err(None);
+        return Err(SettingsFault::TooMany);
     }
     let mut known = HashSet::with_capacity(settings.len());
     for setting in settings {
         if !key_ok(&setting.key) || !value_ok(&setting.value) || !known.insert(fold(&setting.key)) {
-            return Err(Some(setting.key.clone()));
+            return Err(SettingsFault::Invalid(setting.key.clone()));
         }
     }
     Ok(())
@@ -141,19 +151,19 @@ mod tests {
         let repeated = [setting("A", "1"), setting("a", "2")];
         assert_eq!(
             check_settings(&repeated, ok, is_one_line_value, fold),
-            Err(Some("a".into()))
+            Err(SettingsFault::Invalid("a".into()))
         );
         let wrong = [setting("A", "")];
         assert_eq!(
             check_settings(&wrong, ok, is_one_line_value, fold),
-            Err(Some("A".into()))
+            Err(SettingsFault::Invalid("A".into()))
         );
         let long: Vec<_> = (0..=MAX_ADVANCED_SETTINGS)
             .map(|i| setting(&format!("k{i}"), "v"))
             .collect();
         assert_eq!(
             check_settings(&long, ok, is_one_line_value, fold),
-            Err(None)
+            Err(SettingsFault::TooMany)
         );
     }
 }

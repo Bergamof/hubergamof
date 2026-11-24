@@ -1484,7 +1484,7 @@ async fn a_git_configuration_that_cannot_be_applied_is_saved_and_told_to_everyon
         .send(&ClientMessage::UpdateGit { config: wanted })
         .await;
 
-    assert_eq!(expect_error(&mut author).await, ErrorCode::Internal);
+    assert_eq!(expect_error(&mut author).await, ErrorCode::NotApplied);
     let (saved, _, _) = next_git(&mut other).await;
     assert_eq!(saved.revision, 1, "saved all the same, and told");
     server.stop().await;
