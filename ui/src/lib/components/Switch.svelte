@@ -1,7 +1,7 @@
 <!--
 @component
-An on/off switch with its label: a checkbox announced as a switch. The change is sent at once, like every
-other setting of the mouse pages. `indeterminate` shows some of the things it stands for on and some off
+An on/off switch with its label: a checkbox announced as a switch. `onchange` tells what was chosen: the owner decides when it is sent (at once on the mouse pages, with the
+form on the Git ones). `indeterminate` shows some of the things it stands for on and some off
 (a switch for a whole module); pressing it then sets all of them.
 -->
 <script lang="ts">

@@ -6,13 +6,8 @@ the field once the form was sent, and the focus goes to the first one.
 -->
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import {
-		ALIAS_COMMAND_MAX,
-		ALIAS_NAME_MAX,
-		hasErrors,
-		trimCommand,
-		validateAlias
-	} from '#lib/deck/alias-validation.js';
+	import { SHELL_ALIAS_RULES, type AliasRules } from '#lib/deck/alias-rules.js';
+	import { hasErrors, trimCommand } from '#lib/deck/alias-validation.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { ShellAlias } from '#lib/generated/index.js';
 	import Switch from './Switch.svelte';
@@ -31,10 +26,20 @@ the field once the form was sent, and the focus goes to the first one.
 		oncancel?: () => void;
 		/** Id of what names the form (a heading). */
 		labelledby?: string;
+		/** What the aliases must follow; the shell's by default. */
+		rules?: AliasRules;
 	}
 
-	let { initial, takenNames, submitLabel, onsubmit, ondone, oncancel, labelledby }: Props =
-		$props();
+	let {
+		initial,
+		takenNames,
+		submitLabel,
+		onsubmit,
+		ondone,
+		oncancel,
+		labelledby,
+		rules = SHELL_ALIAS_RULES
+	}: Props = $props();
 
 	const uid = $props.id();
 	// The form starts from the alias it was opened for and keeps what is typed.
@@ -49,14 +54,14 @@ the field once the form was sent, and the focus goes to the first one.
 	let commandField: HTMLInputElement | undefined = $state();
 
 	const errors = $derived(
-		submitted ? validateAlias({ name, command: trimCommand(command) }, takenNames) : {}
+		submitted ? rules.validate({ name, command: trimCommand(command) }, takenNames) : {}
 	);
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		submitted = true;
 		const alias = { name, command: trimCommand(command), enabled };
-		const found = validateAlias(alias, takenNames);
+		const found = rules.validate(alias, takenNames);
 		if (hasErrors(found)) {
 			await tick();
 			(found.name ? nameField : commandField)?.focus();
@@ -100,7 +105,7 @@ the field once the form was sent, and the focus goes to the first one.
 			autocomplete="off"
 			autocapitalize="off"
 			spellcheck="false"
-			maxlength={ALIAS_NAME_MAX * 2}
+			maxlength={rules.nameMax * 2}
 			aria-invalid={errors.name !== undefined}
 			aria-describedby={errors.name ? `${uid}-name-error` : undefined}
 		/>
@@ -118,7 +123,7 @@ the field once the form was sent, and the focus goes to the first one.
 			autocomplete="off"
 			autocapitalize="off"
 			spellcheck="false"
-			maxlength={ALIAS_COMMAND_MAX * 2}
+			maxlength={rules.commandMax * 2}
 			aria-invalid={errors.command !== undefined}
 			aria-describedby={errors.command ? `${uid}-command-error` : undefined}
 		/>

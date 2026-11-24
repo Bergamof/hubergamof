@@ -1,7 +1,8 @@
 <!--
 @component
 A choice among a few values, shown side by side: radio buttons dressed as segments, so the keyboard (arrows)
-and assistive technologies work as for any radio group. The change is sent at once.
+and assistive technologies work as for any radio group. `onchange` tells what was chosen: the owner decides
+when it is sent.
 -->
 <script lang="ts" generics="T extends string">
 	interface Props {

@@ -4,6 +4,7 @@ One alias managed by HuBergamof: what it runs, whether it is on the computer, an
 change it or remove it. Changing it opens the alias form in its place; the list says when (it also moves the focus).
 -->
 <script lang="ts">
+	import { SHELL_ALIAS_RULES, type AliasRules } from '#lib/deck/alias-rules.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { ShellAlias } from '#lib/generated/index.js';
 	import AliasForm from './AliasForm.svelte';
@@ -21,10 +22,21 @@ change it or remove it. Changing it opens the alias form in its place; the list 
 		onreplace: (alias: ShellAlias) => Promise<EditOutcome>;
 		ontoggle: (enabled: boolean) => void;
 		onremove: () => void;
+		/** What the aliases must follow; the shell's by default. */
+		rules?: AliasRules;
 	}
 
-	let { alias, editing, takenNames, onedit, oncancel, onreplace, ontoggle, onremove }: Props =
-		$props();
+	let {
+		alias,
+		editing,
+		takenNames,
+		onedit,
+		oncancel,
+		onreplace,
+		ontoggle,
+		onremove,
+		rules = SHELL_ALIAS_RULES
+	}: Props = $props();
 </script>
 
 {#if editing}
@@ -35,6 +47,7 @@ change it or remove it. Changing it opens the alias form in its place; the list 
 			submitLabel="Enregistrer"
 			onsubmit={onreplace}
 			{oncancel}
+			{rules}
 		/>
 	</div>
 {:else}
@@ -46,13 +59,13 @@ change it or remove it. Changing it opens the alias form in its place; the list 
 		{#if !alias.enabled}
 			<span class="rounded-full border border-line px-2 py-0.5 text-sm text-muted">Désactivé</span>
 		{/if}
-		<Switch checked={alias.enabled} label="Alias {alias.name}" onchange={ontoggle} />
+		<Switch checked={alias.enabled} label="{rules.title} {alias.name}" onchange={ontoggle} />
 		<div class="flex gap-2">
 			<button
 				data-edit
 				type="button"
 				class="secondary-button"
-				aria-label="Modifier l’alias {alias.name}"
+				aria-label="Modifier l’{rules.noun} {alias.name}"
 				onclick={onedit}
 			>
 				Modifier
@@ -61,7 +74,7 @@ change it or remove it. Changing it opens the alias form in its place; the list 
 				type="button"
 				data-remove
 				class="secondary-button"
-				aria-label="Supprimer l’alias {alias.name}"
+				aria-label="Supprimer l’{rules.noun} {alias.name}"
 				onclick={onremove}
 			>
 				Supprimer

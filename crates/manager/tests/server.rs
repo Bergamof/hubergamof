@@ -16,6 +16,7 @@ use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineServices, Supervisor};
 use hubergamof_manager::file_chooser::NoFilePicker;
+use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
 use hubergamof_manager::machine::{MachineHub, MachineShell};
 use hubergamof_manager::module_host::{HostServices, ModuleHost};
 use hubergamof_manager::mouse_hub::MouseHub;
@@ -36,9 +37,9 @@ use hubergamof_module_api::{
 };
 use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
-    ClientMessage, DeviceConfig, ErrorCode, InstallSupport, LiveState, MachineConfig,
-    ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem, RadialMenuConfig,
-    ServerMessage, ShellAlias, SystemAlias, UpdateSettings, UpdateStatus,
+    ClientMessage, DeviceConfig, ErrorCode, GitAlias, GitConfig, GitSystemEntry, InstallSupport,
+    LiveState, MachineConfig, ModuleInstance, MouseConfig, MouseInfo, MouseModel, MouseProblem,
+    RadialMenuConfig, ServerMessage, ShellAlias, SystemAlias, UpdateSettings, UpdateStatus,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -177,6 +178,10 @@ impl Devices {
             store.clone(),
             Some(MachineShell::new(home.path().to_owned())),
         );
+        let git = GitConfigHub::new(
+            store.clone(),
+            Some(GitFiles::new(home.path().to_owned(), false)),
+        );
         let context = ServerContext {
             discovery: discovery.clone(),
             engines: supervisor.engines(),
@@ -189,6 +194,7 @@ impl Devices {
             mice: MouseHub::new(store.clone()).unwrap(),
             application: None,
             machine,
+            git,
             screen_lock: Arc::new(hubergamof_manager::screen_lock::NoScreenLock),
         };
         Self {
@@ -1377,6 +1383,109 @@ async fn the_machine_is_read_on_request_and_updates_reach_every_client() {
     server.stop().await;
 }
 
+/// The next `git` message: its configuration, the values found elsewhere and
+/// whether `git` ran.
+async fn next_git(client: &mut Client) -> (GitConfig, Vec<GitSystemEntry>, bool) {
+    client
+        .receive_until(|message| match message {
+            ServerMessage::Git {
+                config,
+                system_entries,
+                git_available,
+            } => Some((config, system_entries, git_available)),
+            _ => None,
+        })
+        .await
+}
+
+fn git_alias(name: &str, command: &str) -> GitAlias {
+    GitAlias {
+        name: name.into(),
+        command: command.into(),
+        enabled: true,
+    }
+}
+
+#[tokio::test]
+async fn the_git_configuration_is_read_on_request_and_updates_reach_every_client() {
+    let server = Running::start().await;
+    let home = server.devices.home.path().to_owned();
+    std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Existing\n").unwrap();
+    let mut author = server.connect().await;
+    let mut other = server.connect().await;
+
+    author.send(&ClientMessage::RefreshGit).await;
+    let (config, found, available) = next_git(&mut author).await;
+    assert_eq!(config, GitConfig::empty());
+    assert!(available);
+    assert_eq!(
+        (found[0].key.as_str(), found[0].value.as_str()),
+        ("user.name", "Existing")
+    );
+
+    let mut wanted = config.clone();
+    wanted.identity.email = "ada@example.org".into();
+    wanted.aliases.push(git_alias("co", "checkout"));
+    author
+        .send(&ClientMessage::UpdateGit {
+            config: wanted.clone(),
+        })
+        .await;
+    for client in [&mut author, &mut other] {
+        let (saved, found, _) = next_git(client).await;
+        assert_eq!(saved.revision, 1);
+        assert_eq!(saved.aliases, wanted.aliases);
+        assert_eq!(found.len(), 1, "what was written is not found elsewhere");
+    }
+    let managed = std::fs::read_to_string(home.join(".config/hubergamof/gitconfig")).unwrap();
+    assert!(managed.contains("email = \"ada@example.org\""));
+    assert!(managed.contains("co = \"checkout\""));
+
+    // Based on the old revision: refused, nothing told.
+    author
+        .send(&ClientMessage::UpdateGit { config: wanted })
+        .await;
+    assert_eq!(expect_error(&mut author).await, ErrorCode::StaleRevision);
+
+    // An alias running a shell command: refused.
+    author.send(&ClientMessage::RefreshGit).await;
+    let mut hostile = next_git(&mut author).await.0;
+    hostile.aliases.push(git_alias("pwn", "!rm -rf ~"));
+    author
+        .send(&ClientMessage::UpdateGit { config: hostile })
+        .await;
+    assert_eq!(expect_error(&mut author).await, ErrorCode::InvalidConfig);
+    let managed = std::fs::read_to_string(home.join(".config/hubergamof/gitconfig")).unwrap();
+    assert!(!managed.contains("pwn"));
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_git_configuration_that_cannot_be_applied_is_saved_and_told_to_everyone_but_the_error_goes_to_the_author()
+ {
+    let server = Running::start().await;
+    let home = server.devices.home.path().to_owned();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "# >>> hubergamof git >>>\n[user]\n",
+    )
+    .unwrap();
+    let mut author = server.connect().await;
+    let mut other = server.connect().await;
+
+    author.send(&ClientMessage::RefreshGit).await;
+    let mut wanted = next_git(&mut author).await.0;
+    wanted.identity.name = "Ada".into();
+    author
+        .send(&ClientMessage::UpdateGit { config: wanted })
+        .await;
+
+    assert_eq!(expect_error(&mut author).await, ErrorCode::Internal);
+    let (saved, _, _) = next_git(&mut other).await;
+    assert_eq!(saved.revision, 1, "saved all the same, and told");
+    server.stop().await;
+}
+
 /// The saved configuration, read back by a refresh.
 async fn next_revision(client: &mut Client) -> MachineConfig {
     client.send(&ClientMessage::RefreshMachine).await;
@@ -1520,6 +1629,10 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
         ClientMessage::RefreshMachine,
         ClientMessage::UpdateMachine {
             config: MachineConfig::empty(),
+        },
+        ClientMessage::RefreshGit,
+        ClientMessage::UpdateGit {
+            config: GitConfig::empty(),
         },
         ClientMessage::CheckForUpdates,
         // Following a device shows its configuration: refused too.

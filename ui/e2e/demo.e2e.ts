@@ -857,6 +857,37 @@ test('intègre un alias du système, qui reste après un rechargement', async ({
 	await expect(system.getByText('git log --oneline', { exact: true })).toBeVisible();
 });
 
+// Git: the demo manager reads, with the real `git`, the configuration of its own home folder
+// (`GitConfigHub::demo`: a name, an address and two aliases).
+
+test('Git : lit la configuration trouvée, enregistre l’identité et refuse un alias du shell', async ({
+	page
+}) => {
+	await open(page);
+	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	const found = page.getByRole('list', { name: 'Valeurs de Git définies ailleurs' });
+	await expect(found.getByText('Ada Lovelace')).toBeVisible();
+	const aliases = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
+	await expect(aliases.getByText('status --short', { exact: true })).toBeVisible();
+
+	const form = page.getByRole('form', { name: 'Identité', exact: true });
+	await form.getByRole('textbox', { name: 'Nom' }).fill('Grace Hopper');
+	await page.getByRole('button', { name: 'Enregistrer l’identité' }).click();
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
+
+	const add = page.getByRole('form', { name: 'Ajouter un alias Git' });
+	await add.getByRole('textbox', { name: 'Nom' }).fill('pwn');
+	await add.getByRole('textbox', { name: 'Commande' }).fill('!rm -rf ~');
+	await add.getByRole('button', { name: 'Ajouter' }).click();
+	await expect(page.getByText(/ne commence ni par « ! »/)).toBeVisible();
+
+	await page.reload();
+	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	await expect(form.getByRole('textbox', { name: 'Nom' })).toHaveValue('Grace Hopper');
+});
+
 test('la page Modules reste accessible', async ({ page }) => {
 	await openModules(page);
 	await expectAccessible(page, 'page des modules');

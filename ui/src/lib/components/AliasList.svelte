@@ -6,6 +6,7 @@ where the person is working after each of these: back to « Modifier » of the a
 of a neighbour (or to `fallbackFocus` when it was the last one).
 -->
 <script lang="ts">
+	import { SHELL_ALIAS_RULES, type AliasRules } from '#lib/deck/alias-rules.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { ShellAlias } from '#lib/generated/index.js';
 	import AliasRow from './AliasRow.svelte';
@@ -18,9 +19,18 @@ of a neighbour (or to `fallbackFocus` when it was the last one).
 		onremove: (name: string) => void;
 		/** Where the focus goes once the last alias is removed. */
 		fallbackFocus?: () => void;
+		/** What the aliases must follow; the shell's by default. */
+		rules?: AliasRules;
 	}
 
-	let { aliases, onreplace, ontoggle, onremove, fallbackFocus }: Props = $props();
+	let {
+		aliases,
+		onreplace,
+		ontoggle,
+		onremove,
+		fallbackFocus,
+		rules = SHELL_ALIAS_RULES
+	}: Props = $props();
 
 	let list: HTMLUListElement | undefined = $state();
 	/** The alias whose form is open. */
@@ -87,9 +97,9 @@ of a neighbour (or to `fallbackFocus` when it was the last one).
 </script>
 
 {#if aliases.length === 0}
-	<p class="text-sm text-muted">Aucun alias géré pour l’instant.</p>
+	<p class="text-sm text-muted">Aucun {rules.noun} géré pour l’instant.</p>
 {:else}
-	<ul bind:this={list} class="flex flex-col gap-2" aria-label="Alias gérés">
+	<ul bind:this={list} class="flex flex-col gap-2" aria-label="{rules.title} gérés">
 		{#each aliases as alias (alias.name)}
 			<li data-alias={alias.name}>
 				<AliasRow
@@ -101,6 +111,7 @@ of a neighbour (or to `fallbackFocus` when it was the last one).
 					onreplace={(changed) => replace(alias.name, changed)}
 					ontoggle={(enabled) => ontoggle(alias.name, enabled)}
 					onremove={() => (removing = alias)}
+					{rules}
 				/>
 			</li>
 		{/each}
@@ -109,12 +120,12 @@ of a neighbour (or to `fallbackFocus` when it was the last one).
 
 <ConfirmDialog
 	open={removing !== undefined}
-	title="Supprimer l’alias ?"
+	title="Supprimer l’{rules.noun} ?"
 	confirmLabel="Supprimer"
 	onconfirm={confirmRemoval}
 	oncancel={() => (removing = undefined)}
 	onclosed={focusAfterRemoval}
 >
-	L’alias <code class="font-mono font-semibold">{removing?.name}</code> sera retiré de la configuration
+	L’{rules.noun} <code class="font-mono font-semibold">{removing?.name}</code> sera retiré de la configuration
 	et de votre ordinateur.
 </ConfirmDialog>
