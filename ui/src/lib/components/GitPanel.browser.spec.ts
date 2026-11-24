@@ -11,7 +11,8 @@ import GitPanel from './GitPanel.svelte';
 const FOUND: GitSystemEntry[] = [
 	{ key: 'user.name', value: 'Existing Name', origin: '~/.gitconfig' },
 	{ key: 'alias.gs', value: 'status --short', origin: '~/.gitconfig' },
-	{ key: 'alias.sh', value: '!echo hi', origin: '~/.gitconfig' }
+	{ key: 'alias.sh', value: '!echo hi', origin: '~/.gitconfig' },
+	{ key: 'alias.ro', value: 'log --oneline', origin: '/etc/gitconfig' }
 ];
 
 function git(revision: number, change: (config: GitConfig) => void = () => undefined): GitConfig {
@@ -330,6 +331,16 @@ describe('GitPanel', () => {
 			await expect.element(page.getByText(/lance une commande du shell/)).toBeVisible();
 			const before = connection.sent.length;
 			await shell.click({ force: true });
+			expect(connection.sent).toHaveLength(before);
+		});
+
+		it('does not take in an alias defined in a file the manager does not modify', async () => {
+			const { connection } = await renderPanel();
+			const reprendre = page.getByRole('button', { name: 'Reprendre l’alias Git ro' });
+			await expect.element(reprendre).toHaveAttribute('aria-disabled', 'true');
+			await expect.element(page.getByText(/Défini dans \/etc\/gitconfig/)).toBeVisible();
+			const before = connection.sent.length;
+			await reprendre.click({ force: true });
 			expect(connection.sent).toHaveLength(before);
 		});
 

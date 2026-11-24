@@ -23,6 +23,8 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 		describeSource?: (source: string) => string;
 		/** The place could not be read: nothing can be said about what is there. */
 		unreadable?: string;
+		/** Why an alias cannot be taken in, besides not following the rules; none when it can. */
+		refuse?: (alias: SystemAlias) => string | undefined;
 	}
 
 	let {
@@ -32,7 +34,8 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 		fallbackFocus,
 		rules = SHELL_ALIAS_RULES,
 		describeSource = (source) => `~/${source}`,
-		unreadable
+		unreadable,
+		refuse
 	}: Props = $props();
 
 	let list: HTMLUListElement | undefined = $state();
@@ -62,7 +65,8 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 	/** Why an alias cannot be taken in, if it cannot: the manager would refuse it. */
 	function obstacle(alias: SystemAlias): string | undefined {
 		if (full) return 'La configuration est pleine.';
-		return hasErrors(rules.validate(alias, [])) ? rules.refusal : undefined;
+		if (hasErrors(rules.validate(alias, []))) return rules.refusal;
+		return refuse?.(alias);
 	}
 </script>
 

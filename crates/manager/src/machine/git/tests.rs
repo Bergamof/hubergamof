@@ -888,3 +888,150 @@ async fn an_invalid_saved_configuration_takes_what_it_had_applied_with_it() {
         "the file only held our block"
     );
 }
+
+const ORIGINAL_ALIASES: &str = "[user]\n\tname = Ada\n[alias]\n\tco = checkout\n\tst = status -s\n";
+
+#[tokio::test]
+async fn an_alias_taken_over_is_commented_out_where_it_came_from_and_really_switches_off() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join(".gitconfig"), ORIGINAL_ALIASES).unwrap();
+
+    // Taken over, on: Git reads it from the file of HuBergamof, the original
+    // line is a comment, the other alias is as it was.
+    saved(&fixture, |config| {
+        config.aliases = vec![alias("co", "checkout --quiet", true)];
+    })
+    .await;
+    let content = read(home, ".gitconfig");
+    assert!(content.contains("#hubergamof-off# \tco = checkout\n"));
+    assert!(content.contains("\n\tst = status -s\n"));
+    assert_eq!(
+        git_get(home, home, "alias.co").as_deref(),
+        Some("checkout --quiet")
+    );
+    assert_eq!(
+        git_get(home, home, "alias.st").as_deref(),
+        Some("status -s")
+    );
+
+    // Off: nothing defines it any more, which is the point.
+    saved(&fixture, |config| config.aliases[0].enabled = false).await;
+    assert_eq!(git_get(home, home, "alias.co"), None);
+    assert_eq!(
+        git_get(home, home, "alias.st").as_deref(),
+        Some("status -s")
+    );
+
+    // Back on, then removed from the configuration: the original comes back.
+    saved(&fixture, |config| config.aliases[0].enabled = true).await;
+    assert_eq!(
+        git_get(home, home, "alias.co").as_deref(),
+        Some("checkout --quiet")
+    );
+    saved(&fixture, |config| config.aliases.clear()).await;
+    assert_eq!(read(home, ".gitconfig"), ORIGINAL_ALIASES);
+    assert_eq!(git_get(home, home, "alias.co").as_deref(), Some("checkout"));
+}
+
+#[tokio::test]
+async fn an_alias_that_is_off_from_the_start_is_commented_out_with_nothing_else_written() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join(".gitconfig"), ORIGINAL_ALIASES).unwrap();
+
+    saved(&fixture, |config| {
+        config.aliases = vec![alias("co", "checkout", false)];
+    })
+    .await;
+    assert_eq!(git_get(home, home, "alias.co"), None);
+    assert!(!home.join(".config/hubergamof/gitconfig").exists());
+    assert!(
+        !read(home, ".gitconfig").contains("hubergamof git"),
+        "no include for nothing"
+    );
+
+    saved(&fixture, |config| config.aliases.clear()).await;
+    assert_eq!(read(home, ".gitconfig"), ORIGINAL_ALIASES);
+}
+
+#[tokio::test]
+async fn the_xdg_configuration_and_the_gitconfig_are_both_claimed() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::create_dir_all(home.join(".config/git")).unwrap();
+    fs::write(
+        home.join(".config/git/config"),
+        "[alias]\n\tco = from-xdg\n",
+    )
+    .unwrap();
+    fs::write(home.join(".gitconfig"), "[alias]\n\tco = from-home\n").unwrap();
+
+    saved(&fixture, |config| {
+        config.aliases = vec![alias("co", "mine", false)];
+    })
+    .await;
+    assert_eq!(git_get(home, home, "alias.co"), None);
+    saved(&fixture, |config| config.aliases.clear()).await;
+    assert_eq!(read(home, ".gitconfig"), "[alias]\n\tco = from-home\n");
+    assert_eq!(
+        read(home, ".config/git/config"),
+        "[alias]\n\tco = from-xdg\n"
+    );
+}
+
+#[tokio::test]
+async fn a_gitconfig_that_cannot_be_rewritten_leaves_its_aliases_alone_and_the_error_says_so() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join(".gitconfig"), [0xff, 0xfe]).unwrap();
+    let mut config = fixture.hub.refresh().await.unwrap().config;
+    config.aliases = vec![alias("co", "mine", false)];
+    let error = fixture.hub.update(config).await.unwrap_err();
+    assert!(
+        matches!(error, GitError::Files(GitFilesError::File(_))),
+        "{error}"
+    );
+    assert_eq!(fs::read(home.join(".gitconfig")).unwrap(), [0xff, 0xfe]);
+}
+
+#[tokio::test]
+async fn an_invalid_saved_configuration_gives_the_aliases_back_too() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join(".gitconfig"), ORIGINAL_ALIASES).unwrap();
+    saved(&fixture, |config| {
+        config.aliases = vec![alias("co", "mine", true)];
+    })
+    .await;
+    assert!(read(home, ".gitconfig").contains("#hubergamof-off# "));
+
+    fs::write(fixture.config_dir.path().join("git.json"), "{ broken").unwrap();
+    fixture.hub.refresh().await.unwrap();
+    assert_eq!(read(home, ".gitconfig"), ORIGINAL_ALIASES);
+}
+
+#[tokio::test]
+async fn an_alias_found_in_an_included_file_is_listed_and_left_where_it_is() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join("aliases.inc"), "[alias]\n\tco = checkout\n").unwrap();
+    fs::write(
+        home.join(".gitconfig"),
+        "[include]\n\tpath = ~/aliases.inc\n",
+    )
+    .unwrap();
+    let snapshot = fixture.hub.refresh().await.unwrap();
+    let found = snapshot
+        .system_entries
+        .iter()
+        .find(|e| e.key == "alias.co")
+        .unwrap();
+    assert_eq!(found.origin, "~/aliases.inc");
+
+    saved(&fixture, |config| {
+        config.aliases = vec![alias("co", "mine", false)];
+    })
+    .await;
+    assert_eq!(read(home, "aliases.inc"), "[alias]\n\tco = checkout\n");
+}

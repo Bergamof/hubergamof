@@ -53,6 +53,16 @@ Each form is sent as a whole; the line under the title says whether the manager 
 	/** What names an alias in the keys Git lists (`alias.co`). */
 	const ALIAS_KEY_PREFIX = 'alias.';
 
+	/** The files of the user whose lines the manager comments out (`GLOBAL_FILES` of `apply.rs`). */
+	const CLAIMABLE_ORIGINS = ['~/.gitconfig', '~/.config/git/config'];
+
+	/** An alias defined in another file could not be switched off: its line would stay. */
+	function refuseOtherFile({ source }: SystemAlias): string | undefined {
+		return CLAIMABLE_ORIGINS.includes(source)
+			? undefined
+			: `Défini dans ${source} : HuBergamof ne modifie que ~/.gitconfig et ~/.config/git/config, cet alias ne pourrait pas être vraiment désactivé.`;
+	}
+
 	const uid = $props.id();
 	let addForm: ReturnType<typeof AliasForm> | undefined = $state();
 	let addAliasHeading: HTMLHeadingElement | undefined = $state();
@@ -197,15 +207,18 @@ Each form is sent as a whole; the line under the title says whether the manager 
 				Alias présents ailleurs, non gérés
 			</h3>
 			<p class="text-sm text-muted">
-				« Reprendre » ajoute l’alias à la configuration, activé : HuBergamof le redéfinit, et comme
-				ses valeurs sont lues en dernier, la sienne l’emporte. La ligne d’origine n’est pas
-				modifiée.
+				« Reprendre » ajoute l’alias à la configuration, activé, et commente sa ligne d’origine
+				(préfixe <code class="font-mono">#hubergamof-off#</code>) : désactivé ici, il disparaît
+				vraiment ; supprimé de la configuration, il retrouve sa ligne. Seuls
+				<code class="font-mono">~/.gitconfig</code> et
+				<code class="font-mono">~/.config/git/config</code> sont modifiés.
 			</p>
 			<SystemAliasList
 				rules={GIT_ALIAS_RULES}
 				aliases={unmanagedAliases}
 				full={isFull(config, GIT_ALIASES_MAX)}
 				describeSource={(source) => source}
+				refuse={refuseOtherFile}
 				unreadable={deck.git.gitAvailable === false
 					? 'Non lu : le programme git est introuvable.'
 					: undefined}

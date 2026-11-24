@@ -8,9 +8,11 @@
 //!
 //! - [`render`]: the configuration as the files Git reads.
 //! - [`apply`]: those files on the computer, and the include that loads them.
+//! - [`claim`]: the aliases taken over, commented out where they came from.
 //! - [`system`]: what `git config --list` finds besides.
 
 mod apply;
+mod claim;
 mod render;
 mod system;
 

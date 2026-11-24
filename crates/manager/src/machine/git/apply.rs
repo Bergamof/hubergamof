@@ -7,6 +7,7 @@
 //! values win over the ones before it. Git ignores an include whose file does
 //! not exist, so no condition is needed.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -16,6 +17,7 @@ use std::time::Duration;
 use hubergamof_protocol::GitConfig;
 use thiserror::Error;
 
+use super::claim::claim_originals;
 use super::render::{
     FOLDER_FILE_PREFIX, MAIN_FILE, MANAGED_DIR, Rendered, UnwritableValue, render,
 };
@@ -116,8 +118,12 @@ impl GitFiles {
 
     /// Puts `config` on the computer: its enabled values are written in the
     /// files of HuBergamof and included from the Git configuration of the
-    /// user. With nothing enabled the files and the include are removed, and
-    /// the Git configuration of the user is as it was.
+    /// user. With nothing enabled the files and the include are removed. Then
+    /// the original definition of every alias of the configuration, enabled or
+    /// not, is commented out in the Git configuration of the user (so that an
+    /// alias that is off is really gone), and those of an alias that left the
+    /// configuration are given back: what remains of the user's files is what
+    /// they wrote, except for those lines.
     ///
     /// # Errors
     /// [`GitFilesError`] for the first file that cannot be written; each
@@ -126,14 +132,30 @@ impl GitFiles {
         if let Some(rendered) = render(config)? {
             self.check_folders(config)?;
             self.write(&rendered)?;
-            self.include()
+            self.include()?;
         } else {
             // The include first: a Git configuration that cannot be
             // rewritten must not keep loading what is removed.
             self.exclude()?;
             self.remove_stale_folder_files(&[])?;
-            Ok(remove_file_if_present(&self.managed_dir().join(MAIN_FILE))?)
+            remove_file_if_present(&self.managed_dir().join(MAIN_FILE))?;
         }
+        // After the files of HuBergamof, so that an enabled alias is never missing.
+        self.claim_originals(config)
+    }
+
+    fn claim_originals(&self, config: &GitConfig) -> Result<(), GitFilesError> {
+        let names: HashSet<String> = config
+            .aliases
+            .iter()
+            .map(|alias| alias.name.to_ascii_lowercase())
+            .collect();
+        for relative in GLOBAL_FILES {
+            update_text_file(&self.home.join(relative), |content| {
+                Ok(claim_originals(content, &names))
+            })?;
+        }
+        Ok(())
     }
 
     fn write(&self, rendered: &Rendered) -> Result<(), GitFilesError> {
