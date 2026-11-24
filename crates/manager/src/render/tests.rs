@@ -133,18 +133,41 @@ fn a_caption_is_drawn_over_the_top_of_the_image_which_keeps_its_size() {
             .filter(|(_, y, _)| *y >= below)
             .all(|(x, y, pixel)| pixel == plain.get_pixel(x, y))
     );
-    // The caption is white on a darkened band over the image.
-    assert_eq!(*plain.get_pixel(60, 2), RED);
+    // The caption is text over the image, with no band behind it: the pixels
+    // that are not text are the image's.
+    let differing = captioned
+        .enumerate_pixels()
+        .filter(|(x, y, pixel)| *y < below && *pixel != plain.get_pixel(*x, *y))
+        .count();
+    assert!(differing > 0, "the caption is drawn");
     assert!(
-        captioned.get_pixel(60, 2).0[0] < 150,
-        "the band darkens the image"
+        differing < 120 * below as usize / 4,
+        "only the letters differ, not a band: {differing}"
     );
-    assert!(
-        captioned
-            .enumerate_pixels()
-            .any(|(_, y, pixel)| y < below && pixel.0[..3] == [255, 255, 255])
-    );
+    assert_eq!(*captioned.get_pixel(60, 1), RED, "no band over the image");
     assert!(captioned.pixels().all(|pixel| pixel.0[3] == 255));
+}
+
+#[test]
+fn a_caption_has_the_size_and_the_font_of_a_label() {
+    let subject = renderer();
+    let text_pixels = |request: &KeyRequest<'_>| {
+        let rendered = subject.render_key(request).unwrap();
+        rendered
+            .image()
+            .pixels()
+            .map(|pixel| u32::from(pixel.0[0]))
+            .sum::<u32>()
+    };
+    let as_label = text_pixels(&KeyRequest::new(KEY, None, Some("12:34")));
+    let as_caption = text_pixels(&KeyRequest::new(KEY, None, None).captioned(Some("12:34")));
+    assert!(as_label > 0);
+    // The same letters at another height only differ by their anti-aliasing.
+    let gap = as_label.abs_diff(as_caption);
+    assert!(
+        gap * 20 < as_label,
+        "the same ink: {as_label} vs {as_caption}"
+    );
 }
 
 #[test]
