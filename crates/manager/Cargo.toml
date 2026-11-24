@@ -35,6 +35,7 @@ async-trait.workspace = true
 # to answer `invalidMessage` instead of rejecting the request).
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "tracing", "ws"] }
 base64.workspace = true
+hubergamof-headset.workspace = true
 hubergamof-module-api.workspace = true
 hubergamof-modules.workspace = true
 hubergamof-mouse.workspace = true

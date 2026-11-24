@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/protocol", "crates/module-api", "crates/modules", "crates/mouse", "crates/manager"]
+members = ["crates/protocol", "crates/module-api", "crates/modules", "crates/mouse", "crates/headset", "crates/manager"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,7 @@ hubergamof-protocol = { path = "crates/protocol" }
 hubergamof-module-api = { path = "crates/module-api" }
 hubergamof-modules = { path = "crates/modules" }
 hubergamof-mouse = { path = "crates/mouse" }
+hubergamof-headset = { path = "crates/headset" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"

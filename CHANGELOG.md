@@ -7,6 +7,10 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ## [Non publié]
 
+### Ajouté
+
+- Casque Sony WH-1000XM4, étape 0 : nouveau crate `hubergamof-headset` (trames MDR et acquittements, charges utiles du son ambiant, de la batterie et de l'égaliseur en lecture, connexion RFCOMM confiée à BlueZ par D-Bus, casque simulé pour les tests) et commande `hubergamof headset-test` (`list`, `info`, `watch`, `ambient`, `probe`) pour relever sur le vrai casque les valeurs que personne n'a documentées. Pas encore branché au service ni à l'interface ; relevés et suite : `docs/headset-sony.md`.
+
 ### Modifié
 
 - Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
