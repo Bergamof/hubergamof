@@ -15,9 +15,9 @@ use tokio::sync::{mpsc, watch};
 use super::backend;
 use super::controller::{Controller, Effect, WindowEvent};
 use super::geometry::{DEFAULT_RING, Size};
-use super::looks::{Items, Looks, Statuses};
+use super::looks::{Items, Looks, PetalNotes};
 use super::paint::DEFAULT_PALETTE;
-use super::window::Surface;
+use super::window::{PetalNote, Surface};
 use crate::haptics::HapticOutput;
 
 /// What the screen is taken to be until the window reports its size.
@@ -277,7 +277,7 @@ pub struct Presentation {
     /// What the modules always look like: names and icons.
     pub looks: Looks,
     /// What the modules say now under their names.
-    pub statuses: Statuses,
+    pub notes: PetalNotes,
     /// The actions the modules offer now around their petals.
     pub items: Items,
 }
@@ -347,7 +347,7 @@ struct Menu<S: Surface> {
     started: Instant,
     /// What the petals say, as the window shows it: a reading that changes
     /// nothing draws nothing.
-    shown_statuses: Vec<Option<String>>,
+    shown_notes: Vec<PetalNote>,
     /// The readings that go on while the menu is open.
     refreshing: Option<RefreshTimer>,
     /// A press that found no window is said once.
@@ -366,12 +366,12 @@ impl<S: Surface> Menu<S> {
         let Presentation {
             feel,
             looks,
-            statuses,
+            notes,
             items,
         } = presentation;
         let mut controller = Controller::new(config, DEFAULT_RING, UNKNOWN_SCREEN);
         controller.set_looks(looks);
-        controller.set_statuses(statuses);
+        controller.set_notes(notes);
         controller.set_items(items);
         Self {
             controller,
@@ -383,7 +383,7 @@ impl<S: Surface> Menu<S> {
             animate: config.animate,
             locked,
             started: Instant::now(),
-            shown_statuses: Vec::new(),
+            shown_notes: Vec::new(),
             refreshing: None,
             warned: false,
         }
@@ -403,7 +403,7 @@ impl<S: Surface> Menu<S> {
                 Vec::new()
             }
             Event::Refresh => {
-                self.refresh_statuses();
+                self.refresh_notes();
                 self.controller.refresh_items()
             }
             Event::Stop => Vec::new(),
@@ -460,10 +460,10 @@ impl<S: Surface> Menu<S> {
                 Effect::Open => {
                     let content = self.controller.content(DEFAULT_PALETTE, self.animate);
                     if let (Some(surface), Some(content)) = (&self.surface, content) {
-                        self.shown_statuses = content
+                        self.shown_notes = content
                             .petals
                             .iter()
-                            .map(|petal| petal.status.clone())
+                            .map(|petal| petal.note.clone())
                             .collect();
                         surface.open(content);
                         (self.wake.schedule)();
@@ -502,17 +502,17 @@ impl<S: Surface> Menu<S> {
         }
     }
 
-    /// Reads again what the modules say under their names, and shows it if
-    /// it changed. The actions around the petals are read again by the
+    /// Reads again what the modules say on their petals, and shows it if it
+    /// changed. The actions around the petals are read again by the
     /// controller, which tells what to show.
-    fn refresh_statuses(&mut self) {
+    fn refresh_notes(&mut self) {
         if !self.controller.is_open() {
             return;
         }
-        let statuses = self.controller.statuses();
-        if statuses != self.shown_statuses {
-            self.with_surface(|surface| surface.update_statuses(statuses.clone()));
-            self.shown_statuses = statuses;
+        let notes = self.controller.notes();
+        if notes != self.shown_notes {
+            self.with_surface(|surface| surface.update_notes(notes.clone()));
+            self.shown_notes = notes;
         }
     }
 
@@ -598,8 +598,8 @@ mod tests {
             self.push(&format!("redraw {:?}", view.lit));
         }
 
-        fn update_statuses(&self, statuses: Vec<Option<String>>) {
-            self.push(&format!("statuses {statuses:?}"));
+        fn update_notes(&self, notes: Vec<PetalNote>) {
+            self.push(&format!("notes {notes:?}"));
         }
 
         fn update_items(&self, items: Vec<Vec<RadialItem>>) {
@@ -647,16 +647,16 @@ mod tests {
             Some(notes.clone()),
             Box::new(move |entry, action| chosen.push(&chosen_note(entry, action))),
             quiet_wake(notes),
-            presentation(notes, Statuses::default()),
+            presentation(notes, PetalNotes::default()),
         );
         (menu, lock)
     }
 
-    fn presentation(notes: &Notes, statuses: Statuses) -> Presentation {
+    fn presentation(window: &Notes, notes: PetalNotes) -> Presentation {
         Presentation {
-            feel: Arc::new(notes.clone()),
+            feel: Arc::new(window.clone()),
             looks: Looks::default(),
-            statuses,
+            notes,
             items: Items::default(),
         }
     }
@@ -682,8 +682,9 @@ mod tests {
             quiet_wake(notes),
             presentation(
                 notes,
-                Statuses::new(move |module| {
-                    (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone())
+                PetalNotes::new(move |module| PetalNote {
+                    status: (module.0 == "pomodoro").then(|| reader.lock().unwrap().clone()),
+                    badge: None,
                 }),
             ),
         );
@@ -715,7 +716,10 @@ mod tests {
         menu.handle(Event::Refresh);
         assert_eq!(
             notes.all().last().unwrap(),
-            r#"statuses [Some("Focus 2/4"), None, None, None]"#
+            "notes [PetalNote { status: Some(\"Focus 2/4\"), badge: None }, \
+             PetalNote { status: None, badge: None }, \
+             PetalNote { status: None, badge: None }, \
+             PetalNote { status: None, badge: None }]"
         );
         menu.handle(Event::Refresh);
         assert_eq!(notes.all().len(), 3, "said once");
@@ -843,7 +847,7 @@ mod tests {
             Presentation {
                 feel: Arc::new(Notes::default()),
                 looks: Looks::default(),
-                statuses: Statuses::default(),
+                notes: PetalNotes::default(),
                 items: Items::default(),
             },
         );
@@ -1026,7 +1030,7 @@ mod tests {
     ) -> Menu<Notes> {
         let (chosen, reader) = (chosen.clone(), Arc::clone(offered));
         let (_lock, locked) = watch::channel(false);
-        let mut presentation = presentation(notes, Statuses::default());
+        let mut presentation = presentation(notes, PetalNotes::default());
         presentation.items = Items::new(move |module| {
             if module.0 == "teams" {
                 reader.lock().unwrap().clone()
@@ -1172,7 +1176,7 @@ mod tests {
                 presentation: Presentation {
                     feel: Arc::new(crate::haptics::NoHaptics),
                     looks: Looks::default(),
-                    statuses: Statuses::default(),
+                    notes: PetalNotes::default(),
                     items: Items::default(),
                 },
             },

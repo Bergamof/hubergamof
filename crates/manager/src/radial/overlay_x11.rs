@@ -29,8 +29,8 @@ use super::controller::{View, WindowEvent};
 use super::geometry::{Point, Size};
 use super::paint::{PetalView, paint};
 use super::window::{
-    Content, Gone, MAX_OPEN, MAX_SURFACE_SIDE, Report, Surface, apply_items, apply_statuses,
-    has_expired, opening_progress, premultiplied_bgra,
+    Content, Gone, MAX_OPEN, MAX_SURFACE_SIDE, PetalNote, Report, Surface, apply_items,
+    apply_notes, has_expired, opening_progress, premultiplied_bgra,
 };
 use crate::render::{RenderError, TextRenderer};
 
@@ -78,7 +78,7 @@ enum Command {
     Open(Box<Content>),
     Place(View),
     Redraw(View),
-    Statuses(Vec<Option<String>>),
+    Notes(Vec<PetalNote>),
     Items(Vec<Vec<RadialItem>>),
     Close,
     Stop,
@@ -241,8 +241,8 @@ impl Surface for X11Overlay {
         self.send(Command::Redraw(view));
     }
 
-    fn update_statuses(&self, statuses: Vec<Option<String>>) {
-        self.send(Command::Statuses(statuses));
+    fn update_notes(&self, notes: Vec<PetalNote>) {
+        self.send(Command::Notes(notes));
     }
 
     fn update_items(&self, items: Vec<Vec<RadialItem>>) {
@@ -687,9 +687,9 @@ impl State {
                 }
                 self.draw();
             }
-            Command::Statuses(statuses) => {
+            Command::Notes(notes) => {
                 if let Some(shown) = &mut self.shown {
-                    apply_statuses(&mut shown.content.petals, statuses);
+                    apply_notes(&mut shown.content.petals, notes);
                 }
                 self.draw();
             }
@@ -799,7 +799,8 @@ impl State {
             .map(|petal| PetalView {
                 label: &petal.label,
                 icon: petal.icon.as_ref(),
-                status: petal.status.as_deref(),
+                status: petal.note.status.as_deref(),
+                badge: petal.note.badge,
                 items: &petal.items,
             })
             .collect();

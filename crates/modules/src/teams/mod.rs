@@ -21,9 +21,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use hubergamof_module_api::{
     Command, ContextDial, ImageData, ItemId, KeyContent, KeyState, Module, ModuleCapabilities,
-    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleSurface,
-    Notification, NotificationId, PageContent, PageId, PageItem, RadialActionDescriptor,
-    RadialGlyph, RadialItem, RadialItemState, Rgb, ScreenLockState,
+    ModuleContext, ModuleDescriptor, ModuleError, ModuleEvent, ModuleFactory, ModuleLifetime,
+    ModuleSurface, Notification, NotificationId, PageContent, PageId, PageItem,
+    RadialActionDescriptor, RadialGlyph, RadialItem, RadialItemState, Rgb, ScreenLockState,
 };
 use hubergamof_module_api::{HapticEventDescriptor, HapticWaveform};
 use serde_json::Value;
@@ -212,6 +212,11 @@ fn descriptor() -> ModuleDescriptor {
 }
 
 impl ModuleFactory for TeamsFactory {
+    /// One instance for the whole application.
+    fn lifetime(&self) -> ModuleLifetime {
+        ModuleLifetime::Application
+    }
+
     fn descriptor(&self) -> ModuleDescriptor {
         descriptor()
     }
@@ -743,6 +748,10 @@ impl Module for Teams {
         }
     }
 
+    fn page_ids(&self) -> Vec<PageId> {
+        vec![PageId(CALL_PAGE.into()), PageId(UNREAD_PAGE.into())]
+    }
+
     fn page(&self, page: &PageId) -> Option<PageContent> {
         match page.0.as_str() {
             UNREAD_PAGE => self.unread_page(),
@@ -772,6 +781,11 @@ impl Module for Teams {
             Some(item) => self.ask(item.action()),
             None => Vec::new(),
         }
+    }
+
+    fn radial_badge(&self) -> Option<u32> {
+        let unread = self.changes.borrow().total_unread();
+        (unread > 0).then_some(unread)
     }
 
     fn radial_status(&self) -> Option<String> {

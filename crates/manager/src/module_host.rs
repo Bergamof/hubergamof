@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use hubergamof_module_api::{
     Command, DialFunctionId, DialHint, KeyContent, ModuleInstanceId, ModuleKind, ModuleLifetime,
-    RadialItem, ScreenLockState, StripPopup, StripWidget,
+    PageContent, PageId, RadialItem, ScreenLockState, StripPopup, StripWidget,
 };
 use hubergamof_modules::ModuleRegistry;
 use hubergamof_protocol::{AppModulesConfig, ModuleInstance};
@@ -87,8 +87,13 @@ pub struct ModuleView {
     pub dial_hints: HashMap<DialFunctionId, DialHint>,
     /// What its petal says in the radial menu.
     pub radial_status: Option<String>,
+    /// The badge on the icon of its petal in the radial menu.
+    pub radial_badge: Option<u32>,
     /// The actions shown around its petal in the radial menu.
     pub radial_items: Vec<RadialItem>,
+    /// The pages it offers (see [`hubergamof_module_api::Module::page_ids`]),
+    /// as they are now.
+    pub pages: BTreeMap<PageId, PageContent>,
     /// Its settings as the instance runs with them.
     pub settings: Value,
 }
@@ -115,6 +120,8 @@ enum Request {
     Call {
         kind: ModuleKind,
         call: Call,
+        /// The page it comes from declares it usable while locked.
+        declared: bool,
         /// After this the device has given up: the input is dropped.
         deadline: tokio::time::Instant,
         reply: oneshot::Sender<Option<Outcome>>,
@@ -238,12 +245,21 @@ impl ModuleHost {
 
     /// Hands `call`, an input of a device, to the instance of `kind`. `None`
     /// when the host holds none or is gone. The host plays the haptic events
-    /// itself: they are not in the commands of the outcome.
-    pub(crate) async fn call(&self, kind: &ModuleKind, call: Call) -> Option<Outcome> {
+    /// itself: they are not in the commands of the outcome. `declared`: the
+    /// page the input comes from declares it usable while the computer is
+    /// locked, which the device checked (see [`Module::page`]'s
+    /// `lock_safe_pages`).
+    pub(crate) async fn call(
+        &self,
+        kind: &ModuleKind,
+        call: Call,
+        declared: bool,
+    ) -> Option<Outcome> {
         let (reply, answer) = oneshot::channel();
         let request = Request::Call {
             kind: kind.clone(),
             call,
+            declared,
             deadline: tokio::time::Instant::now() + APPLICATION_CALL_TIMEOUT,
             reply,
         };
@@ -429,8 +445,10 @@ impl Hosted {
             tracing::debug!(%id, "radial action refused: the computer is locked");
             return RadialReply::Refused;
         }
-        if let Some(Outcome::Done(commands)) =
-            self.instances.call(&id, Call::RadialAction(action)).await
+        if let Some(Outcome::Done(commands)) = self
+            .instances
+            .call(&id, Call::RadialAction(action), false)
+            .await
         {
             self.run(&id, commands);
         }
@@ -443,6 +461,7 @@ impl Hosted {
         &mut self,
         kind: &ModuleKind,
         call: Call,
+        declared: bool,
         deadline: tokio::time::Instant,
     ) -> Option<Outcome> {
         let id = self.by_kind.get(kind).cloned()?;
@@ -453,10 +472,13 @@ impl Hosted {
             return None;
         }
         if *self.locked.borrow() && !self.usable_when_locked(kind) {
-            tracing::debug!(%id, "input dropped: the computer is locked");
-            return None;
+            if !(declared && self.lock_safe_pages(kind) && self.page_declares(&id, &call)) {
+                tracing::debug!(%id, "input dropped: the computer is locked");
+                return None;
+            }
+            tracing::info!(%id, "input run on a locked computer: its page declares it usable");
         }
-        let outcome = self.instances.call(&id, call).await?;
+        let outcome = self.instances.call(&id, call, declared).await?;
         Some(match outcome {
             Outcome::Done(commands) => Outcome::Done(self.play_haptics(&id, commands)),
             Outcome::Failed => Outcome::Failed,
@@ -477,20 +499,9 @@ impl Hosted {
         let Some(kind) = self.kind_of(source) else {
             return;
         };
-        // A module of the application has no pages and no device of its own to
-        // navigate: only what can be shown on any device is passed on.
-        let (rest, navigation): (Vec<_>, Vec<_>) = rest.into_iter().partition(|command| {
-            matches!(
-                command,
-                Command::Notify(_)
-                    | Command::ShowNotification(_)
-                    | Command::Feedback(_)
-                    | Command::FeedbackOn(..)
-            )
-        });
-        if !navigation.is_empty() {
-            tracing::warn!(module = %source, dropped = navigation.len(), "navigation commands of a module of the application ignored");
-        }
+        // The devices apply them as if the instance were theirs, so a page
+        // the module opens (a call that rings) opens on every device that
+        // places it.
         if !rest.is_empty() {
             // Nobody listening is fine: no device, nobody to show it to.
             let _ = self.commands.send(AppCommands {
@@ -533,11 +544,49 @@ impl Hosted {
             .is_some_and(|factory| factory.descriptor().capabilities.usable_when_locked)
     }
 
+    /// Whether the key or the item `call` presses declares itself usable while
+    /// the computer is locked, as the instance shows it now: what a device
+    /// declared is only a hint, the instance has the last word. Anything that
+    /// is not a press of a key or of an item of a page declares nothing.
+    fn page_declares(&mut self, id: &ModuleInstanceId, call: &Call) -> bool {
+        match call {
+            Call::KeyPress => self
+                .instances
+                .key(id)
+                .is_some_and(|key| key.usable_when_locked),
+            Call::ItemPress(page, item) => self.instances.page(id, page).is_some_and(|content| {
+                content
+                    .items
+                    .iter()
+                    .any(|shown| shown.id == *item && shown.key.usable_when_locked)
+            }),
+            _ => false,
+        }
+    }
+
+    /// Whether the pages of the module of `kind` may declare what stays
+    /// usable while the computer is locked.
+    fn lock_safe_pages(&self, kind: &ModuleKind) -> bool {
+        self.registry
+            .get(kind)
+            .is_some_and(|factory| factory.descriptor().capabilities.lock_safe_pages)
+    }
+
     /// A device found `settings` for `kind`: kept when the file has nothing
     /// for it, so that what was configured on a deck before the module moved
     /// to the application is not lost. The first device to say wins.
     async fn adopt(&mut self, kind: ModuleKind, settings: Value) {
-        if self.config.modules.iter().any(|stored| stored.kind == kind) {
+        if let Some(stored) = self
+            .config
+            .modules
+            .iter()
+            .find(|stored| stored.kind == kind)
+        {
+            if stored.settings != settings {
+                // One set of settings for the whole application: a device
+                // that had others (before the module moved) loses them.
+                tracing::warn!(%kind, "a device has other settings than the application's: the application's are kept");
+            }
             return;
         }
         // Refused settings are logged by `set_settings`; a device has no use of
@@ -615,18 +664,24 @@ impl Hosted {
                     Some((function.clone(), hint))
                 })
                 .collect();
-            views.insert(
-                kind.clone(),
-                Arc::new(ModuleView {
-                    key: self.instances.key(id).unwrap_or_default(),
-                    strip_widget: self.instances.strip_widget(id),
-                    strip_popup: self.instances.strip_popup(id),
-                    dial_hints,
-                    radial_status: self.instances.radial_status(id),
-                    radial_items: self.instances.radial_items(id).unwrap_or_default(),
-                    settings: self.settings_of(kind),
-                }),
-            );
+            let view = ModuleView {
+                key: self.instances.key(id).unwrap_or_default(),
+                strip_widget: self.instances.strip_widget(id),
+                strip_popup: self.instances.strip_popup(id),
+                dial_hints,
+                radial_status: self.instances.radial_status(id),
+                radial_badge: self.instances.radial_badge(id),
+                radial_items: self.instances.radial_items(id).unwrap_or_default(),
+                pages: self.instances.pages(id),
+                settings: self.settings_of(kind),
+            };
+            // A module that shows what it showed keeps its `Arc`: a device
+            // can tell by the pointer that there is nothing to read again.
+            let view = match self.views.borrow().get(kind) {
+                Some(shown) if **shown == view => Arc::clone(shown),
+                _ => Arc::new(view),
+            };
+            views.insert(kind.clone(), view);
         }
         self.views.send_if_modified(|current| {
             let changed = *current != views;
@@ -715,8 +770,8 @@ async fn run(mut hosted: Hosted, mut requests: mpsc::Receiver<Request>) {
                     let answer = hosted.radial_action(&module, action).await;
                     let _ = reply.send(answer);
                 }
-                Some(Request::Call { kind, call, deadline, reply }) => {
-                    let outcome = hosted.call(&kind, call, deadline).await;
+                Some(Request::Call { kind, call, declared, deadline, reply }) => {
+                    let outcome = hosted.call(&kind, call, declared, deadline).await;
                     let _ = reply.send(outcome);
                 }
                 Some(Request::Adopt { kind, settings }) => hosted.adopt(kind, settings).await,
@@ -765,7 +820,11 @@ async fn stop_instances(mut instances: Instances) {
 mod tests {
     use std::sync::Mutex;
 
-    use hubergamof_module_api::Feedback;
+    use async_trait::async_trait;
+    use hubergamof_module_api::{
+        Feedback, ItemId, Module, ModuleCapabilities, ModuleContext, ModuleDescriptor, ModuleError,
+        ModuleFactory, PageItem,
+    };
     use hubergamof_modules::pomodoro::{MemoryStateStore, PomodoroStateStore};
     use hubergamof_modules::{BuiltinServices, builtin_registry_with};
     use serde_json::json;
@@ -791,6 +850,75 @@ mod tests {
         }
     }
 
+    /// A module of the application with a page where one item declares itself
+    /// usable while the computer is locked and another does not.
+    struct LockProbeFactory;
+
+    struct LockProbe;
+
+    const PROBE_PAGE: &str = "probe";
+    const SAFE_ITEM: &str = "safe";
+    const UNSAFE_ITEM: &str = "unsafe";
+
+    #[async_trait]
+    impl Module for LockProbe {
+        fn page_ids(&self) -> Vec<PageId> {
+            vec![PageId(PROBE_PAGE.into())]
+        }
+
+        fn page(&self, page: &PageId) -> Option<PageContent> {
+            (page.0 == PROBE_PAGE).then(|| {
+                PageContent::new(
+                    "Probe",
+                    vec![
+                        PageItem::new(
+                            ItemId(SAFE_ITEM.into()),
+                            KeyContent::with_label("safe").usable_when_locked(true),
+                        ),
+                        PageItem::new(ItemId(UNSAFE_ITEM.into()), KeyContent::with_label("unsafe")),
+                    ],
+                )
+            })
+        }
+
+        async fn on_item_press(&mut self, _page: &PageId, _item: &ItemId) -> Vec<Command> {
+            Vec::new()
+        }
+
+        fn update_settings(&mut self, _settings: &Value) -> Result<(), ModuleError> {
+            Ok(())
+        }
+    }
+
+    impl ModuleFactory for LockProbeFactory {
+        fn descriptor(&self) -> ModuleDescriptor {
+            let capabilities = ModuleCapabilities {
+                lock_safe_pages: true,
+                ..ModuleCapabilities::default()
+            };
+            ModuleDescriptor {
+                kind: "lockprobe".into(),
+                name: "Probe".into(),
+                description: String::new(),
+                capabilities,
+                dial_functions: Vec::new(),
+                settings: Vec::new(),
+            }
+        }
+
+        fn lifetime(&self) -> ModuleLifetime {
+            ModuleLifetime::Application
+        }
+
+        fn create(
+            &self,
+            _ctx: ModuleContext,
+            _settings: &Value,
+        ) -> Result<Box<dyn Module>, ModuleError> {
+            Ok(Box::new(LockProbe))
+        }
+    }
+
     struct FakeLock(watch::Sender<bool>);
 
     impl ScreenLock for FakeLock {
@@ -808,10 +936,12 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let state = Arc::new(MemoryStateStore::default());
-            let registry = Arc::new(builtin_registry_with(BuiltinServices {
+            let mut registry = builtin_registry_with(BuiltinServices {
                 pomodoro_state: Arc::clone(&state) as _,
                 ..BuiltinServices::simulated()
-            }));
+            });
+            registry.register(Arc::new(LockProbeFactory));
+            let registry = Arc::new(registry);
             Self {
                 dir: tempfile::tempdir().unwrap(),
                 state,
@@ -875,7 +1005,7 @@ mod tests {
     async fn a_module_the_application_does_not_hold_is_not_found() {
         let fixture = Fixture::new();
         let (host, _task) = fixture.start();
-        for module in ["audio", "nothing"] {
+        for module in ["docker", "nothing"] {
             assert_eq!(
                 host.radial_action(&module.into(), "toggle").await,
                 RadialReply::NotHeld
@@ -959,9 +1089,13 @@ mod tests {
         );
         assert!(heard.try_recv().is_err());
 
-        // Navigation means nothing without pages: it is not passed on.
-        hosted.run(&id, vec![Command::GoHome, Command::Back]);
-        assert!(heard.try_recv().is_err());
+        // Navigation (a page that opens) is passed on: devices that place the
+        // module apply it as their own.
+        hosted.run(&id, vec![Command::OpenPage("call".into()), Command::Back]);
+        assert_eq!(
+            heard.try_recv().unwrap().commands,
+            vec![Command::OpenPage("call".into()), Command::Back]
+        );
     }
 
     #[tokio::test]
@@ -987,7 +1121,7 @@ mod tests {
         let (host, _task) = fixture.start();
         host.adopt(&"pomodoro".into(), &json!({ "workMinutes": 30 }));
         host.update_settings(&"pomodoro".into(), &json!({ "workMinutes": 45 }));
-        host.update_settings(&"audio".into(), &json!({}));
+        host.update_settings(&"docker".into(), &json!({}));
         host.radial_action(&"nothing".into(), "x").await;
         let store = ConfigStore::new(fixture.dir.path(), Arc::clone(&fixture.registry));
         let stored = store.load_app_modules().unwrap().config;
@@ -1080,7 +1214,7 @@ mod tests {
 
         // The device gave up on it.
         let late = hosted
-            .call(&kind, Call::RadialAction("toggle".into()), now)
+            .call(&kind, Call::RadialAction("toggle".into()), false, now)
             .await;
         assert!(late.is_none());
         assert_eq!(fixture.saved(), None);
@@ -1090,10 +1224,39 @@ mod tests {
         locked.send_replace(true);
         let later = now + Duration::from_secs(60);
         let done = hosted
-            .call(&kind, Call::RadialAction("toggle".into()), later)
+            .call(&kind, Call::RadialAction("toggle".into()), false, later)
             .await;
         assert!(matches!(done, Some(Outcome::Done(_))));
         assert!(fixture.saved().is_some_and(|saved| saved.is_running()));
+    }
+
+    #[tokio::test]
+    async fn a_locked_computer_only_runs_what_the_page_declares_and_the_instance_confirms() {
+        let fixture = Fixture::new();
+        let locked = watch::Sender::new(true);
+        let services = fixture.services(Arc::new(NoHaptics), Arc::new(FakeLock(locked.clone())));
+        let (host, _task) = ModuleHost::start(services);
+        let press = |item: &str| Call::ItemPress(PageId(PROBE_PAGE.into()), ItemId(item.into()));
+        let probe: ModuleKind = "lockprobe".into();
+
+        // Declared by the page, and the instance agrees: it runs.
+        let done = host.call(&probe, press(SAFE_ITEM), true).await;
+        assert!(matches!(done, Some(Outcome::Done(_))));
+        // The device did not find it declared: dropped.
+        assert!(host.call(&probe, press(SAFE_ITEM), false).await.is_none());
+        // The device says declared but the instance does not: its word wins.
+        assert!(host.call(&probe, press(UNSAFE_ITEM), true).await.is_none());
+        // A page that is not there declares nothing.
+        let elsewhere = Call::ItemPress(PageId("gone".into()), ItemId(SAFE_ITEM.into()));
+        assert!(host.call(&probe, elsewhere, true).await.is_none());
+        // A module whose pages may not declare anything runs nothing locked.
+        let audio = Call::ItemPress(PageId("audio".into()), ItemId("microphone".into()));
+        assert!(host.call(&"audio".into(), audio, true).await.is_none());
+
+        // Unlocked, everything runs.
+        locked.send_replace(false);
+        let later = host.call(&probe, press(UNSAFE_ITEM), false).await;
+        assert!(matches!(later, Some(Outcome::Done(_))));
     }
 
     #[tokio::test]
@@ -1117,14 +1280,43 @@ mod tests {
         );
 
         let outcome = host
-            .call(&"pomodoro".into(), Call::RadialAction("toggle".into()))
+            .call(
+                &"pomodoro".into(),
+                Call::RadialAction("toggle".into()),
+                false,
+            )
             .await;
         assert!(matches!(outcome, Some(Outcome::Done(_))));
         views
             .wait_for(|views| views.get(&"pomodoro".into()).unwrap().key != before)
             .await
             .unwrap();
-        assert!(host.call(&"audio".into(), Call::KeyPress).await.is_none());
+        assert!(
+            host.call(&"docker".into(), Call::KeyPress, false)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pages_a_module_lists_are_shared_in_its_view() {
+        let fixture = Fixture::new();
+        let (host, _task) = fixture.start();
+        let mut views = host.views();
+        views
+            .wait_for(|views| views.contains_key(&"audio".into()))
+            .await
+            .unwrap();
+        let view = views.borrow().get(&"audio".into()).cloned().unwrap();
+        assert!(
+            view.pages.contains_key(&PageId("audio".into())),
+            "{:?}",
+            view.pages.keys()
+        );
+        // The module that lists none shares none.
+        let pomodoro = views.borrow().get(&"pomodoro".into()).cloned().unwrap();
+        assert!(pomodoro.pages.is_empty());
+        assert_eq!(pomodoro.radial_badge, None);
     }
 
     #[test]
@@ -1132,11 +1324,11 @@ mod tests {
         let fixture = Fixture::new();
         let none =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
-        assert_eq!(none.len(), 1);
-        assert_eq!(
-            (none[0].id.0.as_str(), none[0].kind.0.as_str()),
-            (POMODORO_ID, "pomodoro")
-        );
+        let default = none
+            .iter()
+            .find(|instance| instance.kind.0 == "pomodoro")
+            .expect("a default pomodoro");
+        assert_eq!(default.id.0, POMODORO_ID);
 
         stored(
             &fixture,
@@ -1144,9 +1336,13 @@ mod tests {
         );
         let mine =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
-        assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0].id.0, "mine");
-        assert_eq!(mine[0].settings["workMinutes"], 30);
+        let pomodoros: Vec<_> = mine
+            .iter()
+            .filter(|instance| instance.kind.0 == "pomodoro")
+            .collect();
+        assert_eq!(pomodoros.len(), 1);
+        assert_eq!(pomodoros[0].id.0, "mine");
+        assert_eq!(pomodoros[0].settings["workMinutes"], 30);
     }
 
     #[test]
@@ -1155,7 +1351,7 @@ mod tests {
         stored(
             &fixture,
             vec![
-                instance("a", "audio", json!({})),
+                instance("a", "docker", json!({})),
                 instance("first", "pomodoro", json!({})),
                 instance("second", "pomodoro", json!({})),
                 instance("ghost", "nothing", json!({})),
@@ -1164,7 +1360,10 @@ mod tests {
         let kept =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
         let ids: Vec<_> = kept.iter().map(|instance| instance.id.0.as_str()).collect();
-        assert_eq!(ids, ["first"]);
+        assert!(ids.contains(&"first"), "{ids:?}");
+        for ignored in ["a", "second", "ghost"] {
+            assert!(!ids.contains(&ignored), "{ignored} is ignored: {ids:?}");
+        }
     }
 
     #[test]
@@ -1180,7 +1379,16 @@ mod tests {
         .unwrap();
         let kept =
             configured_instances(&fixture.services(Arc::new(NoHaptics), Arc::new(NoScreenLock)));
-        assert_eq!(kept.len(), 1);
+        let application_kinds = fixture
+            .registry
+            .factories()
+            .filter(|factory| factory.lifetime() == ModuleLifetime::Application)
+            .count();
+        assert_eq!(kept.len(), application_kinds);
+        assert!(
+            kept.iter()
+                .all(|instance| instance.id.0.starts_with("app-"))
+        );
     }
 
     const TICKER_KIND: &str = "ticker";
@@ -1280,7 +1488,8 @@ mod tests {
         };
         assert_eq!(labels(&host), ["Start"]);
 
-        host.call(&kind, Call::RadialAction("toggle".into())).await;
+        host.call(&kind, Call::RadialAction("toggle".into()), false)
+            .await;
         views
             .wait_for(|views| views[&kind].radial_items[0].label == "Stop")
             .await

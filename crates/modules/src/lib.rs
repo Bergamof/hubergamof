@@ -263,7 +263,8 @@ mod tests {
 
     use hubergamof_module_api::testing::TestContext;
     use hubergamof_module_api::{
-        Module, ModuleCapabilities, ModuleEvent, StripWidget, TaskScope, VolumeWidget,
+        Module, ModuleCapabilities, ModuleEvent, ModuleLifetime, StripWidget, TaskScope,
+        VolumeWidget,
     };
     use serde_json::json;
     use tokio::sync::mpsc::UnboundedReceiver;
@@ -464,6 +465,45 @@ mod tests {
             registry.factories().count(),
             simulated_registry().factories().count()
         );
+    }
+
+    /// Where each builtin module lives, and the pages a module of the
+    /// application shares: a page missing from `page_ids` is a page its
+    /// devices never show.
+    #[tokio::test(start_paused = true)]
+    async fn the_modules_of_the_application_list_the_pages_they_offer() {
+        let registry = simulated_registry();
+        let expected: [(&str, ModuleLifetime, &[&str]); 7] = [
+            (
+                audio::AUDIO_KIND,
+                ModuleLifetime::Application,
+                &["audio", "outputs", "inputs"],
+            ),
+            (claude::CLAUDE_KIND, ModuleLifetime::Application, &[]),
+            (docker::DOCKER_KIND, ModuleLifetime::Device, &[]),
+            (
+                intellij::INTELLIJ_KIND,
+                ModuleLifetime::Application,
+                &["intellij"],
+            ),
+            (inbox::INBOX_KIND, ModuleLifetime::Device, &[]),
+            (pomodoro::POMODORO_KIND, ModuleLifetime::Application, &[]),
+            (
+                teams::TEAMS_KIND,
+                ModuleLifetime::Application,
+                &["call", "unread"],
+            ),
+        ];
+        for (kind, lifetime, pages) in expected {
+            let factory = registry.get(&kind.into()).unwrap();
+            assert_eq!(factory.lifetime(), lifetime, "{kind}");
+            if lifetime == ModuleLifetime::Application {
+                let settings = registry.default_settings(&kind.into());
+                let (module, _events, _scope) = instance(&registry, kind, &settings);
+                let listed: Vec<_> = module.page_ids().into_iter().map(|page| page.0).collect();
+                assert_eq!(listed, pages, "{kind}");
+            }
+        }
     }
 
     /// An instance of `kind` from `registry`, its events and its tasks.

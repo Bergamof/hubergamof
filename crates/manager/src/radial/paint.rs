@@ -33,6 +33,28 @@ const MAX_STATUS_LINES: usize = 2;
 /// Most characters of a line of status that are drawn: a petal is about a
 /// hundred pixels wide, and a module that says more is not allowed to spill.
 const MAX_STATUS_CHARS: usize = 24;
+/// Height of the badge on an icon (a count), in pixels.
+const ICON_BADGE_HEIGHT: f64 = 16.0;
+/// Width of a character of a badge, in pixels: the badge widens with the
+/// count it shows.
+const ICON_BADGE_CHARACTER_WIDTH: f64 = 7.0;
+/// Room left around the characters of a badge, in pixels.
+const ICON_BADGE_PADDING: f64 = 7.0;
+/// Font size of the count of a badge, in pixels.
+const ICON_BADGE_FONT_SIZE: f64 = 11.0;
+/// From how many a badge shows `99+` instead of the count.
+const ICON_BADGE_CAP: u32 = 99;
+/// How far a badge sticks out past the top right corner of the icon, in
+/// pixels.
+const ICON_BADGE_OVERHANG: f64 = 4.0;
+/// Red of a badge, whether or not its petal is lit; its white text reads
+/// at about 5:1 on it.
+const ICON_BADGE_FILL: &str = "#c8452d";
+/// White of the count of a badge.
+const ICON_BADGE_TEXT_FILL: &str = "#ffffff";
+/// Where the baseline of the count sits under the middle of the badge, as a
+/// fraction of the font size.
+const ICON_BADGE_BASELINE_RATIO: f64 = 1.0 / 3.0;
 /// Smallest the menu is while it opens, as a fraction of its size.
 const OPENING_SCALE: f64 = 0.85;
 /// Width of the thin edge along the outside of the petal that has actions, in
@@ -72,11 +94,23 @@ pub struct PetalView<'a> {
     pub icon: Option<&'a RgbaImage>,
     /// What the module says under the name, lines separated by `\n`.
     pub status: Option<&'a str>,
+    /// A count to show as a badge on the icon; none or zero shows none.
+    pub badge: Option<u32>,
     /// The actions drawn in front of the petal when it is the one lit.
     pub items: &'a [RadialItem],
 }
 
 impl PetalView<'_> {
+    /// The text of the badge: the count, `99+` from a hundred, nothing for
+    /// none or zero.
+    fn badge_text(&self) -> Option<String> {
+        match self.badge? {
+            0 => None,
+            count if count > ICON_BADGE_CAP => Some(format!("{ICON_BADGE_CAP}+")),
+            count => Some(count.to_string()),
+        }
+    }
+
     /// The lines of the status that are drawn, cut to fit the petal.
     fn status_lines(&self) -> Vec<String> {
         self.status
@@ -198,6 +232,16 @@ pub fn paint(
             };
             overlay_icon(&mut canvas, layout, index, &icon, scale, opening);
         }
+    }
+    let mut badges = String::new();
+    for (index, petal) in petals.iter().enumerate() {
+        push_icon_badge(&mut badges, layout, index, petal);
+    }
+    if !badges.is_empty() {
+        let group = format!(
+            r#"<g transform="translate({middle} {middle}) scale({scale})" opacity="{opening}">{badges}</g>"#
+        );
+        renderer.overlay_svg(&mut canvas, &group)?;
     }
     Ok(canvas)
 }
@@ -536,6 +580,30 @@ fn push_label(
     }
 }
 
+/// Adds the badge of petal `index` to `body`, on the top right corner of its
+/// icon; nothing without an icon or a count.
+fn push_icon_badge(body: &mut String, layout: &Layout, index: usize, petal: &PetalView<'_>) {
+    let (Some(text), Some(_)) = (petal.badge_text(), petal.icon) else {
+        return;
+    };
+    let lines = petal.status_lines().len();
+    let (centre, top, _) = content_places(layout, index, true, lines);
+    let width =
+        count_as_f64(text.chars().count()) * ICON_BADGE_CHARACTER_WIDTH + ICON_BADGE_PADDING;
+    let width = width.max(ICON_BADGE_HEIGHT);
+    let right = centre.x + ICON_SIZE / 2.0 + ICON_BADGE_OVERHANG;
+    let left = right - width;
+    let up = top - ICON_BADGE_OVERHANG;
+    let radius = ICON_BADGE_HEIGHT / 2.0;
+    let _ = write!(
+        body,
+        r#"<rect x="{left}" y="{up}" width="{width}" height="{ICON_BADGE_HEIGHT}" rx="{radius}" fill="{ICON_BADGE_FILL}"/><text x="{}" y="{}" font-family="{}" font-size="{ICON_BADGE_FONT_SIZE}" font-weight="700" text-anchor="middle" fill="{ICON_BADGE_TEXT_FILL}">{text}</text>"#,
+        left + width / 2.0,
+        up + radius + ICON_BADGE_FONT_SIZE * ICON_BADGE_BASELINE_RATIO,
+        crate::render::FONT_FAMILY,
+    );
+}
+
 /// Draws `icon` where petal `index` has it, scaled and faded like the rest of
 /// the menu while it opens.
 fn overlay_icon(
@@ -630,6 +698,7 @@ mod tests {
                 label,
                 icon: None,
                 status: None,
+                badge: None,
                 items: &[],
             })
             .collect()
@@ -731,18 +800,21 @@ mod tests {
                 label: "<b>&\"'",
                 icon: None,
                 status: None,
+                badge: None,
                 items: &[],
             },
             PetalView {
                 label: "a\u{1}b",
                 icon: None,
                 status: None,
+                badge: None,
                 items: &[],
             },
             PetalView {
                 label: "Audio",
                 icon: None,
                 status: None,
+                badge: None,
                 items: &[],
             },
         ];
@@ -760,6 +832,7 @@ mod tests {
             label: "Pomodoro",
             icon: None,
             status: None,
+            badge: None,
             items: &[],
         };
         let colour_of = |lit| {
@@ -807,6 +880,170 @@ mod tests {
         assert_eq!(long, cut, "a line is cut at the width of a petal");
     }
 
+    fn icon_image() -> RgbaImage {
+        RgbaImage::from_pixel(96, 96, Rgba([0x20, 0x90, 0x40, 0xff]))
+    }
+
+    #[test]
+    fn a_badge_says_the_count_up_to_ninety_nine() {
+        let text = |badge| {
+            PetalView {
+                badge,
+                ..views(1).remove(0)
+            }
+            .badge_text()
+        };
+        assert_eq!(text(None), None);
+        assert_eq!(text(Some(0)), None);
+        assert_eq!(text(Some(1)).as_deref(), Some("1"));
+        assert_eq!(text(Some(99)).as_deref(), Some("99"));
+        assert_eq!(text(Some(100)).as_deref(), Some("99+"));
+        assert_eq!(text(Some(u32::MAX)).as_deref(), Some("99+"));
+    }
+
+    #[test]
+    fn a_badge_is_drawn_over_the_icon_only_when_there_is_a_count() {
+        let renderer = TextRenderer::new().unwrap();
+        let icon = icon_image();
+        let paint_with = |badge: Option<u32>| {
+            let petals: Vec<_> = views(4)
+                .into_iter()
+                .map(|view| PetalView {
+                    icon: Some(&icon),
+                    badge,
+                    ..view
+                })
+                .collect();
+            paint(&renderer, &layout(4), &petals, None, None, 1.0, PALETTE).unwrap()
+        };
+        let none = paint_with(None);
+        assert_eq!(none, paint_with(Some(0)), "zero draws nothing");
+        let some = paint_with(Some(5));
+        assert_ne!(none, some, "the badge is drawn");
+        let red = |image: &RgbaImage| {
+            image
+                .pixels()
+                .filter(|pixel| pixel.0[..3] == [0xc8, 0x45, 0x2d] && pixel.0[3] > 200)
+                .count()
+        };
+        assert_eq!(red(&none), 0);
+        assert!(red(&some) > 100, "{}", red(&some));
+        // A longer count widens the badge, and a huge one is capped.
+        assert!(red(&paint_with(Some(42))) > red(&some));
+        assert_eq!(paint_with(Some(100)), paint_with(Some(100_000)));
+    }
+
+    #[test]
+    fn a_badge_follows_the_opening_of_the_menu_and_needs_an_icon() {
+        let renderer = TextRenderer::new().unwrap();
+        let without_icon: Vec<_> = views(4)
+            .into_iter()
+            .map(|view| PetalView {
+                badge: Some(7),
+                ..view
+            })
+            .collect();
+        let plain = paint(&renderer, &layout(4), &views(4), None, None, 1.0, PALETTE).unwrap();
+        let badged = paint(
+            &renderer,
+            &layout(4),
+            &without_icon,
+            None,
+            None,
+            1.0,
+            PALETTE,
+        )
+        .unwrap();
+        assert_eq!(plain, badged, "no icon: nowhere to put a badge");
+
+        let icon = icon_image();
+        let with_icon: Vec<_> = without_icon
+            .iter()
+            .map(|view| PetalView {
+                icon: Some(&icon),
+                ..*view
+            })
+            .collect();
+        let unbadged: Vec<_> = with_icon
+            .iter()
+            .map(|view| PetalView {
+                badge: None,
+                ..*view
+            })
+            .collect();
+        // How many pixels the badges change at `opening`.
+        let drawn = |opening: f32| {
+            let with = paint(
+                &renderer,
+                &layout(4),
+                &with_icon,
+                None,
+                None,
+                opening,
+                PALETTE,
+            )
+            .unwrap();
+            let without = paint(
+                &renderer,
+                &layout(4),
+                &unbadged,
+                None,
+                None,
+                opening,
+                PALETTE,
+            )
+            .unwrap();
+            with.pixels()
+                .zip(without.pixels())
+                .filter(|(a, b)| a != b)
+                .count()
+        };
+        assert_eq!(drawn(0.0), 0, "invisible as the menu starts to open");
+        assert!(
+            drawn(0.5) > 0 && drawn(0.5) < drawn(1.0),
+            "it grows with the opening"
+        );
+    }
+
+    /// The box around the pixels of the badge of a single petal.
+    fn badge_box(status: Option<&'static str>) -> (f64, f64, f64, f64) {
+        let renderer = TextRenderer::new().unwrap();
+        let icon = icon_image();
+        let petals = [PetalView {
+            icon: Some(&icon),
+            badge: Some(5),
+            status,
+            ..views(1).remove(0)
+        }];
+        let image = paint(&renderer, &layout(1), &petals, None, None, 1.0, PALETTE).unwrap();
+        let (mut left, mut top, mut right, mut bottom) = (f64::MAX, f64::MAX, 0.0_f64, 0.0_f64);
+        for (x, y, pixel) in image.enumerate_pixels() {
+            if pixel.0[..3] == [0xc8, 0x45, 0x2d] && pixel.0[3] > 200 {
+                let (x, y) = (f64::from(x), f64::from(y));
+                (left, top) = (left.min(x), top.min(y));
+                (right, bottom) = (right.max(x), bottom.max(y));
+            }
+        }
+        let middle = f64::from(image.width()) / 2.0;
+        (left - middle, top - middle, right - middle, bottom - middle)
+    }
+
+    #[test]
+    fn the_badge_sits_on_the_top_right_corner_of_the_icon_whatever_the_status() {
+        for (status, lines) in [(None, 0), (Some("a\nb"), 2)] {
+            let (_, top, right, bottom) = badge_box(status);
+            let (centre, icon_top, _) = content_places(&layout(1), 0, true, lines);
+            let corner = centre.x + ICON_SIZE / 2.0 + ICON_BADGE_OVERHANG;
+            assert!((right - corner).abs() <= 1.5, "right {right} vs {corner}");
+            let up = icon_top - ICON_BADGE_OVERHANG;
+            assert!((top - up).abs() <= 1.5, "top {top} vs {up}");
+            assert!(
+                (bottom - (up + ICON_BADGE_HEIGHT)).abs() <= 1.5,
+                "bottom {bottom}"
+            );
+        }
+    }
+
     #[test]
     fn the_block_of_a_petal_stays_centred_whatever_the_lines_of_status() {
         let layout = layout(4);
@@ -826,6 +1063,7 @@ mod tests {
             .map(|view| PetalView {
                 icon: Some(&red),
                 status: None,
+                badge: None,
                 ..view
             })
             .collect();

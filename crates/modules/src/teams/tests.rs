@@ -1527,3 +1527,59 @@ async fn the_petal_says_when_a_call_rings_and_forgets_it_after() {
         .await;
     assert_eq!(harness.module.radial_status(), None);
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_petal_counts_what_teams_counts_and_lists_its_pages() {
+    let mut harness = Harness::new(SimulatedBridge::new());
+    assert_eq!(harness.module.radial_badge(), None);
+    harness
+        .report(BrowserReport::Badges {
+            activity: 2,
+            chats: 3,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(5));
+    harness
+        .report(BrowserReport::Badges {
+            activity: 0,
+            chats: 0,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), None, "zero draws no badge");
+
+    // One counter alone counts.
+    harness
+        .report(BrowserReport::Badges {
+            activity: 0,
+            chats: 4,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(4));
+    harness
+        .report(BrowserReport::Badges {
+            activity: 6,
+            chats: 0,
+        })
+        .await;
+    assert_eq!(harness.module.radial_badge(), Some(6));
+
+    let pages: Vec<_> = harness
+        .module
+        .page_ids()
+        .into_iter()
+        .map(|page| page.0)
+        .collect();
+    assert_eq!(pages, [CALL_PAGE, UNREAD_PAGE]);
+}
+
+#[test]
+fn teams_lives_in_the_application() {
+    let factory = TeamsFactory::new(
+        Arc::new(SimulatedBridge::new()),
+        DesktopHub::new(
+            Arc::new(SimulatedDesktop::empty()) as _,
+            vec![desktop_app()],
+        ),
+    );
+    assert_eq!(factory.lifetime(), ModuleLifetime::Application);
+}
