@@ -235,6 +235,10 @@ pub enum BrowserReport {
         /// Unread conversations announced by the Conversation badge (the
         /// bubble).
         chats: u32,
+        /// Unread channels announced by the Teams badge; `0` from an older
+        /// extension, and when the application is not pinned to the rail.
+        #[serde(default)]
+        teams: u32,
     },
     /// The version of the extension, sent at every connection: the manager
     /// tells the user when it is not its own.
@@ -247,6 +251,12 @@ pub enum BrowserReport {
     #[serde(rename_all = "camelCase")]
     Conversations {
         /// The unread conversations, with their avatar when there is one.
+        unread: Vec<UnreadConversation>,
+    },
+    /// Names of the unread channels, read from the list of the Teams view.
+    #[serde(rename_all = "camelCase")]
+    Channels {
+        /// The unread channels; they have no avatar.
         unread: Vec<UnreadConversation>,
     },
     /// State of the call.
@@ -298,6 +308,8 @@ pub enum Panel {
     Activity,
     /// The conversation list (the bubble).
     Chat,
+    /// The teams and their channels.
+    Teams,
 }
 
 /// A message to the extension.
@@ -319,6 +331,11 @@ pub enum ManagerRequest {
         /// The identifier, as reported.
         id: String,
     },
+    /// Show a channel the extension reported, by its identifier.
+    OpenChannel {
+        /// The identifier, as reported.
+        id: String,
+    },
 }
 
 /// `text` without control characters nor bidirectional overrides (which
@@ -331,6 +348,20 @@ fn bounded_text(text: &str) -> String {
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+/// `unread` with every name bounded, empty ones dropped, and no more than
+/// [`MAX_CONVERSATIONS`] kept.
+fn sanitized_unread(unread: Vec<UnreadConversation>) -> Vec<UnreadConversation> {
+    unread
+        .into_iter()
+        .map(|conversation| UnreadConversation {
+            name: bounded_text(&conversation.name),
+            ..conversation
+        })
+        .filter(|conversation| !conversation.name.is_empty())
+        .take(MAX_CONVERSATIONS)
+        .collect()
 }
 
 impl CallPhase {
@@ -349,20 +380,23 @@ impl BrowserReport {
     pub fn sanitized(self) -> Self {
         match self {
             Self::Unread { count } => Self::Unread { count },
-            Self::Badges { activity, chats } => Self::Badges { activity, chats },
+            Self::Badges {
+                activity,
+                chats,
+                teams,
+            } => Self::Badges {
+                activity,
+                chats,
+                teams,
+            },
             Self::Hello { version } => Self::Hello {
                 version: bounded_text(&version),
             },
             Self::Conversations { unread } => Self::Conversations {
-                unread: unread
-                    .into_iter()
-                    .map(|conversation| UnreadConversation {
-                        name: bounded_text(&conversation.name),
-                        ..conversation
-                    })
-                    .filter(|conversation| !conversation.name.is_empty())
-                    .take(MAX_CONVERSATIONS)
-                    .collect(),
+                unread: sanitized_unread(unread),
+            },
+            Self::Channels { unread } => Self::Channels {
+                unread: sanitized_unread(unread),
             },
             Self::Call {
                 phase,
@@ -657,9 +691,17 @@ mod tests {
             report.clone().sanitized(),
             BrowserReport::Badges {
                 activity: 2,
-                chats: 3
-            }
+                chats: 3,
+                teams: 0
+            },
+            "an older extension sends no Teams counter"
         );
+        let report: BrowserReport =
+            serde_json::from_str(r#"{"type":"badges","activity":2,"chats":3,"teams":4}"#).unwrap();
+        assert!(matches!(
+            report.sanitized(),
+            BrowserReport::Badges { teams: 4, .. }
+        ));
         assert!(
             serde_json::from_str::<BrowserReport>(r#"{"type":"badges","activity":-1,"chats":0}"#)
                 .is_err()
@@ -684,6 +726,18 @@ mod tests {
             serde_json::to_string(&open).unwrap(),
             r#"{"type":"openConversation","id":"19:a"}"#
         );
+        let channel = ManagerRequest::OpenChannel { id: "19:c".into() };
+        assert_eq!(
+            serde_json::to_string(&channel).unwrap(),
+            r#"{"type":"openChannel","id":"19:c"}"#
+        );
+        let panel = ManagerRequest::OpenPanel {
+            panel: Panel::Teams,
+        };
+        assert_eq!(
+            serde_json::to_string(&panel).unwrap(),
+            r#"{"type":"openPanel","panel":"teams"}"#
+        );
         let act = ManagerRequest::Do {
             action: CallAction::HangUp,
         };
@@ -691,6 +745,29 @@ mod tests {
             serde_json::to_string(&act).unwrap(),
             r#"{"type":"do","action":"hangUp"}"#
         );
+    }
+
+    #[test]
+    fn the_unread_channels_are_bounded_like_the_conversations() {
+        let names = (0..MAX_CONVERSATIONS * 2)
+            .map(|n| format!("canal {n}"))
+            .chain([String::new(), "x".repeat(MAX_TEXT_CHARS * 2)])
+            .map(UnreadConversation::named)
+            .collect();
+        let BrowserReport::Channels { unread } =
+            (BrowserReport::Channels { unread: names }).sanitized()
+        else {
+            panic!("a list of channels stays one");
+        };
+        assert_eq!(unread.len(), MAX_CONVERSATIONS);
+        let report: BrowserReport = serde_json::from_str(
+            r#"{"type":"channels","unread":[{"name":"Général","id":"19:c"}]}"#,
+        )
+        .unwrap();
+        let BrowserReport::Channels { unread } = report.sanitized() else {
+            panic!("a list of channels stays one");
+        };
+        assert_eq!(unread[0].id.as_deref(), Some("19:c"));
     }
 
     #[test]
