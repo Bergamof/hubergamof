@@ -39,6 +39,7 @@ const SYSTEM_HOSTS = [
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
+		options: [],
 		otherOptions: []
 	},
 	{
@@ -49,7 +50,8 @@ const SYSTEM_HOSTS = [
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
-		otherOptions: ['proxycommand']
+		options: [],
+		otherOptions: ['identityfile']
 	}
 ];
 
@@ -191,7 +193,10 @@ test('ajoute des options communes et des options d’un serveur, refuse « Host 
 		{ key: 'ServerAliveInterval', value: '30', enabled: true }
 	]);
 
-	await page.getByText(/^Options avancées/).click();
+	await page
+		.getByText(/^Options avancées/)
+		.first()
+		.click();
 	const own = page.getByRole('form', { name: 'Ajouter une option à prod' });
 	await own.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
 	await own.getByRole('textbox', { name: 'Valeur' }).fill('yes');
@@ -219,6 +224,27 @@ test('montre à l’écran, en français, qu’une option enregistrée n’est p
 	await expect(alert).toBeInViewport();
 });
 
+test('ajoute un serveur avec ses options depuis le formulaire, Entrée ajoute l’option', async ({
+	page
+}) => {
+	const manager = await playManager(page);
+	await openSsh(page);
+	const form = addForm(page);
+	await form.getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
+	await form.getByText(/^Options avancées/).click();
+	await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
+	await page.keyboard.press('Tab');
+	await page.keyboard.type('yes');
+	await page.keyboard.press('Enter');
+	expect(manager.received).not.toContain('updateSsh');
+	await expect(form.getByRole('list', { name: 'Options' })).toContainText('Compression');
+	await form.getByRole('button', { name: 'Ajouter', exact: true }).click();
+	await expect(managed(page).getByText(/Options avancées \(1\)/)).toBeVisible();
+	expect(manager.config.hosts[0].options).toEqual([
+		{ key: 'Compression', value: 'yes', enabled: true }
+	]);
+});
+
 test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page }) => {
 	const manager = await playManager(page);
 	await openSsh(page);
@@ -231,7 +257,7 @@ test('refuse un rebond qui serait une option de ssh, au clavier', async ({ page 
 	expect(manager.received).not.toContain('updateSsh');
 });
 
-test('reprend un serveur trouvé dans ~/.ssh/config, sauf celui qui lance un programme', async ({
+test('reprend un serveur trouvé dans ~/.ssh/config avec ses options, sauf celui qu’on perdrait', async ({
 	page
 }) => {
 	const manager = await playManager(page);
@@ -298,10 +324,18 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		};
 		await scan('page SSH');
 
-		await addForm(page).getByRole('button', { name: 'Ajouter' }).click();
+		await addForm(page)
+			.getByText(/^Options avancées/)
+			.click();
+		await scan('options avancées dans le formulaire');
+
+		await addForm(page).getByRole('button', { name: 'Ajouter', exact: true }).click();
 		await scan('formulaire en erreur');
 
-		await page.getByText(/^Options avancées/).click();
+		await page
+			.getByText(/^Options avancées/)
+			.first()
+			.click();
 		await scan('options avancées d’un serveur');
 
 		await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();

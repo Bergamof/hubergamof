@@ -734,7 +734,12 @@ fn ssh_messages_and_configuration() {
                 identity_file: String::new(),
                 proxy_jump: String::new(),
                 forward_agent: false,
-                other_options: vec!["proxycommand".into()],
+                options: vec![AdvancedSetting {
+                    key: "ProxyCommand".into(),
+                    value: "nc %h %p".into(),
+                    enabled: true,
+                }],
+                other_options: vec!["identityfile".into()],
             }],
         },
         &json!({
@@ -743,7 +748,8 @@ fn ssh_messages_and_configuration() {
             "systemHosts": [{
                 "alias": "web", "hostName": "", "user": "", "port": null,
                 "identityFile": "", "proxyJump": "", "forwardAgent": false,
-                "otherOptions": ["proxycommand"]
+                "options": [{ "key": "ProxyCommand", "value": "nc %h %p", "enabled": true }],
+                "otherOptions": ["identityfile"]
             }]
         }),
     );

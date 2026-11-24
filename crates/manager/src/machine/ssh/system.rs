@@ -7,7 +7,7 @@
 use hubergamof_protocol::SshSystemHost;
 
 use super::apply::SshFiles;
-use super::sections::{Header, lines_of, option_of, sections, unmanaged_options};
+use super::sections::{Header, lines_of, option_of, sections, split_options};
 use crate::machine::files::{FileError, read_text_file};
 
 /// Most hosts listed.
@@ -44,14 +44,16 @@ fn parse_hosts(content: &str) -> Vec<SshSystemHost> {
             identity_file: String::new(),
             proxy_jump: String::new(),
             forward_agent: false,
+            options: Vec::new(),
             other_options: Vec::new(),
         };
         if patterns.len() != 1 || patterns.iter().any(|name| name.contains(['*', '?', '!'])) {
             host.other_options.push(SEVERAL_PATTERNS.to_owned());
         }
         let body = &lines[section.lines.clone()];
-        host.other_options
-            .extend(unmanaged_options(body.iter().copied()));
+        let split = split_options(body.iter().copied());
+        host.options = split.free;
+        host.other_options.extend(split.lost);
         let mut seen: Vec<String> = Vec::new();
         for line in &body[1..] {
             let Some((keyword, value)) = option_of(line) else {
@@ -124,9 +126,55 @@ mod tests {
     }
 
     #[test]
-    fn other_options_are_named_and_keep_the_host_from_being_taken() {
-        let hosts = parse_hosts("Host a\n\tUser u\n\tProxyCommand nc %h %p\n\tCompression yes\n");
-        assert_eq!(hosts[0].other_options, ["proxycommand", "compression"]);
+    fn the_other_options_are_carried_as_they_are_written() {
+        let hosts = parse_hosts(
+            "Host a\n\tUser u\n\tProxyCommand nc %h %p\n\tcompression=yes\n\t\"SendEnv\" \"A B\"\n",
+        );
+        let found: Vec<_> = hosts[0]
+            .options
+            .iter()
+            .map(|option| (option.key.as_str(), option.value.as_str(), option.enabled))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("ProxyCommand", "nc %h %p", true),
+                ("compression", "yes", true),
+                ("SendEnv", "\"A B\"", true),
+            ]
+        );
+        assert_eq!(hosts[0].other_options, Vec::<String>::new());
+    }
+
+    #[test]
+    fn what_cannot_be_carried_is_named_and_keeps_the_host_from_being_taken() {
+        let hosts = parse_hosts(
+            "Host a\n\tCompression yes\n\tcompression no\n\tServerAliveInterval 5\n\tSendEnv \"A\n\tBad@Key 1\n",
+        );
+        assert_eq!(
+            hosts[0].other_options,
+            ["compression", "sendenv", "bad@key"]
+        );
+        let kept: Vec<_> = hosts[0].options.iter().map(|o| o.key.as_str()).collect();
+        assert_eq!(
+            kept,
+            ["ServerAliveInterval"],
+            "an option written twice is carried by neither line"
+        );
+    }
+
+    #[test]
+    fn no_more_options_are_carried_than_a_list_holds() {
+        let mut content = String::from("Host a\n");
+        for i in 0..=hubergamof_protocol::MAX_ADVANCED_SETTINGS {
+            writeln!(content, "\tKey{i} v").unwrap();
+        }
+        let hosts = parse_hosts(&content);
+        assert_eq!(
+            hosts[0].options.len(),
+            hubergamof_protocol::MAX_ADVANCED_SETTINGS
+        );
+        assert_eq!(hosts[0].other_options.len(), 1);
     }
 
     #[test]

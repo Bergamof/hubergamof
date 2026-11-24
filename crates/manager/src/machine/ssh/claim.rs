@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use super::sections::{CLAIMED_MARKER, Header, lines_of, sections, unmanaged_options};
+use super::sections::{CLAIMED_MARKER, Header, lines_of, sections, split_options};
 
 /// The alias of a section that is one host: a single name, no joker.
 fn single_alias(patterns: &[String]) -> Option<&str> {
@@ -19,22 +19,29 @@ fn single_alias(patterns: &[String]) -> Option<&str> {
     }
 }
 
-/// Whether `lines` hold nothing but what HuBergamof manages and can give back
-/// as it is (see [`unmanaged_options`]), with their quotes in pairs. The lines
-/// may be commented out by HuBergamof or not.
+/// Whether `lines` hold nothing but what HuBergamof can carry and give back as
+/// it was written (see [`split_options`]): the options of its fields and the
+/// options written by the person, with their quotes in pairs. The lines may be
+/// commented out by HuBergamof or not.
 ///
-/// A list of what is allowed rather than of what is forbidden: `ssh` reads a
-/// keyword with its quotes taken off, and has options that run a program or
-/// weaken the connection (`ProxyCommand`, `LocalCommand`, `XAuthLocation`,
-/// `StrictHostKeyChecking`, forwards…) beyond any list.
-fn only_managed_options(lines: &[&str]) -> bool {
+/// No option is refused for what it does (`ProxyCommand`, `LocalCommand`…):
+/// the person can write them in the list of the options of a host, and a host
+/// taken over with them is given back with them. What stops a section is what
+/// cannot be carried without loss (an option written twice, a value `ssh`
+/// would read otherwise). A marker copied from another computer can thus
+/// switch on a section with such an option once its host leaves the
+/// configuration: whoever writes in `~/.ssh/config` can write it directly
+/// (`docs/security.md`).
+fn only_carried_options(lines: &[&str]) -> bool {
     let inner = |line: &&str| -> String {
         let text = line.trim_end_matches(['\n', '\r']);
         text.strip_prefix(CLAIMED_MARKER).unwrap_or(text).to_owned()
     };
     let texts: Vec<String> = lines.iter().map(inner).collect();
     texts.iter().all(|text| text.matches('"').count() % 2 == 0)
-        && unmanaged_options(texts.iter().map(String::as_str)).is_empty()
+        && split_options(texts.iter().map(String::as_str))
+            .lost
+            .is_empty()
 }
 
 /// Whether every non-blank line of `lines` is commented out by HuBergamof.
@@ -57,7 +64,7 @@ pub(super) fn untakeable_names<'a>(content: &str, aliases: &HashSet<&'a str>) ->
         let named = single_alias(patterns).and_then(|alias| aliases.get(alias).copied());
         if let Some(alias) = named
             && !section.marked
-            && !only_managed_options(&lines[section.lines.clone()])
+            && !only_carried_options(&lines[section.lines.clone()])
             && !found.contains(&alias)
         {
             found.push(alias);
@@ -85,7 +92,7 @@ pub(super) fn claim_originals(content: &str, aliases: &HashSet<&str>) -> String 
         };
         let alias = single_alias(patterns);
         let named = alias.is_some_and(|alias| aliases.contains(alias));
-        if !section.marked && named && only_managed_options(own) {
+        if !section.marked && named && only_carried_options(own) {
             for line in own {
                 if line.trim().is_empty() {
                     claimed.push_str(line);
@@ -98,7 +105,7 @@ pub(super) fn claim_originals(content: &str, aliases: &HashSet<&str>) -> String 
             && alias.is_some()
             && !named
             && all_commented_out(own)
-            && only_managed_options(own)
+            && only_carried_options(own)
         {
             for line in own {
                 claimed.push_str(line.strip_prefix(CLAIMED_MARKER).unwrap_or(line));
@@ -184,33 +191,41 @@ mod tests {
     }
 
     #[test]
-    fn a_section_with_an_option_that_is_not_managed_is_never_given_back() {
+    fn a_section_with_options_written_by_the_person_is_taken_and_given_back_as_it_was() {
         for option in [
             "ProxyCommand nc %h %p",
             "ProxyCommand=nc %h %p",
             "\"ProxyCommand\" nc %h %p",
-            "Proxy\"Command\" nc",
             "LocalCommand curl x | sh",
-            "PermitLocalCommand yes",
             "XAuthLocation /tmp/x",
-            "KnownHostsCommand x",
             "Include other",
-            "IdentityAgent /tmp/x",
             "StrictHostKeyChecking no",
-            "LocalForward 8080 localhost:80",
+            "SendEnv \"A B\"",
             "Compression yes",
         ] {
-            let content = format!("#hubergamof-off# Host x\n#hubergamof-off# \t{option}\n");
-            assert_eq!(claim_originals(&content, &names(&[])), content, "{option}");
+            let content = format!("Host prod\n\tUser u\n\t{option}\n");
+            let claimed = claim_originals(&content, &names(&["prod"]));
+            assert!(
+                claimed.starts_with("#hubergamof-off# Host prod\n"),
+                "{option}"
+            );
+            assert_eq!(
+                untakeable_names(&content, &names(&["prod"])),
+                Vec::<&str>::new()
+            );
+            assert_eq!(claim_originals(&claimed, &names(&[])), content, "{option}");
         }
     }
 
     #[test]
-    fn a_section_with_an_option_that_is_not_managed_is_never_taken() {
+    fn a_section_with_what_cannot_be_carried_is_never_taken_nor_given_back() {
         for option in [
-            "ProxyCommand nc %h %p",
-            "\"ProxyCommand\" nc",
-            "Compression yes",
+            "Compression yes\n\tCompression no",
+            "IdentityFile k1\n\tIdentityFile k2",
+            "ForwardAgent /tmp/agent.sock",
+            "Port ssh",
+            "SendEnv \"A",
+            "Bad@Key yes",
         ] {
             let content = format!("Host prod\n\tUser u\n\t{option}\n");
             assert_eq!(
@@ -222,12 +237,19 @@ mod tests {
                 untakeable_names(&content, &names(&["prod", "other"])),
                 ["prod"]
             );
+            let mut marked = String::new();
+            for line in content.lines() {
+                marked.push_str(CLAIMED_MARKER);
+                marked.push_str(line);
+                marked.push('\n');
+            }
+            assert_eq!(claim_originals(&marked, &names(&[])), marked, "{option}");
         }
     }
 
     #[test]
     fn the_names_that_cannot_be_taken_are_those_of_the_configuration_only() {
-        let content = "Host a\n\tProxyCommand x\nHost b\n\tUser u\nHost c d\n\tProxyCommand y\n";
+        let content = "Host a\n\tIdentityFile x\n\tIdentityFile y\nHost b\n\tUser u\nHost c d\n\tIdentityFile x\n\tIdentityFile y\n";
         assert_eq!(untakeable_names(content, &names(&["a", "b", "c"])), ["a"]);
         assert_eq!(untakeable_names(content, &names(&[])), Vec::<&str>::new());
         // What HuBergamof commented out is not a conflict: it is its own.

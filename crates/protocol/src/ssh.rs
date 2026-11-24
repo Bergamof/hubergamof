@@ -89,9 +89,14 @@ pub struct SshSystemHost {
     pub proxy_jump: String,
     /// `ForwardAgent` is `yes`.
     pub forward_agent: bool,
-    /// The options of the host that HuBergamof does not manage, by name. A
-    /// host that has some cannot be taken over: commenting it out would lose
-    /// them.
+    /// The other options of the host, as written, which become its options
+    /// when it is taken over.
+    pub options: Vec<AdvancedSetting>,
+    /// What of the host HuBergamof cannot carry without loss, by option name
+    /// (lowercase): an option written twice, a second `IdentityFile`, a
+    /// `ForwardAgent` that is not `yes` or `no`, a port that is not a number,
+    /// quotes that do not pair up. A host that has some cannot be taken over:
+    /// commenting it out would lose them.
     pub other_options: Vec<String>,
 }
 

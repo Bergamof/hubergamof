@@ -4,6 +4,10 @@
 
 use std::ops::Range;
 
+use hubergamof_protocol::{
+    AdvancedSetting, MAX_ADVANCED_SETTINGS, is_valid_ssh_option_key, is_valid_ssh_option_value,
+};
+
 /// What starts a line of `~/.ssh/config` that HuBergamof has commented out
 /// because it took the host over. It is a comment for `ssh`, and the marker
 /// tells it from a comment of the user, so that it can be given back.
@@ -15,37 +19,73 @@ fn dequoted(word: &str) -> String {
     word.chars().filter(|c| !matches!(c, '"' | '\'')).collect()
 }
 
-/// What of a section HuBergamof cannot represent, by option name (lowercase,
-/// once each, in order): the options it does not manage, and the managed ones
-/// whose value it could not give back as it is. `lines` are the lines of one
-/// section, the header included, without the marker of a commented-out line.
+/// What of the options of a section HuBergamof can carry, and what it cannot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct SplitOptions {
+    /// The options it does not manage with a field of its own, that it can give
+    /// back as they were written: a valid name and value, once each. They
+    /// become the options of the host when it is taken over.
+    pub free: Vec<AdvancedSetting>,
+    /// What it cannot represent, by option name (lowercase, once each, in
+    /// order): a host that has some cannot be taken over, it would lose them.
+    pub lost: Vec<String>,
+}
+
+/// The options of one section, split by [`SplitOptions`]. `lines` are the lines
+/// of the section, the header included, without the marker of a commented-out
+/// line.
 ///
-/// `ssh` takes the first value of an option, except `IdentityFile`, which
-/// adds up: a second one would be lost. `ForwardAgent` is `yes` or `no` for
-/// HuBergamof, where `ssh` also takes a socket path or a variable. A port is
-/// a number.
-pub(super) fn unmanaged_options<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
+/// `ssh` takes the first value of an option, except `IdentityFile` and a few
+/// others, which add up: a second one would be lost, so an option written twice
+/// is not carried. `ForwardAgent` is `yes` or `no` for HuBergamof, where `ssh`
+/// also takes a socket path or a variable. A port is a number. The name and the
+/// value of the others are kept as they are written (the case of the name, the
+/// quotes of the value).
+pub(super) fn split_options<'a>(lines: impl IntoIterator<Item = &'a str>) -> SplitOptions {
+    let mut split = SplitOptions::default();
     let mut identity_files = 0;
+    let mut seen: Vec<String> = Vec::new();
     for line in lines {
-        let Some((keyword, value)) = option_of(line) else {
+        let Some((name, raw)) = raw_option_of(line) else {
             continue;
         };
-        let unmanaged = match keyword.as_str() {
+        let keyword = name.to_ascii_lowercase();
+        let lost = match keyword.as_str() {
             "host" | "hostname" | "user" | "proxyjump" => false,
-            "port" => value.parse::<u16>().is_err(),
+            "port" => unquoted(&raw).parse::<u16>().is_err(),
             "identityfile" => {
                 identity_files += 1;
                 identity_files > 1
             }
-            "forwardagent" => !matches!(value.to_ascii_lowercase().as_str(), "yes" | "no"),
-            _ => true,
+            "forwardagent" => !matches!(unquoted(&raw).to_ascii_lowercase().as_str(), "yes" | "no"),
+            _ => {
+                if seen.contains(&keyword) {
+                    // Written twice: the first one is not carried either.
+                    split
+                        .free
+                        .retain(|option| option.key.to_ascii_lowercase() != keyword);
+                    true
+                } else {
+                    seen.push(keyword.clone());
+                    let carried = is_valid_ssh_option_key(&name)
+                        && is_valid_ssh_option_value(&raw)
+                        && split.free.len() < MAX_ADVANCED_SETTINGS;
+                    if carried {
+                        split.free.push(AdvancedSetting {
+                            key: name,
+                            value: raw,
+                            enabled: true,
+                        });
+                    }
+                    !carried
+                }
+            }
         };
-        if unmanaged && !found.contains(&keyword) {
-            found.push(keyword);
+        if lost && !split.lost.contains(&keyword) {
+            split.lost.push(keyword);
         }
     }
-    found
+    split
 }
 
 /// How a section starts.
@@ -68,9 +108,9 @@ pub(super) struct Section {
     pub lines: Range<usize>,
 }
 
-/// The keyword (lowercase) and the value of an option line: `Key value` or
-/// `Key=value`. Nothing for a blank or comment line.
-pub(super) fn option_of(line: &str) -> Option<(String, String)> {
+/// The keyword (its quotes taken off, its case kept) and the value, as written, of
+/// an option line: `Key value` or `Key=value`. Nothing for a blank or comment line.
+pub(super) fn raw_option_of(line: &str) -> Option<(String, String)> {
     let text = line.trim();
     if text.is_empty() || text.starts_with('#') {
         return None;
@@ -79,10 +119,14 @@ pub(super) fn option_of(line: &str) -> Option<(String, String)> {
         .find(|c: char| c.is_whitespace() || c == '=')
         .unwrap_or(text.len());
     let value = text[end..].trim_start_matches(|c: char| c.is_whitespace() || c == '=');
-    Some((
-        dequoted(&text[..end]).to_ascii_lowercase(),
-        unquoted(value.trim_end()),
-    ))
+    Some((dequoted(&text[..end]), value.trim_end().to_owned()))
+}
+
+/// The keyword (lowercase) and the value of an option line, without the double
+/// quotes that surround it. Nothing for a blank or comment line.
+pub(super) fn option_of(line: &str) -> Option<(String, String)> {
+    let (keyword, value) = raw_option_of(line)?;
+    Some((keyword.to_ascii_lowercase(), unquoted(&value)))
 }
 
 /// `value` without the double quotes that surround it.

@@ -2,7 +2,7 @@
 @component
 A host the person connects to by a short name, to add one or to change one: its name, the machine it
 stands for, the account, the port, the private key, the machines to go through, whether the agent is
-forwarded and whether the host is on the computer. A value left empty is left to `ssh`. The fields are
+forwarded, its other options and whether the host is on the computer. A value left empty is left to `ssh`. The fields are
 checked as the manager checks them; what is wrong is said under the field once the form was sent, and
 the focus goes to the first one.
 -->
@@ -21,6 +21,7 @@ the focus goes to the first one.
 		type HostDraft
 	} from '#lib/deck/ssh-validation.js';
 	import type { SshHost } from '#lib/generated/index.js';
+	import HostOptionsEditor from './HostOptionsEditor.svelte';
 	import Switch from './Switch.svelte';
 	import TextField from './TextField.svelte';
 
@@ -51,6 +52,7 @@ the focus goes to the first one.
 	// svelte-ignore state_referenced_locally
 	let draft: HostDraft = $state(initial ? draftOf(initial) : { ...BLANK_HOST });
 	let submitted = $state(false);
+	let optionsDetails: HTMLDetailsElement | undefined = $state();
 	let aliasField: ReturnType<typeof TextField> | undefined = $state();
 	let hostNameField: ReturnType<typeof TextField> | undefined = $state();
 	let userField: ReturnType<typeof TextField> | undefined = $state();
@@ -104,9 +106,12 @@ the focus goes to the first one.
 		aliasField?.focus();
 	}
 
-	// Changing a host: the form opens on its first field.
+	// Changing a host: the form opens on its first field, and shows the options the host has. Only
+	// then: afterwards the browser keeps what the person chose (an attribute kept in step with the
+	// draft would shut the options as soon as one is added).
 	onMount(() => {
 		if (initial) focusAlias();
+		if (initial && initial.options.length > 0 && optionsDetails) optionsDetails.open = true;
 	});
 </script>
 
@@ -183,6 +188,19 @@ the focus goes to the first one.
 			maxlength={SSH_INPUT_MAX}
 		/>
 	</div>
+	<details bind:this={optionsDetails} class="sm:col-span-2">
+		<summary id="{uid}-options" class="cursor-pointer py-1 text-sm font-medium">
+			Options avancées{draft.options.length > 0 ? ` (${draft.options.length})` : ''}
+		</summary>
+		<div class="mt-3">
+			<HostOptionsEditor
+				options={draft.options}
+				host={initial?.alias}
+				labelledby="{uid}-options"
+				onchange={(options) => (draft.options = options)}
+			/>
+		</div>
+	</details>
 	<div class="flex flex-col gap-1 sm:col-span-2">
 		<Switch
 			checked={draft.forwardAgent}

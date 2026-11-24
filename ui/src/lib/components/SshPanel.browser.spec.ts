@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
 import { FakeConnection } from '#lib/deck/fake-connection.js';
@@ -32,6 +32,7 @@ function found(alias: string, change: Partial<SshSystemHost> = {}): SshSystemHos
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
+		options: [],
 		otherOptions: [],
 		...change
 	};
@@ -43,7 +44,7 @@ function ssh(revision: number, ...hosts: SshHost[]): SshConfig {
 
 const SYSTEM: SshSystemHost[] = [
 	found('web', { hostName: 'web.example.org', user: 'ada' }),
-	found('tunnel', { otherOptions: ['proxycommand'] }),
+	found('tunnel', { otherOptions: ['identityfile'] }),
 	found('far', { identityFile: '/home/ada/key' })
 ];
 
@@ -255,7 +256,11 @@ describe('SshPanel', () => {
 			const tunnel = page.getByRole('button', { name: 'Reprendre le serveur tunnel' });
 			await expect.element(tunnel).toHaveAttribute('aria-disabled', 'true');
 			await expect
-				.element(page.getByText(/Utilise ProxyCommand, que HuBergamof ne gère pas/))
+				.element(
+					page.getByText(
+						/Utilise IdentityFile \(plusieurs clés\), que HuBergamof ne sait pas reprendre/
+					)
+				)
 				.toBeVisible();
 			const before = connection.sent.length;
 			await tunnel.click({ force: true });
@@ -316,7 +321,7 @@ describe('SshPanel', () => {
 		it('warns that an option is written as it is', async () => {
 			await renderPanel();
 			await expect
-				.element(page.getByText(/une option est écrite telle quelle/).first())
+				.element(page.getByText(/une option est écrite telle quelle/).last())
 				.toBeVisible();
 		});
 
@@ -361,6 +366,51 @@ describe('SshPanel', () => {
 			});
 		});
 
+		it('adds a host with its options from the form that adds a host', async () => {
+			const { connection } = await renderPanel();
+			await addForm().getByRole('textbox', { name: 'Nom du serveur' }).fill('prod');
+			await addForm()
+				.getByText(/^Options avancées/)
+				.click();
+			await addForm().getByRole('textbox', { name: 'Nom de l’option' }).fill('Compression');
+			await addForm().getByRole('textbox', { name: 'Valeur' }).fill('yes');
+			await page.getByRole('textbox', { name: 'Valeur' }).first().click();
+			await userEvent.keyboard('{Enter}');
+			expect(connection.lastSent()?.type).not.toBe('updateSsh');
+			await addForm().getByRole('button', { name: 'Ajouter', exact: true }).click();
+			expect(connection.lastSent()).toMatchObject({
+				type: 'updateSsh',
+				config: {
+					hosts: [{ alias: 'prod', options: [{ key: 'Compression', value: 'yes', enabled: true }] }]
+				}
+			});
+		});
+
+		it('changes the options of a host from its form', async () => {
+			const option = { key: 'Compression', value: 'yes', enabled: true };
+			const { connection } = await renderPanel(ssh(1, host('prod', { options: [option] })));
+			await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
+			const form = page.getByRole('form', { name: 'Modifier le serveur prod' });
+			await form.getByRole('button', { name: 'Retirer l’option Compression de prod' }).click();
+			await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('LogLevel');
+			await form.getByRole('textbox', { name: 'Valeur' }).fill('ERROR');
+			await form.getByRole('button', { name: 'Ajouter l’option' }).click();
+			await form.getByRole('button', { name: 'Enregistrer' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { hosts: [{ alias: 'prod', options: [{ key: 'LogLevel', value: 'ERROR' }] }] }
+			});
+		});
+
+		it('takes over a host found elsewhere with its options', async () => {
+			const option = { key: 'ProxyCommand', value: 'nc %h %p', enabled: true };
+			const { connection } = await renderPanel(ssh(1), [found('proxied', { options: [option] })]);
+			await expect.element(page.getByText(/1 option avancée/)).toBeVisible();
+			await page.getByRole('button', { name: 'Reprendre le serveur proxied' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { hosts: [{ alias: 'proxied', options: [option], enabled: true }] }
+			});
+		});
+
 		it('describes the form that adds an option by the warning', async () => {
 			await renderPanel();
 			await expect
@@ -382,7 +432,10 @@ describe('SshPanel', () => {
 		it('keeps the options of a host shown after the host was changed', async () => {
 			const option = { key: 'Compression', value: 'yes', enabled: true };
 			const { connection } = await renderPanel(ssh(1, host('prod', { options: [option] })));
-			await page.getByText(/^Options avancées/).click();
+			await page
+				.getByText(/^Options avancées/)
+				.first()
+				.click();
 			await expect
 				.element(page.getByRole('list', { name: 'Options du serveur prod' }))
 				.toBeVisible();

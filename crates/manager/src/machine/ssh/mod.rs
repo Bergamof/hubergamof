@@ -30,7 +30,8 @@ use crate::config_store::{ConfigStore, ConfigStoreError, Loaded};
 /// The configuration file of the demo's home folder, so that the interface has
 /// something to list.
 const DEMO_SSH_CONFIG: &str = "Host demo-server\n\tHostName 192.0.2.10\n\tUser ada\n\tPort 2222\n\n\
-                               Host demo-tunnel\n\tHostName 192.0.2.20\n\tProxyCommand nc %h %p\n";
+                               Host demo-tunnel\n\tHostName 192.0.2.20\n\tProxyCommand nc %h %p\n\n\
+                               Host demo-keys\n\tHostName 192.0.2.30\n\tIdentityFile ~/.ssh/one\n\tIdentityFile ~/.ssh/two\n";
 
 /// The SSH configuration and what `~/.ssh/config` holds besides.
 #[derive(Debug, Clone, PartialEq, Eq)]

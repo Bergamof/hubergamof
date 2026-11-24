@@ -1,8 +1,8 @@
 <!--
 @component
 The hosts found in `~/.ssh/config` that HuBergamof does not manage. They are only shown: « Reprendre »
-moves one into the configuration, switched on, and its section is commented out where it was. A host
-that uses options HuBergamof does not manage cannot be taken: the reason is given. Dashed lines tell
+moves one into the configuration, switched on, and its section is commented out where it was. The other
+options of a host become its advanced options; one that cannot be carried without loss keeps the host from being taken: the reason is given. Dashed lines tell
 them from the managed ones. Once one is taken, the focus goes to the next « Reprendre » button, or to
 `fallbackFocus` when it was the last one.
 -->
@@ -52,7 +52,9 @@ them from the managed ones. Once one is taken, the focus goes to the next « Rep
 		return [
 			target,
 			host.proxyJump && `via ${host.proxyJump}`,
-			host.forwardAgent && 'agent transmis'
+			host.forwardAgent && 'agent transmis',
+			host.options.length > 0 &&
+				`${host.options.length} option${host.options.length > 1 ? 's' : ''} avancée${host.options.length > 1 ? 's' : ''}`
 		]
 			.filter(Boolean)
 			.join(' · ');

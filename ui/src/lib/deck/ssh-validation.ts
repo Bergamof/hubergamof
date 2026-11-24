@@ -2,8 +2,10 @@ import type { AdvancedSetting, SshHost, SshSystemHost } from '#lib/generated/ind
 import { lengthOf } from './alias-validation.js';
 import {
 	ADVANCED_KEY_MAX,
+	ADVANCED_MAX,
 	hasPairedQuotes,
 	isOneLineValue,
+	validateSetting,
 	valueError,
 	type SettingRules
 } from './advanced-validation.js';
@@ -118,6 +120,8 @@ export interface HostErrors {
 	port?: string;
 	identityFile?: string;
 	proxyJump?: string;
+	/** The first option of the list that does not follow the rules. */
+	options?: string;
 }
 
 /** A host as typed: the port is text until it is checked. */
@@ -181,6 +185,8 @@ export function validateHost(draft: HostDraft, takenAliases: readonly string[]):
 		const jumpError = proxyJumpError(draft.proxyJump);
 		if (jumpError) found.proxyJump = jumpError;
 	}
+	const optionsError = optionListError(draft.options);
+	if (optionsError) found.options = optionsError;
 	return found;
 }
 
@@ -188,22 +194,29 @@ export function hasHostErrors(errors: HostErrors): boolean {
 	return Object.keys(errors).length > 0;
 }
 
-/** The name `ssh` documents for an option, from the lowercase one the manager gives. */
+/** The name `ssh` documents for an option the manager could not carry, from the lowercase one it gives. */
 const OPTION_NAMES: Record<string, string> = {
-	proxycommand: 'ProxyCommand',
-	localcommand: 'LocalCommand',
 	identityfile: 'IdentityFile (plusieurs clés)',
 	forwardagent: 'ForwardAgent (une valeur autre que yes ou no)',
-	port: 'Port (une valeur qui n’est pas un nombre)',
-	compression: 'Compression',
-	serveraliveinterval: 'ServerAliveInterval',
-	identitiesonly: 'IdentitiesOnly',
-	include: 'Include',
-	match: 'Match'
+	port: 'Port (une valeur qui n’est pas un nombre)'
 };
 
 function optionName(option: string): string {
 	return OPTION_NAMES[option] ?? option;
+}
+
+/** What is wrong with the first option of a list, in French; `undefined` when the list is fine. */
+function optionListError(options: readonly AdvancedSetting[]): string | undefined {
+	const taken: string[] = [];
+	if (options.length > ADVANCED_MAX) return `${ADVANCED_MAX} options au plus.`;
+	for (const option of options) {
+		const problem = Object.values(
+			validateSetting({ key: option.key, value: option.value }, taken, SSH_OPTION_RULES)
+		)[0];
+		if (problem) return `L’option « ${option.key} » : ${problem}`;
+		taken.push(option.key);
+	}
+	return undefined;
 }
 
 /** Why a host found in `~/.ssh/config` cannot be taken over, if it cannot. */
@@ -213,7 +226,7 @@ export function takeOverObstacle(
 ): string | undefined {
 	if (host.otherOptions.length > 0) {
 		const names = host.otherOptions.map(optionName).join(', ');
-		return `Utilise ${names}, que HuBergamof ne gère pas ou ne sait pas reprendre tel quel : le reprendre ferait perdre ce réglage.`;
+		return `Utilise ${names}, que HuBergamof ne sait pas reprendre tel quel (une option écrite deux fois, une valeur qu’ssh lirait autrement) : le reprendre ferait perdre ce réglage.`;
 	}
 	const draft = draftOf({ ...host, enabled: true });
 	const [problem] = Object.values(validateHost(draft, takenAliases));

@@ -148,6 +148,7 @@ describe('takeOverObstacle', () => {
 		identityFile: '',
 		proxyJump: '',
 		forwardAgent: false,
+		options: [],
 		otherOptions: [],
 		...change
 	});
@@ -157,9 +158,20 @@ describe('takeOverObstacle', () => {
 	});
 
 	it('names the options that would be lost', () => {
-		expect(takeOverObstacle(found({ otherOptions: ['proxycommand', 'compression'] }), [])).toMatch(
-			/ProxyCommand, Compression/
+		expect(takeOverObstacle(found({ otherOptions: ['identityfile', 'port'] }), [])).toMatch(
+			/IdentityFile \(plusieurs clés\), Port/
 		);
+	});
+
+	it('lets a host with options of its own be taken over, and refuses one whose options break the rules', () => {
+		const option = { key: 'ProxyCommand', value: 'nc %h %p', enabled: true };
+		expect(takeOverObstacle(found({ options: [option] }), [])).toBeUndefined();
+		expect(takeOverObstacle(found({ options: [{ ...option, key: 'Host' }] }), [])).toMatch(
+			/L’option « Host »/
+		);
+		expect(
+			takeOverObstacle(found({ options: [option, { ...option, key: 'proxycommand' }] }), [])
+		).toMatch(/déjà dans la liste/);
 	});
 
 	it('refuses a host whose values do not follow the rules', () => {
