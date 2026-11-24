@@ -868,7 +868,7 @@ test('Git : lit la configuration trouvée, enregistre l’identité et refuse un
 	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
 	const found = page.getByRole('list', { name: 'Valeurs de Git définies ailleurs' });
 	await expect(found.getByText('Ada Lovelace')).toBeVisible();
-	const aliases = page.getByRole('list', { name: 'Alias Git du système, non gérés' });
+	const aliases = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
 	await expect(aliases.getByText('status --short', { exact: true })).toBeVisible();
 
 	const form = page.getByRole('form', { name: 'Identité', exact: true });

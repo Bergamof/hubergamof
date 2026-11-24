@@ -168,7 +168,7 @@ mod tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     use super::super::files::{
-        MAX_STARTUP_FILE_BYTES, MODE_MASK, PRIVATE_DIR_MODE as MANAGED_DIR_MODE,
+        MAX_TEXT_FILE_BYTES, MODE_MASK, PRIVATE_DIR_MODE as MANAGED_DIR_MODE,
         PRIVATE_FILE_MODE as MANAGED_FILE_MODE,
     };
     use super::*;
@@ -233,7 +233,7 @@ mod tests {
     fn an_unreadable_or_oversized_startup_file_is_skipped() {
         let (dir, shell) = home();
         fs::create_dir(dir.path().join(".bashrc")).unwrap();
-        let limit = usize::try_from(MAX_STARTUP_FILE_BYTES).unwrap();
+        let limit = usize::try_from(MAX_TEXT_FILE_BYTES).unwrap();
         let big = format!("alias a=b\n{}", "#".repeat(limit));
         fs::write(dir.path().join(".zshrc"), big).unwrap();
         fs::write(dir.path().join(".bash_aliases"), "alias ok=1\n").unwrap();

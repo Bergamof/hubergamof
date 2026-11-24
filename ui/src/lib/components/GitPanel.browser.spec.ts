@@ -62,14 +62,17 @@ describe('GitPanel', () => {
 
 	it('says when git was not found', async () => {
 		await renderPanel(git(1), [], false);
-		await expect.element(page.getByText(/est introuvable/)).toBeVisible();
+		await expect.element(page.getByRole('alert').getByText(/est introuvable/)).toBeVisible();
+		await expect
+			.element(page.getByText('Non lu : le programme git est introuvable.').first())
+			.toBeVisible();
 	});
 
 	it('lists what Git finds elsewhere, aliases apart', async () => {
 		await renderPanel();
 		const found = page.getByRole('list', { name: 'Valeurs de Git définies ailleurs' });
 		await expect.element(found.getByText('Existing Name')).toBeVisible();
-		const aliases = page.getByRole('list', { name: 'Alias Git du système, non gérés' });
+		const aliases = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
 		await expect.element(aliases.getByText('status --short')).toBeVisible();
 	});
 
@@ -103,10 +106,15 @@ describe('GitPanel', () => {
 			await expect.element(email).toBeInvalid();
 		});
 
-		it('notes what was typed and not saved yet', async () => {
+		it('notes what was typed and not saved yet, until it is the saved value again', async () => {
 			await renderPanel();
-			await identityForm().getByRole('textbox', { name: 'Nom' }).fill('Ada');
+			const name = identityForm().getByRole('textbox', { name: 'Nom' });
+			await name.fill('Ada');
 			await expect.element(page.getByText('Modifications non enregistrées.')).toBeVisible();
+			await name.fill('');
+			await expect
+				.element(page.getByText('Modifications non enregistrées.'))
+				.not.toBeInTheDocument();
 		});
 
 		it('shows the saved identity of another client while nothing was typed', async () => {
@@ -192,7 +200,7 @@ describe('GitPanel', () => {
 			const before = connection.sent.length;
 			await page.getByRole('button', { name: 'Enregistrer les réglages' }).click();
 			expect(connection.sent).toHaveLength(before);
-			await expect.element(page.getByText(/chemin absolu de son programme/)).toBeVisible();
+			await expect.element(page.getByText(/Choisissez un éditeur de la liste/)).toBeVisible();
 			await expect.element(path).toHaveFocus();
 
 			await path.fill('/usr/bin/vim');
@@ -203,11 +211,11 @@ describe('GitPanel', () => {
 		});
 
 		it('shows an editor that is not in the list as another program', async () => {
-			await renderPanel(git(1, (config) => (config.settings.editor = '/opt/ed/bin/ed')));
+			await renderPanel(git(1, (config) => (config.settings.editor = '/opt/nvim/bin/nvim')));
 			await expect.element(page.getByRole('combobox', { name: /Éditeur/ })).toHaveValue('other');
 			await expect
 				.element(page.getByRole('textbox', { name: 'Chemin du programme' }))
-				.toHaveValue('/opt/ed/bin/ed');
+				.toHaveValue('/opt/nvim/bin/nvim');
 		});
 
 		it('refuses a duration out of range, and warns about the clear text store', async () => {
@@ -221,6 +229,24 @@ describe('GitPanel', () => {
 
 			await page.getByRole('combobox', { name: 'Mots de passe' }).selectOptions('store');
 			await expect.element(page.getByText(/écrits en clair dans/)).toBeVisible();
+		});
+
+		it('wants a path once « another program » is chosen', async () => {
+			const { connection } = await renderPanel();
+			await page.getByRole('combobox', { name: /Éditeur/ }).selectOptions('other');
+			const before = connection.sent.length;
+			await page.getByRole('button', { name: 'Enregistrer les réglages' }).click();
+			expect(connection.sent).toHaveLength(before);
+			await expect.element(page.getByText(/Saisissez le chemin du programme/)).toBeVisible();
+		});
+
+		it('refuses an interpreter given by its path: it would run what it edits', async () => {
+			const { connection } = await renderPanel();
+			await page.getByRole('combobox', { name: /Éditeur/ }).selectOptions('other');
+			await page.getByRole('textbox', { name: 'Chemin du programme' }).fill('/bin/sh');
+			const before = connection.sent.length;
+			await page.getByRole('button', { name: 'Enregistrer les réglages' }).click();
+			expect(connection.sent).toHaveLength(before);
 		});
 
 		it('refuses a branch name Git would not accept', async () => {
@@ -294,12 +320,12 @@ describe('GitPanel', () => {
 
 		it('takes an alias found elsewhere in, but not one that runs a shell command', async () => {
 			const { connection } = await renderPanel();
-			await page.getByRole('button', { name: 'Intégrer l’alias Git gs' }).click();
+			await page.getByRole('button', { name: 'Reprendre l’alias Git gs' }).click();
 			expect(connection.lastSent()).toMatchObject({
 				config: { aliases: [{ name: 'gs', command: 'status --short', enabled: true }] }
 			});
 
-			const shell = page.getByRole('button', { name: 'Intégrer l’alias Git sh' });
+			const shell = page.getByRole('button', { name: 'Reprendre l’alias Git sh' });
 			await expect.element(shell).toHaveAttribute('aria-disabled', 'true');
 			await expect.element(page.getByText(/lance une commande du shell/)).toBeVisible();
 			const before = connection.sent.length;
@@ -399,6 +425,31 @@ describe('GitPanel', () => {
 						.getByRole('form', { name: 'Ajouter une identité par dossier' })
 						.getByRole('textbox', { name: 'Dossier' })
 				)
+				.toHaveFocus();
+		});
+
+		it('puts the focus on the neighbour when a rule is removed and others remain', async () => {
+			const { connection } = await renderPanel(
+				git(1, (config) => {
+					config.folderIdentities = ['~/a', '~/b'].map((folder) => ({
+						folder,
+						name: '',
+						email: 'x@y.z',
+						signingKey: '',
+						enabled: true
+					}));
+				})
+			);
+			await page.getByRole('button', { name: 'Supprimer l’identité de ~/a' }).click();
+			await page
+				.getByRole('dialog', { name: 'Supprimer l’identité du dossier ?' })
+				.getByRole('button', { name: 'Supprimer' })
+				.click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { folderIdentities: [{ folder: '~/b' }] }
+			});
+			await expect
+				.element(page.getByRole('button', { name: 'Supprimer l’identité de ~/b' }))
 				.toHaveFocus();
 		});
 

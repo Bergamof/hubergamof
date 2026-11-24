@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
 import { FakeConnection } from '#lib/deck/fake-connection.js';
+import { emptyGit } from '#lib/deck/git-test-support.js';
 import MachinePage from './MachinePage.svelte';
 
 async function renderPage() {
@@ -14,17 +15,35 @@ async function renderPage() {
 }
 
 describe('MachinePage', () => {
-	it('opens on the shell aliases', async () => {
+	it('opens on the shell aliases, and reads both topics from the computer', async () => {
 		const { connection } = await renderPage();
 		await expect.element(page.getByRole('radio', { name: 'Alias du shell' })).toBeChecked();
-		expect(connection.sent).toEqual([{ type: 'refreshMachine' }]);
+		expect(connection.sent).toContainEqual({ type: 'refreshMachine' });
+		expect(connection.sent).toContainEqual({ type: 'refreshGit' });
 	});
 
-	it('shows Git, and reads the computer for it, when it is chosen', async () => {
-		const { connection } = await renderPage();
+	it('shows Git when it is chosen', async () => {
+		await renderPage();
 		await page.getByRole('radio', { name: 'Git' }).click({ force: true });
-		await expect.element(page.getByRole('heading', { name: 'Identité' })).toBeVisible();
-		expect(connection.sent).toContainEqual({ type: 'refreshGit' });
+		await expect
+			.element(page.getByRole('heading', { name: 'Identité', exact: true }))
+			.toBeVisible();
+	});
+
+	it('keeps what was typed in one topic while the other is shown', async () => {
+		const { connection } = await renderPage();
+		connection.receive({
+			type: 'git',
+			config: emptyGit(1),
+			systemEntries: [],
+			gitAvailable: true
+		});
+		await page.getByRole('radio', { name: 'Git' }).click({ force: true });
+		const form = page.getByRole('form', { name: 'Identité', exact: true });
+		await form.getByRole('textbox', { name: 'Nom' }).fill('Ada');
+		await page.getByRole('radio', { name: 'Alias du shell' }).click({ force: true });
+		await page.getByRole('radio', { name: 'Git' }).click({ force: true });
+		await expect.element(form.getByRole('textbox', { name: 'Nom' })).toHaveValue('Ada');
 	});
 
 	it('goes back to the aliases', async () => {

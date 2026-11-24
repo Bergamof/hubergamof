@@ -9,12 +9,16 @@ they come from tell them from what is managed.
 
 	interface Props {
 		entries: readonly GitSystemEntry[];
+		/** `git` could not be run: nothing was read, which is not the same as nothing found. */
+		unreadable?: boolean;
 	}
 
-	let { entries }: Props = $props();
+	let { entries, unreadable = false }: Props = $props();
 </script>
 
-{#if entries.length === 0}
+{#if unreadable}
+	<p class="text-sm text-muted">Non lu : le programme git est introuvable.</p>
+{:else if entries.length === 0}
 	<p class="text-sm text-muted">Aucune autre valeur gérée par HuBergamof n’est définie ailleurs.</p>
 {:else}
 	<ul class="flex flex-col gap-2" aria-label="Valeurs de Git définies ailleurs">

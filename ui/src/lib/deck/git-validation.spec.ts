@@ -5,6 +5,7 @@ import {
 	CREDENTIAL_CACHE_MAX,
 	CREDENTIAL_CACHE_MIN,
 	GIT_EDITORS,
+	GIT_PLAIN_EDITORS,
 	branchError,
 	cacheTimeoutError,
 	editorError,
@@ -36,6 +37,7 @@ interface SharedCases {
 	branches: SharedCase[];
 	editors: SharedCase[];
 	knownEditors: string[];
+	plainEditors: string[];
 	aliasNames: SharedCase[];
 	aliasCommands: SharedCase[];
 	folders: SharedCase[];
@@ -74,6 +76,7 @@ describe('the cases shared with the manager', () => {
 
 	it('lists the editors the manager knows', () => {
 		expect([...GIT_EDITORS]).toEqual(SHARED_CASES.knownEditors);
+		expect([...GIT_PLAIN_EDITORS]).toEqual(SHARED_CASES.plainEditors);
 	});
 });
 

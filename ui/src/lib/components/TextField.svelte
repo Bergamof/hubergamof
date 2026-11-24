@@ -19,6 +19,8 @@ caller (`oninput` gives the new one): forms keep a draft and show it here.
 		/** The kind of keyboard and checks the browser gives. */
 		type?: 'text' | 'email';
 		autocomplete?: 'off' | 'name' | 'email';
+		/** The keyboard a touch screen shows. */
+		inputmode?: 'text' | 'numeric';
 	}
 
 	let {
@@ -31,7 +33,8 @@ caller (`oninput` gives the new one): forms keep a draft and show it here.
 		placeholder,
 		maxlength,
 		type = 'text',
-		autocomplete = 'off'
+		autocomplete = 'off',
+		inputmode = 'text'
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -58,6 +61,7 @@ caller (`oninput` gives the new one): forms keep a draft and show it here.
 		{placeholder}
 		{maxlength}
 		{autocomplete}
+		{inputmode}
 		autocapitalize="off"
 		spellcheck="false"
 		aria-invalid={error !== undefined}

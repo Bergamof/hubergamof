@@ -4,9 +4,9 @@ The signature of the commits (`commit.gpgsign`, `gpg.format`, `user.signingkey`)
 signature is off nothing of it is written on the computer. The form is sent as a whole.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { FormDraft } from '#lib/deck/form-draft.svelte.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
-	import { signingKeyError, trimValue } from '#lib/deck/git-validation.js';
+	import { GIT_INPUT_MAX, signingKeyError, trimValue } from '#lib/deck/git-validation.js';
 	import type { GitSigning, GitSigningFormat } from '#lib/generated/index.js';
 	import FormFooter from './FormFooter.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
@@ -35,51 +35,43 @@ signature is off nothing of it is written on the computer. The form is sent as a
 		x509: 'L’identifiant du certificat ; vide, Git choisit d’après votre adresse.'
 	};
 
-	/** What was typed since the last save; none: the saved signature is shown. */
-	let draft: GitSigning | undefined = $state();
-	let submitted = $state(false);
+	const form = new FormDraft<GitSigning>(() => signing);
 	let keyField: ReturnType<typeof TextField> | undefined = $state();
 
-	const shown = $derived(draft ?? signing);
-	const keyProblem = $derived(submitted ? signingKeyError(trimValue(shown.key)) : undefined);
+	const keyProblem = $derived(
+		form.submitted ? signingKeyError(trimValue(form.shown.key)) : undefined
+	);
 
-	async function submit(event: SubmitEvent) {
-		event.preventDefault();
-		submitted = true;
-		const sent = { ...shown, key: trimValue(shown.key) };
-		if (signingKeyError(sent.key)) {
-			await tick();
-			keyField?.focus();
-			return;
-		}
-		const { saved } = await onsubmit(sent);
-		if (!saved) return;
-		draft = undefined;
-		submitted = false;
-	}
+	const submit = (event: SubmitEvent) =>
+		form.submit(
+			event,
+			(values) => ({ ...values, key: trimValue(values.key) }),
+			({ key }) => (signingKeyError(key) ? () => keyField?.focus() : undefined),
+			onsubmit
+		);
 </script>
 
 <form novalidate aria-labelledby={labelledby} class="flex flex-col gap-3" onsubmit={submit}>
-	<Switch checked={shown.enabled} onchange={(enabled) => (draft = { ...shown, enabled })}>
+	<Switch checked={form.shown.enabled} onchange={(enabled) => form.edit({ enabled })}>
 		Signer mes commits
 	</Switch>
-	{#if shown.enabled}
+	{#if form.shown.enabled}
 		<SegmentedControl
 			label="Format de la signature"
 			options={FORMATS}
-			value={shown.format}
-			onchange={(format) => (draft = { ...shown, format })}
+			value={form.shown.format}
+			onchange={(format) => form.edit({ format })}
 		/>
 		<TextField
 			bind:this={keyField}
 			label="Clé de signature"
 			mono
-			value={shown.key}
-			oninput={(key) => (draft = { ...shown, key })}
-			hint={KEY_HINTS[shown.format]}
+			value={form.shown.key}
+			oninput={(key) => form.edit({ key })}
+			hint={KEY_HINTS[form.shown.format]}
 			error={keyProblem}
-			maxlength={512}
+			maxlength={GIT_INPUT_MAX}
 		/>
 	{/if}
-	<FormFooter dirty={draft !== undefined} submitLabel="Enregistrer la signature" />
+	<FormFooter dirty={form.dirty} submitLabel="Enregistrer la signature" />
 </form>

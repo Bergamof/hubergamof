@@ -15,8 +15,8 @@ defaultBranch: string,
  */
 pull: GitPullMode, 
 /**
- * `core.editor`: one of [`GIT_EDITORS`] or the absolute path of a program;
- * empty leaves it as it is.
+ * `core.editor`: one of [`GIT_EDITORS`] or the absolute path of the
+ * program of one of [`GIT_PLAIN_EDITORS`]; empty leaves it as it is.
  */
 editor: string, 
 /**

@@ -1,7 +1,8 @@
 <!--
 @component
 The machine: what HuBergamof sets up on the computer of the person. A choice at the top picks the
-topic (the shell aliases, Git); each topic reads the computer when it is shown, never watches it.
+topic (the shell aliases, Git). Both topics stay in the page, so what is typed in one survives a look
+at the other; both read the computer when the page opens, and never watch it.
 -->
 <script lang="ts">
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
@@ -31,9 +32,11 @@ topic (the shell aliases, Git); each topic reads the computer when it is shown, 
 		value={topic}
 		onchange={(chosen) => (topic = chosen)}
 	/>
-	{#if topic === 'git'}
-		<GitPanel {deck} />
-	{:else}
+	<!-- Both stay in the page: what is typed in one is still there when the other has been looked at. -->
+	<div hidden={topic !== 'aliases'}>
 		<ShellAliasesPanel {deck} />
-	{/if}
+	</div>
+	<div hidden={topic !== 'git'}>
+		<GitPanel {deck} />
+	</div>
 </div>

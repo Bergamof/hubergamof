@@ -22,6 +22,10 @@ export interface AliasRules {
 	noun: string;
 	/** The same, capitalised, to start a label. */
 	title: string;
+	/** What the button that takes an alias found elsewhere in says. */
+	adoptVerb: string;
+	/** Names the list of the aliases found elsewhere. */
+	foundLabel: string;
 }
 
 export const SHELL_ALIAS_RULES: AliasRules = {
@@ -30,7 +34,9 @@ export const SHELL_ALIAS_RULES: AliasRules = {
 	validate: validateAlias,
 	refusal: 'Cet alias ne respecte pas les règles de HuBergamof (nom ou commande).',
 	noun: 'alias',
-	title: 'Alias'
+	title: 'Alias',
+	adoptVerb: 'Intégrer',
+	foundLabel: 'Alias du système, non gérés'
 };
 
 export const GIT_ALIAS_RULES: AliasRules = {
@@ -40,5 +46,7 @@ export const GIT_ALIAS_RULES: AliasRules = {
 	refusal:
 		'HuBergamof ne gère pas cet alias : son nom n’est pas valide, ou il lance une commande du shell (« ! ») ou une option de Git (« - »).',
 	noun: 'alias Git',
-	title: 'Alias Git'
+	title: 'Alias Git',
+	adoptVerb: 'Reprendre',
+	foundLabel: 'Alias Git définis ailleurs, non gérés'
 };

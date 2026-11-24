@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
+use crate::text::{is_blank, is_invisible};
+
 /// Machine configuration schema version produced and understood by this crate.
 pub const MACHINE_SCHEMA_VERSION: u32 = 1;
 
@@ -100,27 +102,6 @@ pub fn is_valid_alias_name(name: &str) -> bool {
     starts_well
         && name.chars().count() <= MAX_ALIAS_NAME_CHARS
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-}
-
-/// Zero width no-break space: not white space for Rust, but for JavaScript,
-/// which the interface runs on; both must agree on what a blank command is.
-const BYTE_ORDER_MARK: char = '\u{FEFF}';
-
-/// Characters that show nothing or reorder the text around them: a command
-/// containing one reads as something other than what it runs (the same set as
-/// the interface, `alias-validation.ts`).
-pub(crate) fn is_invisible(c: char) -> bool {
-    matches!(c,
-        '\u{200B}'..='\u{200F}'
-        | '\u{2028}'..='\u{202E}'
-        | '\u{2060}'..='\u{206F}'
-        | BYTE_ORDER_MARK)
-}
-
-pub(crate) fn is_blank(command: &str) -> bool {
-    command
-        .chars()
-        .all(|c| c.is_whitespace() || c == BYTE_ORDER_MARK)
 }
 
 /// Whether `command` can be the command of an alias.

@@ -5,9 +5,14 @@ had. The form is sent as a whole; what is wrong is said under the field once it 
 goes to the first one.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { FormDraft } from '#lib/deck/form-draft.svelte.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
-	import { trimValue, userEmailError, userNameError } from '#lib/deck/git-validation.js';
+	import {
+		GIT_INPUT_MAX,
+		trimValue,
+		userEmailError,
+		userNameError
+	} from '#lib/deck/git-validation.js';
 	import type { GitIdentity } from '#lib/generated/index.js';
 	import FormFooter from './FormFooter.svelte';
 	import TextField from './TextField.svelte';
@@ -22,63 +27,60 @@ goes to the first one.
 
 	let { identity, onsubmit, labelledby }: Props = $props();
 
-	/** What was typed since the last save; none: the saved identity is shown. */
-	let draft: GitIdentity | undefined = $state();
-	let submitted = $state(false);
+	const form = new FormDraft<GitIdentity>(() => identity);
 	let nameField: ReturnType<typeof TextField> | undefined = $state();
 	let emailField: ReturnType<typeof TextField> | undefined = $state();
 
-	const shown = $derived(draft ?? identity);
+	const trimmed = (values: GitIdentity): GitIdentity => ({
+		name: trimValue(values.name),
+		email: trimValue(values.email)
+	});
 	const errors = $derived(
-		submitted
+		form.submitted
 			? {
-					name: userNameError(trimValue(shown.name)),
-					email: userEmailError(trimValue(shown.email))
+					name: userNameError(trimmed(form.shown).name),
+					email: userEmailError(trimmed(form.shown).email)
 				}
 			: {}
 	);
 
-	async function submit(event: SubmitEvent) {
-		event.preventDefault();
-		submitted = true;
-		const sent = { name: trimValue(shown.name), email: trimValue(shown.email) };
-		const nameProblem = userNameError(sent.name);
-		const emailProblem = userEmailError(sent.email);
-		if (nameProblem || emailProblem) {
-			await tick();
-			(nameProblem ? nameField : emailField)?.focus();
-			return;
-		}
-		const { saved } = await onsubmit(sent);
-		if (!saved) return;
-		draft = undefined;
-		submitted = false;
-	}
+	const submit = (event: SubmitEvent) =>
+		form.submit(
+			event,
+			trimmed,
+			({ name, email }) =>
+				userNameError(name)
+					? () => nameField?.focus()
+					: userEmailError(email)
+						? () => emailField?.focus()
+						: undefined,
+			onsubmit
+		);
 </script>
 
 <form novalidate aria-labelledby={labelledby} class="grid gap-3 sm:grid-cols-2" onsubmit={submit}>
 	<TextField
 		bind:this={nameField}
 		label="Nom"
-		value={shown.name}
-		oninput={(name) => (draft = { ...shown, name })}
+		value={form.shown.name}
+		oninput={(name) => form.edit({ name })}
 		hint="Le nom des auteurs de vos commits (user.name)."
 		error={errors.name}
 		autocomplete="name"
-		maxlength={512}
+		maxlength={GIT_INPUT_MAX}
 	/>
 	<TextField
 		bind:this={emailField}
 		label="Adresse e-mail"
 		type="email"
-		value={shown.email}
-		oninput={(email) => (draft = { ...shown, email })}
+		value={form.shown.email}
+		oninput={(email) => form.edit({ email })}
 		hint="L’adresse de vos commits (user.email)."
 		error={errors.email}
 		autocomplete="email"
-		maxlength={512}
+		maxlength={GIT_INPUT_MAX}
 	/>
 	<div class="sm:col-span-2">
-		<FormFooter dirty={draft !== undefined} submitLabel="Enregistrer l’identité" />
+		<FormFooter dirty={form.dirty} submitLabel="Enregistrer l’identité" />
 	</div>
 </form>

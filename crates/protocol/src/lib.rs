@@ -21,6 +21,7 @@ mod machine;
 mod messages;
 mod mouse;
 mod radial;
+mod text;
 mod update;
 
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
@@ -36,10 +37,10 @@ pub use config::{
 };
 pub use device::{DeviceCapabilities, DeviceInfo, DeviceModel, ImageSize};
 pub use git::{
-    CREDENTIAL_CACHE_SECONDS, DEFAULT_CREDENTIAL_CACHE_SECONDS, GIT_EDITORS, GIT_SCHEMA_VERSION,
-    GitAlias, GitConfig, GitConfigError, GitCredentialHelper, GitFolderIdentity, GitIdentity,
-    GitPullMode, GitSettings, GitSigning, GitSigningFormat, GitSystemEntry,
-    MAX_GIT_ALIAS_COMMAND_CHARS, MAX_GIT_ALIAS_NAME_CHARS, MAX_GIT_ALIASES,
+    CREDENTIAL_CACHE_SECONDS, DEFAULT_CREDENTIAL_CACHE_SECONDS, GIT_EDITORS, GIT_PLAIN_EDITORS,
+    GIT_SCHEMA_VERSION, GitAlias, GitConfig, GitConfigError, GitCredentialHelper,
+    GitFolderIdentity, GitIdentity, GitPullMode, GitSettings, GitSigning, GitSigningFormat,
+    GitSystemEntry, MAX_GIT_ALIAS_COMMAND_CHARS, MAX_GIT_ALIAS_NAME_CHARS, MAX_GIT_ALIASES,
     MAX_GIT_FOLDER_IDENTITIES, MAX_GIT_VALUE_CHARS, is_valid_git_alias_command,
     is_valid_git_alias_name, is_valid_git_branch_name, is_valid_git_editor, is_valid_git_folder,
     is_valid_git_signing_key, is_valid_git_user_email, is_valid_git_user_name,

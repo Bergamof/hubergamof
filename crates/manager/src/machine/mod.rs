@@ -18,14 +18,14 @@ pub mod git;
 mod rc_block;
 mod shell;
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use hubergamof_protocol::{ErrorCode, MachineConfig, SystemAlias};
 use thiserror::Error;
 use tokio::sync::{Semaphore, broadcast};
 
 pub use aliases::UnwritableAlias;
-pub use files::{FileError, MAX_STARTUP_FILE_BYTES};
+pub use files::{FileError, MAX_TEXT_FILE_BYTES};
 pub use shell::{MAX_SYSTEM_ALIASES, MachineShell, STARTUP_FILES, ShellError};
 
 use crate::config_store::{ConfigStore, ConfigStoreError};
@@ -80,11 +80,9 @@ struct Inner {
     /// `None` when the home folder is unknown.
     shell: Option<MachineShell>,
     changes: broadcast::Sender<Arc<MachineSnapshot>>,
-    /// One update at a time, so that what reaches the clients follows the
-    /// order of the revisions.
-    turn: Mutex<()>,
-    /// One request at a time reaches the blocking threads, that the renderer
-    /// and the store share: a client sending them in a burst waits its turn.
+    /// One request at a time: what reaches the clients follows the order of
+    /// the revisions, and the blocking threads that the renderer and the store
+    /// share are not flooded by a client sending requests in a burst.
     requests: Semaphore,
 }
 
@@ -113,7 +111,6 @@ impl MachineHub {
                 _demo_home: demo_home,
                 shell,
                 changes,
-                turn: Mutex::new(()),
                 requests: Semaphore::new(1),
             }),
         }
@@ -180,7 +177,6 @@ impl MachineHub {
 
 impl Inner {
     fn update(&self, config: MachineConfig) -> Result<(), MachineError> {
-        let _turn = self.turn.lock().unwrap_or_else(PoisonError::into_inner);
         let saved = self.store.save_machine(config)?;
         let applied = match &self.shell {
             Some(shell) => shell.apply(&saved.aliases).map_err(MachineError::from),

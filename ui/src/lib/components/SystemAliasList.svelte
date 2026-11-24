@@ -21,6 +21,8 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 		rules?: AliasRules;
 		/** Says where an alias was read, from its `source`; the shell files are under `~/`. */
 		describeSource?: (source: string) => string;
+		/** The place could not be read: nothing can be said about what is there. */
+		unreadable?: string;
 	}
 
 	let {
@@ -29,7 +31,8 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 		onadopt,
 		fallbackFocus,
 		rules = SHELL_ALIAS_RULES,
-		describeSource = (source) => `~/${source}`
+		describeSource = (source) => `~/${source}`,
+		unreadable
 	}: Props = $props();
 
 	let list: HTMLUListElement | undefined = $state();
@@ -63,10 +66,12 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 	}
 </script>
 
-{#if aliases.length === 0}
+{#if unreadable}
+	<p class="text-sm text-muted">{unreadable}</p>
+{:else if aliases.length === 0}
 	<p class="text-sm text-muted">Aucun autre {rules.noun} sur le système.</p>
 {:else}
-	<ul bind:this={list} class="flex flex-col gap-2" aria-label="{rules.title} du système, non gérés">
+	<ul bind:this={list} class="flex flex-col gap-2" aria-label={rules.foundLabel}>
 		{#each aliases as alias, index (keyOf(alias))}
 			{@const reason = obstacle(alias)}
 			<li
@@ -82,12 +87,12 @@ they come from tell them from the managed ones. Once one is taken in, the focus 
 						type="button"
 						data-adopt={keyOf(alias)}
 						class="secondary-button"
-						aria-label="Intégrer l’{rules.noun} {alias.name}"
+						aria-label="{rules.adoptVerb} l’{rules.noun} {alias.name}"
 						aria-disabled={reason !== undefined}
 						aria-describedby={reason ? `${uid}-reason-${index}` : undefined}
 						onclick={() => !reason && adopt(alias, index)}
 					>
-						Intégrer
+						{rules.adoptVerb}
 					</button>
 					{#if reason}
 						<span id="{uid}-reason-{index}" class="text-sm text-muted">{reason}</span>

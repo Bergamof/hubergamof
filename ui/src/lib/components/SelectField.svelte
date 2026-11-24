@@ -11,11 +11,19 @@ to the caller (`onchange` gives the new one).
 		onchange: (value: T) => void;
 		/** What the choice does, read after the label. */
 		hint?: string;
+		/** What to beware of in the choice made, read with the hint and shown as a warning. */
+		warning?: string;
 	}
 
-	let { label, options, value, onchange, hint }: Props = $props();
+	let { label, options, value, onchange, hint, warning }: Props = $props();
 
 	const uid = $props.id();
+
+	const described = $derived(
+		[hint ? `${uid}-hint` : undefined, warning ? `${uid}-warning` : undefined]
+			.filter(Boolean)
+			.join(' ')
+	);
 </script>
 
 <div class="flex flex-col gap-1">
@@ -24,7 +32,7 @@ to the caller (`onchange` gives the new one).
 		id="{uid}-field"
 		class="field"
 		{value}
-		aria-describedby={hint ? `${uid}-hint` : undefined}
+		aria-describedby={described || undefined}
 		onchange={(event) => onchange(event.currentTarget.value as T)}
 	>
 		{#each options as option (option.value)}
@@ -33,5 +41,8 @@ to the caller (`onchange` gives the new one).
 	</select>
 	{#if hint}
 		<p id="{uid}-hint" class="text-sm text-muted">{hint}</p>
+	{/if}
+	{#if warning}
+		<p id="{uid}-warning" class="text-sm text-danger">{warning}</p>
 	{/if}
 </div>

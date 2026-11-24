@@ -16,6 +16,24 @@ pub(super) const MAIN_FILE: &str = "gitconfig";
 /// [`MANAGED_DIR`]: followed by its number.
 pub(super) const FOLDER_FILE_PREFIX: &str = "gitconfig-folder-";
 
+/// Keys, in lower case, that HuBergamof writes besides the aliases: those of
+/// the same keys found in other files are listed for the person.
+pub(super) const MANAGED_KEYS: [&str; 10] = [
+    "user.name",
+    "user.email",
+    "user.signingkey",
+    "commit.gpgsign",
+    "gpg.format",
+    "init.defaultbranch",
+    "pull.rebase",
+    "pull.ff",
+    "core.editor",
+    "credential.helper",
+];
+
+/// What the keys of the aliases start with, in lower case.
+pub(super) const ALIAS_KEY_PREFIX: &str = "alias.";
+
 const MANAGED_HEADER: &str = "# Managed by HuBergamof, do not edit: changes are overwritten.\n";
 
 /// A value that cannot be written to a Git configuration file safely.
@@ -199,8 +217,18 @@ pub(super) fn render(config: &GitConfig) -> Result<Option<Rendered>, UnwritableV
             name: name.clone(),
             content: file_text(&[user]),
         });
+        // Written as a sub-section name, between quotes and unescaped: the
+        // validation has no `"` nor `\` in a folder, which is checked again here.
+        if rule
+            .folder
+            .chars()
+            .any(|c| matches!(c, '"' | '\\') || c.is_control())
+        {
+            return Err(UnwritableValue {
+                key: "includeIf".to_owned(),
+            });
+        }
         let mut include = Section::new(&format!("includeIf \"gitdir:{}/\"", rule.folder));
-        // A folder is checked before: no `"` nor `\` in it.
         include.text("path", &format!("~/{MANAGED_DIR}/{name}"))?;
         sections.push(include);
     }
@@ -222,8 +250,70 @@ mod tests {
 
     use super::*;
 
+    fn folder_rule(folder: &str) -> GitFolderIdentity {
+        GitFolderIdentity {
+            folder: folder.into(),
+            name: String::new(),
+            email: "a@b.c".into(),
+            signing_key: String::new(),
+            enabled: true,
+        }
+    }
+
     fn rendered(config: &GitConfig) -> Rendered {
         render(config).unwrap().unwrap()
+    }
+
+    /// The keys the listing of what is found elsewhere looks for must be the
+    /// ones that are written: a key added to the rendering and not to the
+    /// list would silently never be shown.
+    #[test]
+    fn every_key_written_is_a_managed_key() {
+        let mut config = GitConfig::empty();
+        config.identity.name = "Ada".into();
+        config.identity.email = "ada@example.org".into();
+        config.signing.enabled = true;
+        config.signing.key = "k".into();
+        config.settings.default_branch = "main".into();
+        config.settings.pull = GitPullMode::Rebase;
+        config.settings.editor = "vim".into();
+        config.settings.credential_helper = GitCredentialHelper::Store;
+        config.aliases = vec![GitAlias {
+            name: "co".into(),
+            command: "checkout".into(),
+            enabled: true,
+        }];
+        let mut content = rendered(&config).main.content;
+        config.settings.pull = GitPullMode::FastForwardOnly;
+        content.push_str(&rendered(&config).main.content);
+        let mut written = Vec::new();
+        let mut section = String::new();
+        for line in content.lines().filter(|line| !line.starts_with('#')) {
+            if let Some(header) = line.strip_prefix('[') {
+                section = header.trim_end_matches(']').to_ascii_lowercase();
+            } else if let Some((key, _)) = line.trim().split_once(" = ") {
+                written.push(format!("{section}.{}", key.to_ascii_lowercase()));
+            }
+        }
+        assert!(written.len() >= MANAGED_KEYS.len());
+        for key in &written {
+            assert!(
+                MANAGED_KEYS.contains(&key.as_str()) || key.starts_with(ALIAS_KEY_PREFIX),
+                "{key} is written but not listed as managed"
+            );
+        }
+        for key in MANAGED_KEYS {
+            assert!(written.iter().any(|w| w == key), "{key} is never written");
+        }
+    }
+
+    #[test]
+    fn a_folder_that_would_break_out_of_its_section_name_is_refused() {
+        for folder in ["~/a\"b", "~/a\\b", "~/a\nb"] {
+            let mut config = GitConfig::empty();
+            config.folder_identities = vec![folder_rule(folder)];
+            assert!(render(&config).is_err(), "{folder:?}");
+        }
     }
 
     #[test]

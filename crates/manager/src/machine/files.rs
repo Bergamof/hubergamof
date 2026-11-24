@@ -19,9 +19,9 @@ use thiserror::Error;
 
 use super::block::UnterminatedBlock;
 
-/// Largest startup file read or rewritten: a bigger one is not a
+/// Largest text file read or rewritten: a bigger one is not a
 /// configuration file, and is not loaded in memory.
-pub const MAX_STARTUP_FILE_BYTES: u64 = 256 * 1024;
+pub const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
 
 /// Permissions of the files HuBergamof keeps: the user's only.
 pub(super) const PRIVATE_FILE_MODE: u32 = 0o600;
@@ -47,12 +47,16 @@ pub enum FileError {
     /// The path is not a regular file (or, for the private folder, a folder).
     #[error("{0} is not a regular file")]
     NotRegular(PathBuf),
+    /// The path is a link to something that does not exist: it is left as it
+    /// is, not replaced by a file.
+    #[error("{0} is a link to nothing")]
+    DanglingLink(PathBuf),
     /// Another name links to the same file: replacing it would only change
     /// one of them.
     #[error("{0} has other hard links")]
     HardLinked(PathBuf),
-    /// The file is larger than [`MAX_STARTUP_FILE_BYTES`].
-    #[error("{0} is larger than {MAX_STARTUP_FILE_BYTES} bytes")]
+    /// The file is larger than [`MAX_TEXT_FILE_BYTES`].
+    #[error("{0} is larger than {MAX_TEXT_FILE_BYTES} bytes")]
     TooLarge(PathBuf),
     /// The file is not valid UTF-8: it is left untouched.
     #[error("{0} is not valid UTF-8, left untouched")]
@@ -69,7 +73,7 @@ pub(super) fn io_error(path: &Path, source: io::Error) -> FileError {
     }
 }
 
-/// The bytes of a startup file; `None` when it does not exist.
+/// The bytes of a text file; `None` when it does not exist.
 ///
 /// Opened without blocking, so that a named pipe in its place is refused
 /// instead of waiting for a writer.
@@ -89,16 +93,16 @@ pub(super) fn read_text_file(path: &Path) -> Result<Option<Vec<u8>>, FileError> 
     }
     let mut bytes = Vec::new();
     // One byte more than the limit tells a file that grew since the check.
-    file.take(MAX_STARTUP_FILE_BYTES + 1)
+    file.take(MAX_TEXT_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| io_error(path, error))?;
-    if bytes.len() as u64 > MAX_STARTUP_FILE_BYTES {
+    if bytes.len() as u64 > MAX_TEXT_FILE_BYTES {
         return Err(FileError::TooLarge(path.to_owned()));
     }
     Ok(Some(bytes))
 }
 
-/// Rewrites a startup file through `change`, keeping its mode and any link
+/// Rewrites a text file through `change`, keeping its mode and any link
 /// to it. A missing file is not created; an unchanged one is not written.
 pub(super) fn update_text_file(
     path: &Path,
@@ -171,5 +175,73 @@ pub(super) fn remove_file_if_present(path: &Path) -> Result<(), FileError> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error(path, error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_file_is_none_and_a_folder_is_not_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_text_file(&dir.path().join("none")).unwrap().is_none());
+        assert!(matches!(
+            read_text_file(dir.path()),
+            Err(FileError::NotRegular(_))
+        ));
+    }
+
+    #[test]
+    fn the_largest_file_is_read_and_a_larger_one_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let limit = usize::try_from(MAX_TEXT_FILE_BYTES).unwrap();
+        let path = dir.path().join("f");
+        fs::write(&path, vec![b'a'; limit]).unwrap();
+        assert_eq!(read_text_file(&path).unwrap().unwrap().len(), limit);
+        fs::write(&path, vec![b'a'; limit + 1]).unwrap();
+        assert!(matches!(read_text_file(&path), Err(FileError::TooLarge(_))));
+    }
+
+    #[test]
+    fn the_private_folder_is_created_tightened_and_never_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = dir.path().join("a/b");
+        ensure_private_dir(&private).unwrap();
+        assert_eq!(
+            fs::metadata(&private).unwrap().permissions().mode() & MODE_MASK,
+            PRIVATE_DIR_MODE
+        );
+        fs::set_permissions(&private, Permissions::from_mode(0o755)).unwrap();
+        ensure_private_dir(&private).unwrap();
+        assert_eq!(
+            fs::metadata(&private).unwrap().permissions().mode() & MODE_MASK,
+            PRIVATE_DIR_MODE
+        );
+        let file = dir.path().join("file");
+        fs::write(&file, "x").unwrap();
+        assert!(matches!(
+            ensure_private_dir(&file),
+            Err(FileError::NotRegular(_))
+        ));
+    }
+
+    #[test]
+    fn a_file_is_replaced_whole_with_the_mode_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        fs::write(&path, "old content that is longer").unwrap();
+        write_replacing(&path, b"new", PRIVATE_FILE_MODE).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & MODE_MASK,
+            PRIVATE_FILE_MODE
+        );
+    }
+
+    #[test]
+    fn removing_what_is_not_there_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        remove_file_if_present(&dir.path().join("none")).unwrap();
     }
 }

@@ -1,6 +1,7 @@
 //! The Git hub and the files it writes, checked against the real `git`: what
 //! is written must be read back by Git as it was meant.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
@@ -20,6 +21,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    require_git();
     let config_dir = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let store = ConfigStore::new(config_dir.path(), Arc::new(builtin_registry()));
@@ -35,6 +37,15 @@ fn read(home: &Path, relative: &str) -> String {
     fs::read_to_string(home.join(relative)).unwrap()
 }
 
+/// Git must be installed to run these tests: they use it as the judge of what is written.
+fn require_git() {
+    let found = Command::new("git").arg("--version").output();
+    assert!(
+        found.is_ok_and(|output| output.status.success()),
+        "the git program is needed to run these tests"
+    );
+}
+
 /// What Git itself reads for `key`, run in `directory` (a repository or not),
 /// with only the files of `home`.
 fn git_get(home: &Path, directory: &Path, key: &str) -> Option<String> {
@@ -46,6 +57,8 @@ fn git_get(home: &Path, directory: &Path, key: &str) -> Option<String> {
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        // A repository above the temporary folder must not be read.
+        .env("GIT_CEILING_DIRECTORIES", home.parent().unwrap_or(home))
         .output()
         .unwrap();
     output.status.success().then(|| {
@@ -82,7 +95,7 @@ async fn saved(fixture: &Fixture, change: impl FnOnce(&mut GitConfig)) -> GitCon
 }
 
 #[tokio::test]
-async fn the_demo_never_touches_the_real_home() {
+async fn the_demo_works_in_a_temporary_home_and_never_touches_the_real_one() {
     let config_dir = tempfile::tempdir().unwrap();
     let store = ConfigStore::new(config_dir.path(), Arc::new(builtin_registry()));
     let hub = GitConfigHub::demo(store).unwrap();
@@ -98,6 +111,10 @@ async fn the_demo_never_touches_the_real_home() {
     let mut config = snapshot.config;
     config.identity.name = "Grace Hopper".into();
     hub.update(config).await.unwrap();
+    let demo_home = hub.inner.files.as_ref().unwrap().home().to_owned();
+    assert!(demo_home.starts_with(std::env::temp_dir()));
+    assert_ne!(Some(demo_home.clone()), std::env::home_dir());
+    assert!(read(&demo_home, ".config/hubergamof/gitconfig").contains("Grace Hopper"));
     let after = hub.refresh().await.unwrap();
     assert_eq!(
         after.system_entries.len(),
@@ -459,7 +476,7 @@ async fn without_a_home_folder_the_configuration_is_saved_but_not_applied() {
     let snapshot = hub.refresh().await.unwrap();
     assert_eq!(snapshot.config.revision, 1);
     assert_eq!(snapshot.system_entries, []);
-    assert!(!snapshot.git_available);
+    assert!(snapshot.git_available, "no home is not a missing git");
 }
 
 #[tokio::test]
@@ -522,5 +539,352 @@ async fn values_found_elsewhere_are_listed_for_the_page() {
             ("alias.co", "checkout"),
             ("alias.danger", "!echo hi")
         ]
+    );
+}
+
+#[tokio::test]
+async fn with_both_git_files_the_block_goes_in_dotgitconfig_and_the_other_stays_as_it_was() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let xdg = "[core]\n\tpager = less\n";
+    fs::create_dir_all(home.join(".config/git")).unwrap();
+    fs::write(home.join(".config/git/config"), xdg).unwrap();
+    fs::write(home.join(".gitconfig"), "[user]\n\tname = Before\n").unwrap();
+
+    saved(&fixture, |config| config.identity.name = "After".into()).await;
+    assert!(read(home, ".gitconfig").contains("hubergamof git"));
+    assert_eq!(read(home, ".config/git/config"), xdg);
+    assert_eq!(git_get(home, home, "user.name").as_deref(), Some("After"));
+}
+
+#[tokio::test]
+async fn the_block_moves_when_the_file_that_gets_it_changes_and_never_stays_twice() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::create_dir_all(home.join(".config/git")).unwrap();
+    fs::write(home.join(".config/git/config"), "[core]\n\tpager = less\n").unwrap();
+    saved(&fixture, |config| config.identity.name = "Ada".into()).await;
+    assert!(read(home, ".config/git/config").contains("hubergamof git"));
+
+    // The person makes a ~/.gitconfig: it comes first now.
+    fs::write(home.join(".gitconfig"), "[user]\n\temail = a@b.c\n").unwrap();
+    saved(&fixture, |config| config.identity.name = "Grace".into()).await;
+    let blocks = |relative: &str| read(home, relative).matches("hubergamof git >>>").count();
+    assert_eq!(blocks(".gitconfig"), 1);
+    assert_eq!(blocks(".config/git/config"), 0);
+    assert_eq!(read(home, ".config/git/config"), "[core]\n\tpager = less\n");
+
+    // Switched off with a block in each file: both are cleaned.
+    let block = "# >>> hubergamof git >>>\n[include]\n\tpath = x\n# <<< hubergamof git <<<\n";
+    fs::write(home.join(".config/git/config"), format!("[core]\n{block}")).unwrap();
+    saved(&fixture, |config| config.identity.name.clear()).await;
+    assert_eq!(blocks(".gitconfig"), 0);
+    assert_eq!(blocks(".config/git/config"), 0);
+    assert_eq!(read(home, ".gitconfig"), "[user]\n\temail = a@b.c\n");
+}
+
+#[tokio::test]
+async fn an_empty_gitconfig_of_the_user_is_never_removed() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(home.join(".gitconfig"), "").unwrap();
+
+    // Nothing to write: the file was never ours.
+    saved(&fixture, |_| ()).await;
+    assert!(home.join(".gitconfig").is_file());
+
+    // Written then switched off: the block goes. An empty file and no file
+    // are the same to Git, so the file may go with it, but never keeps a block.
+    saved(&fixture, |config| config.identity.name = "Ada".into()).await;
+    saved(&fixture, |config| config.identity.name.clear()).await;
+    let left = fs::read_to_string(home.join(".gitconfig")).unwrap_or_default();
+    assert_eq!(left.trim(), "");
+}
+
+/// Why a file of the user cannot be rewritten, and what is left then.
+#[tokio::test]
+async fn a_gitconfig_that_cannot_be_rewritten_is_left_untouched_and_the_error_says_why() {
+    type Prepare = fn(&Path);
+    let cases: [(&str, Prepare); 3] = [
+        ("not UTF-8", |home| {
+            fs::write(home.join(".gitconfig"), [0xff, 0xfe, b'\n']).unwrap();
+        }),
+        ("hard link", |home| {
+            fs::write(home.join("other"), "[core]\n").unwrap();
+            fs::hard_link(home.join("other"), home.join(".gitconfig")).unwrap();
+        }),
+        ("too large", |home| {
+            let big = "#".repeat(usize::try_from(crate::machine::MAX_TEXT_FILE_BYTES).unwrap() + 1);
+            fs::write(home.join(".gitconfig"), big).unwrap();
+        }),
+    ];
+    for (what, prepare) in cases {
+        let fixture = fixture();
+        let home = fixture.home.path();
+        prepare(home);
+        let before = fs::read(home.join(".gitconfig")).unwrap();
+        let mut changes = fixture.hub.subscribe();
+        let mut config = fixture.hub.refresh().await.unwrap().config;
+        config.identity.name = "Ada".into();
+
+        let error = fixture.hub.update(config).await.unwrap_err();
+        assert!(
+            matches!(error, GitError::Files(GitFilesError::File(_))),
+            "{what}: {error}"
+        );
+        assert_eq!(fs::read(home.join(".gitconfig")).unwrap(), before, "{what}");
+        assert_eq!(changes.recv().await.unwrap().config.revision, 1, "{what}");
+    }
+}
+
+#[tokio::test]
+async fn switching_off_with_an_unreadable_gitconfig_keeps_the_files_the_include_may_still_load() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| config.identity.name = "Ada".into()).await;
+    let with_block = fs::read(home.join(".gitconfig")).unwrap();
+    fs::write(home.join(".gitconfig"), [0xff, 0xfe]).unwrap();
+
+    let mut config = fixture.hub.refresh().await.unwrap().config;
+    config.identity.name.clear();
+    assert!(fixture.hub.update(config).await.is_err());
+    assert!(
+        home.join(".config/hubergamof/gitconfig").is_file(),
+        "no include is left pointing at a removed file"
+    );
+    drop(with_block);
+}
+
+#[tokio::test]
+async fn the_folder_of_hubergamof_is_tightened_and_a_file_in_its_place_is_refused() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let dir = home.join(".config/hubergamof");
+    fs::create_dir_all(&dir).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    saved(&fixture, |config| config.identity.name = "Ada".into()).await;
+    assert_eq!(
+        fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+
+    let other = fixture_without_folder();
+    let mut config = other.hub.refresh().await.unwrap().config;
+    config.identity.name = "Ada".into();
+    fs::create_dir_all(other.home.path().join(".config")).unwrap();
+    fs::write(other.home.path().join(".config/hubergamof"), "x").unwrap();
+    let error = other.hub.update(config).await.unwrap_err();
+    assert!(
+        matches!(error, GitError::Files(GitFilesError::File(_))),
+        "{error}"
+    );
+}
+
+fn fixture_without_folder() -> Fixture {
+    fixture()
+}
+
+#[tokio::test]
+async fn saving_twice_leaves_one_block_and_an_identical_update_rewrites_nothing() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| config.identity.name = "Ada".into()).await;
+    saved(&fixture, |config| config.identity.email = "a@b.c".into()).await;
+    assert_eq!(
+        read(home, ".gitconfig")
+            .matches("hubergamof git >>>")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn folder_rules_follow_the_boundaries_git_gives_them() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let mut off = folder_rule("~/off", "Off", "off@x.org");
+    off.enabled = false;
+    let mut key_only = folder_rule("~/signed", "", "");
+    key_only.signing_key = "KEY1".into();
+    saved(&fixture, |config| {
+        config.identity.email = "global@x.org".into();
+        config.folder_identities = vec![
+            folder_rule("~/work", "Work", "work@x.org"),
+            folder_rule("~/work/acme", "Acme", "acme@x.org"),
+            folder_rule("~/my projects", "Spaced", "spaced@x.org"),
+            off,
+            key_only,
+        ];
+    })
+    .await;
+
+    let repository = |relative: &str| {
+        let path = home.join(relative);
+        fs::create_dir_all(&path).unwrap();
+        let status = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&path)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", home)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        path
+    };
+    let email = |path: &Path| git_get(home, path, "user.email");
+    assert_eq!(email(&repository("work/a")).as_deref(), Some("work@x.org"));
+    assert_eq!(
+        email(&repository("workshop/a")).as_deref(),
+        Some("global@x.org")
+    );
+    assert_eq!(
+        email(&repository("work/acme/a")).as_deref(),
+        Some("acme@x.org"),
+        "the last rule wins"
+    );
+    assert_eq!(
+        email(&repository("my projects/a")).as_deref(),
+        Some("spaced@x.org")
+    );
+    assert_eq!(email(&repository("off/a")).as_deref(), Some("global@x.org"));
+    let signed = repository("signed/a");
+    assert_eq!(
+        git_get(home, &signed, "user.signingkey").as_deref(),
+        Some("KEY1")
+    );
+    assert_eq!(email(&signed).as_deref(), Some("global@x.org"));
+}
+
+#[tokio::test]
+async fn git_reads_back_every_escape_and_both_pull_modes() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.identity.name = r"Zoë \ ; # \ end".into();
+        config.settings.pull = GitPullMode::Merge;
+    })
+    .await;
+    assert_eq!(
+        git_get(home, home, "user.name").as_deref(),
+        Some(r"Zoë \ ; # \ end")
+    );
+    assert_eq!(git_get(home, home, "pull.rebase").as_deref(), Some("false"));
+    saved(&fixture, |config| {
+        config.settings.pull = GitPullMode::Rebase;
+    })
+    .await;
+    assert_eq!(git_get(home, home, "pull.rebase").as_deref(), Some("true"));
+}
+
+#[tokio::test]
+async fn a_folder_that_is_or_goes_through_a_link_is_refused_and_a_rule_that_is_off_is_not_checked()
+{
+    let elsewhere = tempfile::tempdir().unwrap();
+    for (rule_folder, link_at, enabled) in
+        [("~/work", "work", true), ("~/deep/er/work", "deep", true)]
+    {
+        let fixture = fixture();
+        let home = fixture.home.path();
+        symlink(elsewhere.path(), home.join(link_at)).unwrap();
+        let mut rule = folder_rule(rule_folder, "A", "a@x.org");
+        rule.enabled = enabled;
+        let mut config = fixture.hub.refresh().await.unwrap().config;
+        config.folder_identities = vec![rule];
+        let error = fixture.hub.update(config).await.unwrap_err();
+        assert!(
+            matches!(error, GitError::Files(GitFilesError::LinkedFolder(_))),
+            "{rule_folder} {enabled}: {error}"
+        );
+    }
+
+    // Off, it writes nothing: it may stay, so that it can be switched on later
+    // or removed.
+    let fixture = fixture();
+    symlink(elsewhere.path(), fixture.home.path().join("work")).unwrap();
+    let mut off = folder_rule("~/work", "A", "a@x.org");
+    off.enabled = false;
+    saved(&fixture, |config| config.folder_identities = vec![off]).await;
+}
+
+#[tokio::test]
+async fn an_absent_git_is_told_and_nothing_else_fails() {
+    let fixture = fixture();
+    let mut files = GitFiles::new(fixture.home.path().to_owned(), false);
+    files.program = "/nonexistent/git".into();
+    let read = files.read_system().await;
+    assert_eq!(
+        read,
+        SystemRead {
+            entries: Vec::new(),
+            git_available: false
+        }
+    );
+
+    let store = ConfigStore::new(fixture.config_dir.path(), Arc::new(builtin_registry()));
+    let hub = GitConfigHub::new(store, Some(files));
+    let snapshot = hub.refresh().await.unwrap();
+    assert!(!snapshot.git_available);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_git_that_takes_too_long_is_given_up_and_killed() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("slow-git");
+    fs::write(&script, "#!/bin/sh\nexec sleep 3600\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut files = GitFiles::new(dir.path().to_owned(), false);
+    files.program = script.into_os_string();
+    let read = files.read_system().await;
+    assert!(!read.git_available);
+}
+
+#[tokio::test]
+async fn a_huge_configuration_is_listed_within_its_limit() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    let mut text = String::from("[alias]\n");
+    for index in 0..(MAX_SYSTEM_GIT_ENTRIES + 100) {
+        writeln!(text, "\ta{index} = status").unwrap();
+    }
+    fs::write(home.join(".gitconfig"), text).unwrap();
+    let snapshot = fixture.hub.refresh().await.unwrap();
+    assert_eq!(snapshot.system_entries.len(), MAX_SYSTEM_GIT_ENTRIES);
+}
+
+#[tokio::test]
+async fn a_circular_include_is_stopped_by_git_itself() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    fs::write(
+        home.join(".gitconfig"),
+        "[include]\n\tpath = ~/.gitconfig\n[user]\n\tname = Loop\n",
+    )
+    .unwrap();
+    let snapshot = fixture.hub.refresh().await.unwrap();
+    assert!(snapshot.git_available);
+    assert!(
+        snapshot.system_entries.is_empty()
+            || snapshot.system_entries.len() <= MAX_SYSTEM_GIT_ENTRIES
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_saved_configuration_takes_what_it_had_applied_with_it() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| config.identity.name = "Ada".into()).await;
+    assert!(home.join(".config/hubergamof/gitconfig").is_file());
+
+    // The saved file is damaged (or comes from a newer version).
+    let path = fixture.config_dir.path().join("git.json");
+    fs::write(&path, "{ not json").unwrap();
+    let snapshot = fixture.hub.refresh().await.unwrap();
+    assert_eq!(snapshot.config, GitConfig::empty());
+    assert!(!home.join(".config/hubergamof/gitconfig").exists());
+    assert!(
+        !home.join(".gitconfig").exists(),
+        "the file only held our block"
     );
 }

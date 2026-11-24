@@ -142,10 +142,10 @@ export class DeckState {
 				this.#edits.dropPending(CONNECTION_LOST);
 				this.mice.dropPending(CONNECTION_LOST);
 				this.application.dropPending(CONNECTION_LOST);
-				this.machine.dropPending(CONNECTION_LOST);
-				this.machine.reconnected();
-				this.git.dropPending(CONNECTION_LOST);
-				this.git.reconnected();
+				for (const state of [this.machine, this.git]) {
+					state.dropPending(CONNECTION_LOST);
+					state.reconnected();
+				}
 				this.managerVersion = message.version;
 				break;
 			case 'devices':

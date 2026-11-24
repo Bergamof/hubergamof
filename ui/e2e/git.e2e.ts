@@ -110,20 +110,32 @@ async function openGit(page: Page) {
 
 const identityForm = (page: Page) => page.getByRole('form', { name: 'Identité', exact: true });
 
-test('ne lit l’ordinateur qu’à l’ouverture de la rubrique Git, puis à chaque reconnexion', async ({
+test('ne lit l’ordinateur qu’à l’ouverture de la page Machine, puis à chaque reconnexion', async ({
 	page
 }) => {
 	const manager = await playManager(page);
 	await page.goto('/');
-	await page.getByRole('button', { name: 'Machine' }).click();
+	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	expect(manager.received).not.toContain('refreshGit');
 
-	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	await page.getByRole('button', { name: 'Machine' }).click();
 	await expect.poll(() => manager.received.filter((type) => type === 'refreshGit')).toHaveLength(1);
 
 	await manager.sockets[0].close();
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	await expect.poll(() => manager.received.filter((type) => type === 'refreshGit')).toHaveLength(2);
+});
+
+test('garde ce qui est saisi quand on regarde les alias du shell puis qu’on revient', async ({
+	page
+}) => {
+	await playManager(page);
+	await openGit(page);
+	await identityForm(page).getByRole('textbox', { name: 'Nom' }).fill('Ada');
+	await page.getByRole('radio', { name: 'Alias du shell' }).check({ force: true });
+	await expect(page.getByRole('heading', { name: 'Alias du shell' })).toBeVisible();
+	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	await expect(identityForm(page).getByRole('textbox', { name: 'Nom' })).toHaveValue('Ada');
 });
 
 test('enregistre l’identité, la signature et les réglages', async ({ page }) => {
@@ -174,7 +186,7 @@ test('ajoute, désactive et supprime un alias Git, et intègre un alias trouvé 
 	const manager = await playManager(page);
 	await openGit(page);
 	const managed = page.getByRole('list', { name: 'Alias Git gérés' });
-	const found = page.getByRole('list', { name: 'Alias Git du système, non gérés' });
+	const found = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
 
 	const form = page.getByRole('form', { name: 'Ajouter un alias Git' });
 	await form.getByRole('textbox', { name: 'Nom' }).fill('co');
@@ -186,10 +198,10 @@ test('ajoute, désactive et supprime un alias Git, et intègre un alias trouvé 
 	await expect(managed.getByText('Désactivé')).toBeVisible();
 	expect(manager.config.aliases).toEqual([{ name: 'co', command: 'checkout', enabled: false }]);
 
-	await page.getByRole('button', { name: 'Intégrer l’alias Git gs' }).click();
+	await page.getByRole('button', { name: 'Reprendre l’alias Git gs' }).click();
 	await expect(managed.getByText('status --short')).toBeVisible();
 	await expect(found.getByText('status --short')).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Intégrer l’alias Git sh' })).toHaveAttribute(
+	await expect(page.getByRole('button', { name: 'Reprendre l’alias Git sh' })).toHaveAttribute(
 		'aria-disabled',
 		'true'
 	);

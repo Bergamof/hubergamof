@@ -99,3 +99,37 @@ impl Block<'_> {
 fn lines_of(content: &str) -> Vec<&str> {
     content.split_inclusive('\n').collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GIT: Block<'static> = Block {
+        start: "# >>> hubergamof git >>>",
+        end: "# <<< hubergamof git <<<",
+        body: "[include]\n\tpath = ~/x\n",
+    };
+
+    #[test]
+    fn a_block_with_other_markers_is_added_replaced_and_removed_like_any() {
+        let original = "[user]\n\tname = Ada\n";
+        let with = GIT.insert(original).unwrap();
+        assert_eq!(with, format!("{original}\n{}", GIT.text()));
+        assert_eq!(GIT.insert(&with).unwrap(), with);
+        assert_eq!(GIT.remove(&with).unwrap(), original);
+    }
+
+    #[test]
+    fn the_markers_of_another_block_are_not_this_one() {
+        let other = "# >>> hubergamof aliases >>>\nx\n# <<< hubergamof aliases <<<\n";
+        assert_eq!(GIT.remove(other).unwrap(), other);
+        assert!(GIT.insert(other).unwrap().ends_with(&GIT.text()));
+    }
+
+    #[test]
+    fn a_block_without_its_end_is_refused() {
+        let broken = "a\n# >>> hubergamof git >>>\n[include]\n";
+        assert_eq!(GIT.insert(broken), Err(UnterminatedBlock));
+        assert_eq!(GIT.remove(broken), Err(UnterminatedBlock));
+    }
+}

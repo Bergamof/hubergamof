@@ -12,11 +12,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use hubergamof_protocol::GitSystemEntry;
+use tokio::io::AsyncReadExt as _;
 use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::apply::GitFiles;
-use super::render::MANAGED_DIR;
+use super::render::{ALIAS_KEY_PREFIX, MANAGED_DIR, MANAGED_KEYS};
 
 /// Most entries listed.
 pub const MAX_SYSTEM_GIT_ENTRIES: usize = 256;
@@ -24,8 +25,14 @@ pub const MAX_SYSTEM_GIT_ENTRIES: usize = 256;
 /// Longest value kept of an entry, in characters.
 const MAX_ENTRY_VALUE_CHARS: usize = 1024;
 
+/// Most of what `git config --list` says that is read.
+const MAX_GIT_OUTPUT_BYTES: u64 = 1024 * 1024;
+
+/// The program that lists the configuration.
+pub(super) const GIT_PROGRAM: &str = "git";
+
 /// How long `git config` may take: it only reads a few small files.
-const GIT_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const GIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Where programs are looked for when the manager has no `PATH`.
 const DEFAULT_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
@@ -41,19 +48,7 @@ pub struct SystemRead {
 
 /// Whether the configuration key `key` (lower case) is one HuBergamof manages.
 fn is_managed_key(key: &str) -> bool {
-    matches!(
-        key,
-        "user.name"
-            | "user.email"
-            | "user.signingkey"
-            | "commit.gpgsign"
-            | "gpg.format"
-            | "init.defaultbranch"
-            | "pull.rebase"
-            | "pull.ff"
-            | "core.editor"
-            | "credential.helper"
-    ) || key.starts_with("alias.")
+    MANAGED_KEYS.contains(&key) || key.starts_with(ALIAS_KEY_PREFIX)
 }
 
 /// The entries of the output of `git config --list --show-origin --null`:
@@ -76,7 +71,7 @@ fn parse_entries(output: &[u8], home: &Path) -> Vec<GitSystemEntry> {
         }
         entries.push(GitSystemEntry {
             key: key.to_owned(),
-            value: value.chars().take(MAX_ENTRY_VALUE_CHARS).collect(),
+            value: shown_value(key, value),
             origin: tilde(path, home),
         });
         if entries.len() == MAX_SYSTEM_GIT_ENTRIES {
@@ -84,6 +79,17 @@ fn parse_entries(output: &[u8], home: &Path) -> Vec<GitSystemEntry> {
         }
     }
     entries
+}
+
+/// What a helper that is a shell command shows instead of itself: it may hold
+/// a password. Any other value is cut to [`MAX_ENTRY_VALUE_CHARS`].
+const HIDDEN_COMMAND: &str = "!… (commande non affichée)";
+
+fn shown_value(key: &str, value: &str) -> String {
+    if key == "credential.helper" && value.starts_with('!') {
+        return HIDDEN_COMMAND.to_owned();
+    }
+    value.chars().take(MAX_ENTRY_VALUE_CHARS).collect()
 }
 
 /// `path` with the home folder written `~`.
@@ -94,33 +100,34 @@ fn tilde(path: &str, home: &Path) -> String {
     }
 }
 
+/// What listing the configuration gave.
+enum Listing {
+    /// All of what `git` said, and it succeeded.
+    Complete(Vec<u8>),
+    /// More than [`MAX_GIT_OUTPUT_BYTES`]: `git` was stopped, this is the start.
+    Truncated(Vec<u8>),
+    /// `git` ran and failed.
+    Failed(std::process::ExitStatus),
+}
+
 impl GitFiles {
     /// Reads the managed values the computer holds besides HuBergamof's. A
     /// missing `git`, a failure or a timeout leave the list empty (logged).
     pub async fn read_system(&self) -> SystemRead {
-        let path = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(DEFAULT_PATH));
-        let mut command = Command::new("git");
-        command
-            .args(["config", "--list", "--show-origin", "--null"])
-            .env_clear()
-            .env("PATH", path)
-            .env("HOME", &self.home)
-            .env("XDG_CONFIG_HOME", self.home.join(".config"))
-            .env("LC_ALL", "C")
-            .current_dir("/")
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        if !self.with_system_config {
-            command.env("GIT_CONFIG_NOSYSTEM", "1");
-        }
-        match timeout(GIT_TIMEOUT, command.output()).await {
-            Ok(Ok(output)) if output.status.success() => SystemRead {
-                entries: parse_entries(&output.stdout, &self.home),
+        match timeout(self.timeout, self.list()).await {
+            Ok(Ok(Listing::Complete(output))) => SystemRead {
+                entries: parse_entries(&output, &self.home),
                 git_available: true,
             },
-            Ok(Ok(output)) => {
-                tracing::warn!(status = %output.status, "git could not list its configuration");
+            Ok(Ok(Listing::Truncated(output))) => {
+                tracing::warn!("git listed more than it is read: the rest is left out");
+                SystemRead {
+                    entries: parse_entries(&output, &self.home),
+                    git_available: true,
+                }
+            }
+            Ok(Ok(Listing::Failed(status))) => {
+                tracing::warn!(%status, "git could not list its configuration");
                 SystemRead {
                     entries: Vec::new(),
                     git_available: true,
@@ -135,6 +142,50 @@ impl GitFiles {
                 SystemRead::default()
             }
         }
+    }
+
+    /// Runs `git config --list`, reading no more than [`MAX_GIT_OUTPUT_BYTES`]
+    /// of what it says: a configuration file of the user, or one it includes,
+    /// may be of any size.
+    async fn list(&self) -> std::io::Result<Listing> {
+        let path = std::env::var_os("PATH").unwrap_or_else(|| OsString::from(DEFAULT_PATH));
+        let mut command = Command::new(&self.program);
+        command
+            .args(["config", "--list", "--show-origin", "--null"])
+            .env_clear()
+            .env("PATH", path)
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("LC_ALL", "C")
+            .current_dir("/")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        if !self.with_system_config {
+            command.env("GIT_CONFIG_NOSYSTEM", "1");
+        }
+        let mut child = command.spawn()?;
+        let Some(stdout) = child.stdout.take() else {
+            return Err(std::io::Error::other("the output of git is not piped"));
+        };
+        let mut output = Vec::new();
+        // One byte more than the limit tells an output that was cut.
+        stdout
+            .take(MAX_GIT_OUTPUT_BYTES + 1)
+            .read_to_end(&mut output)
+            .await?;
+        if output.len() as u64 > MAX_GIT_OUTPUT_BYTES {
+            child.kill().await?;
+            output.truncate(usize::try_from(MAX_GIT_OUTPUT_BYTES).unwrap_or(usize::MAX));
+            return Ok(Listing::Truncated(output));
+        }
+        let status = child.wait().await?;
+        Ok(if status.success() {
+            Listing::Complete(output)
+        } else {
+            Listing::Failed(status)
+        })
     }
 }
 
@@ -213,6 +264,19 @@ mod tests {
     }
 
     #[test]
+    fn a_credential_helper_that_is_a_command_is_not_shown() {
+        let found = parse(&[
+            (
+                "file:/etc/gitconfig",
+                "credential.helper\n!f() { echo password=hunter2; }; f",
+            ),
+            ("file:/etc/gitconfig", "credential.helper\nstore"),
+        ]);
+        assert_eq!(found[0].value, HIDDEN_COMMAND);
+        assert_eq!(found[1].value, "store");
+    }
+
+    #[test]
     fn a_key_without_value_is_true_and_values_keep_their_newlines_free_text() {
         let found = parse(&[("file:/home/ada/.gitconfig", "commit.gpgsign")]);
         assert_eq!(found[0].value, "true");
@@ -254,6 +318,20 @@ mod tests {
         let keys: Vec<_> = read.entries.iter().map(|e| e.key.as_str()).collect();
         assert_eq!(keys, ["user.name", "alias.co"]);
         assert_eq!(read.entries[0].origin, "~/.gitconfig");
+    }
+
+    #[tokio::test]
+    async fn an_output_larger_than_the_limit_is_cut_and_git_is_stopped() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("chatty-git");
+        std::fs::write(&script, "#!/bin/sh\nexec yes\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut files = GitFiles::new(dir.path().to_owned(), false);
+        files.program = script.into_os_string();
+        let read = files.read_system().await;
+        assert!(read.git_available);
+        assert_eq!(read.entries, []);
     }
 
     #[tokio::test]

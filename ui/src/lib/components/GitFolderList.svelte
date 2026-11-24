@@ -35,10 +35,7 @@ where the person works: back to « Modifier » after a change, on `fallbackFocus
 	$effect(() => {
 		void rules;
 		if (editFocusFolder === undefined) return;
-		const row = [...(list?.querySelectorAll<HTMLLIElement>('li[data-folder]') ?? [])].find(
-			(item) => item.dataset.folder === editFocusFolder
-		);
-		const button = row?.querySelector<HTMLButtonElement>('[data-edit]');
+		const button = rowOf(editFocusFolder)?.querySelector<HTMLButtonElement>('[data-edit]');
 		if (!button) return;
 		button.focus();
 		editFocusFolder = undefined;
@@ -58,22 +55,35 @@ where the person works: back to « Modifier » after a change, on `fallbackFocus
 		return outcome;
 	}
 
-	/** A removal was confirmed: once the dialog is closed the focus must leave the row that goes. */
-	let removed = false;
+	/** The neighbour whose « Supprimer » button takes the focus once the confirmation is closed (none: the last one). */
+	let afterRemoval: { neighbour: string | undefined } | undefined;
+
+	function rowOf(folder: string): HTMLLIElement | undefined {
+		return [...(list?.querySelectorAll<HTMLLIElement>('li[data-folder]') ?? [])].find(
+			(item) => item.dataset.folder === folder
+		);
+	}
 
 	function confirmRemoval() {
 		if (removing) {
+			const index = rules.findIndex(({ folder }) => folder === removing?.folder);
+			afterRemoval = { neighbour: (rules[index + 1] ?? rules[index - 1])?.folder };
 			onremove(removing.folder);
-			removed = true;
 		}
 		removing = undefined;
 	}
 
 	/** After the dialog gave the focus back to its opener, which is about to leave. */
 	function focusAfterRemoval() {
-		if (!removed) return;
-		removed = false;
-		fallbackFocus?.();
+		if (!afterRemoval) return;
+		const { neighbour } = afterRemoval;
+		afterRemoval = undefined;
+		const button =
+			neighbour === undefined
+				? undefined
+				: rowOf(neighbour)?.querySelector<HTMLButtonElement>('[data-remove]');
+		if (button) button.focus();
+		else fallbackFocus?.();
 	}
 
 	/** What the rule sets, in words. */
@@ -136,6 +146,7 @@ where the person works: back to « Modifier » after a change, on `fallbackFocus
 							</button>
 							<button
 								type="button"
+								data-remove
 								class="secondary-button"
 								aria-label="Supprimer l’identité de {rule.folder}"
 								onclick={() => (removing = rule)}

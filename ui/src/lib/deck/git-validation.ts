@@ -7,6 +7,8 @@ export const trimValue = trimCommand;
 
 /** Limits of the manager (`MAX_GIT_*` and `CREDENTIAL_CACHE_SECONDS` in `git.rs`). */
 export const GIT_VALUE_MAX = 256;
+/** What a field of text accepts to be typed: twice what is valid, so that the check says why, not the field. */
+export const GIT_INPUT_MAX = GIT_VALUE_MAX * 2;
 export const GIT_ALIAS_NAME_MAX = 64;
 export const GIT_ALIAS_COMMAND_MAX = 1024;
 export const GIT_ALIASES_MAX = 128;
@@ -29,6 +31,17 @@ export const GIT_EDITORS: readonly string[] = [
 	'subl --wait',
 	'kate --block',
 	'gedit --wait'
+];
+
+/** The editors that may be given by the absolute path of their program (`GIT_PLAIN_EDITORS`). */
+export const GIT_PLAIN_EDITORS: readonly string[] = [
+	'vi',
+	'vim',
+	'nvim',
+	'nano',
+	'emacs',
+	'micro',
+	'hx'
 ];
 
 const LEADING_WHITE_SPACE = /^\p{White_Space}/u;
@@ -85,13 +98,14 @@ export function isValidBranchName(branch: string): boolean {
 	);
 }
 
-/** `core.editor`: one of {@link GIT_EDITORS}, or the absolute path of a program. */
+/** `core.editor`: one of {@link GIT_EDITORS}, or the absolute path of the program of one of {@link GIT_PLAIN_EDITORS}. */
 export function isValidEditor(editor: string): boolean {
 	if (GIT_EDITORS.includes(editor)) return true;
 	return (
 		lengthOf(editor) <= GIT_VALUE_MAX &&
 		editor.startsWith('/') &&
 		editor.length > 1 &&
+		GIT_PLAIN_EDITORS.includes(editor.slice(editor.lastIndexOf('/') + 1)) &&
 		EDITOR_PATH_CHARACTERS.test(editor) &&
 		editor
 			.split('/')
@@ -151,7 +165,7 @@ export function branchError(branch: string): string | undefined {
 
 export function editorError(editor: string): string | undefined {
 	if (editor === '' || isValidEditor(editor)) return undefined;
-	return 'Choisissez un éditeur de la liste, ou saisissez le chemin absolu de son programme (lettres, chiffres, « . », « _ », « - », « + » et « / », sans espace).';
+	return 'Choisissez un éditeur de la liste, ou saisissez le chemin absolu du programme de vi, vim, nvim, nano, emacs, micro ou hx (sans espace).';
 }
 
 export function cacheTimeoutError(seconds: number): string | undefined {

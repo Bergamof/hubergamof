@@ -52,7 +52,7 @@ editor and the credential helper come from lists, since Git runs them. The form 
 	const EDITORS = [
 		{ value: '', label: 'Ne pas gérer' },
 		...GIT_EDITORS.map((editor) => ({ value: editor, label: editor })),
-		{ value: OTHER_EDITOR, label: 'Un autre programme (chemin absolu)' }
+		{ value: OTHER_EDITOR, label: 'Un de ces éditeurs, par son chemin absolu' }
 	];
 
 	/** What was typed since the last save; none: the saved settings are shown. */
@@ -91,7 +91,10 @@ editor and the credential helper come from lists, since Git runs them. The form 
 	function found(sent: GitSettings): Problems {
 		return {
 			branch: branchError(sent.defaultBranch),
-			editor: editorError(sent.editor),
+			editor:
+				isOtherEditor && sent.editor === ''
+					? 'Saisissez le chemin du programme, ou choisissez « Ne pas gérer ».'
+					: editorError(sent.editor),
 			cache:
 				sent.credentialHelper.kind === 'cache'
 					? cacheTimeoutError(sent.credentialHelper.timeoutSeconds)
@@ -161,7 +164,7 @@ editor and the credential helper come from lists, since Git runs them. The form 
 	<div class="flex flex-col gap-1">
 		<span class="text-sm font-medium">Que fait « git pull » ?</span>
 		<SegmentedControl
-			label="Que fait git pull"
+			label="Que fait « git pull » ?"
 			options={PULL_MODES}
 			value={shown.pull}
 			onchange={(pull) => (draft = { ...shown, pull })}
@@ -181,7 +184,7 @@ editor and the credential helper come from lists, since Git runs them. The form 
 			mono
 			value={shown.editor}
 			oninput={(editor) => (draft = { ...shown, editor })}
-			hint="Un chemin absolu, sans espace ni argument. Vide : Git garde son éditeur."
+			hint="Le chemin absolu du programme de vi, vim, nvim, nano, emacs, micro ou hx, sans argument. Vide : Git garde son éditeur."
 			error={errors.editor}
 			maxlength={512}
 		/>
@@ -192,6 +195,9 @@ editor and the credential helper come from lists, since Git runs them. The form 
 		value={helperKind}
 		onchange={chooseHelper}
 		hint="credential.helper : où Git garde les mots de passe qu’on lui a donnés."
+		warning={helperKind === 'store'
+			? 'Les mots de passe sont écrits en clair dans ~/.git-credentials.'
+			: undefined}
 	/>
 	{#if helperKind === 'cache'}
 		<TextField
@@ -199,14 +205,11 @@ editor and the credential helper come from lists, since Git runs them. The form 
 			label="Durée en mémoire (secondes)"
 			value={cacheValue}
 			oninput={(text) => (cacheText = text)}
+			inputmode="numeric"
 			hint="De 30 s à 7 jours (604800 s)."
 			error={errors.cache}
 			maxlength={16}
 		/>
-	{:else if helperKind === 'store'}
-		<p class="self-end text-sm text-danger">
-			Les mots de passe sont écrits en clair dans <code class="font-mono">~/.git-credentials</code>.
-		</p>
 	{/if}
 	<div class="sm:col-span-2">
 		<FormFooter {dirty} submitLabel="Enregistrer les réglages" />

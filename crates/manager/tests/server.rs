@@ -1460,6 +1460,32 @@ async fn the_git_configuration_is_read_on_request_and_updates_reach_every_client
     server.stop().await;
 }
 
+#[tokio::test]
+async fn a_git_configuration_that_cannot_be_applied_is_saved_and_told_to_everyone_but_the_error_goes_to_the_author()
+ {
+    let server = Running::start().await;
+    let home = server.devices.home.path().to_owned();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "# >>> hubergamof git >>>\n[user]\n",
+    )
+    .unwrap();
+    let mut author = server.connect().await;
+    let mut other = server.connect().await;
+
+    author.send(&ClientMessage::RefreshGit).await;
+    let mut wanted = next_git(&mut author).await.0;
+    wanted.identity.name = "Ada".into();
+    author
+        .send(&ClientMessage::UpdateGit { config: wanted })
+        .await;
+
+    assert_eq!(expect_error(&mut author).await, ErrorCode::Internal);
+    let (saved, _, _) = next_git(&mut other).await;
+    assert_eq!(saved.revision, 1, "saved all the same, and told");
+    server.stop().await;
+}
+
 /// The saved configuration, read back by a refresh.
 async fn next_revision(client: &mut Client) -> MachineConfig {
     client.send(&ClientMessage::RefreshMachine).await;

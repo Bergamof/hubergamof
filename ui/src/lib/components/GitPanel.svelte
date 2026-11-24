@@ -104,7 +104,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 	<SaveStatusLine tracker={saves} />
 
 	{#if deck.git.gitAvailable === false}
-		<p class="rounded-xl border border-danger bg-danger-soft p-3 text-sm text-danger" role="status">
+		<p class="rounded-xl border border-danger bg-danger-soft p-3 text-sm text-danger" role="alert">
 			Le programme <code class="font-mono">git</code> est introuvable : les valeurs déjà présentes sur
 			l’ordinateur ne peuvent pas être lues. La configuration ci-dessous reste enregistrée et appliquée.
 		</p>
@@ -124,7 +124,9 @@ Each form is sent as a whole; the line under the title says whether the manager 
 				onsubmit={(identity) => edit(setIdentity(identity))}
 			/>
 		{:else}
-			<p class="text-muted">Chargement de la configuration de Git…</p>
+			<p class="text-muted" role="status" aria-busy="true">
+				Chargement de la configuration de Git…
+			</p>
 		{/if}
 	</section>
 
@@ -195,7 +197,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 				Alias présents ailleurs, non gérés
 			</h3>
 			<p class="text-sm text-muted">
-				« Intégrer » ajoute l’alias à la configuration, activé : HuBergamof le redéfinit, et comme
+				« Reprendre » ajoute l’alias à la configuration, activé : HuBergamof le redéfinit, et comme
 				ses valeurs sont lues en dernier, la sienne l’emporte. La ligne d’origine n’est pas
 				modifiée.
 			</p>
@@ -204,6 +206,9 @@ Each form is sent as a whole; the line under the title says whether the manager 
 				aliases={unmanagedAliases}
 				full={isFull(config, GIT_ALIASES_MAX)}
 				describeSource={(source) => source}
+				unreadable={deck.git.gitAvailable === false
+					? 'Non lu : le programme git est introuvable.'
+					: undefined}
 				onadopt={adopt}
 				fallbackFocus={() => systemAliasHeading?.focus()}
 			/>
@@ -261,7 +266,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 				>, <code class="font-mono">/etc/gitconfig</code>…), lus quand cette page s’ouvre. Ce que
 				vous enregistrez ici les remplace.
 			</p>
-			<GitSystemEntries entries={otherEntries} />
+			<GitSystemEntries entries={otherEntries} unreadable={deck.git.gitAvailable === false} />
 		</section>
 	{/if}
 </div>

@@ -5,7 +5,9 @@
 //! Git runs some of what it reads from its configuration (an editor, a
 //! credential helper, an alias starting with `!`), so those values are not
 //! free text: the helper and the editor come from closed lists, and an alias
-//! cannot run a shell command.
+//! cannot start a shell command directly. That is not a barrier: the options
+//! of a Git command can run a program (`fetch --upload-pack=…`), so an alias
+//! is as trusted as a shell alias (`docs/security.md`).
 
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
@@ -14,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::machine::{is_blank, is_invisible};
+use crate::text::{is_blank, is_invisible};
 
 /// Git configuration schema version produced and understood by this crate.
 pub const GIT_SCHEMA_VERSION: u32 = 1;
@@ -56,6 +58,11 @@ pub const GIT_EDITORS: [&str; 12] = [
     "kate --block",
     "gedit --wait",
 ];
+
+/// Editors that can be given by the absolute path of their program: a program
+/// that is not one of them (a shell, an interpreter) would run the text it is
+/// given to edit, and a commit message comes from anyone.
+pub const GIT_PLAIN_EDITORS: [&str; 7] = ["vi", "vim", "nvim", "nano", "emacs", "micro", "hx"];
 
 /// Who the commits are made as.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -148,15 +155,16 @@ pub struct GitSettings {
     pub default_branch: String,
     /// What `git pull` does.
     pub pull: GitPullMode,
-    /// `core.editor`: one of [`GIT_EDITORS`] or the absolute path of a program;
-    /// empty leaves it as it is.
+    /// `core.editor`: one of [`GIT_EDITORS`] or the absolute path of the
+    /// program of one of [`GIT_PLAIN_EDITORS`]; empty leaves it as it is.
     pub editor: String,
     /// `credential.helper`.
     pub credential_helper: GitCredentialHelper,
 }
 
-/// A Git alias. It runs a Git command: one starting with `!` would run a
-/// shell command and is refused.
+/// A Git alias. It stands for a Git command: one starting with `!` would run a
+/// shell command and is refused, and so is one starting with `-`. The options
+/// of the command itself are not checked (`docs/security.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -324,8 +332,8 @@ pub fn is_valid_git_branch_name(branch: &str) -> bool {
 }
 
 /// Whether `editor` can be `core.editor`: one of [`GIT_EDITORS`], or the
-/// absolute path of a program (no space, no shell character: Git runs the
-/// value through a shell).
+/// absolute path of the program of one of [`GIT_PLAIN_EDITORS`] (no space, no
+/// shell character: Git runs the value through a shell).
 #[must_use]
 pub fn is_valid_git_editor(editor: &str) -> bool {
     if GIT_EDITORS.contains(&editor) {
@@ -334,6 +342,10 @@ pub fn is_valid_git_editor(editor: &str) -> bool {
     editor.chars().count() <= MAX_GIT_VALUE_CHARS
         && editor.starts_with('/')
         && editor.len() > 1
+        && editor
+            .rsplit('/')
+            .next()
+            .is_some_and(|program| GIT_PLAIN_EDITORS.contains(&program))
         && editor
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+' | '/'))
@@ -535,6 +547,8 @@ mod tests {
         editors: Vec<Case>,
         #[serde(rename = "knownEditors")]
         known_editors: Vec<String>,
+        #[serde(rename = "plainEditors")]
+        plain_editors: Vec<String>,
         #[serde(rename = "aliasNames")]
         alias_names: Vec<Case>,
         #[serde(rename = "aliasCommands")]
@@ -567,6 +581,7 @@ mod tests {
         );
         verdicts(&cases.folders, is_valid_git_folder, "folder");
         assert_eq!(cases.known_editors, GIT_EDITORS);
+        assert_eq!(cases.plain_editors, GIT_PLAIN_EDITORS);
     }
 
     #[test]

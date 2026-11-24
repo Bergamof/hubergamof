@@ -7,9 +7,11 @@
 //! values win over the ones before it. Git ignores an include whose file does
 //! not exist, so no condition is needed.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use hubergamof_protocol::GitConfig;
 use thiserror::Error;
@@ -17,6 +19,7 @@ use thiserror::Error;
 use super::render::{
     FOLDER_FILE_PREFIX, MAIN_FILE, MANAGED_DIR, Rendered, UnwritableValue, render,
 };
+use super::system::{GIT_PROGRAM, GIT_TIMEOUT};
 use crate::machine::block::Block;
 use crate::machine::files::{
     FileError, PRIVATE_FILE_MODE, ensure_private_dir, io_error, remove_file_if_present,
@@ -58,6 +61,10 @@ pub struct GitFiles {
     pub(super) home: PathBuf,
     /// Whether `/etc/gitconfig` is read besides the user's files.
     pub(super) with_system_config: bool,
+    /// The program that lists the configuration: `git`, unless a test says otherwise.
+    pub(super) program: OsString,
+    /// How long it may take.
+    pub(super) timeout: Duration,
 }
 
 /// What the block holds: the include of the main file.
@@ -82,7 +89,15 @@ impl GitFiles {
         Self {
             home,
             with_system_config,
+            program: OsString::from(GIT_PROGRAM),
+            timeout: GIT_TIMEOUT,
         }
+    }
+
+    /// The home folder whose files are read and written.
+    #[must_use]
+    pub fn home(&self) -> &Path {
+        &self.home
     }
 
     /// The Git files of the user running the manager, when its home folder is
@@ -158,11 +173,12 @@ impl GitFiles {
         Ok(())
     }
 
-    /// Refuses a folder, enabled or not, that exists as a link or under one:
-    /// Git matches the real path too, so the rule would reach repositories
-    /// the user did not mean. A folder not created yet is fine.
+    /// Refuses the folder of an enabled rule that exists as a link or under
+    /// one: Git matches the real path too, so the rule would reach
+    /// repositories the user did not mean. A folder not created yet is fine,
+    /// and a rule that is off writes nothing, so it can stay (or be removed).
     fn check_folders(&self, config: &GitConfig) -> Result<(), GitFilesError> {
-        for rule in &config.folder_identities {
+        for rule in config.folder_identities.iter().filter(|rule| rule.enabled) {
             let Some(relative) = rule.folder.strip_prefix("~/") else {
                 continue;
             };
@@ -225,8 +241,16 @@ impl GitFiles {
         let block = include_block(&body);
         for relative in GLOBAL_FILES {
             let path = self.home.join(relative);
-            update_text_file(&path, |content| block.remove(content))?;
-            remove_if_empty(&path)?;
+            let mut had_block = false;
+            update_text_file(&path, |content| {
+                had_block = content.contains(BLOCK_START);
+                block.remove(content)
+            })?;
+            // An empty file the user made is theirs: only one that held our
+            // block, and nothing else, was ours to make.
+            if had_block {
+                remove_if_empty(&path)?;
+            }
         }
         Ok(())
     }
@@ -238,7 +262,7 @@ fn exists(path: &Path) -> Result<bool, FileError> {
     match fs::symlink_metadata(path) {
         Ok(_) => match fs::canonicalize(path) {
             Ok(_) => Ok(true),
-            Err(_) => Err(FileError::NotRegular(path.to_owned())),
+            Err(_) => Err(FileError::DanglingLink(path.to_owned())),
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(io_error(path, error)),

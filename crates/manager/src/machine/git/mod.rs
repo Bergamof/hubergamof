@@ -24,7 +24,7 @@ pub use apply::{GitFiles, GitFilesError};
 pub use render::UnwritableValue;
 pub use system::{MAX_SYSTEM_GIT_ENTRIES, SystemRead};
 
-use crate::config_store::{ConfigStore, ConfigStoreError};
+use crate::config_store::{ConfigStore, ConfigStoreError, LoadOutcome};
 
 /// The Git configuration file of the demo's home folder, so that the interface
 /// has something to list.
@@ -41,7 +41,7 @@ pub struct GitSnapshot {
     pub config: GitConfig,
     /// The managed values that Git finds in other files.
     pub system_entries: Vec<GitSystemEntry>,
-    /// Whether the `git` program ran.
+    /// `false` only when the `git` program could not be run.
     pub git_available: bool,
 }
 
@@ -141,7 +141,7 @@ impl GitConfigHub {
     pub async fn refresh(&self) -> Result<GitSnapshot, GitError> {
         let _request = self.request_slot().await;
         let inner = Arc::clone(&self.inner);
-        let config = run_blocking(move || Ok(inner.store.load_git()?.config)).await?;
+        let config = run_blocking(move || inner.load()).await?;
         Ok(self.inner.snapshot_of(config).await)
     }
 
@@ -175,6 +175,20 @@ impl GitConfigHub {
 }
 
 impl Inner {
+    /// The saved configuration. A file that was invalid is set aside and
+    /// replaced by an empty configuration: what it had put on the computer is
+    /// removed too, so that the page shows what the computer holds.
+    fn load(&self) -> Result<GitConfig, GitError> {
+        let loaded = self.store.load_git()?;
+        if matches!(loaded.outcome, LoadOutcome::ReplacedInvalid { .. })
+            && let Some(files) = &self.files
+            && let Err(error) = files.apply(&loaded.config)
+        {
+            tracing::warn!(%error, "what an invalid Git configuration had applied was not removed");
+        }
+        Ok(loaded.config)
+    }
+
     /// Saves `config`; the outcome of putting it on the computer comes with
     /// the saved configuration, since it is saved either way.
     fn save_and_apply(
@@ -190,9 +204,13 @@ impl Inner {
     }
 
     async fn snapshot_of(&self, config: GitConfig) -> GitSnapshot {
+        // Without a home folder nothing is looked for, which is not `git` missing.
         let read = match &self.files {
             Some(files) => files.read_system().await,
-            None => SystemRead::default(),
+            None => SystemRead {
+                entries: Vec::new(),
+                git_available: true,
+            },
         };
         GitSnapshot {
             config,

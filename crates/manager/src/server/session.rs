@@ -114,23 +114,9 @@ async fn application_changed(views: Option<&mut watch::Receiver<ModuleViews>>) {
     std::future::pending::<()>().await;
 }
 
-/// Resolves with the next snapshot of the machine, never when the hub is gone
-/// (a client that missed some is told the latest one).
-async fn machine_changed(
-    changes: &mut broadcast::Receiver<Arc<MachineSnapshot>>,
-) -> Arc<MachineSnapshot> {
-    loop {
-        match changes.recv().await {
-            Ok(snapshot) => return snapshot,
-            Err(RecvError::Lagged(_)) => {}
-            Err(RecvError::Closed) => std::future::pending::<()>().await,
-        }
-    }
-}
-
-/// Resolves with the next snapshot of the Git configuration, never when the
+/// Resolves with the next snapshot a hub of the machine sent, never when the
 /// hub is gone (a client that missed some is told the latest one).
-async fn git_changed(changes: &mut broadcast::Receiver<Arc<GitSnapshot>>) -> Arc<GitSnapshot> {
+async fn next_snapshot<T: Clone>(changes: &mut broadcast::Receiver<T>) -> T {
     loop {
         match changes.recv().await {
             Ok(snapshot) => return snapshot,
@@ -282,8 +268,8 @@ impl Session {
             result = self.update_settings.changed() => Event::SettingsChanged(result),
             message = self.mouse.next_change() => Event::Mouse(message),
             () = application_changed(self.application.as_mut()) => Event::ApplicationChanged,
-            snapshot = machine_changed(&mut self.machine) => Event::MachineChanged(snapshot),
-            snapshot = git_changed(&mut self.git) => Event::GitChanged(snapshot),
+            snapshot = next_snapshot(&mut self.machine) => Event::MachineChanged(snapshot),
+            snapshot = next_snapshot(&mut self.git) => Event::GitChanged(snapshot),
             Ok(()) = self.locked.changed() => Event::LockChanged,
         }
     }
