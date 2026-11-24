@@ -22,6 +22,7 @@ use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor, first_radial_items};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
+use hubergamof_manager::headset_control::HubControl;
 use hubergamof_manager::headset_engine::{
     HeadsetSupervisor, SCAN_INTERVAL as HEADSET_SCAN_INTERVAL,
 };
@@ -604,7 +605,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
 
     // The mice, started after the devices, play their haptic events.
     let haptics = Arc::new(HapticRelay::new());
-    let mut services = real_services(&cli, Arc::clone(&haptics) as Arc<dyn HapticOutput>)?;
+    let (mut services, headsets) = real_services(&cli, haptics.clone(), stopping.clone())?;
     let catalog = catalog_of(&services).await?;
     let store = services.store.clone();
     let renderer = Arc::clone(&services.renderer);
@@ -630,7 +631,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         file_picker: file_picker(cli.file_chooser_answer.clone()),
         updates: updates.clone(),
         mice: mouse_hub,
-        headsets: start_headsets(&cli, stopping.clone()),
+        headsets,
         application: Some(host.clone()),
         machine: start_machine(cli.demo, store.clone())?,
         git: start_git(cli.demo, store.clone())?,
@@ -1186,14 +1187,25 @@ async fn catalog_of(services: &EngineServices) -> Result<Arc<[CatalogModule]>> {
 }
 
 /// The services of the engines for this run (simulated ones with `--demo`).
-fn real_services(cli: &Cli, haptics: Arc<dyn HapticOutput>) -> Result<EngineServices> {
-    services(
+fn real_services(
+    cli: &Cli,
+    haptics: Arc<dyn HapticOutput>,
+    stopping: watch::Receiver<bool>,
+) -> Result<(EngineServices, Option<HeadsetHub>)> {
+    // Before the modules: the headphones module drives the hub.
+    let headsets = start_headsets(cli, stopping);
+    let mut builtins = builtin_services(cli.demo);
+    if let Some(hub) = headsets.clone() {
+        builtins.headset = HubControl::start(hub);
+    }
+    let services = services(
         &cli.config_dir,
-        builtin_services(cli.demo),
+        builtins,
         system_probe(cli.demo),
         screen_lock(cli.demo),
         haptics,
-    )
+    )?;
+    Ok((services, headsets))
 }
 
 fn services(

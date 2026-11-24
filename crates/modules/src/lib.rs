@@ -2,8 +2,8 @@
 //! from.
 //!
 //! Each module implements [`hubergamof_module_api::Module`] exactly like an
-//! external module would: [`audio`], [`claude`], [`docker`], [`intellij`]
-//! and [`pomodoro`] (the manager shows a placeholder key for kinds missing
+//! external module would: [`audio`], [`claude`], [`docker`], [`headphones`],
+//! [`intellij`] and [`pomodoro`] (the manager shows a placeholder key for kinds missing
 //! from the registry). Time, date, system load and navigation belong to the
 //! touch strip of the host, not to a module.
 //!
@@ -18,6 +18,7 @@ mod background;
 pub mod claude;
 pub mod desktop;
 pub mod docker;
+pub mod headphones;
 mod icons;
 pub mod inbox;
 pub mod intellij;
@@ -181,6 +182,8 @@ pub struct BuiltinServices {
     pub intellij: Arc<dyn intellij::ProjectCatalog>,
     /// Browser extension reading and driving Teams.
     pub teams: Arc<dyn teams::TeamsBridge>,
+    /// The Sony headphones of the headphones module.
+    pub headset: Arc<dyn headphones::HeadsetControl>,
 }
 
 impl BuiltinServices {
@@ -200,6 +203,8 @@ impl BuiltinServices {
             desktop: Arc::new(desktop::SystemDesktop::new(session_bus)),
             intellij: Arc::new(intellij::SystemCatalog::new()),
             teams: Arc::new(teams::SocketBridge::new(teams::socket_path())),
+            // The manager hands over the headphones it serves.
+            headset: Arc::new(headphones::NoHeadset::default()),
         }
     }
 
@@ -218,6 +223,7 @@ impl BuiltinServices {
             desktop: Arc::new(desktop::SimulatedDesktop::demo()),
             intellij: Arc::new(intellij::SimulatedCatalog::demo()),
             teams: Arc::new(teams::SimulatedBridge::demo()),
+            headset: Arc::new(headphones::SimulatedHeadset::demo()),
         }
     }
 }
@@ -230,6 +236,9 @@ pub fn builtin_registry_with(services: BuiltinServices) -> ModuleRegistry {
     registry.set_default_layout(DefaultLayout::builtin());
     registry.register(Arc::new(audio::AudioFactory::new(services.audio)));
     registry.register(Arc::new(docker::DockerFactory::new(services.docker)));
+    registry.register(Arc::new(headphones::HeadphonesFactory::new(
+        services.headset,
+    )));
     // One desktop hub for every module following an application: the
     // backend follows the windows for one hub only.
     let desktop = desktop::DesktopHub::new(
@@ -298,6 +307,7 @@ mod tests {
                 audio::AUDIO_KIND,
                 claude::CLAUDE_KIND,
                 docker::DOCKER_KIND,
+                headphones::HEADPHONES_KIND,
                 intellij::INTELLIJ_KIND,
                 inbox::INBOX_KIND,
                 pomodoro::POMODORO_KIND,
@@ -561,6 +571,7 @@ mod tests {
             desktop: Arc::new(desktop::SimulatedDesktop::empty()),
             intellij: Arc::new(intellij::SimulatedCatalog::default()),
             teams: Arc::new(teams::SimulatedBridge::new()),
+            headset: Arc::new(headphones::NoHeadset::default()),
         });
         let minute = Duration::from_secs(60);
 
