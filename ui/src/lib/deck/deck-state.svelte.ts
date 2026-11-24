@@ -16,6 +16,7 @@ import {
 } from './edit-queue.svelte.js';
 import { browserDevicePreference, type DevicePreference } from './device-preference.js';
 import { ApplicationState } from './application-state.svelte.js';
+import { GitState } from './git-state.svelte.js';
 import { MachineState } from './machine-state.svelte.js';
 import { MouseState } from './mouse-state.svelte.js';
 import { problemOf, type Problem } from './problems.js';
@@ -61,6 +62,8 @@ export class DeckState {
 	readonly application: ApplicationState;
 	/** The shell aliases of the machine, managed and found. */
 	readonly machine: MachineState;
+	/** The Git configuration of the machine, managed and found. */
+	readonly git: GitState;
 
 	readonly #edits = new EditQueue<DeviceConfig>({
 		send: (config) =>
@@ -88,6 +91,7 @@ export class DeckState {
 		this.mice = new MouseState(connection, (problem) => this.report(problem));
 		this.application = new ApplicationState(connection);
 		this.machine = new MachineState(connection, (problem) => this.report(problem));
+		this.git = new GitState(connection, (problem) => this.report(problem));
 	}
 
 	/** Starts following the manager messages; returns the function that stops it. */
@@ -138,8 +142,10 @@ export class DeckState {
 				this.#edits.dropPending(CONNECTION_LOST);
 				this.mice.dropPending(CONNECTION_LOST);
 				this.application.dropPending(CONNECTION_LOST);
-				this.machine.dropPending(CONNECTION_LOST);
-				this.machine.reconnected();
+				for (const state of [this.machine, this.git]) {
+					state.dropPending(CONNECTION_LOST);
+					state.reconnected();
+				}
 				this.managerVersion = message.version;
 				break;
 			case 'devices':
@@ -169,6 +175,9 @@ export class DeckState {
 				break;
 			case 'machine':
 				this.machine.handle(message);
+				break;
+			case 'git':
+				this.git.handle(message);
 				break;
 			case 'applicationModules':
 			case 'locked':
@@ -210,10 +219,12 @@ export class DeckState {
 
 	/**
 	 * Errors are not tied to requests: one arriving while an update is in flight answers it
-	 * (of the deck, the mice or the machine alike), else it is only shown.
+	 * (of the deck, the mice, the machine or Git alike), else it is only shown.
 	 */
 	#receiveError(problem: Problem): void {
-		const waiting = [this.#edits, this.mice, this.machine].filter((edits) => edits.pending);
+		const waiting = [this.#edits, this.mice, this.machine, this.git].filter(
+			(edits) => edits.pending
+		);
 		if (waiting.length === 0) {
 			if (this.application.pending) this.application.dropPending(problem);
 			else this.report(problem);

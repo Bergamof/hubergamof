@@ -14,8 +14,8 @@ use super::errors::client_message;
 use super::mouse_feed::{Failure, MouseFeed};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use hubergamof_protocol::{
-    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, MachineConfig,
-    ModuleKind, ServerMessage, UpdateSettings, UpdateStatus,
+    ApplicationModuleView, ClientMessage, DeviceConfig, DeviceInfo, ErrorCode, GitConfig,
+    MachineConfig, ModuleKind, ServerMessage, UpdateSettings, UpdateStatus,
 };
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -26,6 +26,7 @@ use super::{AppState, SimulatedInput};
 use crate::device::DiscoveryEvent;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry, LiveSnapshot};
 use crate::machine::MachineSnapshot;
+use crate::machine::git::GitSnapshot;
 use crate::module_host::{ModuleHost, ModuleViews, RadialReply, SettingsRefusal};
 
 /// Shortest delay between two `liveState` messages to a client: bursts of
@@ -75,6 +76,7 @@ enum Event {
     SettingsChanged(Result<(), watch::error::RecvError>),
     ApplicationChanged,
     MachineChanged(Arc<MachineSnapshot>),
+    GitChanged(Arc<GitSnapshot>),
     LockChanged,
     Mouse(Option<ServerMessage>),
     Shutdown,
@@ -112,11 +114,9 @@ async fn application_changed(views: Option<&mut watch::Receiver<ModuleViews>>) {
     std::future::pending::<()>().await;
 }
 
-/// Resolves with the next snapshot of the machine, never when the hub is gone
-/// (a client that missed some is told the latest one).
-async fn machine_changed(
-    changes: &mut broadcast::Receiver<Arc<MachineSnapshot>>,
-) -> Arc<MachineSnapshot> {
+/// Resolves with the next snapshot a hub of the machine sent, never when the
+/// hub is gone (a client that missed some is told the latest one).
+async fn next_snapshot<T: Clone>(changes: &mut broadcast::Receiver<T>) -> T {
     loop {
         match changes.recv().await {
             Ok(snapshot) => return snapshot,
@@ -136,6 +136,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let mouse = MouseFeed::new(&state.context.mice);
     let application = state.context.application.as_ref().map(ModuleHost::views);
     let machine = state.context.machine.subscribe();
+    let git = state.context.git.subscribe();
     let locked = state.context.screen_lock.watch();
     let mut session = Session {
         socket,
@@ -148,6 +149,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         application,
         told_modules: Vec::new(),
         machine,
+        git,
         locked,
         shutdown,
         selection: Selection::None,
@@ -170,6 +172,8 @@ struct Session {
     told_modules: Vec<ApplicationModuleView>,
     /// The machine as updates leave it, from any client.
     machine: broadcast::Receiver<Arc<MachineSnapshot>>,
+    /// The Git configuration as updates leave it, from any client.
+    git: broadcast::Receiver<Arc<GitSnapshot>>,
     /// Whether the computer is locked.
     locked: watch::Receiver<bool>,
     shutdown: watch::Receiver<bool>,
@@ -215,6 +219,7 @@ impl Session {
                 Event::SettingsChanged(Ok(())) => self.send_update_settings().await?,
                 Event::ApplicationChanged => self.send_application_modules_if_changed().await?,
                 Event::MachineChanged(snapshot) => self.send_machine(&snapshot).await?,
+                Event::GitChanged(snapshot) => self.send_git(&snapshot).await?,
                 Event::LockChanged => {
                     self.send_locked().await?;
                     if !*self.locked.borrow() {
@@ -267,7 +272,8 @@ impl Session {
             result = self.update_settings.changed() => Event::SettingsChanged(result),
             message = self.mouse.next_change() => Event::Mouse(message),
             () = application_changed(self.application.as_mut()) => Event::ApplicationChanged,
-            snapshot = machine_changed(&mut self.machine) => Event::MachineChanged(snapshot),
+            snapshot = next_snapshot(&mut self.machine) => Event::MachineChanged(snapshot),
+            snapshot = next_snapshot(&mut self.git) => Event::GitChanged(snapshot),
             Ok(()) = self.locked.changed() => Event::LockChanged,
         }
     }
@@ -336,6 +342,8 @@ impl Session {
             }
             ClientMessage::RefreshMachine => return self.refresh_machine().await,
             ClientMessage::UpdateMachine { config } => return self.update_machine(config).await,
+            ClientMessage::RefreshGit => return self.refresh_git().await,
+            ClientMessage::UpdateGit { config } => return self.update_git(config).await,
             ClientMessage::SelectMouse { serial } => {
                 // The configuration, then what the mouse refused of it.
                 let selected = self.mouse.select(&serial).map(|config| {
@@ -494,6 +502,39 @@ impl Session {
         self.send(&ServerMessage::Machine {
             config: snapshot.config.clone(),
             system_aliases: snapshot.system_aliases.clone(),
+        })
+        .await
+    }
+
+    /// Reads the Git configuration now and tells this client only.
+    async fn refresh_git(&mut self) -> Result<(), Closed> {
+        match self.state.context.git.refresh().await {
+            Ok(snapshot) => self.send_git(&snapshot).await,
+            Err(error) => {
+                self.send_error(error.error_code(), &error.to_string())
+                    .await
+            }
+        }
+    }
+
+    /// Saves and applies the Git configuration. Every client, this one
+    /// included, hears the result as the configuration changes; only a failure
+    /// is answered here.
+    async fn update_git(&mut self, config: GitConfig) -> Result<(), Closed> {
+        match self.state.context.git.update(config).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.send_error(error.error_code(), &error.to_string())
+                    .await
+            }
+        }
+    }
+
+    async fn send_git(&mut self, snapshot: &GitSnapshot) -> Result<(), Closed> {
+        self.send(&ServerMessage::Git {
+            config: snapshot.config.clone(),
+            system_entries: snapshot.system_entries.clone(),
+            git_available: snapshot.git_available,
         })
         .await
     }

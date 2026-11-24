@@ -4,6 +4,8 @@ import type { CatalogModule } from "./CatalogModule";
 import type { DeviceConfig } from "./DeviceConfig";
 import type { DeviceInfo } from "./DeviceInfo";
 import type { ErrorCode } from "./ErrorCode";
+import type { GitConfig } from "./GitConfig";
+import type { GitSystemEntry } from "./GitSystemEntry";
 import type { LiveState } from "./LiveState";
 import type { MachineConfig } from "./MachineConfig";
 import type { MouseBattery } from "./MouseBattery";
@@ -66,7 +68,20 @@ config: MachineConfig,
 /**
  * Aliases of the shell startup files, not managed by HuBergamof.
  */
-systemAliases: Array<SystemAlias>, } | { "type": "locked", 
+systemAliases: Array<SystemAlias>, } | { "type": "git", 
+/**
+ * Current configuration.
+ */
+config: GitConfig, 
+/**
+ * Values HuBergamof manages that Git also finds elsewhere.
+ */
+systemEntries: Array<GitSystemEntry>, 
+/**
+ * Whether the `git` program was found: without it nothing can be read
+ * from the computer.
+ */
+gitAvailable: boolean, } | { "type": "locked", 
 /**
  * `true` while the computer is locked.
  */

@@ -4,11 +4,11 @@
 
 use hubergamof_protocol::{
     CatalogModule, ChoiceOption, ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo,
-    DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode,
-    HapticEventDescriptor, HapticWaveform, ImageSize, InstallSupport, KeyState, KeyView, LiveState,
-    ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem, PageView,
-    RadialActionDescriptor, ServerMessage, SettingField, SettingKind, StripConfig, UpdateSettings,
-    UpdateStatus,
+    DeviceModel, DeviceTheme, DialAssignment, DialFunctionDescriptor, ErrorCode, GitConfig,
+    GitCredentialHelper, GitSystemEntry, HapticEventDescriptor, HapticWaveform, ImageSize,
+    InstallSupport, KeyState, KeyView, LiveState, ModuleCapabilities, ModuleDescriptor,
+    ModuleInstance, MouseBattery, MouseProblem, PageView, RadialActionDescriptor, ServerMessage,
+    SettingField, SettingKind, StripConfig, UpdateSettings, UpdateStatus,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -624,4 +624,53 @@ fn a_configuration_without_a_lock_sleep_delay_gets_the_default() {
     let config: DeviceConfig = serde_json::from_value(json).unwrap();
 
     assert_eq!(config.lock_sleep_seconds, 5);
+}
+
+#[test]
+fn git_messages_and_configuration() {
+    assert_wire_format(&ClientMessage::RefreshGit, &json!({ "type": "refreshGit" }));
+
+    let mut config = GitConfig::empty();
+    config.settings.credential_helper = GitCredentialHelper::Cache {
+        timeout_seconds: 900,
+    };
+    let expected_config = json!({
+        "schemaVersion": 1,
+        "identity": { "name": "", "email": "" },
+        "signing": { "enabled": false, "format": "openPgp", "key": "" },
+        "settings": {
+            "defaultBranch": "",
+            "pull": "default",
+            "editor": "",
+            "credentialHelper": { "kind": "cache", "timeoutSeconds": 900 }
+        },
+        "aliases": [],
+        "folderIdentities": [],
+        "revision": 0
+    });
+    assert_wire_format(
+        &ClientMessage::UpdateGit {
+            config: config.clone(),
+        },
+        &json!({ "type": "updateGit", "config": expected_config }),
+    );
+    assert_wire_format(
+        &ServerMessage::Git {
+            config,
+            system_entries: vec![GitSystemEntry {
+                key: "user.name".into(),
+                value: "Ada".into(),
+                origin: "~/.gitconfig".into(),
+            }],
+            git_available: true,
+        },
+        &json!({
+            "type": "git",
+            "config": expected_config,
+            "systemEntries": [
+                { "key": "user.name", "value": "Ada", "origin": "~/.gitconfig" }
+            ],
+            "gitAvailable": true
+        }),
+    );
 }

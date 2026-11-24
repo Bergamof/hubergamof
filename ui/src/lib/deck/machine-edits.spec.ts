@@ -13,7 +13,9 @@ function machine(...names: string[]): MachineConfig {
 
 describe('machine edits', () => {
 	it('adds an alias at the end, keeping the revision', () => {
-		const config = addAlias({ name: 'c', command: 'x', enabled: false })(machine('a', 'b'));
+		const config = addAlias<MachineConfig>({ name: 'c', command: 'x', enabled: false })(
+			machine('a', 'b')
+		);
 		expect(config.aliases.map(({ name }) => name)).toEqual(['a', 'b', 'c']);
 		expect(config.aliases[2].enabled).toBe(false);
 		expect(config.revision).toBe(3);
@@ -21,18 +23,20 @@ describe('machine edits', () => {
 
 	it('does not add a name twice', () => {
 		const before = machine('a');
-		expect(addAlias({ name: 'a', command: 'other', enabled: true })(before)).toBe(before);
+		expect(addAlias<MachineConfig>({ name: 'a', command: 'other', enabled: true })(before)).toBe(
+			before
+		);
 	});
 
 	it('does not add past the limit', () => {
 		const full = machine(...Array.from({ length: ALIASES_MAX }, (_, index) => `a${index}`));
 		expect(isFull(full)).toBe(true);
-		expect(addAlias({ name: 'more', command: 'x', enabled: true })(full)).toBe(full);
+		expect(addAlias<MachineConfig>({ name: 'more', command: 'x', enabled: true })(full)).toBe(full);
 		expect(isFull(machine('a'))).toBe(false);
 	});
 
 	it('replaces an alias where it stands', () => {
-		const config = replaceAlias('b', { name: 'B', command: 'y', enabled: false })(
+		const config = replaceAlias<MachineConfig>('b', { name: 'B', command: 'y', enabled: false })(
 			machine('a', 'b', 'c')
 		);
 		expect(config.aliases.map(({ name }) => name)).toEqual(['a', 'B', 'c']);
@@ -40,11 +44,13 @@ describe('machine edits', () => {
 	});
 
 	it('switches one alias only', () => {
-		const config = setAliasEnabled('b', false)(machine('a', 'b'));
+		const config = setAliasEnabled<MachineConfig>('b', false)(machine('a', 'b'));
 		expect(config.aliases.map(({ enabled }) => enabled)).toEqual([true, false]);
 	});
 
 	it('removes an alias', () => {
-		expect(removeAlias('a')(machine('a', 'b')).aliases.map(({ name }) => name)).toEqual(['b']);
+		expect(
+			removeAlias<MachineConfig>('a')(machine('a', 'b')).aliases.map(({ name }) => name)
+		).toEqual(['b']);
 	});
 });

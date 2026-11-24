@@ -31,8 +31,14 @@ export function trimCommand(command: string): string {
 	return command.replace(EDGE_WHITE_SPACE, '');
 }
 
-function lengthOf(text: string): number {
+/** The length of `text` in Unicode code points, as the manager counts characters. */
+export function lengthOf(text: string): number {
 	return [...text].length;
+}
+
+/** Whether `text` holds a control character or one that shows nothing or reorders the text around it. */
+export function hasHiddenCharacter(text: string): boolean {
+	return CONTROL_CHARACTER.test(text) || INVISIBLE_CHARACTER.test(text);
 }
 
 function nameError(name: string, takenNames: readonly string[]): string | undefined {

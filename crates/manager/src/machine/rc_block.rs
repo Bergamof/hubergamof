@@ -1,9 +1,7 @@
 //! The block HuBergamof keeps in the shell startup files (`.bashrc`,
-//! `.zshrc`): it sources the managed aliases file. Pure text functions; the
-//! rest of the file is never modified.
+//! `.zshrc`): it sources the managed aliases file.
 
-use std::ops::Range;
-
+use super::block::{Block, UnterminatedBlock};
 use super::shell::MANAGED_FILE;
 
 /// First line of the block.
@@ -12,91 +10,40 @@ pub(super) const BLOCK_START: &str = "# >>> hubergamof aliases >>>";
 /// Last line of the block.
 pub(super) const BLOCK_END: &str = "# <<< hubergamof aliases <<<";
 
-/// A block start without its end: the file is not ours to rewrite.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct UnterminatedBlock;
+/// What the block holds. The managed file is sourced only when it exists, so
+/// that a removed file never makes the shell complain.
+fn body() -> String {
+    format!("if [ -f \"$HOME/{MANAGED_FILE}\" ]; then . \"$HOME/{MANAGED_FILE}\"; fi\n")
+}
 
-/// The block, ending with a newline. The managed file is sourced only when it
-/// exists, so that a removed file never makes the shell complain.
+fn spec(body: &str) -> Block<'_> {
+    Block {
+        start: BLOCK_START,
+        end: BLOCK_END,
+        body,
+    }
+}
+
+/// The block, ending with a newline.
+#[cfg(test)]
 fn block() -> String {
-    format!(
-        "{BLOCK_START}\nif [ -f \"$HOME/{MANAGED_FILE}\" ]; then . \"$HOME/{MANAGED_FILE}\"; fi\n{BLOCK_END}\n"
-    )
+    spec(&body()).text()
 }
 
-/// Line ranges of every block of `lines`.
-fn block_ranges(lines: &[&str]) -> Result<Vec<Range<usize>>, UnterminatedBlock> {
-    let mut ranges = Vec::new();
-    let mut start = None;
-    for (index, line) in lines.iter().enumerate() {
-        match (line.trim_end(), start) {
-            (BLOCK_START, None) => start = Some(index),
-            (BLOCK_END, Some(first)) => {
-                ranges.push(first..index + 1);
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    match start {
-        Some(_) => Err(UnterminatedBlock),
-        None => Ok(ranges),
-    }
-}
-
-fn lines_of(content: &str) -> Vec<&str> {
-    content.split_inclusive('\n').collect()
-}
-
-/// `content` with the block: replaced in place when there is one (any others
-/// are dropped), else appended after a blank line.
+/// `content` with the block, see [`Block::insert`].
 ///
 /// # Errors
 /// [`UnterminatedBlock`] when a block has no end.
 pub(super) fn with_block(content: &str) -> Result<String, UnterminatedBlock> {
-    let lines = lines_of(content);
-    let ranges = block_ranges(&lines)?;
-    let Some(first) = ranges.first() else {
-        let mut appended = content.to_owned();
-        if !appended.is_empty() {
-            if !appended.ends_with('\n') {
-                appended.push('\n');
-            }
-            appended.push('\n');
-        }
-        appended.push_str(&block());
-        return Ok(appended);
-    };
-    let mut replaced = String::with_capacity(content.len());
-    for (index, line) in lines.iter().enumerate() {
-        if index == first.start {
-            replaced.push_str(&block());
-        }
-        if !ranges.iter().any(|range| range.contains(&index)) {
-            replaced.push_str(line);
-        }
-    }
-    Ok(replaced)
+    spec(&body()).insert(content)
 }
 
-/// `content` without any block, nor the blank line that separated it from
-/// what precedes.
+/// `content` without any block, see [`Block::remove`].
 ///
 /// # Errors
 /// [`UnterminatedBlock`] when a block has no end.
 pub(super) fn without_block(content: &str) -> Result<String, UnterminatedBlock> {
-    let lines = lines_of(content);
-    let ranges = block_ranges(&lines)?;
-    let mut kept = String::with_capacity(content.len());
-    for (index, line) in lines.iter().enumerate() {
-        let in_block = ranges.iter().any(|range| range.contains(&index));
-        let separator =
-            line.trim().is_empty() && ranges.iter().any(|range| range.start == index + 1);
-        if !in_block && !separator {
-            kept.push_str(line);
-        }
-    }
-    Ok(kept)
+    spec(&body()).remove(content)
 }
 
 #[cfg(test)]
