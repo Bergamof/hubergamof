@@ -105,12 +105,6 @@ const LABEL_FONT_RATIO: f32 = 0.13;
 const LABEL_PADDING_RATIO: f32 = 0.05;
 /// Vertical padding above and below a label, relative to the key height.
 const LABEL_VERTICAL_PADDING_RATIO: f32 = 0.03;
-/// Key caption font size, relative to the key height: a little larger than
-/// the label, being short and read at a glance.
-const CAPTION_FONT_RATIO: f32 = 0.16;
-/// Black of the band under a caption, and how much of the icon shows through.
-const CAPTION_BAND_FILL: &str = "#000000";
-const CAPTION_BAND_OPACITY: f32 = 0.6;
 const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 
 /// Rendering failure.
@@ -468,7 +462,7 @@ impl Renderer {
                 self.draw_label(&mut canvas, label, text_color)?;
             }
             if let Some(caption) = caption {
-                self.draw_caption(&mut canvas, caption)?;
+                self.draw_caption(&mut canvas, caption, text_color)?;
             }
             if let Some(color) = frame {
                 cursor::draw_frame(&mut canvas, color);
@@ -650,20 +644,21 @@ impl Renderer {
     }
 
     /// Draws `caption` on one line at the top of `canvas`, over the image, in
-    /// white on a darkened band so that it reads on any icon.
-    fn draw_caption(&self, canvas: &mut RgbaImage, caption: &str) -> Result<(), RenderError> {
+    /// the size and the font of the label.
+    fn draw_caption(
+        &self,
+        canvas: &mut RgbaImage,
+        caption: &str,
+        color: Rgba<u8>,
+    ) -> Result<(), RenderError> {
         let height = f32_from(canvas.height());
-        let size = height * CAPTION_FONT_RATIO;
-        let padding = height * LABEL_VERTICAL_PADDING_RATIO;
-        let band = TextRenderer::line_height(size) + 2.0 * padding;
-        self.text.overlay_svg(
+        self.draw_line(
             canvas,
-            &format!(
-                r#"<rect x="0" y="0" width="{}" height="{band}" fill="{CAPTION_BAND_FILL}" fill-opacity="{CAPTION_BAND_OPACITY}"/>"#,
-                canvas.width()
-            ),
-        )?;
-        self.draw_line(canvas, caption, size, padding, TEXT_COLOR)
+            caption,
+            height * LABEL_FONT_RATIO,
+            height * LABEL_VERTICAL_PADDING_RATIO,
+            color,
+        )
     }
 
     /// Draws `text` centred on one line of `size` pixels whose top is at
