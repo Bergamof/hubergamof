@@ -1,7 +1,7 @@
 <!--
 @component
 The machine: what HuBergamof sets up on the computer of the person. A choice at the top picks the
-topic (the shell aliases, Git). Both topics stay in the page, so what is typed in one survives a look
+topic (the shell aliases, Git, SSH). Both topics stay in the page, so what is typed in one survives a look
 at the other; both read the computer when the page opens, and never watch it.
 -->
 <script lang="ts">
@@ -9,6 +9,7 @@ at the other; both read the computer when the page opens, and never watch it.
 	import GitPanel from './GitPanel.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
 	import ShellAliasesPanel from './ShellAliasesPanel.svelte';
+	import SshPanel from './SshPanel.svelte';
 
 	interface Props {
 		deck: DeckState;
@@ -16,10 +17,11 @@ at the other; both read the computer when the page opens, and never watch it.
 
 	let { deck }: Props = $props();
 
-	type Topic = 'aliases' | 'git';
+	type Topic = 'aliases' | 'git' | 'ssh';
 	const TOPICS: { value: Topic; label: string }[] = [
 		{ value: 'aliases', label: 'Alias du shell' },
-		{ value: 'git', label: 'Git' }
+		{ value: 'git', label: 'Git' },
+		{ value: 'ssh', label: 'SSH' }
 	];
 
 	let topic: Topic = $state('aliases');
@@ -38,5 +40,8 @@ at the other; both read the computer when the page opens, and never watch it.
 	</div>
 	<div hidden={topic !== 'git'}>
 		<GitPanel {deck} />
+	</div>
+	<div hidden={topic !== 'ssh'}>
+		<SshPanel {deck} />
 	</div>
 </div>

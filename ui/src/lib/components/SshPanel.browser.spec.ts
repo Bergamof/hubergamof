@@ -1,0 +1,240 @@
+import { describe, expect, it } from 'vitest';
+import { page } from 'vitest/browser';
+import { render } from 'vitest-browser-svelte';
+import { DeckState } from '#lib/deck/deck-state.svelte.js';
+import { FakeConnection } from '#lib/deck/fake-connection.js';
+import { SSH_HOSTS_MAX } from '#lib/deck/ssh-validation.js';
+import type { SshConfig, SshHost, SshSystemHost } from '#lib/generated/index.js';
+import SshPanel from './SshPanel.svelte';
+
+function host(alias: string, change: Partial<SshHost> = {}): SshHost {
+	return {
+		alias,
+		hostName: '',
+		user: '',
+		port: null,
+		identityFile: '',
+		proxyJump: '',
+		forwardAgent: false,
+		enabled: true,
+		...change
+	};
+}
+
+function found(alias: string, change: Partial<SshSystemHost> = {}): SshSystemHost {
+	return {
+		alias,
+		hostName: '',
+		user: '',
+		port: null,
+		identityFile: '',
+		proxyJump: '',
+		forwardAgent: false,
+		otherOptions: [],
+		...change
+	};
+}
+
+function ssh(revision: number, ...hosts: SshHost[]): SshConfig {
+	return { schemaVersion: 1, hosts, revision };
+}
+
+const SYSTEM: SshSystemHost[] = [
+	found('web', { hostName: 'web.example.org', user: 'ada' }),
+	found('tunnel', { otherOptions: ['proxycommand'] }),
+	found('far', { identityFile: '/home/ada/key' })
+];
+
+async function renderPanel(config: SshConfig | null = ssh(1), system = SYSTEM) {
+	const connection = new FakeConnection();
+	const deck = new DeckState(connection, { load: () => null, save: () => undefined });
+	deck.listen();
+	await render(SshPanel, { deck });
+	if (config) connection.receive({ type: 'ssh', config, systemHosts: system });
+	return { connection };
+}
+
+const addForm = () => page.getByRole('form', { name: 'Ajouter un serveur' });
+const managed = () => page.getByRole('list', { name: 'Serveurs SSH gérés' });
+
+describe('SshPanel', () => {
+	it('asks the manager to read the computer when it opens, and waits for the configuration', async () => {
+		const { connection } = await renderPanel(null);
+		expect(connection.sent[0]).toEqual({ type: 'refreshSsh' });
+		await expect.element(page.getByText('Chargement de la configuration de SSH…')).toBeVisible();
+	});
+
+	it('lists the managed hosts and, apart, those found in the file', async () => {
+		await renderPanel(ssh(1, host('prod', { hostName: '10.0.0.1', user: 'deploy', port: 2222 })));
+		await expect.element(managed().getByText('prod', { exact: true })).toBeVisible();
+		await expect.element(managed().getByText('deploy@10.0.0.1:2222')).toBeVisible();
+		const system = page.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' });
+		await expect.element(system.getByText('ada@web.example.org')).toBeVisible();
+	});
+
+	describe('adding a host', () => {
+		it('sends the whole configuration on its revision', async () => {
+			const { connection } = await renderPanel();
+			await addForm().getByRole('textbox', { name: 'Nom' }).fill('prod');
+			await addForm().getByRole('textbox', { name: 'Machine' }).fill('10.0.0.1');
+			await addForm().getByRole('textbox', { name: 'Utilisateur' }).fill('deploy');
+			await addForm().getByRole('textbox', { name: 'Port' }).fill('2222');
+			await addForm().getByRole('textbox', { name: 'Clé privée' }).fill('~/.ssh/id_ed25519');
+			await addForm().getByRole('textbox', { name: 'Rebonds' }).fill('bastion');
+			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				type: 'updateSsh',
+				config: {
+					revision: 1,
+					hosts: [
+						{
+							alias: 'prod',
+							hostName: '10.0.0.1',
+							user: 'deploy',
+							port: 2222,
+							identityFile: '~/.ssh/id_ed25519',
+							proxyJump: 'bastion',
+							forwardAgent: false,
+							enabled: true
+						}
+					]
+				}
+			});
+		});
+
+		it('says what is wrong and sends nothing, with the focus on the first field', async () => {
+			const { connection } = await renderPanel();
+			const before = connection.sent.length;
+			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			const name = addForm().getByRole('textbox', { name: 'Nom' });
+			await expect.element(name).toHaveFocus();
+			await expect.element(page.getByText('Saisissez le nom du serveur.')).toBeVisible();
+			expect(connection.sent).toHaveLength(before);
+
+			await name.fill('prod');
+			await addForm().getByRole('textbox', { name: 'Rebonds' }).fill('-oProxyCommand=evil');
+			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await expect.element(addForm().getByRole('textbox', { name: 'Rebonds' })).toHaveFocus();
+			expect(connection.sent).toHaveLength(before);
+		});
+
+		it('refuses a key outside ~/.ssh and a port out of range', async () => {
+			const { connection } = await renderPanel();
+			const before = connection.sent.length;
+			await addForm().getByRole('textbox', { name: 'Nom' }).fill('prod');
+			await addForm().getByRole('textbox', { name: 'Clé privée' }).fill('/etc/shadow');
+			await addForm().getByRole('textbox', { name: 'Port' }).fill('70000');
+			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await expect.element(page.getByText(/commence par ~\/\.ssh\//)).toBeVisible();
+			await expect.element(page.getByText(/nombre entier de 1 à 65535/)).toBeVisible();
+			expect(connection.sent).toHaveLength(before);
+		});
+
+		it('refuses a name that is taken', async () => {
+			await renderPanel(ssh(1, host('prod')));
+			await addForm().getByRole('textbox', { name: 'Nom' }).fill('prod');
+			await addForm().getByRole('button', { name: 'Ajouter' }).click();
+			await expect.element(page.getByText('Un serveur porte déjà ce nom.')).toBeVisible();
+		});
+
+		it('warns about forwarding the agent', async () => {
+			await renderPanel();
+			await expect
+				.element(addForm().getByRole('switch', { name: 'Transmettre l’agent SSH' }))
+				.toHaveAccessibleDescription(/utiliser vos clés/);
+		});
+
+		it('does not offer to add once the configuration is full', async () => {
+			await renderPanel(
+				ssh(1, ...Array.from({ length: SSH_HOSTS_MAX }, (_, index) => host(`h${index}`)))
+			);
+			await expect.element(page.getByText(/nombre maximal de serveurs/)).toBeVisible();
+		});
+	});
+
+	describe('the managed hosts', () => {
+		it('switches a host, changes it in place and removes it after a confirmation', async () => {
+			const { connection } = await renderPanel(ssh(1, host('prod', { user: 'old' })));
+			await page.getByRole('switch', { name: 'Serveur prod' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { hosts: [{ alias: 'prod', enabled: false }] }
+			});
+		});
+
+		it('changes a host and gives the focus back to its button', async () => {
+			const { connection } = await renderPanel(ssh(1, host('prod', { user: 'old' })));
+			await page.getByRole('button', { name: 'Modifier le serveur prod' }).click();
+			await managed().getByRole('textbox', { name: 'Utilisateur' }).fill('new');
+			await managed().getByRole('button', { name: 'Enregistrer' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: { hosts: [{ alias: 'prod', user: 'new' }] }
+			});
+		});
+
+		it('removes a host after a confirmation, and keeps it when the removal is given up', async () => {
+			const { connection } = await renderPanel(ssh(1, host('a'), host('b')));
+			const remove = page.getByRole('button', { name: 'Supprimer le serveur a' });
+			await remove.click();
+			const dialog = page.getByRole('dialog', { name: 'Supprimer le serveur ?' });
+			await dialog.getByRole('button', { name: 'Annuler' }).click();
+			await expect.element(remove).toHaveFocus();
+
+			await remove.click();
+			await dialog.getByRole('button', { name: 'Supprimer' }).click();
+			expect(connection.lastSent()).toMatchObject({ config: { hosts: [{ alias: 'b' }] } });
+			await expect
+				.element(page.getByRole('button', { name: 'Supprimer le serveur b' }))
+				.toHaveFocus();
+		});
+	});
+
+	describe('the hosts found elsewhere', () => {
+		it('takes one in, switched on, and removes it from the list at once', async () => {
+			const { connection } = await renderPanel();
+			await page.getByRole('button', { name: 'Reprendre le serveur web' }).click();
+			expect(connection.lastSent()).toMatchObject({
+				config: {
+					hosts: [{ alias: 'web', hostName: 'web.example.org', user: 'ada', enabled: true }]
+				}
+			});
+			await expect
+				.element(
+					page
+						.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' })
+						.getByText('web.example.org')
+				)
+				.not.toBeInTheDocument();
+		});
+
+		it('does not take one that uses options that would be lost, saying which', async () => {
+			const { connection } = await renderPanel();
+			const tunnel = page.getByRole('button', { name: 'Reprendre le serveur tunnel' });
+			await expect.element(tunnel).toHaveAttribute('aria-disabled', 'true');
+			await expect
+				.element(page.getByText(/options que HuBergamof ne gère pas \(proxycommand\)/))
+				.toBeVisible();
+			const before = connection.sent.length;
+			await tunnel.click({ force: true });
+			expect(connection.sent).toHaveLength(before);
+		});
+
+		it('does not take one whose values break the rules', async () => {
+			await renderPanel();
+			await expect
+				.element(page.getByRole('button', { name: 'Reprendre le serveur far' }))
+				.toHaveAttribute('aria-disabled', 'true');
+		});
+
+		it('focuses the next button, then the title, as hosts are taken', async () => {
+			await renderPanel(ssh(1), [found('a'), found('b')]);
+			await page.getByRole('button', { name: 'Reprendre le serveur a' }).click();
+			await expect
+				.element(page.getByRole('button', { name: 'Reprendre le serveur b' }))
+				.toHaveFocus();
+			await page.getByRole('button', { name: 'Reprendre le serveur b' }).click();
+			await expect
+				.element(page.getByRole('heading', { name: 'Serveurs définis ailleurs, non gérés' }))
+				.toHaveFocus();
+		});
+	});
+});

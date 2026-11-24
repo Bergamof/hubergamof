@@ -263,6 +263,26 @@
   {
    "value": "2001:db8::1",
    "valid": true
+  },
+  {
+   "value": "bastion:+22",
+   "valid": true
+  },
+  {
+   "value": "bastion:65535",
+   "valid": true
+  },
+  {
+   "value": "bastion:",
+   "valid": false
+  },
+  {
+   "value": "u@h@x",
+   "valid": false
+  },
+  {
+   "value": "u@:22",
+   "valid": false
   }
  ]
 }
