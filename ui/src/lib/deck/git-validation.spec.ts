@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { validateSetting } from './advanced-validation.js';
 import { hasErrors } from './alias-validation.js';
 import {
 	CREDENTIAL_CACHE_MAX,
@@ -16,12 +17,16 @@ import {
 	isValidBranchName,
 	isValidEditor,
 	isValidFolder,
+	isValidSettingKey,
+	isValidSettingValue,
 	isValidSigningKey,
 	isValidUserEmail,
 	isValidUserName,
 	signingKeyError,
 	userEmailError,
 	userNameError,
+	GIT_SETTING_RULES,
+	foldKey,
 	validateFolderIdentity,
 	validateGitAlias
 } from './git-validation.js';
@@ -41,6 +46,8 @@ interface SharedCases {
 	aliasNames: SharedCase[];
 	aliasCommands: SharedCase[];
 	folders: SharedCase[];
+	settingKeys: SharedCase[];
+	settingValues: SharedCase[];
 }
 
 /** The cases the Rust validation (`GitConfig::validate`) is tested with as well. */
@@ -64,7 +71,9 @@ describe('the cases shared with the manager', () => {
 		['editors', isValidEditor],
 		['aliasNames', isValidAliasName],
 		['aliasCommands', isValidAliasCommand],
-		['folders', isValidFolder]
+		['folders', isValidFolder],
+		['settingKeys', isValidSettingKey],
+		['settingValues', isValidSettingValue]
 	];
 	for (const [group, check] of checks) {
 		it(`gives the verdicts of the manager for ${group}`, () => {
@@ -177,5 +186,35 @@ describe('folders and their identities', () => {
 			[]
 		);
 		expect(hasFolderIdentityErrors(fine)).toBe(false);
+	});
+});
+
+describe('the settings written by the person', () => {
+	const check = (key: string, value: string, takenKeys: string[] = []) =>
+		validateSetting({ key, value }, takenKeys, GIT_SETTING_RULES);
+
+	it('accepts a key of Git that no form manages', () => {
+		expect(check('push.default', 'current')).toEqual({});
+		expect(check('url.https://example.org/.insteadOf', 'ex:')).toEqual({});
+	});
+
+	it('says why a key is refused', () => {
+		expect(check('', 'x').name).toMatch(/Saisissez la clé/);
+		expect(check('alias.co', 'x').name).toMatch(/propre place/);
+		expect(check('includeIf.gitdir:~/x/.path', 'x').name).toMatch(/propre place/);
+		expect(check('USER.Email', 'x').name).toMatch(/propre champ/);
+		expect(check('push', 'x').name).toMatch(/section\.nom/);
+	});
+
+	it('says why a value is refused', () => {
+		expect(check('a.b', '').command).toMatch(/Saisissez la valeur/);
+		expect(check('a.b', ' x').command).toBeUndefined();
+	});
+
+	it('compares keys as Git does: section and name without case, sub-section as it is', () => {
+		expect(foldKey('Core.AutoCRLF')).toBe('core.autocrlf');
+		expect(foldKey('URL.Https://X/.InsteadOf')).toBe('url.Https://X/.insteadof');
+		expect(check('Push.Default', 'x', ['push.default']).name).toMatch(/déjà dans la liste/);
+		expect(check('url.A.insteadOf', 'x', ['url.a.insteadOf'])).toEqual({});
 	});
 });

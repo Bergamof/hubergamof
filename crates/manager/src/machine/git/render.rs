@@ -3,7 +3,10 @@
 
 use std::fmt::Write as _;
 
-use hubergamof_protocol::{GitConfig, GitCredentialHelper, GitPullMode, GitSigningFormat};
+use hubergamof_protocol::{
+    GIT_MANAGED_KEYS, GitConfig, GitCredentialHelper, GitPullMode, GitSigningFormat, git_key_parts,
+    is_valid_git_setting_key, is_valid_git_setting_value,
+};
 use thiserror::Error;
 
 /// Folder, relative to the home folder, of the files HuBergamof keeps.
@@ -18,18 +21,7 @@ pub(super) const FOLDER_FILE_PREFIX: &str = "gitconfig-folder-";
 
 /// Keys, in lower case, that HuBergamof writes besides the aliases: those of
 /// the same keys found in other files are listed for the person.
-pub(super) const MANAGED_KEYS: [&str; 10] = [
-    "user.name",
-    "user.email",
-    "user.signingkey",
-    "commit.gpgsign",
-    "gpg.format",
-    "init.defaultbranch",
-    "pull.rebase",
-    "pull.ff",
-    "core.editor",
-    "credential.helper",
-];
+pub(super) const MANAGED_KEYS: [&str; 10] = GIT_MANAGED_KEYS;
 
 /// What the keys of the aliases start with, in lower case.
 pub(super) const ALIAS_KEY_PREFIX: &str = "alias.";
@@ -181,9 +173,38 @@ fn global_sections(config: &GitConfig) -> Result<Vec<Section>, UnwritableValue> 
         aliases.text(&alias.name, &alias.command)?;
     }
 
-    Ok(vec![
-        user, commit, gpg, init, pull, core, credential, aliases,
-    ])
+    let mut sections = vec![user, commit, gpg, init, pull, core, credential, aliases];
+    sections.extend(extra_sections(config)?);
+    Ok(sections)
+}
+
+/// One section per setting the person wrote, in their order. A section name
+/// is written bare and a sub-section between quotes: both are checked again
+/// here, the file being read by Git.
+fn extra_sections(config: &GitConfig) -> Result<Vec<Section>, UnwritableValue> {
+    let mut sections = Vec::new();
+    for setting in config
+        .extra_settings
+        .iter()
+        .filter(|setting| setting.enabled)
+    {
+        let writable =
+            is_valid_git_setting_key(&setting.key) && is_valid_git_setting_value(&setting.value);
+        let Some((section, subsection, name)) = git_key_parts(&setting.key).filter(|_| writable)
+        else {
+            return Err(UnwritableValue {
+                key: setting.key.clone(),
+            });
+        };
+        let header = match subsection {
+            Some(subsection) => format!("{section} \"{subsection}\""),
+            None => section.to_owned(),
+        };
+        let mut extra = Section::new(&header);
+        extra.text(name, &setting.value)?;
+        sections.push(extra);
+    }
+    Ok(sections)
 }
 
 fn file_text(sections: &[Section]) -> String {

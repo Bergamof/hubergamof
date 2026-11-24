@@ -1,5 +1,12 @@
-import type { SshHost, SshSystemHost } from '#lib/generated/index.js';
+import type { AdvancedSetting, SshHost, SshSystemHost } from '#lib/generated/index.js';
 import { lengthOf } from './alias-validation.js';
+import {
+	ADVANCED_KEY_MAX,
+	hasPairedQuotes,
+	isOneLineValue,
+	valueError,
+	type SettingRules
+} from './advanced-validation.js';
 
 /** Limits of the manager (`MAX_SSH_*`, `SSH_FOLDER` in `ssh.rs`). */
 export const SSH_HOSTS_MAX = 128;
@@ -123,10 +130,19 @@ export interface HostDraft {
 	proxyJump: string;
 	forwardAgent: boolean;
 	enabled: boolean;
+	/** Kept as they are: the list of the options has its own form. */
+	options: AdvancedSetting[];
 }
 
-export function draftOf(host: SshHost): HostDraft {
-	return { ...host, port: host.port === null ? '' : String(host.port) };
+/** A host as the form starts from it; a host found elsewhere has no options of its own yet. */
+export function draftOf(
+	host: Omit<SshHost, 'options'> & Partial<Pick<SshHost, 'options'>>
+): HostDraft {
+	return {
+		...host,
+		options: host.options ?? [],
+		port: host.port === null ? '' : String(host.port)
+	};
 }
 
 export const BLANK_HOST: HostDraft = {
@@ -137,7 +153,8 @@ export const BLANK_HOST: HostDraft = {
 	identityFile: '',
 	proxyJump: '',
 	forwardAgent: false,
-	enabled: true
+	enabled: true,
+	options: []
 };
 
 /** The host a draft stands for, once it has no error (see {@link validateHost}). */
@@ -202,3 +219,54 @@ export function takeOverObstacle(
 	const [problem] = Object.values(validateHost(draft, takenAliases));
 	return problem ? `Ne respecte pas les règles de HuBergamof : ${problem}` : undefined;
 }
+
+/** The options the form of a host manages (`MANAGED_OPTIONS` in `ssh.rs`), in lower case. */
+const MANAGED_OPTIONS: readonly string[] = [
+	'hostname',
+	'user',
+	'port',
+	'identityfile',
+	'proxyjump',
+	'forwardagent'
+];
+
+const OPTION_KEY = /^[A-Za-z][A-Za-z0-9]*$/;
+
+/** Mirrors `is_valid_ssh_option_key`: a keyword of `ssh_config`, neither `Host`, `Match` nor a managed one. */
+export function isValidOptionKey(key: string): boolean {
+	const lower = key.toLowerCase();
+	return (
+		OPTION_KEY.test(key) &&
+		lengthOf(key) <= ADVANCED_KEY_MAX &&
+		lower !== 'host' &&
+		lower !== 'match' &&
+		!MANAGED_OPTIONS.includes(lower)
+	);
+}
+
+/** Mirrors `is_valid_ssh_option_value`: one line, quotes in pairs. */
+export function isValidOptionValue(value: string): boolean {
+	return isOneLineValue(value) && hasPairedQuotes(value);
+}
+
+function optionKeyError(key: string): string | undefined {
+	if (key === '') return 'Saisissez le nom de l’option.';
+	const lower = key.toLowerCase();
+	if (lower === 'host' || lower === 'match') {
+		return '« Host » et « Match » ouvrent une autre section : ils ne sont pas acceptés ici.';
+	}
+	if (MANAGED_OPTIONS.includes(lower)) {
+		return 'Cette option a son propre champ dans le formulaire du serveur.';
+	}
+	if (!isValidOptionKey(key)) {
+		return `Une option commence par une lettre, puis lettres et chiffres (${ADVANCED_KEY_MAX} au plus) : ServerAliveInterval.`;
+	}
+	return undefined;
+}
+
+/** What the options written by the person must follow: those of `ssh_config`, compared without regard to case. */
+export const SSH_OPTION_RULES: SettingRules = {
+	keyError: optionKeyError,
+	valueError: (value) => valueError(value, true),
+	fold: (key) => key.toLowerCase()
+};

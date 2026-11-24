@@ -7,7 +7,10 @@ one) after a removal.
 -->
 <script lang="ts">
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
+	import type { SettingsEdit } from '#lib/deck/advanced-edits.js';
+	import { SSH_OPTION_ALIAS_RULES } from '#lib/deck/alias-rules.js';
 	import type { SshHost } from '#lib/generated/index.js';
+	import AdvancedSettings from './AdvancedSettings.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import SshHostForm from './SshHostForm.svelte';
 	import Switch from './Switch.svelte';
@@ -17,11 +20,13 @@ one) after a removal.
 		onreplace: (alias: string, host: SshHost) => Promise<EditOutcome>;
 		ontoggle: (alias: string, enabled: boolean) => void;
 		onremove: (alias: string) => void;
+		/** Changes the options of the host called `alias`. */
+		onoptions: (alias: string, change: SettingsEdit) => Promise<EditOutcome>;
 		/** Where the focus goes once a host is removed. */
 		fallbackFocus?: () => void;
 	}
 
-	let { hosts, onreplace, ontoggle, onremove, fallbackFocus }: Props = $props();
+	let { hosts, onreplace, ontoggle, onremove, onoptions, fallbackFocus }: Props = $props();
 
 	let list: HTMLUListElement | undefined = $state();
 	/** The host whose form is open. */
@@ -59,7 +64,7 @@ one) after a removal.
 	let afterRemoval: { neighbour: string | undefined } | undefined;
 
 	function rowOf(alias: string): HTMLLIElement | undefined {
-		return [...(list?.querySelectorAll<HTMLLIElement>('li[data-alias]') ?? [])].find(
+		return [...(list?.querySelectorAll<HTMLLIElement>(':scope > li[data-alias]') ?? [])].find(
 			(item) => item.dataset.alias === alias
 		);
 	}
@@ -157,6 +162,24 @@ one) after a removal.
 								Supprimer
 							</button>
 						</div>
+						<details class="basis-full" data-options>
+							<summary class="cursor-pointer text-sm font-medium">
+								Options avancées{host.options.length > 0 ? ` (${host.options.length})` : ''}
+								<span class="sr-only">du serveur {host.alias}</span>
+							</summary>
+							<div class="mt-3 flex flex-col gap-3">
+								<p class="text-sm text-muted">
+									Écrites telles quelles sous ce serveur : ssh vérifie qu’il les comprend avant
+									qu’elles soient enregistrées sur l’ordinateur.
+								</p>
+								<AdvancedSettings
+									settings={host.options}
+									rules={SSH_OPTION_ALIAS_RULES}
+									addLabel="Ajouter une option à {host.alias}"
+									onchange={(change) => onoptions(host.alias, change)}
+								/>
+							</div>
+						</details>
 					</div>
 				{/if}
 			</li>

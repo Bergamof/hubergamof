@@ -96,7 +96,7 @@ the field once the form was sent, and the focus goes to the first one.
 	onsubmit={submit}
 >
 	<div class="flex flex-col gap-1">
-		<label for="{uid}-name" class="text-sm font-medium">Nom</label>
+		<label for="{uid}-name" class="text-sm font-medium">{rules.nameLabel ?? 'Nom'}</label>
 		<input
 			bind:this={nameField}
 			bind:value={name}
@@ -114,7 +114,9 @@ the field once the form was sent, and the focus goes to the first one.
 		{/if}
 	</div>
 	<div class="flex flex-col gap-1">
-		<label for="{uid}-command" class="text-sm font-medium">Commande</label>
+		<label for="{uid}-command" class="text-sm font-medium">
+			{rules.commandLabel ?? 'Commande'}
+		</label>
 		<input
 			bind:this={commandField}
 			bind:value={command}

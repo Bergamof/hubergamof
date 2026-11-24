@@ -18,7 +18,7 @@ const FOUND: SshSystemHost[] = [
 ];
 
 function ssh(revision: number): SshConfig {
-	return { schemaVersion: 1, hosts: [], revision };
+	return { schemaVersion: 1, hosts: [], commonOptions: [], revision };
 }
 
 function setup() {
@@ -37,7 +37,8 @@ const NEW_HOST = {
 	identityFile: '',
 	proxyJump: '',
 	forwardAgent: false,
-	enabled: true
+	enabled: true,
+	options: []
 };
 
 describe('SshState', () => {

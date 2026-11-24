@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
+use crate::advanced::{AdvancedSetting, check_settings, is_one_line_value};
 use crate::text::{is_blank, is_invisible};
 
 /// Git configuration schema version produced and understood by this crate.
@@ -227,6 +228,9 @@ pub struct GitConfig {
     pub aliases: Vec<GitAlias>,
     /// The identities by folder, in the order they are shown and written.
     pub folder_identities: Vec<GitFolderIdentity>,
+    /// The other keys of Git, written by the person (`push.default`).
+    #[serde(default)]
+    pub extra_settings: Vec<AdvancedSetting>,
     /// Revision counter, incremented on every accepted update; an update
     /// carrying an outdated revision is rejected.
     pub revision: u64,
@@ -277,6 +281,10 @@ pub enum GitConfigError {
     /// Two identities share a folder.
     #[error("duplicate folder {0:?}")]
     DuplicateFolder(String),
+    /// A setting written by the person is not valid, or written twice, or the
+    /// list is too long (the key is then empty).
+    #[error("invalid git setting {0:?}")]
+    InvalidSetting(String),
 }
 
 fn is_plain_text(text: &str) -> bool {
@@ -355,6 +363,99 @@ pub fn is_valid_git_editor(editor: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
+/// The keys of Git that the forms manage (lowercase): the person does not write
+/// them twice. The aliases (`alias.*`) and the includes are managed too.
+pub const GIT_MANAGED_KEYS: [&str; 10] = [
+    "user.name",
+    "user.email",
+    "user.signingkey",
+    "commit.gpgsign",
+    "gpg.format",
+    "init.defaultbranch",
+    "pull.rebase",
+    "pull.ff",
+    "core.editor",
+    "credential.helper",
+];
+
+/// Longest sub-section of a key, in characters.
+const MAX_GIT_SUBSECTION_CHARS: usize = 128;
+
+fn is_git_word(word: &str) -> bool {
+    word.chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && word.chars().count() <= crate::advanced::MAX_SETTING_KEY_CHARS
+        && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// The parts of `key` (`section`, `subsection`, `name`): a key is
+/// `section.name` or `section.subsection.name`, the sub-section being whatever
+/// is between the first and the last `.`.
+#[must_use]
+pub fn git_key_parts(key: &str) -> Option<(&str, Option<&str>, &str)> {
+    let (section, rest) = key.split_once('.')?;
+    match rest.rsplit_once('.') {
+        Some((subsection, name)) => Some((section, Some(subsection), name)),
+        None => Some((section, None, rest)),
+    }
+}
+
+/// Whether `key` can be the key of a setting written by the person: a Git key
+/// made of closed characters, which none of the forms manages.
+#[must_use]
+pub fn is_valid_git_setting_key(key: &str) -> bool {
+    let Some((section, subsection, name)) = git_key_parts(key) else {
+        return false;
+    };
+    let subsection_ok = subsection.is_none_or(|sub| {
+        !sub.is_empty()
+            && sub.chars().count() <= MAX_GIT_SUBSECTION_CHARS
+            && sub.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, '.' | '_' | '/' | ':' | '@' | '*' | '~' | '+' | '-')
+            })
+    });
+    let lower = key.to_ascii_lowercase();
+    let section = section.to_ascii_lowercase();
+    is_git_word(&section)
+        && is_git_word(name)
+        && subsection_ok
+        && !GIT_MANAGED_KEYS.contains(&fold_git_key(key).as_str())
+        && !matches!(section.as_str(), "alias" | "include" | "includeif")
+        && !lower.is_empty()
+}
+
+/// A key as Git compares it: the section and the name without regard to case,
+/// the sub-section as it is.
+#[must_use]
+pub fn fold_git_key(key: &str) -> String {
+    match git_key_parts(key) {
+        Some((section, Some(sub), name)) => {
+            format!(
+                "{}.{sub}.{}",
+                section.to_ascii_lowercase(),
+                name.to_ascii_lowercase()
+            )
+        }
+        Some((section, None, name)) => {
+            format!(
+                "{}.{}",
+                section.to_ascii_lowercase(),
+                name.to_ascii_lowercase()
+            )
+        }
+        None => key.to_owned(),
+    }
+}
+
+/// Whether `value` can be the value of a setting: one line. Git reads it between
+/// quotes, escaped, so whatever it holds is safe to write.
+#[must_use]
+pub fn is_valid_git_setting_value(value: &str) -> bool {
+    is_one_line_value(value)
+}
+
 /// Whether `name` can be the name of a Git alias: what Git accepts in the
 /// name of a configuration variable (a letter, then letters, digits or `-`).
 #[must_use]
@@ -406,6 +507,7 @@ impl GitConfig {
             settings: GitSettings::default(),
             aliases: Vec::new(),
             folder_identities: Vec::new(),
+            extra_settings: Vec::new(),
             revision: 0,
         }
     }
@@ -424,7 +526,14 @@ impl GitConfig {
         }
         self.validate_values()?;
         self.validate_aliases()?;
-        self.validate_folder_identities()
+        self.validate_folder_identities()?;
+        check_settings(
+            &self.extra_settings,
+            is_valid_git_setting_key,
+            is_valid_git_setting_value,
+            fold_git_key,
+        )
+        .map_err(|key| GitConfigError::InvalidSetting(key.unwrap_or_default()))
     }
 
     fn validate_values(&self) -> Result<(), GitConfigError> {
@@ -554,6 +663,10 @@ mod tests {
         #[serde(rename = "aliasCommands")]
         alias_commands: Vec<Case>,
         folders: Vec<Case>,
+        #[serde(rename = "settingKeys")]
+        setting_keys: Vec<Case>,
+        #[serde(rename = "settingValues")]
+        setting_values: Vec<Case>,
     }
 
     fn verdicts(cases: &[Case], check: fn(&str) -> bool, what: &str) {
@@ -580,6 +693,12 @@ mod tests {
             "alias command",
         );
         verdicts(&cases.folders, is_valid_git_folder, "folder");
+        verdicts(&cases.setting_keys, is_valid_git_setting_key, "setting key");
+        verdicts(
+            &cases.setting_values,
+            is_valid_git_setting_value,
+            "setting value",
+        );
         assert_eq!(cases.known_editors, GIT_EDITORS);
         assert_eq!(cases.plain_editors, GIT_PLAIN_EDITORS);
     }
@@ -666,6 +785,48 @@ mod tests {
                 field: "folderIdentities"
             })
         );
+    }
+
+    #[test]
+    fn the_settings_written_by_the_person_are_checked() {
+        let setting = |key: &str, value: &str| AdvancedSetting {
+            key: key.into(),
+            value: value.into(),
+            enabled: true,
+        };
+        let mut config = GitConfig::empty();
+        config.extra_settings = vec![
+            setting("push.default", "current"),
+            setting("core.autocrlf", "input"),
+        ];
+        assert_eq!(config.validate(), Ok(()));
+
+        config
+            .extra_settings
+            .push(setting("Push.Default", "simple"));
+        assert_eq!(
+            config.validate(),
+            Err(GitConfigError::InvalidSetting("Push.Default".into()))
+        );
+        // A key a form manages, and an alias that runs a shell command by the back door.
+        for key in ["user.email", "alias.x", "include.path"] {
+            config.extra_settings = vec![setting(key, "!rm -rf ~")];
+            assert_eq!(
+                config.validate(),
+                Err(GitConfigError::InvalidSetting(key.into())),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_configuration_saved_before_the_settings_existed_is_still_read() {
+        let old = r#"{"schemaVersion":1,"identity":{"name":"","email":""},
+            "signing":{"enabled":false,"format":"openPgp","key":""},
+            "settings":{"defaultBranch":"","pull":"default","editor":"","credentialHelper":{"kind":"none"}},
+            "aliases":[],"folderIdentities":[],"revision":2}"#;
+        let config: GitConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(config.extra_settings, []);
     }
 
     #[test]

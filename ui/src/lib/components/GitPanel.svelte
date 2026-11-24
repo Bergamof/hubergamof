@@ -8,12 +8,13 @@ Each form is sent as a whole; the line under the title says whether the manager 
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { GIT_ALIAS_RULES } from '#lib/deck/alias-rules.js';
+	import { GIT_ALIAS_RULES, GIT_SETTING_ALIAS_RULES } from '#lib/deck/alias-rules.js';
 	import { hasErrors } from '#lib/deck/alias-validation.js';
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import {
 		addFolderIdentity,
+		editExtraSettings,
 		isFolderListFull,
 		removeFolderIdentity,
 		replaceFolderIdentity,
@@ -33,6 +34,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 	} from '#lib/deck/machine-edits.js';
 	import { SaveTracker } from '#lib/deck/save-tracker.svelte.js';
 	import type { GitConfig, ShellAlias, SystemAlias } from '#lib/generated/index.js';
+	import AdvancedSettings from './AdvancedSettings.svelte';
 	import AliasForm from './AliasForm.svelte';
 	import AliasList from './AliasList.svelte';
 	import GitFolderForm from './GitFolderForm.svelte';
@@ -224,6 +226,33 @@ Each form is sent as a whole; the line under the title says whether the manager 
 					: undefined}
 				onadopt={adopt}
 				fallbackFocus={() => systemAliasHeading?.focus()}
+			/>
+		</section>
+
+		<section aria-labelledby="{uid}-extra" class="flex flex-col gap-4 card">
+			<h2 id="{uid}-extra" class="font-display text-xl font-semibold">Autres réglages</h2>
+			<p class="text-sm text-muted">
+				Tout réglage de Git que les formulaires ci-dessus ne couvrent pas, sous la forme
+				<code class="font-mono">section.nom</code> et sa valeur : par exemple
+				<code class="font-mono">push.default</code> à <code class="font-mono">current</code>. Écrits
+				dans le fichier de HuBergamof, ils l’emportent sur les mêmes clés de
+				<code class="font-mono">~/.gitconfig</code>, qui reste tel qu’il est : un réglage désactivé
+				ici laisse la valeur de ce fichier.
+			</p>
+			<p class="rounded-xl border border-line bg-sunken p-3 text-sm">
+				<strong>Attention :</strong> un réglage est écrit tel quel, sans autre contrôle que sa
+				forme. Certaines clés font exécuter un programme à Git (<code class="font-mono"
+					>core.pager</code
+				>,
+				<code class="font-mono">core.sshCommand</code>, <code class="font-mono">diff.tool</code>…) :
+				n’ajoutez que ce que vous comprenez. Les alias (<code class="font-mono">alias.*</code>) et
+				les inclusions ont leur propre place et sont refusés ici.
+			</p>
+			<AdvancedSettings
+				settings={config.extraSettings}
+				rules={GIT_SETTING_ALIAS_RULES}
+				addLabel="Ajouter un réglage"
+				onchange={(change) => edit(editExtraSettings(change))}
 			/>
 		</section>
 

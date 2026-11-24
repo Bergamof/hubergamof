@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use hubergamof_protocol::{SshConfig, SshHost};
+use hubergamof_protocol::{AdvancedSetting, SshConfig, SshHost};
 
 use super::*;
 use crate::machine::FileError;
@@ -65,6 +65,7 @@ fn host(alias: &str) -> SshHost {
         proxy_jump: String::new(),
         forward_agent: false,
         enabled: true,
+        options: Vec::new(),
     }
 }
 
@@ -712,4 +713,153 @@ async fn a_host_with_a_comment_after_its_name_is_taken_over_and_really_switches_
     );
     saved(&fixture, |config| config.hosts.clear()).await;
     assert_eq!(read(home, ".ssh/config"), original);
+}
+
+fn option(key: &str, value: &str) -> AdvancedSetting {
+    AdvancedSetting {
+        key: key.into(),
+        value: value.into(),
+        enabled: true,
+    }
+}
+
+#[tokio::test]
+async fn ssh_reads_back_the_options_of_a_host_and_the_common_ones() {
+    let fixture = fixture();
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    saved(&fixture, |config| {
+        let mut prod = server("prod", "10.0.0.1", "deploy");
+        prod.options = vec![
+            option("Compression", "yes"),
+            option("ServerAliveInterval", "15"),
+            AdvancedSetting {
+                enabled: false,
+                ..option("LogLevel", "DEBUG")
+            },
+        ];
+        config.hosts = vec![prod, host("bare")];
+        config.common_options = vec![
+            option("ServerAliveInterval", "60"),
+            option("ServerAliveCountMax", "5"),
+        ];
+    })
+    .await;
+
+    let prod = ssh_reads(&managed, "prod");
+    assert_eq!(first(&prod, "compression").as_deref(), Some("yes"));
+    assert_eq!(
+        first(&prod, "serveraliveinterval").as_deref(),
+        Some("15"),
+        "the host wins over the common options"
+    );
+    assert_eq!(first(&prod, "serveralivecountmax").as_deref(), Some("5"));
+    assert_ne!(first(&prod, "loglevel").as_deref(), Some("DEBUG"));
+    let bare = ssh_reads(&managed, "bare");
+    assert_eq!(first(&bare, "serveraliveinterval").as_deref(), Some("60"));
+    assert_ne!(first(&bare, "compression").as_deref(), Some("yes"));
+}
+
+#[tokio::test]
+async fn an_option_is_free_whatever_it_does() {
+    let fixture = fixture();
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    saved(&fixture, |config| {
+        let mut tunnel = host("tunnel");
+        tunnel.options = vec![option("ProxyCommand", "ssh -W %h:%p bastion")];
+        config.hosts = vec![tunnel];
+    })
+    .await;
+    assert_eq!(
+        first(&ssh_reads(&managed, "tunnel"), "proxycommand").as_deref(),
+        Some("ssh -W %h:%p bastion")
+    );
+}
+
+#[tokio::test]
+async fn options_ssh_cannot_read_are_refused_and_what_was_applied_stays() {
+    type Change = fn(&mut SshConfig);
+    let cases: [(&str, Change, &str, &str); 3] = [
+        (
+            "unknown option on a host",
+            |config| config.hosts[0].options = vec![option("Compresion", "yes")],
+            "a",
+            "Bad configuration option",
+        ),
+        (
+            "bad value on a host",
+            |config| config.hosts[0].options = vec![option("Compression", "maybe")],
+            "a",
+            "unsupported option",
+        ),
+        (
+            "unknown common option",
+            |config| config.common_options = vec![option("Nope", "1")],
+            "*",
+            "Bad configuration option",
+        ),
+    ];
+    for (what, change, scope, message) in cases {
+        let fixture = fixture();
+        let home = fixture.home.path();
+        saved(&fixture, |config| {
+            config.hosts = vec![server("a", "good.example.org", "u")];
+        })
+        .await;
+        let managed = home.join(".config/hubergamof/ssh_config");
+        let before = fs::read_to_string(&managed).unwrap();
+
+        let mut config = fixture.hub.refresh().await.unwrap().config;
+        change(&mut config);
+        let error = fixture.hub.update(config).await.unwrap_err();
+        let SshError::Apply(SshFilesError::Rejected {
+            scope: found_scope,
+            message: found_message,
+        }) = &error
+        else {
+            panic!("{what}: {error}");
+        };
+        assert_eq!(found_scope, scope, "{what}");
+        assert!(found_message.contains(message), "{what}: {found_message}");
+        assert!(!found_message.contains(home.to_str().unwrap()), "{what}");
+        assert_eq!(fs::read_to_string(&managed).unwrap(), before, "{what}");
+        assert!(
+            !home.join(".config/hubergamof/ssh_config.check").exists(),
+            "{what}: the trial file is removed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn options_that_are_off_are_not_tried() {
+    let fixture = fixture();
+    saved(&fixture, |config| {
+        let mut broken = host("a");
+        broken.options = vec![AdvancedSetting {
+            enabled: false,
+            ..option("Nope", "1")
+        }];
+        config.hosts = vec![broken];
+    })
+    .await;
+    let managed = fixture.home.path().join(".config/hubergamof/ssh_config");
+    assert!(!read_to_string_lossy(&managed).contains("Nope"));
+}
+
+fn read_to_string_lossy(path: &Path) -> String {
+    fs::read_to_string(path).unwrap()
+}
+
+#[tokio::test]
+async fn common_options_alone_are_written_and_removed_with_the_include() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.common_options = vec![option("Compression", "yes")];
+    })
+    .await;
+    assert!(read(home, ".config/hubergamof/ssh_config").contains("Host *\n\tCompression yes\n"));
+    assert!(read(home, ".ssh/config").contains("Include"));
+    saved(&fixture, |config| config.common_options.clear()).await;
+    assert!(!home.join(".config/hubergamof/ssh_config").exists());
+    assert!(!home.join(".ssh/config").exists());
 }

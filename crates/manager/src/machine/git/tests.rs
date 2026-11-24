@@ -8,7 +8,8 @@ use std::path::Path;
 use std::process::Command;
 
 use hubergamof_protocol::{
-    GitAlias, GitCredentialHelper, GitFolderIdentity, GitPullMode, GitSigningFormat,
+    AdvancedSetting, GitAlias, GitCredentialHelper, GitFolderIdentity, GitPullMode,
+    GitSigningFormat,
 };
 
 use super::*;
@@ -976,4 +977,75 @@ async fn an_alias_found_in_an_included_file_is_listed_and_left_where_it_is() {
     })
     .await;
     assert_eq!(read(home, "aliases.inc"), "[alias]\n\tco = checkout\n");
+}
+
+fn setting(key: &str, value: &str, enabled: bool) -> AdvancedSetting {
+    AdvancedSetting {
+        key: key.into(),
+        value: value.into(),
+        enabled,
+    }
+}
+
+#[tokio::test]
+async fn git_reads_back_the_settings_the_person_wrote() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.extra_settings = vec![
+            setting("push.default", "current", true),
+            setting("core.autocrlf", "input", false),
+            setting("url.https://example.org/.insteadOf", "ex:", true),
+            setting("diff.tool", "say \"hi\" ; # not a comment \\", true),
+        ];
+    })
+    .await;
+
+    assert_eq!(
+        git_get(home, home, "push.default").as_deref(),
+        Some("current")
+    );
+    assert_eq!(
+        git_get(home, home, "core.autocrlf"),
+        None,
+        "off is not written"
+    );
+    assert_eq!(
+        git_get(home, home, "url.https://example.org/.insteadof").as_deref(),
+        Some("ex:")
+    );
+    assert_eq!(
+        git_get(home, home, "diff.tool").as_deref(),
+        Some("say \"hi\" ; # not a comment \\")
+    );
+}
+
+#[tokio::test]
+async fn settings_alone_make_a_file_and_leave_with_the_last_one() {
+    let fixture = fixture();
+    let home = fixture.home.path();
+    saved(&fixture, |config| {
+        config.extra_settings = vec![setting("push.default", "current", true)];
+    })
+    .await;
+    assert!(read(home, ".gitconfig").contains("hubergamof"));
+    saved(&fixture, |config| config.extra_settings.clear()).await;
+    assert!(!home.join(".gitconfig").exists());
+    assert!(!home.join(".config/hubergamof/gitconfig").exists());
+}
+
+#[tokio::test]
+async fn a_setting_cannot_be_an_alias_a_managed_key_or_an_include() {
+    for key in [
+        "alias.x",
+        "user.email",
+        "include.path",
+        "includeIf.gitdir:~/x/.path",
+    ] {
+        let fixture = fixture();
+        let mut config = fixture.hub.refresh().await.unwrap().config;
+        config.extra_settings = vec![setting(key, "!rm -rf ~", true)];
+        let error = fixture.hub.update(config).await.unwrap_err();
+        assert!(matches!(error, GitError::Store(_)), "{key}: {error}");
+    }
 }

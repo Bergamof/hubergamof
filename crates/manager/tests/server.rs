@@ -1513,6 +1513,7 @@ fn ssh_host(alias: &str, proxy_jump: &str) -> SshHost {
         proxy_jump: proxy_jump.into(),
         forward_agent: false,
         enabled: true,
+        options: Vec::new(),
     }
 }
 

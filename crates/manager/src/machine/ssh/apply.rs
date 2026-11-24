@@ -48,6 +48,16 @@ pub enum SshFilesError {
     /// without losing them, nor leave it next to the new one.
     #[error("{} already used in ~/.ssh/config by hosts with options HuBergamof does not manage", names_in_use(.0))]
     NameInUse(Vec<String>),
+    /// `ssh` cannot read the options of the person (an unknown option, a value
+    /// it refuses): the configuration is not written, so that every host
+    /// keeps working.
+    #[error("ssh refuses the options of {scope}: {message}")]
+    Rejected {
+        /// The host, or `*` for the common options.
+        scope: String,
+        /// What `ssh` said.
+        message: String,
+    },
 }
 
 fn names_in_use(names: &[String]) -> String {
@@ -119,7 +129,11 @@ impl SshFiles {
     /// is atomic, so no file is left half written.
     pub fn apply(&self, config: &SshConfig) -> Result<(), SshFilesError> {
         self.check_names(config)?;
-        if let Some(content) = render(config)? {
+        let rendered = render(config)?;
+        if let Some(content) = &rendered {
+            self.check_with_ssh(config, content)?;
+        }
+        if let Some(content) = rendered {
             let dir = self.home.join(MANAGED_DIR);
             ensure_private_dir(&dir)?;
             write_replacing(&self.managed_file(), content.as_bytes(), PRIVATE_FILE_MODE)?;

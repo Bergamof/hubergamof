@@ -557,5 +557,185 @@
   "emacs",
   "micro",
   "hx"
+ ],
+ "settingKeys": [
+  {
+   "value": "push.default",
+   "valid": true
+  },
+  {
+   "value": "core.autocrlf",
+   "valid": true
+  },
+  {
+   "value": "Core.AutoCRLF",
+   "valid": true
+  },
+  {
+   "value": "url.https://x.org/.insteadOf",
+   "valid": true
+  },
+  {
+   "value": "branch.main.remote",
+   "valid": true
+  },
+  {
+   "value": "a-b.c-d",
+   "valid": true
+  },
+  {
+   "value": "diff.tool",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "push",
+   "valid": false
+  },
+  {
+   "value": ".default",
+   "valid": false
+  },
+  {
+   "value": "push.",
+   "valid": false
+  },
+  {
+   "value": "1a.b",
+   "valid": false
+  },
+  {
+   "value": "a.1b",
+   "valid": false
+  },
+  {
+   "value": "a b.c",
+   "valid": false
+  },
+  {
+   "value": "a.b c",
+   "valid": false
+  },
+  {
+   "value": "push.\"default",
+   "valid": false
+  },
+  {
+   "value": "user.name",
+   "valid": false
+  },
+  {
+   "value": "USER.NAME",
+   "valid": false
+  },
+  {
+   "value": "user.email",
+   "valid": false
+  },
+  {
+   "value": "core.editor",
+   "valid": false
+  },
+  {
+   "value": "credential.helper",
+   "valid": false
+  },
+  {
+   "value": "pull.rebase",
+   "valid": false
+  },
+  {
+   "value": "alias.co",
+   "valid": false
+  },
+  {
+   "value": "include.path",
+   "valid": false
+  },
+  {
+   "value": "includeIf.gitdir:~/x/.path",
+   "valid": false
+  },
+  {
+   "value": "url..insteadOf",
+   "valid": false
+  },
+  {
+   "value": "url.a b.insteadOf",
+   "valid": false
+  },
+  {
+   "value": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss.k",
+   "valid": false
+  },
+  {
+   "value": "a.kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+   "valid": false
+  },
+  {
+   "value": "remote.origin.url",
+   "valid": true
+  },
+  {
+   "value": "a.b\nc.d",
+   "valid": false
+  }
+ ],
+ "settingValues": [
+  {
+   "value": "true",
+   "valid": true
+  },
+  {
+   "value": "a b",
+   "valid": true
+  },
+  {
+   "value": "\"quoted\"",
+   "valid": true
+  },
+  {
+   "value": "it's",
+   "valid": true
+  },
+  {
+   "value": "\u00e9 \u2713",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": " a",
+   "valid": false
+  },
+  {
+   "value": "a ",
+   "valid": false
+  },
+  {
+   "value": "a\nb",
+   "valid": false
+  },
+  {
+   "value": "a\tb",
+   "valid": false
+  },
+  {
+   "value": "a\u202eb",
+   "valid": false
+  },
+  {
+   "value": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+   "valid": true
+  },
+  {
+   "value": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+   "valid": false
+  }
  ]
 }

@@ -29,6 +29,7 @@ interface FakeGit {
 		signingKey: string;
 		enabled: boolean;
 	}[];
+	extraSettings: { key: string; value: string; enabled: boolean }[];
 	revision: number;
 }
 
@@ -66,6 +67,7 @@ function emptyGit(): FakeGit {
 		},
 		aliases: [],
 		folderIdentities: [],
+		extraSettings: [],
 		revision: 1
 	};
 }
@@ -214,6 +216,34 @@ test('ajoute, désactive et supprime un alias Git, et intègre un alias trouvé 
 	await expect(managed.getByText('checkout')).toHaveCount(0);
 });
 
+test('ajoute un réglage libre, refuse un alias déguisé, au clavier', async ({ page }) => {
+	const manager = await playManager(page);
+	await openGit(page);
+
+	const form = page.getByRole('form', { name: 'Ajouter un réglage' });
+	await form.getByRole('textbox', { name: 'Clé' }).fill('alias.pwn');
+	await form.getByRole('textbox', { name: 'Valeur' }).fill('!rm -rf ~');
+	await page.keyboard.press('Enter');
+	await expect(form.getByRole('textbox', { name: 'Clé' })).toHaveAccessibleDescription(
+		/propre place/
+	);
+	expect(manager.received).not.toContain('updateGit');
+
+	await form.getByRole('textbox', { name: 'Clé' }).fill('push.default');
+	await form.getByRole('textbox', { name: 'Valeur' }).fill('current');
+	await page.keyboard.press('Enter');
+	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
+	expect(manager.config.extraSettings).toEqual([
+		{ key: 'push.default', value: 'current', enabled: true }
+	]);
+
+	await page.getByRole('switch', { name: 'Option Git push.default' }).uncheck();
+	await expect(
+		page.getByRole('list', { name: 'Option Git gérés' }).getByText('Désactivé')
+	).toBeVisible();
+	expect(manager.config.extraSettings[0].enabled).toBe(false);
+});
+
 test('ajoute une identité par dossier et refuse un dossier hors du dossier personnel', async ({
 	page
 }) => {
@@ -266,6 +296,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		config.aliases = [{ name: 'co', command: 'checkout', enabled: false }];
 		config.signing = { enabled: true, format: 'ssh', key: '~/.ssh/id.pub' };
 		config.settings.credentialHelper = { kind: 'store' };
+		config.extraSettings = [{ key: 'push.default', value: 'current', enabled: true }];
 		config.folderIdentities = [
 			{ folder: '~/travail', name: '', email: 'ada@work.org', signingKey: '', enabled: true }
 		];
