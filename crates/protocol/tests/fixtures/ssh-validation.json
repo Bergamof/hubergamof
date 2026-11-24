@@ -1,0 +1,268 @@
+{
+ "aliases": [
+  {
+   "value": "prod",
+   "valid": true
+  },
+  {
+   "value": "web-01.eu",
+   "valid": true
+  },
+  {
+   "value": "a_b",
+   "valid": true
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "-x",
+   "valid": false
+  },
+  {
+   "value": "*",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "a?",
+   "valid": false
+  },
+  {
+   "value": "!a",
+   "valid": false
+  },
+  {
+   "value": "\u00e9",
+   "valid": false
+  },
+  {
+   "value": "a/b",
+   "valid": false
+  },
+  {
+   "value": "a=b",
+   "valid": false
+  }
+ ],
+ "users": [
+  {
+   "value": "deploy",
+   "valid": true
+  },
+  {
+   "value": "a.b-c_d",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "-oProxyCommand",
+   "valid": false
+  },
+  {
+   "value": "a@b",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+   "valid": false
+  }
+ ],
+ "hostNames": [
+  {
+   "value": "example.org",
+   "valid": true
+  },
+  {
+   "value": "10.0.0.1",
+   "valid": true
+  },
+  {
+   "value": "2001:db8::1",
+   "valid": true
+  },
+  {
+   "value": "a_b.local",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "-h",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "a;b",
+   "valid": false
+  },
+  {
+   "value": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+   "valid": true
+  },
+  {
+   "value": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+   "valid": false
+  },
+  {
+   "value": "a/b",
+   "valid": false
+  },
+  {
+   "value": "$HOST",
+   "valid": false
+  }
+ ],
+ "identityFiles": [
+  {
+   "value": "~/.ssh/id_ed25519",
+   "valid": true
+  },
+  {
+   "value": "~/.ssh/keys/work.key",
+   "valid": true
+  },
+  {
+   "value": "~/.ssh/",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh",
+   "valid": false
+  },
+  {
+   "value": "/etc/passwd",
+   "valid": false
+  },
+  {
+   "value": "~/other/key",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh/../x",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh/./x",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh//x",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh/-x",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh/a b",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh/%d",
+   "valid": false
+  },
+  {
+   "value": "~/.ssh/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+   "valid": false
+  }
+ ],
+ "proxyJumps": [
+  {
+   "value": "bastion",
+   "valid": true
+  },
+  {
+   "value": "deploy@bastion",
+   "valid": true
+  },
+  {
+   "value": "deploy@bastion:2222",
+   "valid": true
+  },
+  {
+   "value": "a,b,c",
+   "valid": true
+  },
+  {
+   "value": "a,b,c,d,e",
+   "valid": true
+  },
+  {
+   "value": "a,b,c,d,e,f",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": "-oProxyCommand=x",
+   "valid": false
+  },
+  {
+   "value": "a,-J",
+   "valid": false
+  },
+  {
+   "value": "a,,b",
+   "valid": false
+  },
+  {
+   "value": "@bastion",
+   "valid": false
+  },
+  {
+   "value": "a@",
+   "valid": false
+  },
+  {
+   "value": "bastion:0",
+   "valid": false
+  },
+  {
+   "value": "bastion:70000",
+   "valid": false
+  },
+  {
+   "value": "bastion:x",
+   "valid": false
+  },
+  {
+   "value": "a b",
+   "valid": false
+  },
+  {
+   "value": "[::1]:22",
+   "valid": false
+  },
+  {
+   "value": "2001:db8::1",
+   "valid": true
+  }
+ ]
+}

@@ -75,8 +75,25 @@ impl Block<'_> {
         Ok(replaced)
     }
 
+    /// `content` with the block as its first lines, followed by a blank line:
+    /// where the file reads it before everything else (an `Include` of
+    /// `ssh_config` must come before any `Host`, and its hosts win by coming
+    /// first). Any block already in the file is removed first, so that the
+    /// block is never twice nor left where the person moved it.
+    ///
+    /// # Errors
+    /// [`UnterminatedBlock`] when a block has no end.
+    pub(super) fn place_first(&self, content: &str) -> Result<String, UnterminatedBlock> {
+        let rest = self.remove(content)?;
+        if rest.is_empty() {
+            return Ok(self.text());
+        }
+        Ok(format!("{}\n{rest}", self.text()))
+    }
+
     /// `content` without any block, nor the blank line that separated it
-    /// from what precedes.
+    /// from what precedes, or follows it when it is the first thing of the
+    /// file.
     ///
     /// # Errors
     /// [`UnterminatedBlock`] when a block has no end.
@@ -86,8 +103,11 @@ impl Block<'_> {
         let mut kept = String::with_capacity(content.len());
         for (index, line) in lines.iter().enumerate() {
             let in_block = ranges.iter().any(|range| range.contains(&index));
-            let separator =
-                line.trim().is_empty() && ranges.iter().any(|range| range.start == index + 1);
+            let before_block = ranges.iter().any(|range| range.start == index + 1);
+            let after_first_block = ranges
+                .iter()
+                .any(|range| range.start == 0 && range.end == index);
+            let separator = line.trim().is_empty() && (before_block || after_first_block);
             if !in_block && !separator {
                 kept.push_str(line);
             }
@@ -117,6 +137,29 @@ mod tests {
         assert_eq!(with, format!("{original}\n{}", GIT.text()));
         assert_eq!(GIT.insert(&with).unwrap(), with);
         assert_eq!(GIT.remove(&with).unwrap(), original);
+    }
+
+    #[test]
+    fn a_block_placed_first_comes_before_everything_and_goes_back_to_the_original() {
+        for original in ["Host a\n\tUser u\n", "", "# c\n\nHost a\n"] {
+            let placed = GIT.place_first(original).unwrap();
+            assert!(placed.starts_with(&GIT.text()), "{original:?}");
+            assert_eq!(
+                GIT.place_first(&placed).unwrap(),
+                placed,
+                "twice: {original:?}"
+            );
+            assert_eq!(GIT.remove(&placed).unwrap(), original, "{original:?}");
+        }
+    }
+
+    #[test]
+    fn a_block_moved_by_the_person_is_placed_first_again() {
+        let moved = format!("Host a\n{}Host b\n", GIT.text());
+        let placed = GIT.place_first(&moved).unwrap();
+        assert!(placed.starts_with(&GIT.text()));
+        assert_eq!(placed.matches(GIT.start).count(), 1);
+        assert!(placed.ends_with("Host a\nHost b\n"));
     }
 
     #[test]

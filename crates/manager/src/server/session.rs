@@ -26,6 +26,7 @@ use super::{AppState, SimulatedInput};
 use crate::device::DiscoveryEvent;
 use crate::engine::{EngineError, EngineHandle, EngineRegistry, LiveSnapshot};
 use crate::machine::git::GitSnapshot;
+use crate::machine::ssh::SshSnapshot;
 use crate::machine::{Feature, Hub, MachineSnapshot};
 use crate::module_host::{ModuleHost, ModuleViews, RadialReply, SettingsRefusal};
 
@@ -77,6 +78,7 @@ enum Event {
     ApplicationChanged,
     MachineChanged(Arc<MachineSnapshot>),
     GitChanged(Arc<GitSnapshot>),
+    SshChanged(Arc<SshSnapshot>),
     LockChanged,
     Mouse(Option<ServerMessage>),
     Shutdown,
@@ -141,6 +143,13 @@ fn git_message(snapshot: &GitSnapshot) -> ServerMessage {
     }
 }
 
+fn ssh_message(snapshot: &SshSnapshot) -> ServerMessage {
+    ServerMessage::Ssh {
+        config: snapshot.config.clone(),
+        system_hosts: snapshot.system_hosts.clone(),
+    }
+}
+
 /// Serves one client until it disconnects or the server shuts down.
 pub(super) async fn run(socket: WebSocket, state: AppState) {
     let (devices, discovery) = state.context.discovery.subscribe();
@@ -152,6 +161,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
     let application = state.context.application.as_ref().map(ModuleHost::views);
     let machine = state.context.machine.subscribe();
     let git = state.context.git.subscribe();
+    let ssh = state.context.ssh.subscribe();
     let locked = state.context.screen_lock.watch();
     let mut session = Session {
         socket,
@@ -165,6 +175,7 @@ pub(super) async fn run(socket: WebSocket, state: AppState) {
         told_modules: Vec::new(),
         machine,
         git,
+        ssh,
         locked,
         shutdown,
         selection: Selection::None,
@@ -189,6 +200,8 @@ struct Session {
     machine: broadcast::Receiver<Arc<MachineSnapshot>>,
     /// The Git configuration as updates leave it, from any client.
     git: broadcast::Receiver<Arc<GitSnapshot>>,
+    /// The SSH configuration as updates leave it, from any client.
+    ssh: broadcast::Receiver<Arc<SshSnapshot>>,
     /// Whether the computer is locked.
     locked: watch::Receiver<bool>,
     shutdown: watch::Receiver<bool>,
@@ -235,6 +248,7 @@ impl Session {
                 Event::ApplicationChanged => self.send_application_modules_if_changed().await?,
                 Event::MachineChanged(snapshot) => self.send(&machine_message(&snapshot)).await?,
                 Event::GitChanged(snapshot) => self.send(&git_message(&snapshot)).await?,
+                Event::SshChanged(snapshot) => self.send(&ssh_message(&snapshot)).await?,
                 Event::LockChanged => {
                     self.send_locked().await?;
                     if !*self.locked.borrow() {
@@ -289,6 +303,7 @@ impl Session {
             () = application_changed(self.application.as_mut()) => Event::ApplicationChanged,
             snapshot = next_snapshot(&mut self.machine) => Event::MachineChanged(snapshot),
             snapshot = next_snapshot(&mut self.git) => Event::GitChanged(snapshot),
+            snapshot = next_snapshot(&mut self.ssh) => Event::SshChanged(snapshot),
             Ok(()) = self.locked.changed() => Event::LockChanged,
         }
     }
@@ -358,7 +373,9 @@ impl Session {
             ClientMessage::RefreshMachine
             | ClientMessage::UpdateMachine { .. }
             | ClientMessage::RefreshGit
-            | ClientMessage::UpdateGit { .. } => return self.on_machine_request(request).await,
+            | ClientMessage::UpdateGit { .. }
+            | ClientMessage::RefreshSsh
+            | ClientMessage::UpdateSsh { .. } => return self.on_machine_request(request).await,
             ClientMessage::SelectMouse { serial } => {
                 // The configuration, then what the mouse refused of it.
                 let selected = self.mouse.select(&serial).map(|config| {
@@ -492,12 +509,18 @@ impl Session {
     /// What a client asks about the features of the machine.
     async fn on_machine_request(&mut self, request: ClientMessage) -> Result<(), Closed> {
         let context = &self.state.context;
-        let (machine, git) = (context.machine.clone(), context.git.clone());
+        let (machine, git, ssh) = (
+            context.machine.clone(),
+            context.git.clone(),
+            context.ssh.clone(),
+        );
         match request {
             ClientMessage::RefreshMachine => self.refresh_feature(machine, machine_message).await,
             ClientMessage::UpdateMachine { config } => self.update_feature(machine, config).await,
             ClientMessage::RefreshGit => self.refresh_feature(git, git_message).await,
             ClientMessage::UpdateGit { config } => self.update_feature(git, config).await,
+            ClientMessage::RefreshSsh => self.refresh_feature(ssh, ssh_message).await,
+            ClientMessage::UpdateSsh { config } => self.update_feature(ssh, config).await,
             _ => unreachable!("only the requests about the machine are routed here"),
         }
     }

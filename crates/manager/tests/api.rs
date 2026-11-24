@@ -17,6 +17,7 @@ use hubergamof_manager::file_chooser::{
 };
 use hubergamof_manager::machine::MachineHub;
 use hubergamof_manager::machine::git::GitConfigHub;
+use hubergamof_manager::machine::ssh::SshConfigHub;
 use hubergamof_manager::mouse_hub::MouseHub;
 use hubergamof_manager::render::{MAX_SOURCE_BYTES, Renderer};
 use hubergamof_manager::screen_lock::{NoScreenLock, ScreenLock};
@@ -104,6 +105,7 @@ impl Api {
             mice: MouseHub::new(store.clone()).unwrap(),
             machine: MachineHub::new(store.clone(), None),
             git: GitConfigHub::new(store.clone(), None),
+            ssh: SshConfigHub::new(store.clone(), None),
             store,
             renderer,
             file_picker,
