@@ -7,24 +7,11 @@ use hubergamof_protocol::{
 };
 use tokio::sync::watch;
 
-use super::errors::client_message;
+use super::errors::Failure;
 use crate::mouse_hub::MouseHub;
 
-/// A request that failed, to report as an `error`.
-#[derive(Debug)]
-pub(super) struct Failure {
-    pub(super) code: ErrorCode,
-    pub(super) message: String,
-}
-
-impl Failure {
-    fn of(code: ErrorCode, detail: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: client_message(code, detail, "mouse request"),
-        }
-    }
-}
+/// What a failure of a request about the mice is logged as.
+const CONTEXT: &str = "mouse request";
 
 /// The mouse a client follows.
 struct Selected {
@@ -89,6 +76,7 @@ impl MouseFeed {
             return Err(Failure::of(
                 ErrorCode::UnknownDevice,
                 "no connected mouse with this serial",
+                CONTEXT,
             ));
         };
         let message = ServerMessage::MouseConfig {
@@ -153,7 +141,7 @@ impl MouseFeed {
         self.hub
             .try_waveform(serial, waveform)
             .map(|()| Vec::new())
-            .map_err(|error| Failure::of(error.error_code(), error.to_string()))
+            .map_err(|error| Failure::of(error.error_code(), error.to_string(), CONTEXT))
     }
 
     /// Saves the radial menu, like [`MouseFeed::update_mouse`].
@@ -237,8 +225,8 @@ async fn blocking<T: Send + 'static>(
     operation: impl FnOnce() -> Result<T, (ErrorCode, String)> + Send + 'static,
 ) -> Result<T, Failure> {
     match tokio::task::spawn_blocking(operation).await {
-        Ok(result) => result.map_err(|(code, detail)| Failure::of(code, detail)),
-        Err(error) => Err(Failure::of(ErrorCode::Internal, error.to_string())),
+        Ok(result) => result.map_err(|(code, detail)| Failure::of(code, detail, CONTEXT)),
+        Err(error) => Err(Failure::of(ErrorCode::Internal, error.to_string(), CONTEXT)),
     }
 }
 

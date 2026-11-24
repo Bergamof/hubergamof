@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
+use hubergamof_headset::simulated::SimulatedHeadset;
 use hubergamof_manager::config_store::ConfigStore;
 use hubergamof_manager::device::hardware::{HOTPLUG_POLL_INTERVAL, HardwareHotplug};
 use hubergamof_manager::device::virtual_deck::{DEMO_SERIAL, VirtualDevices, virtual_plus_info};
@@ -21,6 +22,11 @@ use hubergamof_manager::device::{self, DeviceDiscovery};
 use hubergamof_manager::engine::{EngineRegistry, EngineServices, Supervisor, first_radial_items};
 use hubergamof_manager::file_chooser::{FilePicker, PortalFilePicker, SimulatedFilePicker};
 use hubergamof_manager::haptics::{HapticOutput, HapticRelay};
+use hubergamof_manager::headset_engine::{
+    HeadsetSupervisor, SCAN_INTERVAL as HEADSET_SCAN_INTERVAL,
+};
+use hubergamof_manager::headset_hub::HeadsetHub;
+use hubergamof_manager::headset_source::{BluezSource, HeadsetSource, SimulatedSource};
 use hubergamof_manager::launcher::{self, Outcome, SystemdUserService, XdgOpen};
 use hubergamof_manager::machine::git::{GitConfigHub, GitFiles};
 use hubergamof_manager::machine::ssh::{SshConfigHub, SshFiles};
@@ -54,8 +60,8 @@ use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_mouse::diagnostics::{self, Action, parse_waveform};
 use hubergamof_protocol::CatalogModule;
 use hubergamof_protocol::{
-    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, MouseBattery, MouseInfo, MouseModel,
-    WHEEL_THRESHOLD_RANGE, WheelMode,
+    DPI_RANGE, DPI_STEP, HapticLevel, HapticWaveform, HeadsetInfo, MouseBattery, MouseInfo,
+    MouseModel, WHEEL_THRESHOLD_RANGE, WheelMode,
 };
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -126,6 +132,11 @@ struct Cli {
     /// taken over (to run Solaar or logiops, which divert the same buttons).
     #[arg(long)]
     no_mice: bool,
+
+    /// Do not look for Sony headphones: no Bluetooth is touched and the
+    /// interface does not offer them.
+    #[arg(long)]
+    no_headsets: bool,
 
     /// Never look for a newer release: the manager then makes no connection
     /// to the Internet at all.
@@ -619,6 +630,7 @@ async fn run_manager(cli: Cli) -> Result<()> {
         file_picker: file_picker(cli.file_chooser_answer.clone()),
         updates: updates.clone(),
         mice: mouse_hub,
+        headsets: start_headsets(&cli, stopping.clone()),
         application: Some(host.clone()),
         machine: start_machine(cli.demo, store.clone())?,
         git: start_git(cli.demo, store.clone())?,
@@ -884,6 +896,37 @@ fn start_ssh(demo: bool, store: ConfigStore) -> Result<SshConfigHub> {
     } else {
         Ok(SshConfigHub::new(store, SshFiles::of_current_user()))
     }
+}
+
+/// Address and name of the headphones `--demo` lists (an address of the range
+/// reserved for documentation).
+const SIMULATED_HEADSET: (&str, &str) = ("00:00:5E:00:53:01", "WH-1000XM4 (démo)");
+
+/// The Sony headphones: those BlueZ lists as connected, or with `--demo`
+/// simulated ones, so that no Bluetooth is touched. Nothing with
+/// `--no-headsets`.
+fn start_headsets(cli: &Cli, mut stopping: watch::Receiver<bool>) -> Option<HeadsetHub> {
+    if cli.no_headsets {
+        return None;
+    }
+    let source: Arc<dyn HeadsetSource> = if cli.demo {
+        let (address, name) = SIMULATED_HEADSET;
+        let info = HeadsetInfo {
+            address: address.into(),
+            name: name.into(),
+        };
+        Arc::new(SimulatedSource::new(vec![(info, SimulatedHeadset::new())]))
+    } else {
+        Arc::new(BluezSource::default())
+    };
+    let (hub, requests) = HeadsetHub::new();
+    let supervisor = HeadsetSupervisor::start(source, hub.clone(), requests, HEADSET_SCAN_INTERVAL);
+    // Closes the links when the manager stops.
+    tokio::spawn(async move {
+        let _ = stopping.wait_for(|stopping| *stopping).await;
+        supervisor.shutdown().await;
+    });
+    Some(hub)
 }
 
 /// The mice `--demo` lists, with the serial of each.
@@ -1328,6 +1371,27 @@ mod tests {
             "the demo never serves mice"
         );
         assert!(Cli::try_parse_from(["hubergamof", "--mice", "--no-mice"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn headphones_are_simulated_by_the_demo_and_refused_by_the_option() {
+        let (_stop, stopping) = watch::channel(false);
+        let cli = |args: &[&str]| {
+            let mut all = vec!["hubergamof"];
+            all.extend_from_slice(args);
+            Cli::try_parse_from(all).unwrap()
+        };
+        let hub = start_headsets(&cli(&["--demo"]), stopping.clone()).expect("served");
+        let listed = tokio::time::timeout(
+            Duration::from_secs(5),
+            hub.subscribe_headsets().wait_for(|list| !list.is_empty()),
+        )
+        .await
+        .expect("the demo lists its headphones")
+        .unwrap()
+        .clone();
+        assert_eq!(listed[0].address, SIMULATED_HEADSET.0);
+        assert!(start_headsets(&cli(&["--demo", "--no-headsets"]), stopping).is_none());
     }
 
     #[test]
