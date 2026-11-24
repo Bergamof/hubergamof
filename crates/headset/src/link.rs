@@ -118,7 +118,7 @@ impl<C: Channel> Link<C> {
             let left = deadline.saturating_duration_since(Instant::now());
             for frame in self.read_frames(left)? {
                 if !frame.is_ack() {
-                    self.received.push_back(frame);
+                    self.keep(frame);
                 }
             }
             if let Some(frame) = self.received.pop_front() {
@@ -134,19 +134,31 @@ impl<C: Channel> Link<C> {
         let deadline = Instant::now() + self.ack_timeout;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
+            // One read can hold the acknowledgement and the answer that follows
+            // it: every frame is kept before the acknowledgement ends the wait.
+            let mut acknowledged = false;
             for frame in self.read_frames(left)? {
                 if frame.is_ack() {
-                    return Ok(true);
+                    acknowledged = true;
+                } else {
+                    self.keep(frame);
                 }
-                if self.received.len() >= MAX_PENDING {
-                    self.received.pop_front();
-                }
-                self.received.push_back(frame);
+            }
+            if acknowledged {
+                return Ok(true);
             }
             if left.is_zero() {
                 return Ok(false);
             }
         }
+    }
+
+    /// Queues a data frame for the reader, dropping the oldest past [`MAX_PENDING`].
+    fn keep(&mut self, frame: Frame) {
+        if self.received.len() >= MAX_PENDING {
+            self.received.pop_front();
+        }
+        self.received.push_back(frame);
     }
 
     /// Reads once, acknowledges every data frame and returns the frames.
@@ -248,6 +260,32 @@ mod tests {
         let mut link = link(headset);
         link.send(DATA_TYPE_MDR, &[0x66, 0x02]).unwrap();
         assert_eq!(link.receive(SHORT).unwrap().unwrap().payload, [0x69, 0x02]);
+    }
+
+    #[test]
+    fn an_answer_in_the_same_read_as_its_acknowledgement_is_not_lost() {
+        let headset = FakeHeadset::new()
+            .answering(&[0x66, 0x02], &[&[0x67, 0x02]])
+            .joining_reads();
+        let mut link = link(headset);
+        link.send(DATA_TYPE_MDR, &[0x66, 0x02]).unwrap();
+        assert_eq!(link.receive(SHORT).unwrap().unwrap().payload, [0x67, 0x02]);
+    }
+
+    #[test]
+    fn every_frame_after_the_acknowledgement_is_kept_in_order() {
+        let headset = FakeHeadset::new()
+            .answering(
+                &[0x66, 0x02],
+                &[&[0x67, 0x02], &[0x69, 0x02], &[0x13, 0x00]],
+            )
+            .joining_reads();
+        let mut link = link(headset);
+        link.send(DATA_TYPE_MDR, &[0x66, 0x02]).unwrap();
+        for expected in [[0x67, 0x02], [0x69, 0x02], [0x13, 0x00]] {
+            assert_eq!(link.receive(SHORT).unwrap().unwrap().payload, expected);
+        }
+        assert_eq!(link.receive(SHORT).unwrap(), None);
     }
 
     #[test]

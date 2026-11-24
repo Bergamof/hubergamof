@@ -21,6 +21,9 @@ struct State {
     acks_to_drop: u32,
     /// Whether the stream is closed (reads fail).
     closed: bool,
+    /// Whether one read returns everything queued (an acknowledgement and the
+    /// answer behind it arrive together on a real stream).
+    join_reads: bool,
     sequence: u8,
 }
 
@@ -56,6 +59,13 @@ impl FakeHeadset {
     #[must_use]
     pub fn dropping_acks(self, count: u32) -> Self {
         self.lock().acks_to_drop = count;
+        self
+    }
+
+    /// Makes every read return all the queued bytes at once.
+    #[must_use]
+    pub fn joining_reads(self) -> Self {
+        self.lock().join_reads = true;
         self
     }
 
@@ -129,6 +139,10 @@ impl Channel for FakeHeadset {
         let mut state = self.lock();
         if state.closed {
             return Err(ChannelError::Closed);
+        }
+        if state.join_reads {
+            let joined: Vec<u8> = state.outgoing.drain(..).flatten().collect();
+            return Ok((!joined.is_empty()).then_some(joined));
         }
         Ok(state.outgoing.pop_front())
     }

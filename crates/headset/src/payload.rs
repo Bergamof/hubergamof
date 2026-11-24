@@ -11,6 +11,8 @@ use thiserror::Error;
 /// Highest ambient sound level.
 pub const MAX_AMBIENT_LEVEL: u8 = 20;
 
+const GET_PAIRED_DEVICES: u8 = 0x38;
+const RET_PAIRED_DEVICES: u8 = 0x39;
 const GET_BATTERY: u8 = 0x10;
 const RET_BATTERY: u8 = 0x11;
 const NTFY_BATTERY: u8 = 0x13;
@@ -60,11 +62,14 @@ pub enum Query {
     DeviceInfo,
     /// "Concierge" data (payload unknown: the bare code is sent).
     Concierge,
+    /// The paired devices (the request is the code next to the `39` answer the
+    /// headphones were seen to send: unverified, the bare code is sent).
+    PairedDevices,
 }
 
 impl Query {
     /// Every query, in the order `probe` lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ProtocolInfo,
         Self::Ambient,
         Self::Battery,
@@ -72,6 +77,7 @@ impl Query {
         Self::ConnectionStatus,
         Self::DeviceInfo,
         Self::Concierge,
+        Self::PairedDevices,
     ];
 
     /// The name a person types.
@@ -85,6 +91,7 @@ impl Query {
             Self::ConnectionStatus => "connection-status",
             Self::DeviceInfo => "device-info",
             Self::Concierge => "concierge",
+            Self::PairedDevices => "paired-devices",
         }
     }
 
@@ -105,6 +112,7 @@ impl Query {
             Self::ConnectionStatus => vec![0x24],
             Self::DeviceInfo => vec![0x1C],
             Self::Concierge => vec![0x28],
+            Self::PairedDevices => vec![GET_PAIRED_DEVICES],
         }
     }
 
@@ -119,7 +127,7 @@ impl Query {
         }
         if !matches!(
             self,
-            Self::ConnectionStatus | Self::DeviceInfo | Self::Concierge
+            Self::ConnectionStatus | Self::DeviceInfo | Self::Concierge | Self::PairedDevices
         ) {
             return Err(ProbeError::NoArguments(self.name()));
         }
@@ -422,9 +430,36 @@ pub struct EqualizerState {
     pub bands: [i8; 5],
 }
 
+/// Longest list of paired devices read (the headphones remember a handful).
+pub const MAX_PAIRED_DEVICES: usize = 8;
+/// Longest device name kept: names come from the headphones.
+const MAX_DEVICE_NAME_CHARS: usize = 64;
+/// Characters of a Bluetooth address, `AA:BB:CC:DD:EE:FF`.
+const ADDRESS_LEN: usize = 17;
+/// Header of the list: code, a byte the headphones always sent as 1, the count.
+const PAIRED_HEADER_LEN: usize = 3;
+
+/// A device the headphones remember.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairedDevice {
+    /// Bluetooth address, upper case, `AA:BB:CC:DD:EE:FF`.
+    pub address: String,
+    /// The name the device gave (cleaned: from outside).
+    pub name: String,
+    /// A byte next to the device whose meaning is not known yet.
+    pub state: u8,
+}
+
 /// What the headphones said.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// The paired devices (sent on their own, on the second data channel).
+    PairedDevices {
+        /// The devices, in the order sent.
+        devices: Vec<PairedDevice>,
+        /// What follows the last device (one byte was seen: its meaning is not known).
+        trailing: Vec<u8>,
+    },
     /// Noise cancelling and ambient sound.
     Ambient(AmbientState),
     /// Battery.
@@ -461,6 +496,7 @@ pub fn decode(payload: &[u8]) -> Result<Event, MalformedAnswer> {
         Some(RET_AMBIENT | NTFY_AMBIENT) => decode_ambient(payload).map(Event::Ambient),
         Some(RET_BATTERY | NTFY_BATTERY) => decode_battery(payload).map(Event::Battery),
         Some(RET_EQUALIZER | NTFY_EQUALIZER) => decode_equalizer(payload).map(Event::Equalizer),
+        Some(RET_PAIRED_DEVICES) => decode_paired_devices(payload),
         _ => Ok(Event::Other(payload.to_vec())),
     }
 }
@@ -526,6 +562,57 @@ fn decode_battery(payload: &[u8]) -> Result<Battery, MalformedAnswer> {
         }),
         _ => Err(malformed(code, format!("{} bytes", payload.len()))),
     }
+}
+
+fn is_address(text: &str) -> bool {
+    let groups: Vec<&str> = text.split(':').collect();
+    text.len() == ADDRESS_LEN
+        && groups.len() == 6
+        && groups
+            .iter()
+            .all(|group| group.len() == 2 && group.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Reads `[address, 17 characters][state][name length][name]` per device.
+fn decode_paired_devices(payload: &[u8]) -> Result<Event, MalformedAnswer> {
+    let code = payload[0];
+    let &[_, _, count, ..] = payload else {
+        return Err(malformed(code, format!("{} bytes", payload.len())));
+    };
+    let count = usize::from(count);
+    if count > MAX_PAIRED_DEVICES {
+        return Err(malformed(code, format!("{count} devices")));
+    }
+    let mut rest = &payload[PAIRED_HEADER_LEN..];
+    let mut devices = Vec::with_capacity(count);
+    for index in 0..count {
+        let truncated = || malformed(code, format!("device {index} is cut"));
+        let (address, after) = rest.split_at_checked(ADDRESS_LEN).ok_or_else(truncated)?;
+        let address = std::str::from_utf8(address)
+            .ok()
+            .filter(|text| is_address(text))
+            .ok_or_else(|| malformed(code, format!("device {index} has no address")))?;
+        let &[state, name_len, ..] = after else {
+            return Err(truncated());
+        };
+        let (name, after) = after[2..]
+            .split_at_checked(usize::from(name_len))
+            .ok_or_else(truncated)?;
+        devices.push(PairedDevice {
+            address: address.to_ascii_uppercase(),
+            name: String::from_utf8_lossy(name)
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_DEVICE_NAME_CHARS)
+                .collect(),
+            state,
+        });
+        rest = after;
+    }
+    Ok(Event::PairedDevices {
+        devices,
+        trailing: rest.to_vec(),
+    })
 }
 
 /// Equalizer values are sent as `value + EQUALIZER_OFFSET`.
@@ -811,6 +898,112 @@ mod tests {
             Query::Concierge.payload_with(&[0; MAX_PROBE_ARGS + 1]),
             Err(ProbeError::TooMany(MAX_PROBE_ARGS + 1))
         );
+    }
+
+    /// A list as the headphones send it, with invented devices.
+    fn paired_list(devices: &[(&str, u8, &str)], trailing: &[u8]) -> Vec<u8> {
+        let mut payload = vec![0x39, 0x01, u8::try_from(devices.len()).unwrap()];
+        for (address, state, name) in devices {
+            payload.extend_from_slice(address.as_bytes());
+            payload.push(*state);
+            payload.push(u8::try_from(name.len()).unwrap());
+            payload.extend_from_slice(name.as_bytes());
+        }
+        payload.extend_from_slice(trailing);
+        payload
+    }
+
+    #[test]
+    fn a_list_of_paired_devices_is_read() {
+        let payload = paired_list(
+            &[
+                ("00:11:22:33:44:55", 0x02, "Pixel de Test"),
+                ("aa:bb:cc:dd:ee:ff", 0x00, "Portable"),
+            ],
+            &[0x02],
+        );
+        assert_eq!(
+            decode(&payload).unwrap(),
+            Event::PairedDevices {
+                devices: vec![
+                    PairedDevice {
+                        address: "00:11:22:33:44:55".into(),
+                        name: "Pixel de Test".into(),
+                        state: 0x02,
+                    },
+                    PairedDevice {
+                        address: "AA:BB:CC:DD:EE:FF".into(),
+                        name: "Portable".into(),
+                        state: 0x00,
+                    },
+                ],
+                trailing: vec![0x02],
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_list_and_a_name_with_accents_are_read() {
+        assert_eq!(
+            decode(&[0x39, 0x01, 0x00]).unwrap(),
+            Event::PairedDevices {
+                devices: Vec::new(),
+                trailing: Vec::new()
+            }
+        );
+        let payload = paired_list(&[("00:11:22:33:44:55", 0x00, "Téléphone")], &[]);
+        match decode(&payload).unwrap() {
+            Event::PairedDevices { devices, .. } => assert_eq!(devices[0].name, "Téléphone"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_device_name_from_outside_is_cleaned_and_bounded() {
+        let long = "x".repeat(70);
+        let payload = paired_list(
+            &[
+                ("00:11:22:33:44:55", 0x00, "A\u{1b}[2JB\nC"),
+                ("00:11:22:33:44:56", 0x00, &long),
+            ],
+            &[],
+        );
+        match decode(&payload).unwrap() {
+            Event::PairedDevices { devices, .. } => {
+                assert_eq!(devices[0].name, "A[2JBC");
+                assert_eq!(devices[1].name.chars().count(), MAX_DEVICE_NAME_CHARS);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_impossible_list_of_paired_devices_is_refused() {
+        let good = paired_list(&[("00:11:22:33:44:55", 0x00, "Tablette")], &[]);
+        let mut cut = good.clone();
+        cut.truncate(cut.len() - 3);
+        let mut lying_count = good.clone();
+        lying_count[2] = 2;
+        let mut bad_address = good.clone();
+        bad_address[3 + 2] = b'!';
+        let mut long_name = good.clone();
+        long_name[3 + ADDRESS_LEN + 1] = 200;
+        let too_many = {
+            let mut payload = vec![0x39, 0x01, 9];
+            payload.extend(vec![0u8; 400]);
+            payload
+        };
+        for payload in [
+            vec![0x39],
+            vec![0x39, 0x01],
+            cut,
+            lying_count,
+            bad_address,
+            long_name,
+            too_many,
+        ] {
+            assert!(decode(&payload).is_err(), "{payload:?}");
+        }
     }
 
     #[test]

@@ -189,7 +189,8 @@ impl<C: Channel, W: Write> Session<'_, C, W> {
                 Ok(None)
             }
             Ok(event) => {
-                writeln!(self.out, "\n   {event:?}")?;
+                writeln!(self.out)?;
+                self.describe(&event)?;
                 Ok(Some(event))
             }
             Err(error) => {
@@ -197,6 +198,24 @@ impl<C: Channel, W: Write> Session<'_, C, W> {
                 Ok(None)
             }
         }
+    }
+
+    fn describe(&mut self, event: &Event) -> Result<(), DiagnosticError> {
+        match event {
+            Event::PairedDevices { devices, trailing } => {
+                writeln!(self.out, "   {} paired device(s):", devices.len())?;
+                for device in devices {
+                    writeln!(
+                        self.out,
+                        "   {}  state 0x{:02X}  {}",
+                        device.address, device.state, device.name
+                    )?;
+                }
+                writeln!(self.out, "   after the last one: {}", hex(trailing))?;
+            }
+            other => writeln!(self.out, "   {other:?}")?,
+        }
+        Ok(())
     }
 
     /// Sends a query and shows every answer that follows it.
@@ -470,6 +489,24 @@ mod tests {
         let error = result.unwrap_err();
         assert!(matches!(error, DiagnosticError::Closed));
         assert!(error.to_string().contains("another app"));
+    }
+
+    #[test]
+    fn paired_devices_are_listed_one_per_line() {
+        let list = [
+            0x39, 0x01, 0x01, b'0', b'0', b':', b'1', b'1', b':', b'2', b'2', b':', b'3', b'3',
+            b':', b'4', b'4', b':', b'5', b'5', 0x02, 0x04, b'T', b'e', b's', b't', 0x02,
+        ];
+        let headset = FakeHeadset::new().answering(&[0x38], &[&list]);
+        let probe = Action::Probe {
+            query: Query::PairedDevices,
+            args: Vec::new(),
+        };
+        let (result, report) = run_on(&headset, &probe);
+        result.unwrap();
+        assert!(report.contains("1 paired device(s):"));
+        assert!(report.contains("00:11:22:33:44:55  state 0x02  Test"));
+        assert!(report.contains("after the last one: 02"));
     }
 
     #[test]

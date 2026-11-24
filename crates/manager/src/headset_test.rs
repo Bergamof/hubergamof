@@ -88,6 +88,8 @@ pub enum QueryArg {
     DeviceInfo,
     /// Concierge data (payload unknown: the bare code is sent).
     Concierge,
+    /// The paired devices (the request is a guess: the bare code is sent).
+    PairedDevices,
 }
 
 impl From<QueryArg> for Query {
@@ -100,6 +102,7 @@ impl From<QueryArg> for Query {
             QueryArg::ConnectionStatus => Self::ConnectionStatus,
             QueryArg::DeviceInfo => Self::DeviceInfo,
             QueryArg::Concierge => Self::Concierge,
+            QueryArg::PairedDevices => Self::PairedDevices,
         }
     }
 }
@@ -239,7 +242,7 @@ pub enum HeadsetTestAction {
         query: QueryArg,
         /// Argument byte in hexadecimal after the query code, to find what the
         /// undocumented queries (`connection-status`, `device-info`,
-        /// `concierge`) take; repeat for several (at most 4).
+        /// `concierge`, `paired-devices`) take; repeat for several (at most 4).
         #[arg(long = "arg", value_parser = parse_hex_byte)]
         args: Vec<u8>,
     },
@@ -417,6 +420,13 @@ mod tests {
             Some(Action::Probe {
                 query: Query::DeviceInfo,
                 args: vec![0x00, 0x1F]
+            })
+        );
+        assert_eq!(
+            action(&["probe", "paired-devices"]),
+            Some(Action::Probe {
+                query: Query::PairedDevices,
+                args: Vec::new()
             })
         );
         assert_eq!(
