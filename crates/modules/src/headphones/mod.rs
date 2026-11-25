@@ -63,12 +63,12 @@ fn mode_label(mode: Mode) -> &'static str {
     }
 }
 
-/// The mode after `mode`: noise cancelling, ambient, wind reduction when the
-/// headphones have it, off.
-fn next_mode(mode: Mode, wind_reduction: bool) -> Mode {
+/// The mode after `mode`: noise cancelling, ambient, off. The wind reduction
+/// is not part of the round (the Headphones page sets it); headphones found in
+/// it go to off.
+fn next_mode(mode: Mode) -> Mode {
     match mode {
         Mode::NoiseCancelling => Mode::Ambient,
-        Mode::Ambient if wind_reduction => Mode::WindReduction,
         Mode::Ambient | Mode::WindReduction => Mode::Off,
         Mode::Off => Mode::NoiseCancelling,
     }
@@ -230,12 +230,6 @@ impl Headphones {
         self.asked.or(headset.ambient)
     }
 
-    fn wind_reduction(&self) -> bool {
-        self.headset
-            .as_ref()
-            .is_some_and(|headset| headset.wind_reduction)
-    }
-
     /// Asks for `change` of the ambient sound known. Failed when there is none
     /// to start from (the link is not open, and is opened if nobody did) or
     /// the headphones cannot be set.
@@ -266,9 +260,8 @@ impl Headphones {
     }
 
     fn cycle_mode(&mut self) -> Outcome {
-        let wind_reduction = self.wind_reduction();
         self.request(|ambient| Ambient {
-            mode: next_mode(ambient.mode, wind_reduction),
+            mode: next_mode(ambient.mode),
             ..ambient
         })
     }
@@ -355,11 +348,7 @@ impl Module for Headphones {
                 .clamp(0, i32::from(MAX_LEVEL));
             Ambient {
                 // Turning is about the outside sound: it makes it heard.
-                mode: if ambient.mode == Mode::WindReduction {
-                    Mode::WindReduction
-                } else {
-                    Mode::Ambient
-                },
+                mode: Mode::Ambient,
                 level: u8::try_from(level).unwrap_or(MAX_LEVEL),
                 ..ambient
             }

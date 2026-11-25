@@ -22,11 +22,7 @@ fn ambient(mode: Mode, level: u8) -> Ambient {
 }
 
 fn headset(link: Link, ambient: Option<Ambient>) -> Headset {
-    Headset {
-        link,
-        ambient,
-        wind_reduction: true,
-    }
+    Headset { link, ambient }
 }
 
 struct Harness {
@@ -95,25 +91,8 @@ async fn pressing_the_key_goes_through_the_modes_and_around() {
     }
     assert_eq!(
         seen,
-        [
-            "Son ambiant",
-            "Réduction du vent",
-            "Normal",
-            "Réduction de bruit"
-        ]
+        ["Son ambiant", "Normal", "Réduction de bruit", "Son ambiant"]
     );
-}
-
-#[tokio::test(start_paused = true)]
-async fn the_wind_reduction_is_skipped_without_it() {
-    let mut harness = Harness::on(SimulatedHeadset::with(Some(Headset {
-        link: Link::Connected,
-        ambient: Some(ambient(Mode::Ambient, 5)),
-        wind_reduction: false,
-    })))
-    .await;
-    harness.module.on_key_press().await;
-    assert_eq!(harness.headset.requests(), [ambient(Mode::Off, 5)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -142,17 +121,14 @@ async fn turns_before_the_answer_add_up_and_stay_within_the_levels() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_dial_keeps_the_wind_reduction_it_finds() {
+async fn turning_the_dial_leaves_the_wind_reduction_for_the_ambient_sound() {
     let mut harness = Harness::on(SimulatedHeadset::with(headset(
         Link::Connected,
         Some(ambient(Mode::WindReduction, 4)),
     )))
     .await;
     harness.module.on_dial_rotate(&dial(), 1).await;
-    assert_eq!(
-        harness.headset.requests(),
-        [ambient(Mode::WindReduction, 5)]
-    );
+    assert_eq!(harness.headset.requests(), [ambient(Mode::Ambient, 5)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -408,7 +384,6 @@ async fn the_wind_reduction_in_use_is_shown_and_left_by_the_next_mode() {
     let mut harness = Harness::on(SimulatedHeadset::with(Headset {
         link: Link::Connected,
         ambient: Some(ambient(Mode::WindReduction, 7)),
-        wind_reduction: false,
     }))
     .await;
     assert_eq!(

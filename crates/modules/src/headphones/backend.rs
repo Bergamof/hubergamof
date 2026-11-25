@@ -16,7 +16,7 @@ pub enum Mode {
     NoiseCancelling,
     /// Outside sound let through.
     Ambient,
-    /// Outside sound let through, wind reduced.
+    /// Outside sound let through, wind reduced (set on the Headphones page).
     WindReduction,
     /// Neither.
     Off,
@@ -55,8 +55,6 @@ pub struct Headset {
     pub link: Link,
     /// Their ambient sound, once read.
     pub ambient: Option<Ambient>,
-    /// Whether they offer [`Mode::WindReduction`].
-    pub wind_reduction: bool,
 }
 
 /// Why the headphones were not set.

@@ -25,7 +25,6 @@ impl SimulatedHeadset {
                 level: 10,
                 focus_on_voice: false,
             }),
-            wind_reduction: true,
         }))
     }
 

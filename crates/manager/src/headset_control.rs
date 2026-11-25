@@ -48,7 +48,6 @@ fn headset(state: HeadsetState) -> Headset {
             level: ambient.level,
             focus_on_voice: ambient.focus_on_voice,
         }),
-        wind_reduction: state.wind_reduction,
     }
 }
 
@@ -184,7 +183,6 @@ mod tests {
         hub.update_state(address, |state| {
             state.link = link;
             state.ambient = Some(ambient);
-            state.wind_reduction = true;
         });
     }
 
@@ -384,6 +382,7 @@ mod tests {
             state.link = HeadsetLink::Connected;
             state.wind_reduction = false;
         });
+        // The module never asks for it, but the headphones decide what they take.
         let wind = Ambient {
             mode: Mode::WindReduction,
             level: 0,
