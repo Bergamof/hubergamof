@@ -58,6 +58,7 @@ pub use backup::{
     BackupPreview, BackupSection, ExecutableItem, ExecutableKind, MAX_BACKUP_ENTRIES,
     SectionChange, SectionPreview, preview, read_backup, write_backup,
 };
+pub use backup_store::CollectedBackup;
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};
 
 use tokio::io::AsyncReadExt as _;

@@ -32,7 +32,7 @@ use std::io::{self, Cursor, Write};
 
 use hubergamof_protocol::{
     AppModulesConfig, DeviceConfig, GitConfig, MachineConfig, MouseConfig, RadialMenuConfig,
-    SshConfig, is_safe_image_name,
+    SshConfig, SshHost, is_safe_image_name,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -64,6 +64,9 @@ const DOCUMENT_EXTENSION: &str = ".json";
 /// Most entries a backup may hold: a device has a document, a mouse has one,
 /// and a device brings its images.
 pub const MAX_BACKUP_ENTRIES: usize = 1024;
+
+/// Longest version written in a manifest.
+const MAX_VERSION_LEN: usize = 64;
 
 /// Largest decompressed manifest.
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
@@ -198,7 +201,7 @@ impl BackupDocument {
 
     /// Checks what can be checked without the hardware: the checks of the
     /// protocol, and that a document speaks of its own section.
-    fn validate(&self, section: &BackupSection) -> Result<(), BackupError> {
+    pub(super) fn validate(&self, section: &BackupSection) -> Result<(), BackupError> {
         let refused = |reason: String| BackupError::Refused {
             section: section.id(),
             reason,
@@ -251,53 +254,103 @@ impl BackupDocument {
         value
     }
 
-    /// What the document would run on this computer once applied: shell
-    /// aliases, Git aliases and the free options of SSH, for the entries that
-    /// are enabled.
+    /// What the document would have this computer run or reach once applied:
+    /// shell aliases, Git aliases and free settings, the SSH hosts that name
+    /// a machine, forward the agent or go through another one, and the free
+    /// options of SSH. Every entry is listed, with whether it is enabled: a
+    /// disabled one is one click from being run.
     fn executables(&self) -> Vec<ExecutableItem> {
         match self {
             Self::Machine(config) => config
                 .aliases
                 .iter()
-                .filter(|alias| alias.enabled)
                 .map(|alias| {
-                    ExecutableItem::new(ExecutableKind::ShellAlias, &alias.name, &alias.command)
+                    ExecutableItem::new(
+                        ExecutableKind::ShellAlias,
+                        &alias.name,
+                        &alias.command,
+                        alias.enabled,
+                    )
                 })
                 .collect(),
-            Self::Git(config) => config
-                .aliases
-                .iter()
-                .filter(|alias| alias.enabled)
-                .map(|alias| {
-                    ExecutableItem::new(ExecutableKind::GitAlias, &alias.name, &alias.command)
-                })
-                .collect(),
+            Self::Git(config) => {
+                let aliases = config.aliases.iter().map(|alias| {
+                    ExecutableItem::new(
+                        ExecutableKind::GitAlias,
+                        &alias.name,
+                        &alias.command,
+                        alias.enabled,
+                    )
+                });
+                // Any key: `core.fsmonitor`, `core.hooksPath`, `credential.<url>.helper`,
+                // `filter.*`, `diff.*` run something without an alias being typed, and a list
+                // of the dangerous ones would always miss one.
+                let settings = config.extra_settings.iter().map(|setting| {
+                    ExecutableItem::new(
+                        ExecutableKind::GitSetting,
+                        &setting.key,
+                        &setting.value,
+                        setting.enabled,
+                    )
+                });
+                aliases.chain(settings).collect()
+            }
             Self::Ssh(config) => {
-                let common = config.common_options.iter().map(|option| ("*", option));
+                let common = config
+                    .common_options
+                    .iter()
+                    .map(|option| ("*", option, true));
+                let host_options = config.hosts.iter().flat_map(|host| {
+                    host.options
+                        .iter()
+                        .map(|option| (host.alias.as_str(), option, host.enabled))
+                });
+                let options = common.chain(host_options).map(|(host, option, host_on)| {
+                    ExecutableItem::new(
+                        ExecutableKind::SshOption,
+                        &format!("{host}: {}", option.key),
+                        &option.value,
+                        option.enabled && host_on,
+                    )
+                });
+                // A host that names a machine, forwards the agent or goes through another one
+                // takes the place of what the user typed after `ssh`, and may reach the keys.
                 let hosts = config
                     .hosts
                     .iter()
-                    .filter(|host| host.enabled)
-                    .flat_map(|host| {
-                        host.options
-                            .iter()
-                            .map(|option| (host.alias.as_str(), option))
-                    });
-                common
-                    .chain(hosts)
-                    .filter(|(_, option)| option.enabled)
-                    .map(|(host, option)| {
-                        ExecutableItem::new(
-                            ExecutableKind::SshOption,
-                            &format!("{host}: {}", option.key),
-                            &option.value,
-                        )
+                    .filter(|host| {
+                        !host.host_name.is_empty()
+                            || host.forward_agent
+                            || !host.proxy_jump.is_empty()
                     })
-                    .collect()
+                    .map(|host| {
+                        ExecutableItem::new(
+                            ExecutableKind::SshHost,
+                            &host.alias,
+                            &ssh_host_detail(host),
+                            host.enabled,
+                        )
+                    });
+                hosts.chain(options).collect()
             }
             _ => Vec::new(),
         }
     }
+}
+
+/// What an SSH host leads to: `machine`, `via jumps`, `agent forwarded`.
+fn ssh_host_detail(host: &SshHost) -> String {
+    let mut parts = Vec::new();
+    if !host.host_name.is_empty() {
+        parts.push(host.host_name.clone());
+    }
+    if !host.proxy_jump.is_empty() {
+        parts.push(format!("via {}", host.proxy_jump));
+    }
+    if host.forward_agent {
+        parts.push("agent forwarded".to_owned());
+    }
+    parts.join(", ")
 }
 
 /// What the manifest says of a backup.
@@ -362,6 +415,9 @@ pub enum BackupError {
     /// `manifest.json` is not a manifest.
     #[error("invalid {BACKUP_MANIFEST_ENTRY}: {0}")]
     Manifest(#[source] serde_json::Error),
+    /// The version of the manifest is not a version.
+    #[error("the version in the manifest is not a version")]
+    InvalidVersion,
     /// Written by a newer version of the application.
     #[error("backup of format {0}, written by a newer version of the application")]
     NewerFormat(u32),
@@ -532,8 +588,21 @@ pub fn read_backup(bytes: &[u8]) -> Result<Backup, BackupError> {
     })
 }
 
+/// A version as the application writes it: letters, digits and `.-+`, not
+/// long. The manifest comes from the file, and its text will be shown and logged.
+fn is_plain_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= MAX_VERSION_LEN
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+}
+
 fn parse_manifest(bytes: &[u8]) -> Result<BackupManifest, BackupError> {
     let manifest: BackupManifest = serde_json::from_slice(bytes).map_err(BackupError::Manifest)?;
+    if !is_plain_version(&manifest.app_version) {
+        return Err(BackupError::InvalidVersion);
+    }
     match manifest.format {
         BACKUP_FORMAT => Ok(manifest),
         newer if newer > BACKUP_FORMAT => Err(BackupError::NewerFormat(newer)),
@@ -561,6 +630,10 @@ pub enum ExecutableKind {
     GitAlias,
     /// A free option of an SSH host.
     SshOption,
+    /// A free setting of Git.
+    GitSetting,
+    /// An SSH host that names a machine, a jump or the forwarding of the agent.
+    SshHost,
 }
 
 /// Something a backup would have this computer run, which the person is
@@ -573,14 +646,18 @@ pub struct ExecutableItem {
     pub name: String,
     /// The command or the value.
     pub detail: String,
+    /// Whether it is enabled: a disabled one is imported all the same, one
+    /// switch from being run.
+    pub enabled: bool,
 }
 
 impl ExecutableItem {
-    fn new(kind: ExecutableKind, name: &str, detail: &str) -> Self {
+    fn new(kind: ExecutableKind, name: &str, detail: &str, enabled: bool) -> Self {
         Self {
             kind,
             name: name.to_owned(),
             detail: detail.to_owned(),
+            enabled,
         }
     }
 }

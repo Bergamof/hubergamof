@@ -310,8 +310,8 @@ fn the_preview_says_what_would_change() {
     assert_eq!(preview.kept, vec![BackupSection::Mouse("OTHER".into())]);
 }
 
-#[test]
-fn the_preview_lists_what_would_be_run() {
+/// A backup whose documents hold what runs on a computer, enabled or not.
+fn risky_backup() -> Backup {
     let mut backup = full_backup();
     backup.documents.insert(
         BackupSection::Machine,
@@ -339,6 +339,18 @@ fn the_preview_lists_what_would_be_run() {
                 command: "checkout".into(),
                 enabled: true,
             }],
+            extra_settings: vec![
+                AdvancedSetting {
+                    key: "core.fsmonitor".into(),
+                    value: "/tmp/x.sh".into(),
+                    enabled: true,
+                },
+                AdvancedSetting {
+                    key: "credential.https://example.org.helper".into(),
+                    value: "!curl x".into(),
+                    enabled: false,
+                },
+            ],
             ..GitConfig::empty()
         })),
     );
@@ -352,6 +364,9 @@ fn the_preview_lists_what_would_be_run() {
         BackupDocument::Ssh(SshConfig {
             hosts: vec![SshHost {
                 alias: "prod".into(),
+                host_name: "evil.example.org".into(),
+                forward_agent: true,
+                proxy_jump: "bastion".into(),
                 options: vec![
                     option("ProxyCommand", "nc %h %p", true),
                     option("LocalCommand", "x", false),
@@ -363,29 +378,76 @@ fn the_preview_lists_what_would_be_run() {
             ..SshConfig::empty()
         }),
     );
-    let preview = preview(&backup, &BTreeMap::new());
-    let of = |section: &BackupSection| {
-        preview
-            .sections
-            .iter()
-            .find(|s| &s.section == section)
-            .unwrap()
-            .executables
-            .clone()
-    };
+    backup
+}
+
+/// What the preview of `backup` lists for `section`.
+fn executables_of(backup: &Backup, section: &BackupSection) -> Vec<ExecutableItem> {
+    preview(backup, &BTreeMap::new())
+        .sections
+        .into_iter()
+        .find(|s| &s.section == section)
+        .unwrap()
+        .executables
+}
+
+#[test]
+fn the_preview_lists_the_shell_aliases_enabled_or_not() {
+    let of = |section: &BackupSection| executables_of(&risky_backup(), section);
     let machine = of(&BackupSection::Machine);
-    assert_eq!(machine.len(), 1, "a disabled alias is not run");
+    assert_eq!(machine.len(), 2, "a disabled alias is listed too");
     assert_eq!(machine[0].kind, ExecutableKind::ShellAlias);
     assert_eq!(machine[0].detail, "git status");
-    assert_eq!(of(&BackupSection::Git)[0].kind, ExecutableKind::GitAlias);
+    assert!(machine[0].enabled);
+    assert!(!machine[1].enabled);
+}
+
+#[test]
+fn the_preview_lists_the_aliases_and_free_settings_of_git() {
+    let of = |section: &BackupSection| executables_of(&risky_backup(), section);
+    let git = of(&BackupSection::Git);
+    assert_eq!(git[0].kind, ExecutableKind::GitAlias);
+    let fsmonitor = git
+        .iter()
+        .find(|item| item.name == "core.fsmonitor")
+        .expect("a free setting of Git runs code without any alias");
+    assert_eq!(fsmonitor.kind, ExecutableKind::GitSetting);
+    assert!(fsmonitor.enabled);
+    assert!(
+        git.iter()
+            .any(|item| item.name.starts_with("credential.") && !item.enabled)
+    );
+}
+
+#[test]
+fn the_preview_lists_the_hosts_and_options_of_ssh() {
+    let of = |section: &BackupSection| executables_of(&risky_backup(), section);
     let ssh = of(&BackupSection::Ssh);
-    assert_eq!(ssh.len(), 2);
+    let host = ssh
+        .iter()
+        .find(|item| item.kind == ExecutableKind::SshHost)
+        .expect("a host that names a machine and forwards the agent is listed");
+    assert_eq!(host.name, "prod");
+    assert!(host.detail.contains("evil.example.org"));
+    assert!(host.detail.contains("via bastion"));
+    assert!(host.detail.contains("agent forwarded"));
     assert!(
         ssh.iter()
-            .any(|i| i.name == "prod: ProxyCommand" && i.detail == "nc %h %p")
+            .any(|i| i.name == "prod: ProxyCommand" && i.detail == "nc %h %p" && i.enabled)
+    );
+    assert!(
+        ssh.iter()
+            .any(|i| i.name == "prod: LocalCommand" && !i.enabled)
     );
     assert!(ssh.iter().any(|i| i.name == "*: ServerAliveInterval"));
-    assert_eq!(of(&BackupSection::RadialMenu), Vec::new());
+}
+
+#[test]
+fn the_preview_lists_nothing_for_what_runs_nothing() {
+    assert_eq!(
+        executables_of(&risky_backup(), &BackupSection::RadialMenu),
+        Vec::new()
+    );
 }
 
 fn sample_host() -> SshHost {
@@ -400,4 +462,85 @@ fn sample_host() -> SshHost {
         options: Vec::new(),
         enabled: true,
     }
+}
+
+#[test]
+fn a_version_that_is_not_one_is_refused() {
+    for version in ["", "1.0\u{1b}[31m", "a b", &"9".repeat(65)] {
+        let manifest = serde_json::to_vec(&BackupManifest {
+            format: 2,
+            app_version: version.to_owned(),
+            created_at: 1,
+            sections: Vec::new(),
+        })
+        .unwrap();
+        let bytes = zip_of(&[("manifest.json", &manifest)]);
+        assert!(
+            matches!(read_backup(&bytes), Err(BackupError::InvalidVersion)),
+            "{version:?}"
+        );
+    }
+}
+
+#[test]
+fn the_same_document_twice_is_refused_through_a_backup() {
+    // The zip writer refuses duplicate names: rename one in place, as the archive tests do.
+    let ssh = serde_json::to_vec(&SshConfig::empty()).unwrap();
+    let (name, renamed) = ("config/ssh.json", "config/ssh.jsox");
+    let mut bytes = zip_of(&[
+        ("manifest.json", &manifest_json(&["ssh"], 2)),
+        (name, &ssh),
+        (renamed, &ssh),
+    ]);
+    let mut patched = 0;
+    let mut start = 0;
+    while let Some(found) = bytes[start..]
+        .windows(renamed.len())
+        .position(|window| window == renamed.as_bytes())
+    {
+        let at = start + found;
+        bytes[at..at + renamed.len()].copy_from_slice(name.as_bytes());
+        patched += 1;
+        start = at + renamed.len();
+    }
+    assert_eq!(patched, 2, "local header and central directory");
+    assert!(matches!(
+        read_backup(&bytes),
+        Err(BackupError::Archive(ArchiveError::DuplicateEntry))
+    ));
+}
+
+#[test]
+fn the_whole_expanded_size_is_bounded_through_a_backup() {
+    // Each image is under its own limit, all of them together are not.
+    let image = vec![b'x'; MAX_SOURCE_BYTES];
+    let count = MAX_ARCHIVE_EXPANDED_BYTES / MAX_SOURCE_BYTES + 2;
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip.start_file("manifest.json", deflated).unwrap();
+    zip.write_all(&manifest_json(&[], 2)).unwrap();
+    for index in 0..count {
+        zip.start_file(format!("images/GHOST/{index}.png"), deflated)
+            .unwrap();
+        zip.write_all(&image).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    assert!(bytes.len() < MAX_ARCHIVE_BYTES, "it compresses well");
+    assert!(matches!(
+        read_backup(&bytes),
+        Err(BackupError::Archive(ArchiveError::EntryTooLarge(_)))
+    ));
+}
+
+#[test]
+fn an_ambiguous_end_of_archive_is_refused_through_a_backup() {
+    let mut bytes = write_backup(&full_backup()).unwrap();
+    // Anything after the comment of the record leaves two ways to read the end.
+    bytes.extend_from_slice(b"trailing bytes");
+    assert!(matches!(
+        read_backup(&bytes),
+        Err(BackupError::Archive(
+            ArchiveError::AmbiguousEnd | ArchiveError::NoEnd
+        ))
+    ));
 }

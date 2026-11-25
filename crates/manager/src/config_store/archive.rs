@@ -51,10 +51,10 @@ pub struct Archive {
 #[derive(Debug, Error)]
 pub enum ArchiveError {
     /// Larger than [`MAX_ARCHIVE_BYTES`].
-    #[error("archive is larger than {MAX_ARCHIVE_BYTES} bytes")]
+    #[error("archive is too large")]
     TooLarge,
     /// More than [`MAX_ARCHIVE_ENTRIES`] entries.
-    #[error("archive has more than {MAX_ARCHIVE_ENTRIES} entries")]
+    #[error("archive has too many entries")]
     TooManyEntries,
     /// An entry, or all of them, decompress beyond their limit.
     #[error("archive entry {0:?} is too large once decompressed")]
