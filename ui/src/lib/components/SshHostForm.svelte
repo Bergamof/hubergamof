@@ -89,8 +89,8 @@ the focus goes to the first one.
 			const target = [
 				[found.alias, aliasField],
 				[found.hostName, hostNameField],
-				[found.user, userField],
 				[found.port, portField],
+				[found.user, userField],
 				[found.identityFile, keyField],
 				[found.proxyJump, jumpField]
 			].find(([problem]) => problem)?.[1] as ReturnType<typeof TextField> | undefined;
@@ -139,7 +139,8 @@ the focus goes to the first one.
 			bind:this={hostNameField}
 			label="Adresse de la machine"
 			mono
-			placeholder="Vide : le nom du serveur"
+			placeholder="10.0.0.4"
+			hint="Vide : le nom du serveur."
 			value={draft.hostName}
 			oninput={(hostName) => (draft.hostName = hostName)}
 			error={errors.hostName}
@@ -164,7 +165,8 @@ the focus goes to the first one.
 			bind:this={userField}
 			label="Utilisateur"
 			mono
-			placeholder="Votre compte actuel"
+			placeholder="deploy"
+			hint="Vide : votre compte actuel."
 			value={draft.user}
 			oninput={(user) => (draft.user = user)}
 			error={errors.user}
@@ -199,25 +201,29 @@ the focus goes to the first one.
 		/>
 	</FormCell>
 	<FormCell span={4}>
-		<!-- The risk is said where it applies: when the agent is forwarded. -->
-		<div class="flex h-full items-end pb-1">
+		<!-- Level with the field beside it (its label takes a line), not with its hint. -->
+		<div class="flex items-start pt-6">
 			<Switch
 				checked={draft.forwardAgent}
 				onchange={(checked) => (draft.forwardAgent = checked)}
-				describedby={draft.forwardAgent ? `${uid}-agent` : undefined}
+				describedby="{uid}-agent"
 			>
 				Transmettre l’agent SSH
 			</Switch>
 		</div>
 	</FormCell>
-	{#if draft.forwardAgent}
-		<FormCell>
-			<p id="{uid}-agent" class="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
-				Attention : qui contrôle la machine distante peut utiliser vos clés pendant la connexion. À
-				réserver aux serveurs de confiance.
-			</p>
-		</FormCell>
-	{/if}
+	<FormCell>
+		<!-- The risk is said where it applies: when the agent is forwarded. The region is always there, so
+		     that what is put in it is read. -->
+		<p
+			id="{uid}-agent"
+			role="status"
+			class="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning empty:hidden"
+		>
+			{#if draft.forwardAgent}Attention : qui contrôle la machine distante peut utiliser vos clés
+				pendant la connexion. À réserver aux serveurs de confiance.{/if}
+		</p>
+	</FormCell>
 	<FormCell>
 		<details bind:this={optionsDetails}>
 			<summary id="{uid}-options" class="cursor-pointer py-1 text-sm font-medium">

@@ -219,7 +219,7 @@ one being changed keeps what is typed, saved over the other change once finished
 >
 	<div class="flex flex-wrap items-baseline justify-between gap-x-4">
 		<h3 id="{uid}-title" class="font-semibold">Réglages</h3>
-		<p id="{uid}-help" class="text-xs text-muted">
+		<p id="{uid}-help" class="text-sm text-muted">
 			Enregistrés au fil de la saisie (pause, Tab ou Entrée) ; Échap rétablit la valeur enregistrée.
 		</p>
 	</div>

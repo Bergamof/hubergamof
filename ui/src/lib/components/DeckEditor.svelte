@@ -236,7 +236,11 @@ selected key or dial.
 	<p role="status" class="sr-only">{announcement}</p>
 
 	<!-- What applies to the whole device, in one bar above the keys and the details. -->
-	<div class="flex flex-wrap items-center gap-x-8 gap-y-2 card py-2.5">
+	<div
+		role="group"
+		aria-label="Réglages de l’appareil"
+		class="flex flex-wrap items-center gap-x-8 gap-y-2 card py-2.5"
+	>
 		<ThemeControl theme={config.theme} onchange={(theme) => deck.edit(setTheme(theme))} />
 		<BrightnessControl
 			brightness={config.brightness}

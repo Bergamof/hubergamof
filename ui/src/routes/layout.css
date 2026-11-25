@@ -172,7 +172,7 @@
 
 /* Text input, select and textarea. */
 @utility field {
-	@apply min-h-8 w-full rounded-lg border border-edge bg-surface px-2.5 py-1 text-fg focus-ring placeholder:text-muted aria-invalid:border-danger;
+	@apply min-h-8 w-full rounded-lg border border-edge bg-surface px-2.5 py-1 text-fg focus-ring placeholder:text-muted placeholder:italic aria-invalid:border-danger;
 }
 
 /* Secondary action button. */

@@ -103,6 +103,7 @@ focus goes to the first one.
 	onMount(() => {
 		if (initial) focusFolder();
 	});
+	const uid = $props.id();
 </script>
 
 <FormGrid {labelledby} onsubmit={submit}>
@@ -125,7 +126,7 @@ focus goes to the first one.
 			label="Nom"
 			value={draft.name}
 			oninput={(name) => (draft.name = name)}
-			placeholder="Vide : le nom général"
+			placeholder="Valeur générale"
 			error={errors.name}
 			autocomplete="name"
 			maxlength={512}
@@ -138,7 +139,7 @@ focus goes to the first one.
 			type="email"
 			value={draft.email}
 			oninput={(email) => (draft.email = email)}
-			placeholder="Vide : l’adresse générale"
+			placeholder="Valeur générale"
 			error={errors.email}
 			autocomplete="email"
 			maxlength={512}
@@ -151,10 +152,15 @@ focus goes to the first one.
 			mono
 			value={draft.signingKey}
 			oninput={(signingKey) => (draft.signingKey = signingKey)}
-			placeholder="Vide : la clé générale"
+			placeholder="Valeur générale"
 			error={errors.signingKey}
 			maxlength={512}
 		/>
+	</FormCell>
+	<FormCell>
+		<p id="{uid}-empty" class="text-sm text-muted">
+			Un champ laissé vide garde la valeur générale de Git.
+		</p>
 	</FormCell>
 	{#if errors.empty}
 		<FormCell>

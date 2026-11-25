@@ -22,7 +22,7 @@ line between them.
 >
 	<div>
 		<div class="font-medium">{label}</div>
-		<div class="text-xs text-muted">{description}</div>
+		<div class="text-sm text-muted">{description}</div>
 	</div>
 	<div class="flex min-w-0 flex-wrap items-center gap-2.5">
 		{@render children()}

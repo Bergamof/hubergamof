@@ -163,8 +163,12 @@ describe('SshPanel', () => {
 		it('warns about forwarding the agent once it is turned on, not before', async () => {
 			await renderPanel();
 			const forward = addForm().getByRole('switch', { name: 'Transmettre l’agent SSH' });
+			// The region is there before the warning: what is put in it is read.
+			const region = addForm().getByRole('status');
+			await expect.element(region).toBeInTheDocument();
 			await expect.element(page.getByText(/utiliser vos clés/)).not.toBeInTheDocument();
 			await forward.click();
+			await expect.element(region.getByText(/utiliser vos clés/)).toBeVisible();
 			await expect.element(forward).toHaveAccessibleDescription(/utiliser vos clés/);
 		});
 
