@@ -25,6 +25,8 @@ that is away may be given to a connected device instead of being kept for its re
 		decks?: readonly DeviceInfo[];
 		/** Serial of a device of the backup → serial of the connected deck that receives it. */
 		receivers?: Record<string, string>;
+		/** Level of the heading of the commands, under the one of the step or dialog that holds the list. */
+		headingLevel?: 3 | 4;
 	}
 
 	let {
@@ -32,7 +34,8 @@ that is away may be given to a connected device instead of being kept for its re
 		names,
 		selected = $bindable(),
 		decks = [],
-		receivers = $bindable({})
+		receivers = $bindable({}),
+		headingLevel = 3
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -77,7 +80,7 @@ that is away may be given to a connected device instead of being kept for its re
 	}
 
 	function awayNote(id: string, receiver: string | undefined): string {
-		if (receiver) return `Sera appliquée à ${names.get(receiver) ?? receiver}.`;
+		if (receiver) return `Remplacera la configuration de ${names.get(receiver) ?? receiver}.`;
 		return id.startsWith('devices/')
 			? 'Stream Deck absent : sa configuration est gardée pour son prochain branchement.'
 			: 'Souris absente : sa configuration est gardée pour son prochain branchement.';
@@ -85,7 +88,10 @@ that is away may be given to a connected device instead of being kept for its re
 </script>
 
 <div class="flex flex-col gap-4 text-sm">
-	<ul class="flex flex-col divide-y divide-line rounded-lg border border-line">
+	<ul
+		aria-label="Sections de la sauvegarde"
+		class="flex flex-col divide-y divide-line rounded-lg border border-line"
+	>
 		{#each preview.sections as section, index (section.section)}
 			{@const serial = deviceSerialOf(section.section)}
 			{@const receiver = serial ? receivers[serial] : undefined}
@@ -97,13 +103,18 @@ that is away may be given to a connected device instead of being kept for its re
 							type="checkbox"
 							class="size-5 accent-ring focus-ring"
 							checked={selected.includes(section.section)}
+							aria-describedby="{uid}-{index}-state"
 							onchange={(event) => toggle(section.section, event.currentTarget.checked)}
 						/>
 					{/if}
-					<label for={selected ? `${uid}-${index}` : undefined} class="font-medium">
+					<label
+						id="{uid}-{index}-name"
+						for={selected ? `${uid}-${index}` : undefined}
+						class="font-medium"
+					>
 						{sectionLabel(section.section, names)}
 					</label>
-					<span class="rounded-md border border-edge px-1.5 text-xs">
+					<span id="{uid}-{index}-state" class="rounded-md border border-edge px-1.5 text-xs">
 						{CHANGE_LABELS[section.change]}
 					</span>
 				</div>
@@ -115,6 +126,7 @@ that is away may be given to a connected device instead of being kept for its re
 							<select
 								id="{uid}-{index}-to"
 								class="field w-auto"
+								aria-describedby="{uid}-{index}-name"
 								value={receiver ?? ''}
 								onchange={(event) => receive(serial, event.currentTarget.value)}
 							>
@@ -132,15 +144,17 @@ that is away may be given to a connected device instead of being kept for its re
 
 	{#if commands.length > 0}
 		<div class="flex flex-col gap-2">
-			<h3 id="{uid}-commands" class="font-semibold">
+			<svelte:element this={`h${headingLevel}`} id="{uid}-commands" class="font-semibold">
 				Ce que {selectable ? 'l’import' : 'la restauration'} fait exécuter ou atteindre sur cet ordinateur
-			</h3>
+			</svelte:element>
 			<p class="text-muted">
 				Vérifiez chaque ligne : un alias ou un réglage activé est exécuté dès le prochain shell ou
 				la prochaine commande Git ou SSH. Un élément désactivé est importé, à un interrupteur d’être
 				activé.
 			</p>
-			<div class="overflow-x-auto">
+			<!-- Scrolls when a command is long: reachable and named for the keyboard. -->
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+			<div class="overflow-x-auto" tabindex="0" role="region" aria-labelledby="{uid}-commands">
 				<table class="w-full text-left" aria-labelledby="{uid}-commands">
 					<thead>
 						<tr class="border-b border-line text-muted">

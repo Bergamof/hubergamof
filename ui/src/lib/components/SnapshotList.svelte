@@ -5,6 +5,7 @@ are kept). Restoring one shows first what it would do, then puts it back, which 
 write as well: a restore can be undone.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import type { BackupPreview, ImportReport, SnapshotInfo } from '#lib/generated/index.js';
 	import { Operation } from '#lib/deck/operation.svelte.js';
@@ -36,6 +37,9 @@ write as well: a restore can be undone.
 	let pending: { snapshot: SnapshotInfo; preview: BackupPreview } | undefined = $state();
 	let report: ImportReport | undefined = $state();
 	let opener: HTMLElement | undefined;
+	let heading: HTMLHeadingElement | undefined = $state();
+	/** The preview of a snapshot is being read. */
+	let reading = $state(false);
 
 	$effect(() => {
 		void version;
@@ -52,12 +56,14 @@ write as well: a restore can be undone.
 		if (operation.busy) return;
 		opener = button;
 		report = undefined;
+		reading = true;
 		await operation.run(async () => {
 			const result = await api.previewSnapshot(snapshot.id);
 			if (!result.ok) return result.problem;
 			pending = { snapshot, preview: result.value };
 			return undefined;
 		}, '');
+		reading = false;
 	}
 
 	async function restore() {
@@ -70,12 +76,19 @@ write as well: a restore can be undone.
 			report = result.value;
 			return undefined;
 		}, 'Sauvegarde automatique restaurée : le résultat de chaque section est affiché.');
-		if (report) onchange?.();
+		if (report) {
+			onchange?.();
+			// The list is read again and the button that opened the dialog may be gone.
+			await tick();
+			heading?.focus();
+		}
 	}
 </script>
 
 <section aria-labelledby="{uid}-title" class="flex flex-col gap-3 card">
-	<h2 id="{uid}-title" class="text-lg font-semibold">Sauvegardes automatiques</h2>
+	<h2 bind:this={heading} id="{uid}-title" tabindex="-1" class="text-lg font-semibold">
+		Sauvegardes automatiques
+	</h2>
 	<p class="text-sm text-muted">
 		Avant chaque import, HuBergamof garde l’état de la configuration. Les 3 dernières sont
 		conservées ; restaurer l’une d’elles en crée une nouvelle, donc se défait aussi.
@@ -110,7 +123,9 @@ write as well: a restore can be undone.
 		</ul>
 	{/if}
 
-	<p role="status" class="text-sm text-muted">{operation.status}</p>
+	<p role="status" class="text-sm text-muted">
+		{reading ? 'Lecture de la sauvegarde…' : operation.status}
+	</p>
 	{#if operation.problem}
 		<ProblemAlert problem={operation.problem} lead="Sauvegarde automatique non restaurée." />
 	{/if}

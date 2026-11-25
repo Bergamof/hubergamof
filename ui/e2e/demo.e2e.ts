@@ -618,15 +618,15 @@ test('annule un import avec son instantané', async ({ page, context }) => {
 	await page.getByRole('button', { name: 'Importer 1 section' }).click();
 	await expect(page.getByRole('heading', { name: '3. Résultat' })).toBeVisible();
 	await page.getByRole('button', { name: 'Annuler l’import' }).click();
-	const confirm = page.getByRole('dialog', { name: /^Annuler l’import\s\?$/ });
+	const confirm = page.getByRole('dialog', { name: /^Remettre l’état d’avant l’import\s\?$/ });
 	await expect(confirm.getByRole('button', { name: 'Annuler', exact: true })).toBeFocused();
 	await page.keyboard.press('Escape');
 	await expect(confirm).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Annuler l’import' })).toBeFocused();
 
 	await page.getByRole('button', { name: 'Annuler l’import' }).click();
-	await confirm.getByRole('button', { name: 'Annuler l’import' }).click();
-	await expect(page.getByText('Import annulé', { exact: true })).toBeVisible();
+	await confirm.getByRole('button', { name: 'Remettre l’état d’avant' }).click();
+	await expect(page.getByRole('heading', { name: 'Import annulé' })).toBeFocused();
 	// The snapshot of the import, and the one of its undoing.
 	await expect(page.getByRole('button', { name: /^Restaurer la sauvegarde du/ })).toHaveCount(2);
 

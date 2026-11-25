@@ -62,7 +62,7 @@ is shown instead of being saved as a file.
 		Un fichier zip avec la configuration de HuBergamof, pour la restaurer ici ou sur un autre
 		ordinateur.
 	</p>
-	<p class="rounded-lg border border-edge bg-sunken p-3 text-sm">
+	<p id="{uid}-warning" class="rounded-lg border border-edge bg-sunken p-3 text-sm">
 		<strong class="font-semibold">Gardez ce fichier privé.</strong> Il contient votre identité Git, vos
 		hôtes et utilisateurs SSH et les commandes de vos alias : ne le laissez pas dans un dossier partagé.
 		Il ne contient aucune clé privée ni les réglages de mises à jour.
@@ -90,16 +90,15 @@ is shown instead of being saved as a file.
 			type="button"
 			class="secondary-button"
 			aria-disabled={operation.busy || empty}
-			aria-describedby={empty ? `${uid}-empty` : undefined}
+			aria-describedby="{uid}-warning {uid}-status"
 			onclick={exportNow}
 		>
 			{operation.busy ? 'Export…' : 'Exporter la configuration'}
 		</button>
-		{#if empty}
-			<p id="{uid}-empty" class="text-sm text-muted">Cochez au moins une case.</p>
-		{/if}
 	</div>
-	<p role="status" class="text-sm text-muted">{operation.status}</p>
+	<p id="{uid}-status" role="status" class="text-sm text-muted">
+		{empty ? 'Cochez au moins une case.' : operation.status}
+	</p>
 	{#if operation.problem}
 		<ProblemAlert problem={operation.problem} lead="Sauvegarde non exportée." />
 	{/if}

@@ -120,7 +120,9 @@ describe('BackupImport', () => {
 		const { input } = await renderImport({ importBackup });
 		pick(input, ZIP);
 		await page.getByRole('combobox', { name: /Appliquer à/ }).selectOptions('NEW');
-		await expect.element(page.getByText('Sera appliquée à Stream Deck neuf.')).toBeVisible();
+		await expect
+			.element(page.getByText('Remplacera la configuration de Stream Deck neuf.'))
+			.toBeVisible();
 		await page.getByRole('button', { name: 'Importer 2 sections' }).click();
 		expect(importBackup.mock.calls[0][1]).toEqual({
 			sections: ['devices/OLD', 'machine'],
@@ -151,7 +153,7 @@ describe('BackupImport', () => {
 		expect(restoreSnapshot).not.toHaveBeenCalled();
 
 		await page.getByRole('button', { name: 'Annuler l’import' }).click();
-		await page.getByRole('dialog').getByRole('button', { name: 'Annuler l’import' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Remettre l’état d’avant' }).click();
 		expect(restoreSnapshot).toHaveBeenCalledWith('1-0');
 		await expect.element(page.getByText('Import annulé', { exact: true })).toBeVisible();
 		expect(onchange).toHaveBeenCalledTimes(2);
@@ -179,6 +181,15 @@ describe('BackupImport', () => {
 		await expect.element(page.getByText(/Import non effectué/)).toBeVisible();
 		await expect.element(page.getByText('2. Vérifier ce qui sera importé')).toBeVisible();
 		expect(onchange).not.toHaveBeenCalled();
+	});
+
+	it('refuses a file over the limit without reading it', async () => {
+		const previewBackup = vi.fn();
+		const { input } = await renderImport({ previewBackup });
+		const huge = new File([new Uint8Array(32 * 1024 * 1024 + 1)], 'enorme.zip');
+		pick(input, huge);
+		await expect.element(page.getByText(/32 Mio/)).toBeVisible();
+		expect(previewBackup).not.toHaveBeenCalled();
 	});
 
 	it('starts over from the report', async () => {

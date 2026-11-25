@@ -8,7 +8,7 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import type { ManagerApi } from '#lib/api/manager-api.js';
+	import { ARCHIVE_TOO_LARGE, MAX_ARCHIVE_BYTES, type ManagerApi } from '#lib/api/manager-api.js';
 	import type { BackupPreview, DeviceInfo, ImportReport } from '#lib/generated/index.js';
 	import { Operation } from '#lib/deck/operation.svelte.js';
 	import BackupPreviewList from './BackupPreviewList.svelte';
@@ -41,6 +41,7 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 	let input: HTMLInputElement | undefined = $state();
 	let heading: HTMLHeadingElement | undefined = $state();
 	let undoButton: HTMLButtonElement | undefined = $state();
+	let undoneHeading: HTMLHeadingElement | undefined = $state();
 
 	/** The bytes of the file chosen, read once. */
 	let bytes: Blob | undefined;
@@ -71,6 +72,11 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 		const file = event.currentTarget.files?.[0];
 		event.currentTarget.value = '';
 		if (!file) return;
+		// Refused before the whole file is read into memory.
+		if (file.size > MAX_ARCHIVE_BYTES) {
+			await operation.run(async () => ({ ...ARCHIVE_TOO_LARGE }), '');
+			return;
+		}
 		const content = new Blob([await file.arrayBuffer()], { type: 'application/zip' });
 		const ok = await operation.run(async () => {
 			const result = await api.previewBackup(content);
@@ -124,7 +130,12 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 			undone = result.value;
 			return undefined;
 		}, 'Import annulé : l’état d’avant est remis.');
-		if (undone) onchange?.();
+		if (undone) {
+			onchange?.();
+			// The button that opened the confirmation is gone: the result takes the focus.
+			await tick();
+			undoneHeading?.focus();
+		}
 	}
 </script>
 
@@ -160,7 +171,7 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 	{:else if step === 'preview' && preview}
 		<h3 bind:this={heading} tabindex="-1" class="font-medium">2. Vérifier ce qui sera importé</h3>
 		<p class="text-sm">Fichier&nbsp;: <span class="font-mono wrap-anywhere">{fileName}</span></p>
-		<BackupPreviewList {preview} {names} {decks} bind:selected bind:receivers />
+		<BackupPreviewList {preview} {names} {decks} headingLevel={4} bind:selected bind:receivers />
 		<p class="text-sm text-muted">
 			Avant d’écrire quoi que ce soit, HuBergamof garde un instantané de la configuration actuelle :
 			vous pourrez annuler l’import. N’importez que des fichiers de confiance.
@@ -180,13 +191,15 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 					Rien à importer
 				{/if}
 			</button>
-			<button type="button" class="secondary-button" onclick={startOver}>Annuler</button>
+			<button type="button" class="secondary-button" onclick={startOver}>
+				Choisir un autre fichier
+			</button>
 		</div>
 	{:else if step === 'report' && report}
 		<h3 bind:this={heading} tabindex="-1" class="font-medium">3. Résultat</h3>
 		<BackupReport {report} {names} />
 		{#if undone}
-			<h4 class="font-medium">Import annulé</h4>
+			<h4 bind:this={undoneHeading} tabindex="-1" class="font-medium">Import annulé</h4>
 			<BackupReport report={undone} {names} />
 		{/if}
 		<div class="flex flex-wrap gap-2">
@@ -217,8 +230,8 @@ takes a snapshot of what is there; « Annuler l’import » puts it back.
 
 <ConfirmDialog
 	open={confirmingUndo}
-	title={`Annuler l’import${NBSP}?`}
-	confirmLabel="Annuler l’import"
+	title={`Remettre l’état d’avant l’import${NBSP}?`}
+	confirmLabel="Remettre l’état d’avant"
 	onconfirm={undoImport}
 	oncancel={() => (confirmingUndo = false)}
 	onclosed={() => undoButton?.focus()}

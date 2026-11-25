@@ -54,7 +54,7 @@ const UNSUPPORTED_IMAGE: Problem = {
 	text: 'Format d’image non pris en charge : PNG, JPEG ou SVG.',
 	detail: null
 };
-const ARCHIVE_TOO_LARGE: Problem = {
+export const ARCHIVE_TOO_LARGE: Problem = {
 	text: `Fichier trop volumineux : ${mebibytes(MAX_ARCHIVE_BYTES)} au plus.`,
 	detail: null
 };

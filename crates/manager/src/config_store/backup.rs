@@ -41,8 +41,8 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use super::archive::{
-    Archive, ArchiveError, ArchiveImages, Limits, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_CONFIG_BYTES,
-    MAX_ARCHIVE_EXPANDED_BYTES, read_archive, read_entries,
+    ARCHIVE_CONFIG_ENTRY, Archive, ArchiveError, ArchiveImages, Limits, MAX_ARCHIVE_BYTES,
+    MAX_ARCHIVE_CONFIG_BYTES, MAX_ARCHIVE_EXPANDED_BYTES, read_archive, read_entries,
 };
 use super::is_safe_serial;
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};
@@ -657,8 +657,16 @@ pub fn read_backup_or_archive(bytes: &[u8]) -> Result<Backup, BackupError> {
     };
     match read_archive(bytes) {
         Ok(archive) => backup_of_archive(archive),
+        // An archive that has the `config.json` of a device and no manifest is the old
+        // export of one: say what is wrong with it as such, not that its entry is unexpected.
+        Err(archive_error) if names_old_config(&error) => Err(archive_error.into()),
         Err(_) => Err(error),
     }
+}
+
+/// Whether `error` is a backup read refusing the `config.json` entry of an old export.
+fn names_old_config(error: &BackupError) -> bool {
+    matches!(error, BackupError::Archive(ArchiveError::UnexpectedEntry(name)) if name == ARCHIVE_CONFIG_ENTRY)
 }
 
 fn backup_of_archive(archive: Archive) -> Result<Backup, BackupError> {
