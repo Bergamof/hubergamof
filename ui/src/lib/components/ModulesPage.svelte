@@ -70,7 +70,10 @@ and does is on the home page.
 			</ul>
 		</nav>
 		{#if chosen}
-			<ModuleDetail {deck} {api} view={chosen} />
+			<!-- One editor per module: its form is filled once, from the settings of the module it was made for. -->
+			{#key chosen.kind}
+				<ModuleDetail {deck} {api} view={chosen} />
+			{/key}
 		{/if}
 	</div>
 {/if}

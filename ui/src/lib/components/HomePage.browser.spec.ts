@@ -53,4 +53,74 @@ describe('HomePage', () => {
 		await render(ManagerHarness, { deck, page: HomePage });
 		await expect.element(page.getByText(/^À jour\.$/)).toBeVisible();
 	});
+
+	it('shows the battery of every mouse, and offers to read the one of the headphones', async () => {
+		const { connection, deck } = manager();
+		connection.receive({
+			type: 'mice',
+			mice: [
+				{
+					serial: 'M1',
+					model: 'mxMaster4',
+					displayName: 'MX Master 4',
+					capabilities: { controls: [], thumbWheel: true, haptics: true },
+					battery: { percent: 78, charging: false }
+				},
+				{
+					serial: 'M2',
+					model: 'mxAnywhere3s',
+					displayName: 'MX Anywhere 3S',
+					capabilities: { controls: [], thumbWheel: true, haptics: true },
+					battery: { percent: 14, charging: false }
+				}
+			]
+		} as never);
+		connection.receive({ type: 'headsets', headsets: [{ address: 'AA', name: 'WH-1000XM4' }] });
+		await render(ManagerHarness, { deck, page: HomePage });
+		await expect.element(page.getByText(/78\s*%/)).toBeVisible();
+		await expect.element(page.getByText(/14\s*%\s*· faible/)).toBeVisible();
+		await expect.element(page.getByText('Batterie non lue')).toBeVisible();
+		connection.sent.length = 0;
+		await page.getByRole('button', { name: /Lire la batterie/ }).click();
+		expect(connection.sent).toContainEqual({ type: 'selectHeadset', address: 'AA' });
+	});
+
+	it('shows the last battery read of the headphones, without the button', async () => {
+		const { connection, deck } = manager();
+		connection.receive({ type: 'headsets', headsets: [{ address: 'AA', name: 'WH-1000XM4' }] });
+		deck.headsets.enter();
+		connection.receive({
+			type: 'headsetState',
+			address: 'AA',
+			state: { link: 'connected', windReduction: true, battery: { percent: 55, charging: false } }
+		} as never);
+		deck.headsets.leave();
+		await render(ManagerHarness, { deck, page: HomePage });
+		await expect.element(page.getByText(/55\s*%/)).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Lire la batterie/ }))
+			.not.toBeInTheDocument();
+	});
+
+	it('offers the action of a module only when it makes sense now', async () => {
+		const { connection, deck } = manager();
+		const teams = {
+			...POMODORO,
+			kind: 'teams',
+			name: 'Teams',
+			radialActions: [
+				{ id: 'mute', name: 'Micro', description: '' },
+				{ id: 'conversations', name: 'Conversations', description: '' }
+			]
+		};
+		connection.receive({ type: 'moduleCatalog', modules: [teams] });
+		connection.receive({
+			type: 'applicationModules',
+			modules: [{ kind: 'teams', status: null, settings: {}, availableActions: ['conversations'] }]
+		} as never);
+		await render(ManagerHarness, { deck, page: HomePage });
+		// Not in a call: the first action of the module (mute) is not offered, the next one is.
+		await expect.element(page.getByRole('button', { name: 'Conversations' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Micro' })).not.toBeInTheDocument();
+	});
 });

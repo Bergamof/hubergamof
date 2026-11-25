@@ -1,6 +1,7 @@
 import { resolve } from '$app/paths';
 import type { ResolvedPathname } from '$app/types';
 import type { DeviceInfo, HeadsetInfo, MouseInfo } from '#lib/generated/index.js';
+import type { BatteryReading } from './battery.js';
 
 /** The pages of the interface, by address. */
 export const PATHS = {
@@ -59,6 +60,8 @@ export interface NavDevice {
 	path: DevicePath;
 	/** What tells it from the other devices of its kind: `?appareil=`, empty for the headphones. */
 	query: string;
+	/** Its battery, once read; a Stream Deck has none. */
+	battery?: BatteryReading;
 }
 
 export type DevicePath = typeof PATHS.deck | typeof PATHS.mouse | typeof PATHS.headset;
@@ -84,19 +87,25 @@ export function moduleHref(kind: string): ResolvedPathname {
 	return resolve(`${PATHS.modules}?module=${encodeURIComponent(kind)}`);
 }
 
-function entry(kind: NavDevice['kind'], id: string, label: string): NavDevice {
-	return { kind, id, label, path: DEVICE_PATH[kind], query: deviceQuery(kind, id) };
+function entry(
+	kind: NavDevice['kind'],
+	id: string,
+	label: string,
+	battery?: BatteryReading
+): NavDevice {
+	return { kind, id, label, path: DEVICE_PATH[kind], query: deviceQuery(kind, id), battery };
 }
 
 /** The connected devices, in the order of the navigation: Stream Deck, mice, headphones. */
 export function navDevices(
 	decks: readonly DeviceInfo[],
 	mice: readonly MouseInfo[],
-	headsets: readonly HeadsetInfo[]
+	headsets: readonly HeadsetInfo[],
+	headsetBattery: (address: string) => BatteryReading | undefined = () => undefined
 ): NavDevice[] {
 	return [
 		...decks.map((d) => entry('deck', d.serial, d.displayName)),
-		...mice.map((m) => entry('mouse', m.serial, m.displayName)),
-		...headsets.map((h) => entry('headset', h.address, h.name))
+		...mice.map((m) => entry('mouse', m.serial, m.displayName, m.battery ?? undefined)),
+		...headsets.map((h) => entry('headset', h.address, h.name, headsetBattery(h.address)))
 	];
 }

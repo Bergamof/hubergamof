@@ -19,6 +19,11 @@ kind: ModuleKind,
  */
 status?: string | null, 
 /**
+ * The ids of the actions of the module that make sense now (the call controls
+ * exist during a call only); absent when every action does.
+ */
+availableActions?: Array<string> | null, 
+/**
  * Its settings, as stored in `modules.json`.
  */
 settings: JsonValue, };

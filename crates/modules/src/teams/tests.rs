@@ -1598,6 +1598,62 @@ async fn the_petal_says_a_call_is_going_on_with_its_duration() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn the_interface_is_offered_the_actions_that_make_sense_in_each_state() {
+    let panels = [RADIAL_CONVERSATIONS, RADIAL_TEAMS, RADIAL_ACTIVITY];
+    let call = [
+        RADIAL_MUTE,
+        RADIAL_CAMERA,
+        RADIAL_HANG_UP,
+        RADIAL_RETURN_TO_CALL,
+    ];
+    let offered = |harness: &Harness| {
+        harness
+            .module
+            .radial_available_actions()
+            .expect("Teams says which actions make sense")
+    };
+    let mut harness = Harness::new(SimulatedBridge::new());
+
+    // Teams is open and nobody calls: the panels, not the controls of a call.
+    harness.bridge.set_connected(true);
+    harness.report(call_report(None)).await;
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Idle,
+            muted: None,
+            camera_on: None,
+            caller: None,
+            elapsed_seconds: None,
+        })
+        .await;
+    assert_eq!(offered(&harness), panels);
+
+    // Ringing: answering belongs to the notification, not to a button of the page.
+    harness
+        .report(BrowserReport::Call {
+            phase: CallPhase::Ringing,
+            muted: None,
+            camera_on: None,
+            caller: None,
+            elapsed_seconds: None,
+        })
+        .await;
+    assert_eq!(offered(&harness), panels);
+
+    // In a call: the controls of the call come first.
+    harness.in_call().await;
+    assert_eq!(
+        offered(&harness),
+        [call.as_slice(), panels.as_slice()].concat()
+    );
+
+    // The extension is gone: nothing can be done.
+    harness.bridge.set_connected(false);
+    harness.report(call_report(None)).await;
+    assert_eq!(offered(&harness), Vec::<String>::new());
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_petal_says_when_a_call_rings_and_forgets_it_after() {
     let mut harness = Harness::new(SimulatedBridge::new());
     harness

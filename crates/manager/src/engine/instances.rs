@@ -405,6 +405,16 @@ impl Instances {
         self.inspect(id, "radial_status", |module| module.radial_status())
     }
 
+    /// Which actions of instance `id` make sense now, by id; `None`: all of them.
+    pub(crate) fn available_actions(&mut self, id: &ModuleInstanceId) -> Option<Vec<String>> {
+        if self.shared.contains_key(id) {
+            return self.view(id)?.available_actions.clone();
+        }
+        self.inspect(id, "radial_available_actions", |module| {
+            module.radial_available_actions()
+        })
+    }
+
     /// The badge on the petal of instance `id` in the radial menu, if any.
     pub(crate) fn radial_badge(&mut self, id: &ModuleInstanceId) -> Option<u32> {
         if self.shared.contains_key(id) {

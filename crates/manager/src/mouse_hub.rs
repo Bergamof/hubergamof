@@ -80,6 +80,8 @@ struct Entry {
     /// What the mouse refused of its configuration.
     status: Arc<watch::Sender<MouseStatus>>,
     haptics: SyncSender<HapticWaveform>,
+    /// The battery as the mouse last said it, listed with the mouse.
+    battery: Option<MouseBattery>,
     /// The link to the mouse is up: one that is switched off stays registered
     /// (its thread waits for it) but is not listed.
     connected: bool,
@@ -137,7 +139,10 @@ impl MouseHub {
         let mice = entries
             .iter()
             .filter(|entry| entry.connected)
-            .map(|entry| entry.info.clone())
+            .map(|entry| MouseInfo {
+                battery: entry.battery,
+                ..entry.info.clone()
+            })
             .collect();
         self.shared.mice.send_replace(mice);
     }
@@ -160,6 +165,7 @@ impl MouseHub {
             config: Arc::clone(&sender),
             status: Arc::clone(&status),
             haptics: haptic_sender,
+            battery: None,
             connected: true,
         });
         self.publish_mice(&entries);
@@ -441,7 +447,11 @@ impl MouseRegistration {
     /// Where the mouse thread says what the mouse refused, for the interface.
     #[must_use]
     pub fn status_reporter(&self) -> StatusReporter {
-        StatusReporter(Arc::clone(&self.status))
+        StatusReporter {
+            status: Arc::clone(&self.status),
+            hub: self.hub.clone(),
+            id: self.id,
+        }
     }
 
     /// Where the mouse thread says that the mouse was switched off or is back.
@@ -460,32 +470,40 @@ impl MouseRegistration {
 }
 
 /// Tells the interface what is known of a mouse: what it refused of its
-/// configuration, and its battery. Cheap to clone.
+/// configuration (followed by the clients that selected it), and its battery
+/// (listed with the mouse, for every client). Cheap to clone.
 #[derive(Clone)]
-pub struct StatusReporter(Arc<watch::Sender<MouseStatus>>);
+pub struct StatusReporter {
+    status: Arc<watch::Sender<MouseStatus>>,
+    hub: MouseHub,
+    id: u64,
+}
 
 impl StatusReporter {
     /// The settings the mouse refused the last time its configuration was
     /// applied (none: it took everything). Followers are told only of a change.
     pub fn report(&self, problems: Vec<MouseProblem>) {
-        self.update(|status| &mut status.problems, problems);
-    }
-
-    /// The battery as the mouse last said it (`None`: it did not say).
-    /// Followers are told only of a change.
-    pub fn report_battery(&self, battery: Option<MouseBattery>) {
-        self.update(|status| &mut status.battery, battery);
-    }
-
-    fn update<T: PartialEq>(&self, field: impl FnOnce(&mut MouseStatus) -> &mut T, value: T) {
-        self.0.send_if_modified(|current| {
-            let slot = field(current);
-            let changed = *slot != value;
+        self.status.send_if_modified(|current| {
+            let changed = current.problems != problems;
             if changed {
-                *slot = value;
+                current.problems = problems;
             }
             changed
         });
+    }
+
+    /// The battery as the mouse last said it (`None`: it did not say). The
+    /// list of mice is published again when it changes. Nothing when the
+    /// registration has been replaced or dropped.
+    pub fn report_battery(&self, battery: Option<MouseBattery>) {
+        let mut entries = self.hub.entries();
+        let Some(entry) = entries.iter_mut().find(|entry| entry.id == self.id) else {
+            return;
+        };
+        if entry.battery != battery {
+            entry.battery = battery;
+            self.hub.publish_mice(&entries);
+        }
     }
 }
 
@@ -541,6 +559,7 @@ mod tests {
             model,
             display_name: model.display_name().to_owned(),
             capabilities: model.capabilities(),
+            battery: None,
         }
     }
 
@@ -861,29 +880,43 @@ mod tests {
     }
 
     #[test]
-    fn the_battery_is_told_only_when_it_changes_and_keeps_what_was_refused() {
+    fn the_battery_of_each_mouse_is_listed_with_it_and_told_only_when_it_changes() {
         let (_dir, hub) = hub();
-        let mouse = register(&hub, "a");
-        let mut status = hub.subscribe_status("a").unwrap();
-        let reporter = mouse.status_reporter();
-        let refused = vec![MouseProblem {
-            setting: "wheel".to_owned(),
-            message: "refused".to_owned(),
-        }];
-        reporter.report(refused.clone());
+        let (first, second) = (register(&hub, "a"), register(&hub, "b"));
+        let mut mice = hub.subscribe_mice();
+        mice.mark_unchanged();
+        let battery_of = |serial: &str| {
+            hub.mice()
+                .into_iter()
+                .find(|mouse| mouse.serial == serial)
+                .and_then(|mouse| mouse.battery)
+        };
+        assert_eq!(battery_of("a"), None);
+
         let battery = MouseBattery {
             percent: 80,
             charging: false,
         };
-        reporter.report_battery(Some(battery));
-        assert!(status.has_changed().unwrap());
-        let known = status.borrow_and_update().clone();
-        assert_eq!(known.battery, Some(battery));
-        assert_eq!(known.problems, refused);
-        reporter.report_battery(Some(battery));
-        assert!(!status.has_changed().unwrap());
-        reporter.report_battery(None);
-        assert!(status.has_changed().unwrap());
+        first.status_reporter().report_battery(Some(battery));
+        assert!(mice.has_changed().unwrap());
+        assert_eq!(battery_of("a"), Some(battery));
+        assert_eq!(battery_of("b"), None, "another mouse keeps its own");
+        mice.mark_unchanged();
+
+        // The same thing again is not news; a loss is.
+        first.status_reporter().report_battery(Some(battery));
+        assert!(!mice.has_changed().unwrap());
+        first.status_reporter().report_battery(None);
+        assert!(mice.has_changed().unwrap());
+        assert_eq!(battery_of("a"), None);
+
+        // What a mouse refused does not touch the list.
+        mice.mark_unchanged();
+        second.status_reporter().report(vec![MouseProblem {
+            setting: "wheel".to_owned(),
+            message: "refused".to_owned(),
+        }]);
+        assert!(!mice.has_changed().unwrap());
     }
 
     #[test]

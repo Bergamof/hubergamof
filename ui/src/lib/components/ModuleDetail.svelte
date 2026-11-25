@@ -8,6 +8,12 @@ the same. Settings are saved as they are edited, like those of a key.
 	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import { moduleName } from '#lib/deck/display.js';
+	import {
+		availableActions,
+		groupActions,
+		isEnding,
+		noActionText
+	} from '#lib/deck/module-actions.js';
 	import type { ApplicationModuleView, ModuleInstance } from '#lib/generated/index.js';
 	import InstanceEditor from './InstanceEditor.svelte';
 
@@ -22,6 +28,9 @@ the same. Settings are saved as they are edited, like those of a key.
 	const uid = $props.id();
 	const module = $derived(deck.moduleOf(view.kind));
 	const name = $derived(moduleName(view.kind, module));
+	/** The actions that make sense now (the call controls of Teams only exist during a call), grouped. */
+	const actions = $derived(availableActions(module, view));
+	const groups = $derived(groupActions(view.kind, actions));
 
 	/** The module as an instance, which is what the settings form edits. */
 	const instance = $derived<ModuleInstance>({
@@ -81,22 +90,40 @@ the same. Settings are saved as they are edited, like those of a key.
 	<p role="status" class="sr-only">{step}</p>
 
 	{#if module && module.radialActions.length > 0}
-		<ul class="flex flex-wrap gap-2" aria-label="Actions de {name}">
-			{#each module.radialActions as action, index (action.id)}
-				<li>
-					<button
-						type="button"
-						class={['focus-ring', index === 0 ? 'primary-button' : 'secondary-button']}
-						title={action.description}
-						aria-describedby="{uid}-{action.id}"
-						onclick={() => run(action.id)}
-					>
-						{action.name}
-					</button>
-					<span id="{uid}-{action.id}" class="sr-only">{action.description}</span>
-				</li>
+		<div class="flex flex-col gap-3" role="group" aria-label="Actions de {name}">
+			{#each groups as group, groupIndex (group.label ?? '')}
+				<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+					{#if group.label}
+						<h3 class="w-full text-sm font-semibold text-muted">{group.label}</h3>
+					{/if}
+					<ul class="flex flex-wrap gap-2">
+						{#each group.actions as action, index (action.id)}
+							<li>
+								<button
+									type="button"
+									class={[
+										'focus-ring',
+										isEnding(action)
+											? 'danger-button'
+											: groupIndex === 0 && index === 0
+												? 'primary-button'
+												: 'secondary-button'
+									]}
+									title={action.description}
+									aria-describedby="{uid}-{action.id}"
+									onclick={() => run(action.id)}
+								>
+									{action.name}
+								</button>
+								<span id="{uid}-{action.id}" class="sr-only">{action.description}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{:else}
+				<p class="text-sm text-muted">{noActionText(view.kind)}</p>
 			{/each}
-		</ul>
+		</div>
 	{/if}
 
 	{#if module && module.settings.length > 0}

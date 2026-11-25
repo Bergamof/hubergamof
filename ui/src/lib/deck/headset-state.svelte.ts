@@ -1,6 +1,7 @@
 import type {
 	AmbientSound,
 	EqualizerChange,
+	HeadsetBattery,
 	HeadsetInfo,
 	HeadsetState as HeadsetStatus,
 	ServerMessage
@@ -19,6 +20,10 @@ export class HeadsetState {
 
 	readonly #connection: DeckConnection;
 	#watching = false;
+	/** The link is opened only to read the battery: the headphones are let go once it is read. */
+	#reading = false;
+	/** The last battery the headphones said: it stays when the page is left, until read again. */
+	#lastBattery: { address: string; battery: HeadsetBattery } | undefined = $state();
 	#address: string | undefined = $state();
 
 	/** The headphones followed, if still connected; before they are followed, the first ones. */
@@ -39,7 +44,25 @@ export class HeadsetState {
 	/** The page is left: the link stays as it is, nothing is followed. */
 	leave(): void {
 		this.#watching = false;
+		this.#reading = false;
 		this.#forget();
+	}
+
+	/**
+	 * The battery the headphones said last, `undefined` while it has not been read: the link is opened
+	 * by the page of the headphones or by {@link readBattery}, never by itself.
+	 */
+	batteryOf(address: string): HeadsetBattery | undefined {
+		return this.#lastBattery?.address === address ? this.#lastBattery.battery : undefined;
+	}
+
+	/**
+	 * Opens the link to read the battery, which cuts the application of Sony until the headphones are
+	 * released; they are no longer followed once it is read, the link stays.
+	 */
+	readBattery(): void {
+		this.#reading = true;
+		this.enter();
 	}
 
 	/** Opens the link again, after a cut or a release. */
@@ -74,6 +97,11 @@ export class HeadsetState {
 			if (this.#watching) this.#follow();
 		} else if (message.type === 'headsetState' && message.address === this.#address) {
 			this.status = message.state;
+			const battery = message.state.battery;
+			if (battery) {
+				this.#lastBattery = { address: message.address, battery };
+				if (this.#reading) this.leave();
+			}
 		}
 	}
 

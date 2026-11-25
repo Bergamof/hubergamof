@@ -638,6 +638,7 @@ impl Session {
             .map(|(kind, view)| ApplicationModuleView {
                 kind: kind.clone(),
                 status: view.radial_status.clone(),
+                available_actions: view.available_actions.clone(),
                 settings: view.settings.clone(),
             })
             .collect();

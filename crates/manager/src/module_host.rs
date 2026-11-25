@@ -89,6 +89,8 @@ pub struct ModuleView {
     pub radial_status: Option<String>,
     /// The badge on the icon of its petal in the radial menu.
     pub radial_badge: Option<u32>,
+    /// Which of its actions make sense now, by id; `None`: all of them.
+    pub available_actions: Option<Vec<String>>,
     /// The actions shown around its petal in the radial menu.
     pub radial_items: Vec<RadialItem>,
     /// The pages it offers (see [`hubergamof_module_api::Module::page_ids`]),
@@ -671,6 +673,7 @@ impl Hosted {
                 dial_hints,
                 radial_status: self.instances.radial_status(id),
                 radial_badge: self.instances.radial_badge(id),
+                available_actions: self.instances.available_actions(id),
                 radial_items: self.instances.radial_items(id).unwrap_or_default(),
                 pages: self.instances.pages(id),
                 settings: self.settings_of(kind),
@@ -1317,6 +1320,8 @@ mod tests {
         let pomodoro = views.borrow().get(&"pomodoro".into()).cloned().unwrap();
         assert!(pomodoro.pages.is_empty());
         assert_eq!(pomodoro.radial_badge, None);
+        // A module that says nothing of its actions offers all of them.
+        assert_eq!(pomodoro.available_actions, None);
     }
 
     #[test]

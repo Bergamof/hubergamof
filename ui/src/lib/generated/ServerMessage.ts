@@ -10,7 +10,6 @@ import type { HeadsetInfo } from "./HeadsetInfo";
 import type { HeadsetState } from "./HeadsetState";
 import type { LiveState } from "./LiveState";
 import type { MachineConfig } from "./MachineConfig";
-import type { MouseBattery } from "./MouseBattery";
 import type { MouseConfig } from "./MouseConfig";
 import type { MouseInfo } from "./MouseInfo";
 import type { MouseProblem } from "./MouseProblem";
@@ -52,11 +51,7 @@ serial: string,
 /**
  * The settings the mouse refused.
  */
-problems: Array<MouseProblem>, 
-/**
- * Its battery, once read; absent while unknown.
- */
-battery?: MouseBattery | null, } | { "type": "headsets", 
+problems: Array<MouseProblem>, } | { "type": "headsets", 
 /**
  * Connected headphones.
  */

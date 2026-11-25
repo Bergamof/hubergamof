@@ -738,6 +738,7 @@ fn connect_mouse(
             model,
             display_name: model.display_name().to_owned(),
             capabilities: model.capabilities(),
+            battery: None,
         },
         MouseConfig::default_for(serial, model),
     )

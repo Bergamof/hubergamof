@@ -27,11 +27,9 @@ pub struct MouseBattery {
 }
 
 /// What is known of a connected mouse besides its configuration: what it
-/// refused of the configuration, and its battery once read.
+/// refused of the configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MouseStatus {
     /// The settings the mouse refused when its configuration was last applied.
     pub problems: Vec<MouseProblem>,
-    /// `None` until the mouse has said, or when it does not.
-    pub battery: Option<MouseBattery>,
 }

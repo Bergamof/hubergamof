@@ -2,7 +2,6 @@ import type {
 	HapticWaveform,
 	MouseConfig,
 	MouseInfo,
-	MouseBattery,
 	MouseProblem,
 	RadialMenuConfig,
 	ServerMessage
@@ -29,8 +28,6 @@ export class MouseState {
 	selectedSerial: string | undefined = $state();
 	/** What the selected mouse refused of its configuration the last time it was applied. */
 	problems: MouseProblem[] = $state([]);
-	/** Its battery, once the manager has read it. */
-	battery: MouseBattery | undefined = $state();
 
 	readonly #connection: DeckConnection;
 	readonly #mouseEdits: EditQueue<MouseConfig>;
@@ -115,7 +112,6 @@ export class MouseState {
 			case 'mouseStatus':
 				if (message.serial === this.selectedSerial) {
 					this.problems = message.problems;
-					this.battery = message.battery ?? undefined;
 				}
 				break;
 			case 'radialMenu':
@@ -150,7 +146,6 @@ export class MouseState {
 	#forgetMouse(): void {
 		this.selectedSerial = undefined;
 		this.problems = [];
-		this.battery = undefined;
 		this.#mouseEdits.forget();
 	}
 }

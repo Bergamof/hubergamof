@@ -327,6 +327,7 @@ fn serve_mouse<C: Channel>(
             model,
             display_name: model.display_name().to_owned(),
             capabilities: model.capabilities(),
+            battery: None,
         },
         config.clone(),
     );
@@ -500,6 +501,14 @@ mod tests {
     use hubergamof_mouse::testing::{FakeDevice, FakeLink, frame};
 
     use super::*;
+
+    /// The battery the interface is told of the mouse `serial`, in the list of mice.
+    fn listed_battery(hub: &MouseHub, serial: &str) -> Option<MouseBattery> {
+        hub.mice()
+            .into_iter()
+            .find(|mouse| mouse.serial == serial)
+            .and_then(|mouse| mouse.battery)
+    }
     use crate::testing::builtin_registry;
 
     const DEVICE: u8 = 0xFF;
@@ -839,7 +848,7 @@ mod tests {
         let fake = FakeLink::direct(FakeDevice::mx_master_4())
             .with_incoming(vec![LOST.to_vec(), BACK.to_vec()]);
         let stop = AtomicBool::new(false);
-        let status = || hub.subscribe_status("deadbeef").map(|s| s.borrow().battery);
+        let status = || listed_battery(&hub, "deadbeef");
         let mut seen = Vec::new();
         serve_mouse(
             found(fake, Some(UNIT), 2),
@@ -856,8 +865,7 @@ mod tests {
                 _ => {}
             },
         );
-        let known =
-            |entry: &(&str, bool, Option<Option<MouseBattery>>)| entry.2.flatten().is_some();
+        let known = |entry: &(&str, bool, Option<MouseBattery>)| entry.2.is_some();
         assert_eq!(seen.len(), 3, "{seen:?}");
         assert!(!known(&seen[0]), "off: unknown");
         assert!(!known(&seen[1]), "back, not read yet");
@@ -992,9 +1000,7 @@ mod tests {
             1,
             &recording_actions(&recorder, false),
             |_, hub, _| {
-                told = hub
-                    .subscribe_status("deadbeef")
-                    .and_then(|status| status.borrow().battery);
+                told = listed_battery(hub, "deadbeef");
             },
         );
         let battery = told.expect("the battery was read at the start");

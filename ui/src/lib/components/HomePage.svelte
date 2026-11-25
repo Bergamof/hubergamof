@@ -2,19 +2,25 @@
 @component
 The home page: what is connected, what the modules of the application show now, whether an update is waiting,
 and a few ways into the rest. Only what exists is shown, and nothing here opens the link of the headphones:
-it would cut the Sony application.
+it would cut the Sony application: the battery of the headphones is read on request, by a button.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { getManager } from '#lib/deck/manager-context.js';
 	import { PATHS, deviceHref, navDevices, type NavDevice } from '#lib/deck/nav-model.js';
 	import { moduleName } from '#lib/deck/display.js';
+	import { availableActions } from '#lib/deck/module-actions.js';
+	import BatteryBadge from './BatteryBadge.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import PageHeader from './PageHeader.svelte';
 
 	const { deck } = getManager();
 
-	const devices = $derived(navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets));
+	const devices = $derived(
+		navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets, (address) =>
+			deck.headsets.batteryOf(address)
+		)
+	);
 	const modules = $derived(deck.application.modules);
 
 	const DEVICE_ICON: Record<NavDevice['kind'], IconName> = {
@@ -29,19 +35,6 @@ it would cut the Sony application.
 		intellij: 'code',
 		claude: 'spark'
 	};
-
-	/** What is known of the battery of a device; the mouse and the headphones are read one at a time. */
-	function batteryOf(device: NavDevice): string | undefined {
-		if (device.kind === 'mouse' && device.id === deck.mice.selectedSerial) {
-			const battery = deck.mice.battery;
-			return battery ? `${battery.percent} %${battery.charging ? ' · en charge' : ''}` : undefined;
-		}
-		if (device.kind === 'headset') {
-			const battery = deck.headsets.status?.battery;
-			return battery ? `${battery.percent} %${battery.charging ? ' · en charge' : ''}` : undefined;
-		}
-		return undefined;
-	}
 
 	/** The lines a module says: the step, then the detail. */
 	const linesOf = (status: string | null | undefined): string[] =>
@@ -88,29 +81,40 @@ it would cut the Sony application.
 	{:else}
 		<ul class="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3">
 			{#each devices as device (device.kind + device.id)}
-				{@const battery = batteryOf(device)}
 				<li class="flex flex-col gap-2 rounded-lg border border-line p-3">
 					<span class="flex items-center gap-2 font-semibold">
 						<Icon name={DEVICE_ICON[device.kind]} />{device.label}
 					</span>
-					<span class="text-muted">
-						{#if battery}
-							<span class="inline-flex items-center gap-1"
-								><Icon name="battery" class="size-3.5" />Batterie {battery}</span
-							>
-						{:else if device.kind === 'deck'}
-							Connecté en USB
+					<span class="text-sm">
+						{#if device.kind === 'deck'}
+							<span class="text-muted">Connecté en USB</span>
 						{:else}
-							Batterie : inconnue
+							<BatteryBadge
+								battery={device.battery}
+								unknown={device.kind === 'headset' ? 'Batterie non lue' : 'Batterie : inconnue'}
+								labelled
+							/>
 						{/if}
 					</span>
-					<a
-						href={deviceHref(device)}
-						data-sveltekit-preload-data="off"
-						class="mt-auto secondary-button self-start no-underline"
-					>
-						Configurer<span class="sr-only"> {device.label}</span>
-					</a>
+					<span class="mt-auto flex flex-wrap gap-2">
+						{#if device.kind === 'headset' && !device.battery}
+							<button
+								type="button"
+								class="secondary-button"
+								title="Ouvre la liaison avec le casque : l’application Sony se coupe jusqu’à ce qu’il soit libéré."
+								onclick={() => deck.headsets.readBattery()}
+							>
+								Lire la batterie<span class="sr-only"> de {device.label}</span>
+							</button>
+						{/if}
+						<a
+							href={deviceHref(device)}
+							data-sveltekit-preload-data="off"
+							class="secondary-button no-underline"
+						>
+							Configurer<span class="sr-only"> {device.label}</span>
+						</a>
+					</span>
 				</li>
 			{/each}
 		</ul>
@@ -132,7 +136,7 @@ it would cut the Sony application.
 			<ul class="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
 				{#each modules as view (view.kind)}
 					{@const lines = linesOf(view.status)}
-					{@const action = deck.moduleOf(view.kind)?.radialActions[0]}
+					{@const action = availableActions(deck.moduleOf(view.kind), view)[0]}
 					<li class="flex min-h-24 flex-col gap-1 rounded-lg border border-line p-3">
 						<span class="flex items-center gap-1.5 font-medium text-muted">
 							<Icon name={MODULE_ICON[view.kind] ?? 'modules'} />

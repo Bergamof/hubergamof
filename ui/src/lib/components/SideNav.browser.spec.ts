@@ -66,7 +66,7 @@ describe('SideNav', () => {
 			})
 		);
 		await expect.element(page.getByRole('link', { name: 'Stream Deck +' })).toBeVisible();
-		await expect.element(page.getByRole('link', { name: 'WH-1000XM4' })).toBeVisible();
+		await expect.element(page.getByRole('link', { name: /^WH-1000XM4/ })).toBeVisible();
 		await expect
 			.element(page.getByRole('link', { name: 'MX Anywhere 3S' }))
 			.toHaveAttribute('aria-current', 'page');
@@ -75,17 +75,39 @@ describe('SideNav', () => {
 			.not.toHaveAttribute('aria-current');
 	});
 
-	it('shows the battery of the mouse followed', async () => {
+	it('shows the battery of every mouse, with its icon, and warns of a low one in words', async () => {
+		const mice = [
+			{ ...MOUSE, battery: { percent: 78, charging: false } },
+			{ serial: 'M2', displayName: 'MX Anywhere 3S', battery: { percent: 14, charging: false } }
+		] as MouseInfo[];
 		await render(
 			SideNav,
 			props({
 				pathname: '/peripheriques/souris',
-				devices: navDevices([], [MOUSE], []),
-				selectedMouse: 'M1',
-				mouseBattery: 78
+				devices: navDevices([], mice, []),
+				selectedMouse: 'M1'
 			})
 		);
-		await expect.element(page.getByText(/^78 %$/)).toBeVisible();
+		const first = page.getByRole('link', { name: /MX Master 4/ });
+		await expect.element(first.getByText(/78\s*%/)).toBeVisible();
+		expect(first.element().querySelector('svg')).not.toBeNull();
+		const second = page.getByRole('link', { name: /MX Anywhere 3S/ });
+		await expect.element(second.getByText(/14\s*%/)).toBeVisible();
+		await expect.element(second.getByText(', faible')).toBeInTheDocument();
+	});
+
+	it('says the battery of the headphones is not read until it is, then keeps it', async () => {
+		const headset = { address: 'AA', name: 'WH-1000XM4' } as HeadsetInfo;
+		const unread = await render(SideNav, props({ devices: navDevices([], [], [headset]) }));
+		await expect.element(page.getByText('Non lu')).toBeVisible();
+		unread.unmount();
+		await render(
+			SideNav,
+			props({
+				devices: navDevices([], [], [headset], () => ({ percent: 62, charging: false }))
+			})
+		);
+		await expect.element(page.getByText(/62\s*%/)).toBeVisible();
 	});
 
 	it('points to an update that is waiting', async () => {

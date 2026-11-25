@@ -6,8 +6,8 @@ use ts_rs::TS;
 use crate::{
     AmbientSound, ApplicationModuleView, CatalogModule, DeviceConfig, DeviceInfo, EqualizerChange,
     GitConfig, GitSystemEntry, HapticWaveform, HeadsetInfo, HeadsetState, LiveState, MachineConfig,
-    ModuleKind, MouseBattery, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, SshConfig,
-    SshSystemHost, SystemAlias, UpdateSettings, UpdateStatus,
+    ModuleKind, MouseConfig, MouseInfo, MouseProblem, RadialMenuConfig, SshConfig, SshSystemHost,
+    SystemAlias, UpdateSettings, UpdateStatus,
 };
 
 /// Message sent by the UI to the manager.
@@ -255,17 +255,14 @@ pub enum ServerMessage {
         /// Current configuration.
         config: MouseConfig,
     },
-    /// What a mouse the client selected refused of its configuration, and its
-    /// battery: sent after its `mouseConfig`, then each time either changes
-    /// (no problem means the mouse took everything).
+    /// What a mouse the client selected refused of its configuration: sent
+    /// after its `mouseConfig`, then each time it changes (no problem means the
+    /// mouse took everything). The battery is in `mice`.
     MouseStatus {
         /// Mouse serial.
         serial: String,
         /// The settings the mouse refused.
         problems: Vec<MouseProblem>,
-        /// Its battery, once read; absent while unknown.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        battery: Option<MouseBattery>,
     },
     /// Headphones currently connected to this computer: sent after `mice`,
     /// then at every connection or disconnection. Not sent when the manager

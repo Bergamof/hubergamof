@@ -16,6 +16,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 	import { SaveTracker } from '#lib/deck/save-tracker.svelte.js';
 	import { settingLabel } from '#lib/deck/mouse-labels.js';
 	import type { MouseConfig, MouseInfo } from '#lib/generated/index.js';
+	import BatteryBadge from './BatteryBadge.svelte';
 	import HapticsPanel from './HapticsPanel.svelte';
 	import MouseControls from './MouseControls.svelte';
 	import PointerSettings from './PointerSettings.svelte';
@@ -33,13 +34,6 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 	const uid = $props.id();
 
 	const saves = new SaveTracker();
-
-	/** Below this charge (in percent) the battery chip warns, unless the mouse is charging. */
-	const LOW_BATTERY_PERCENT = 20;
-	const battery = $derived(deck.mice.battery);
-	const batteryLow = $derived(
-		battery !== undefined && !battery.charging && battery.percent <= LOW_BATTERY_PERCENT
-	);
 
 	type TabId = 'touches' | 'settings' | 'haptic';
 	let wanted: TabId = $state('touches');
@@ -86,18 +80,9 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 			<span class="rounded-full bg-sunken px-2 py-1 font-mono text-xs text-muted">
 				Connectée · Logi Bolt
 			</span>
-			{#if battery}
-				<span
-					class={[
-						'rounded-full px-2 py-1 font-mono text-xs',
-						batteryLow ? 'bg-warning-soft text-warning' : 'bg-sunken text-muted'
-					]}
-				>
-					Batterie {battery.percent} %{battery.charging
-						? ' · en charge'
-						: batteryLow
-							? ' · faible'
-							: ''}
+			{#if mouse.battery}
+				<span class="rounded-full bg-sunken px-2 py-1 text-xs">
+					<BatteryBadge battery={mouse.battery} labelled />
 				</span>
 			{/if}
 			{#if mouse.capabilities.haptics}

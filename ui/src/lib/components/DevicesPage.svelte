@@ -6,13 +6,18 @@ press to search.
 <script lang="ts">
 	import { getManager } from '#lib/deck/manager-context.js';
 	import { deviceHref, navDevices, type NavDevice } from '#lib/deck/nav-model.js';
+	import BatteryBadge from './BatteryBadge.svelte';
 	import EmptyState from './EmptyState.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import PageHeader from './PageHeader.svelte';
 
 	const { deck } = getManager();
 
-	const devices = $derived(navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets));
+	const devices = $derived(
+		navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets, (address) =>
+			deck.headsets.batteryOf(address)
+		)
+	);
 
 	const ICON: Record<NavDevice['kind'], IconName> = {
 		deck: 'deck',
@@ -57,7 +62,16 @@ press to search.
 					<span class="flex items-center gap-2 font-semibold">
 						<Icon name={ICON[device.kind]} />{device.label}
 					</span>
-					<span class="text-muted">{KIND[device.kind]}</span>
+					<span class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-muted">
+						{KIND[device.kind]}
+						{#if device.kind !== 'deck'}
+							<BatteryBadge
+								battery={device.battery}
+								unknown={device.kind === 'headset' ? 'Non lu' : undefined}
+								labelled
+							/>
+						{/if}
+					</span>
 				</a>
 			</li>
 		{/each}

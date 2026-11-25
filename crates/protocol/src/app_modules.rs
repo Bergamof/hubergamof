@@ -43,6 +43,10 @@ pub struct ApplicationModuleView {
     /// (`Focus 2/4` then `12:34 · pause`); absent when it says nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// The ids of the actions of the module that make sense now (the call controls
+    /// exist during a call only); absent when every action does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_actions: Option<Vec<String>>,
     /// Its settings, as stored in `modules.json`.
     pub settings: serde_json::Value,
 }
