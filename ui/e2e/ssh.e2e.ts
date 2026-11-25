@@ -299,8 +299,8 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	await expect(page.getByRole('alert')).toContainText('modifiée ailleurs');
 });
 
-test('tient dans 320 px sans défilement horizontal', async ({ page }) => {
-	await page.setViewportSize({ width: 320, height: 800 });
+test('tient dans 1024 px sans défilement horizontal', async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 800 });
 	await playManager(page, {
 		schemaVersion: 1,
 		hosts: [

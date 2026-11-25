@@ -9,7 +9,7 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { getManager } from '#lib/deck/manager-context.js';
-	import { navDevices, pageOf } from '#lib/deck/nav-model.js';
+	import { PATHS, navDevices, pageOf } from '#lib/deck/nav-model.js';
 	import Icon from './Icon.svelte';
 	import Notices from './Notices.svelte';
 	import SideNav from './SideNav.svelte';
@@ -30,6 +30,13 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 	const greeted = $derived(deck.managerVersion !== undefined);
 
 	const current = $derived(pageOf(page.url.pathname));
+	/** The page of a device is named after it, in the title of the document. */
+	const documentTitle = $derived.by(() => {
+		if (current.path === PATHS.deck) return deck.device?.displayName ?? current.title;
+		if (current.path === PATHS.mouse) return deck.mice.mouse?.displayName ?? current.title;
+		if (current.path === PATHS.headset) return deck.headsets.headset?.name ?? current.title;
+		return current.title;
+	});
 	const devices = $derived(navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets));
 	const updateAvailable = $derived(deck.updateStatus.type === 'available');
 
@@ -66,7 +73,7 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 </script>
 
 <svelte:head>
-	<title>{current.title} · HuBergamof</title>
+	<title>{documentTitle} · HuBergamof</title>
 </svelte:head>
 
 <a

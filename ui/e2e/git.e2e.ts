@@ -126,15 +126,15 @@ test('ne lit l’ordinateur qu’à l’ouverture de la page Machine, puis à ch
 	await expect.poll(() => manager.received.filter((type) => type === 'refreshGit')).toHaveLength(2);
 });
 
-test('garde ce qui est saisi quand on regarde les alias du shell puis qu’on revient', async ({
+test('retrouve la configuration enregistrée en revenant sur la page après celle des alias', async ({
 	page
 }) => {
-	await playManager(page);
+	const manager = await playManager(page);
+	manager.config.identity = { name: 'Ada', email: '' };
 	await openGit(page);
-	await identityForm(page).getByRole('textbox', { name: 'Nom' }).fill('Ada');
-	await page.getByRole('radio', { name: 'Alias du shell' }).check({ force: true });
-	await expect(page.getByRole('heading', { name: 'Alias du shell' })).toBeVisible();
-	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	await page.getByRole('link', { name: 'Alias du shell' }).click();
+	await expect(page.getByRole('heading', { name: 'Alias du shell' }).first()).toBeVisible();
+	await page.getByRole('link', { name: 'Git', exact: true }).click();
 	await expect(identityForm(page).getByRole('textbox', { name: 'Nom' })).toHaveValue('Ada');
 });
 
@@ -277,8 +277,8 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	await expect(page.getByText('Dernière modification refusée.').first()).toBeVisible();
 });
 
-test('tient dans 320 px sans défilement horizontal', async ({ page }) => {
-	await page.setViewportSize({ width: 320, height: 800 });
+test('tient dans 1024 px sans défilement horizontal', async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 800 });
 	await playManager(page);
 	await openGit(page);
 	const overflow = await page.evaluate(

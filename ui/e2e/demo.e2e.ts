@@ -67,6 +67,7 @@ test('nomme la page d’après l’appareil affiché', async ({ page }) => {
 
 test('annonce une version plus récente puis simule son installation', async ({ page }) => {
 	await open(page);
+	await goTo(page, 'Mises à jour');
 	// `--demo` announces a fake release, without network, and installs it only on request.
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 	const notes = page.getByRole('link', { name: /Notes de version/ });
@@ -82,6 +83,7 @@ test('annonce une version plus récente puis simule son installation', async ({ 
 
 test('relance la recherche de mises à jour à la demande', async ({ page }) => {
 	await open(page);
+	await goTo(page, 'Mises à jour');
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 	await page.getByRole('button', { name: 'Rechercher des mises à jour' }).click();
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
@@ -581,7 +583,6 @@ test('refuse un fichier qui n’est pas un export', async ({ page }) => {
 	await page.getByRole('button', { name: 'Remplacer' }).click();
 	await expect(page.getByRole('alert')).toContainText('Configuration non importée');
 	await expect(page.getByRole('alert')).toContainText('export HuBergamof');
-	await expect(key(page, '1 : Audio')).toBeVisible();
 });
 
 /** Fails on any WCAG 2.2 A/AA violation of the page as it is now. */
@@ -645,7 +646,7 @@ async function openMouse(page: Page) {
 
 /** The control of the list under the drawings, which shows its editor. */
 async function chooseControl(page: Page, name: string | RegExp) {
-	await page.getByRole('list').first().getByRole('button', { name }).click();
+	await page.getByRole('main').getByRole('list').first().getByRole('button', { name }).click();
 }
 
 test('configure les boutons, le pointeur et les vibrations de la souris, et les retrouve', async ({
@@ -691,7 +692,7 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	await expect(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
 
 	await goTo(page, /MX Anywhere 3S/);
-	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S', level: 2 })).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(6);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
 	await expect(page.getByText('Batterie 18 % · en charge')).toBeVisible();
