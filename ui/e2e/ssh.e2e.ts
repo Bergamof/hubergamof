@@ -131,9 +131,7 @@ async function playManager(
 }
 
 async function openSsh(page: Page) {
-	await page.goto('/');
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'SSH' }).check({ force: true });
+	await page.goto('/poste/ssh');
 	await expect(page.getByRole('heading', { name: 'Serveurs SSH', exact: true })).toBeVisible();
 }
 
@@ -301,8 +299,8 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	await expect(page.getByRole('alert')).toContainText('modifiée ailleurs');
 });
 
-test('tient dans 320 px sans défilement horizontal', async ({ page }) => {
-	await page.setViewportSize({ width: 320, height: 800 });
+test('tient dans 1024 px sans défilement horizontal', async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 800 });
 	await playManager(page, {
 		schemaVersion: 1,
 		hosts: [

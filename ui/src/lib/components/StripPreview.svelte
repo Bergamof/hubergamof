@@ -111,7 +111,7 @@ The palettes and the layout copy those of `crates/manager/src/render/strip.rs`: 
 <button
 	type="button"
 	aria-current={selected ? 'true' : undefined}
-	class="block w-full rounded-2xl p-1 hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring aria-current:bg-device-key aria-current:ring-2 aria-current:ring-accent"
+	class="block w-full rounded-2xl p-1 hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring aria-current:bg-device-key aria-current:ring-2 aria-current:ring-device-ring"
 	onclick={onselect}
 >
 	<span class="sr-only">Bande tactile : aperçu avec des valeurs d’exemple, ouvre ses réglages</span>

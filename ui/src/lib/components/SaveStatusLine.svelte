@@ -10,7 +10,7 @@ from the top), and its twin for screen readers.
 	let { tracker }: { tracker: SaveTracker } = $props();
 </script>
 
-<div class="sticky top-0 z-10 -mx-1 bg-page px-1 py-1">
+<div class="sticky top-12 z-10 -mx-1 bg-page px-1 py-1">
 	<p class="min-h-6 text-sm text-muted" aria-hidden="true">{SAVE_STATUS_TEXT[tracker.status]}</p>
 	<p role="status" class="sr-only">{tracker.spoken}</p>
 </div>

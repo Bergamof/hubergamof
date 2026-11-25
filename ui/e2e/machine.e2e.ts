@@ -66,9 +66,8 @@ async function playManager(page: Page, aliases: Alias[] = []): Promise<FakeManag
 }
 
 async function openMachine(page: Page) {
-	await page.goto('/');
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await expect(page.getByRole('heading', { name: 'Alias du shell' })).toBeVisible();
+	await page.goto('/poste/alias');
+	await expect(page.getByRole('heading', { name: 'Alias du shell' }).first()).toBeVisible();
 }
 
 const managed = (page: Page) => page.getByRole('list', { name: 'Alias gérés' });
@@ -81,7 +80,7 @@ test('lit le système à l’ouverture de la page seulement, puis à chaque reco
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	expect(manager.received).not.toContain('refreshMachine');
 
-	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('link', { name: 'Alias du shell' }).click();
 	await expect
 		.poll(() => manager.received.filter((type) => type === 'refreshMachine'))
 		.toHaveLength(1);
@@ -175,13 +174,15 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	expect(manager.aliases).toEqual([]);
 });
 
-test('rend la page inutilisable quand l’ordinateur est verrouillé', async ({ page }) => {
+test('désactive les commandes quand l’ordinateur est verrouillé', async ({ page }) => {
 	const manager = await playManager(page);
 	await openMachine(page);
 	manager.sockets[0].send(JSON.stringify({ type: 'locked', locked: true }));
-	await expect(page.getByRole('alert')).toContainText('L’ordinateur est verrouillé');
-	// The page stays readable, but what is in it is inert.
-	await expect(page.getByRole('main').locator('[inert]')).toContainText('Alias du shell');
+	await expect(page.getByRole('status').filter({ hasText: 'Ordinateur verrouillé' })).toBeVisible();
+	// The page stays readable and the navigation usable, but the controls are disabled.
+	await expect(page.getByRole('heading', { name: 'Alias du shell' }).first()).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Ajouter' })).toBeDisabled();
+	await expect(page.getByRole('link', { name: 'Git', exact: true })).toBeEnabled();
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {

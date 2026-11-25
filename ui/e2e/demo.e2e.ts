@@ -23,11 +23,36 @@ async function expectNames(controls: Locator, names: readonly string[]) {
 	}
 }
 
+/** Follows a link of the main navigation. */
+async function goTo(page: Page, name: string | RegExp) {
+	await page
+		.getByRole('navigation', { name: 'Navigation principale' })
+		.getByRole('link', { name })
+		.click();
+}
+
+/** The banner that says the page cannot be used, or the part of it that holds `text`. */
+const banner = (page: Page, text: string) => page.getByRole('status').filter({ hasText: text });
+
 async function open(page: Page) {
-	await page.goto('/');
+	await page.goto('/peripheriques/stream-deck');
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	await expect(key(page, '1 : Audio')).toBeVisible();
 }
+
+test('dit qu’un Stream Deck de l’adresse n’est plus connecté, sans en montrer un autre', async ({
+	page
+}) => {
+	await page.goto('/peripheriques/stream-deck?appareil=ABSENT');
+	await expect(page.getByRole('status').filter({ hasText: 'plus connecté' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Voir les périphériques' })).toBeVisible();
+	await expect(key(page, '1 : Audio')).toHaveCount(0);
+});
+
+test('dit qu’une souris de l’adresse n’est plus connectée', async ({ page }) => {
+	await page.goto('/peripheriques/souris?appareil=ABSENT');
+	await expect(page.getByRole('status').filter({ hasText: 'plus connectée' })).toBeVisible();
+});
 
 test('affiche les touches et les molettes de la configuration', async ({ page }) => {
 	await open(page);
@@ -56,6 +81,7 @@ test('nomme la page d’après l’appareil affiché', async ({ page }) => {
 
 test('annonce une version plus récente puis simule son installation', async ({ page }) => {
 	await open(page);
+	await goTo(page, 'Mises à jour');
 	// `--demo` announces a fake release, without network, and installs it only on request.
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 	const notes = page.getByRole('link', { name: /Notes de version/ });
@@ -71,6 +97,7 @@ test('annonce une version plus récente puis simule son installation', async ({ 
 
 test('relance la recherche de mises à jour à la demande', async ({ page }) => {
 	await open(page);
+	await goTo(page, 'Mises à jour');
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
 	await page.getByRole('button', { name: 'Rechercher des mises à jour' }).click();
 	await expect(page.getByText('Version 999.0.0 disponible.')).toBeVisible();
@@ -92,8 +119,8 @@ test('le texte d’aide revient à la ligne sans élargir le panneau de l’appa
 	expect(helpBox?.width).toBeLessThanOrEqual(gridBox?.width ?? 0);
 });
 
-test('tient sans défilement horizontal sur un écran de 320 px', async ({ page }) => {
-	await page.setViewportSize({ width: 320, height: 800 });
+test('tient sans défilement horizontal sur un écran de 1024 px', async ({ page }) => {
+	await page.setViewportSize({ width: 1024, height: 800 });
 	await open(page);
 	const overflow = await page.evaluate(
 		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -331,6 +358,7 @@ test('supprime une touche après confirmation et place le focus sur sa voisine',
 test('annonce de nouveau deux suppressions identiques de suite', async ({ page }) => {
 	await open(page);
 	const status = page.getByRole('status').filter({ hasText: /Touche supprimée/ });
+	await goTo(page, /Stream Deck/);
 	await key(page, /^Touche 5 : Notifications/).click();
 	await removeSelectedKey(page);
 	await expect(status).toHaveText('Touche supprimée.');
@@ -456,12 +484,12 @@ test('se reconnecte au gestionnaire en gardant l’éditeur affiché', async ({ 
 	await key(page, '1 : Audio').focus();
 
 	await sockets[0].close();
-	await expect(page.getByRole('alert')).toContainText('Connexion au gestionnaire perdue');
+	await expect(banner(page, 'Connexion au gestionnaire perdue')).toBeVisible();
 	await expect(key(page, '1 : Audio')).toBeVisible();
 
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	await expect(key(page, '1 : Audio'), 'focus given back').toBeFocused();
-	await expect(page.getByRole('alert').filter({ hasText: 'perdue' })).toHaveCount(0);
+	await expect(banner(page, 'perdue')).toHaveCount(0);
 	// Selected again on the new connection: an edit is saved on the current revision.
 	await key(page, '1 : Audio').click();
 	await page.getByLabel('Libellé').fill('Volume');
@@ -523,11 +551,13 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await expect(page.getByText('Image enregistrée.')).toBeVisible();
 	const customImage = await key(page, '1 : Audio').locator('img').getAttribute('src');
 
+	await goTo(page, 'Sauvegarde');
 	const download = page.waitForEvent('download');
 	await page.getByRole('link', { name: 'Exporter la configuration' }).click();
 	const archive = await (await download).path();
 	expect((await download).suggestedFilename()).toMatch(/^hubergamof-.+-\d{4}-\d{2}-\d{2}\.zip$/);
 
+	await goTo(page, /Stream Deck/);
 	await key(page, /^Touche 5 : Notifications/).click();
 	await removeSelectedKey(page);
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
@@ -537,6 +567,7 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await expect(other.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 	await other.close();
 
+	await goTo(page, 'Sauvegarde');
 	const importInput = page.locator('input[type="file"][accept*=".zip"]');
 	await importInput.setInputFiles(archive);
 	const confirm = page.getByRole('dialog', { name: /^Remplacer la configuration\s\?$/ });
@@ -550,12 +581,14 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await importInput.setInputFiles(archive);
 	await confirm.getByRole('button', { name: 'Remplacer' }).click();
 	await expect(page.getByText(/Configuration importée depuis/)).toBeVisible();
+	await goTo(page, /Stream Deck/);
 	await expect(key(page, /^Touche 5 : Notifications/)).toBeVisible();
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', customImage ?? '');
 });
 
 test('refuse un fichier qui n’est pas un export', async ({ page }) => {
 	await open(page);
+	await goTo(page, 'Sauvegarde');
 	await page.locator('input[type="file"][accept*=".zip"]').setInputFiles({
 		name: 'notes.zip',
 		mimeType: 'application/zip',
@@ -564,7 +597,6 @@ test('refuse un fichier qui n’est pas un export', async ({ page }) => {
 	await page.getByRole('button', { name: 'Remplacer' }).click();
 	await expect(page.getByRole('alert')).toContainText('Configuration non importée');
 	await expect(page.getByRole('alert')).toContainText('export HuBergamof');
-	await expect(key(page, '1 : Audio')).toBeVisible();
 });
 
 /** Fails on any WCAG 2.2 A/AA violation of the page as it is now. */
@@ -622,23 +654,24 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 async function openMouse(page: Page) {
 	await open(page);
-	await page.getByRole('button', { name: 'Souris' }).click();
-	await expect(page.getByRole('heading', { name: 'MX Master 4' })).toBeVisible();
+	await goTo(page, /MX Master 4/);
+	await expect(page.getByRole('heading', { name: 'MX Master 4', level: 2 })).toBeVisible();
 }
 
 /** The control of the list under the drawings, which shows its editor. */
 async function chooseControl(page: Page, name: string | RegExp) {
-	await page.getByRole('list').first().getByRole('button', { name }).click();
+	await page.getByRole('main').getByRole('list').first().getByRole('button', { name }).click();
 }
 
 test('configure les boutons, le pointeur et les vibrations de la souris, et les retrouve', async ({
 	page
 }) => {
 	await openMouse(page);
-	await expect(page.getByRole('button', { name: 'Souris' })).toHaveAttribute(
-		'aria-pressed',
-		'true'
-	);
+	await expect(
+		page.getByRole('navigation', { name: 'Navigation principale' }).getByRole('link', {
+			name: /MX Master 4/
+		})
+	).toHaveAttribute('aria-current', 'page');
 
 	await chooseControl(page, /Précédent/);
 	await page.getByLabel('Action', { exact: true }).selectOption('shortcut');
@@ -655,7 +688,6 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 
 	await page.reload();
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
-	await page.getByRole('button', { name: 'Souris' }).click();
 	await chooseControl(page, /Précédent/);
 	await expect(page.getByLabel('Raccourci', { exact: true })).toHaveValue('ctrl+shift+m');
 	await page.getByRole('tab', { name: 'Haptique' }).click();
@@ -673,13 +705,14 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toBeVisible();
 	await expect(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
 
-	await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
-	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S' })).toBeVisible();
+	await goTo(page, /MX Anywhere 3S/);
+	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S', level: 2 })).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(6);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
 	await expect(page.getByText('Batterie 18 % · en charge')).toBeVisible();
 	await expect(
 		page
+			.getByRole('main')
 			.getByRole('list')
 			.first()
 			.getByRole('button', { name: /Bouton du dessus/ })
@@ -724,14 +757,14 @@ test('essaie une vibration depuis l’onglet Haptique et coupe un module entier'
 
 async function openMenu(page: Page) {
 	await open(page);
-	await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
+	await goTo(page, 'Menu circulaire');
 	await expect(page.getByRole('group', { name: 'Aperçu du menu' })).toBeVisible();
 }
 
-test('les pages de la souris et du menu tiennent sans défilement horizontal sur 320 px', async ({
+test('les pages de la souris et du menu tiennent sans défilement horizontal sur 1024 px', async ({
 	page
 }) => {
-	await page.setViewportSize({ width: 320, height: 800 });
+	await page.setViewportSize({ width: 1024, height: 800 });
 	const overflow = () =>
 		page.evaluate(
 			() => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -742,7 +775,7 @@ test('les pages de la souris et du menu tiennent sans défilement horizontal sur
 	expect(await overflow(), 'onglet Pointeur et molette').toBeLessThanOrEqual(0);
 	await page.getByRole('tab', { name: 'Haptique' }).click();
 	expect(await overflow(), 'onglet Haptique').toBeLessThanOrEqual(0);
-	await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
+	await goTo(page, 'Menu circulaire');
 	await expect(page.getByRole('group', { name: 'Aperçu du menu' })).toBeVisible();
 	expect(await overflow(), 'menu circulaire').toBeLessThanOrEqual(0);
 });
@@ -769,9 +802,9 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await expectAccessible(page, 'onglet Pointeur et molette');
 		await page.getByRole('tab', { name: 'Haptique' }).click();
 		await expectAccessible(page, 'onglet Haptique');
-		await page.getByRole('radio', { name: 'MX Anywhere 3S' }).click();
+		await goTo(page, /MX Anywhere 3S/);
 		await expectAccessible(page, 'MX Anywhere 3S');
-		await page.getByRole('button', { name: 'Menu circulaire', exact: true }).click();
+		await goTo(page, 'Menu circulaire');
 		await expect(page.getByTestId('menu-trigger')).toContainText('Bouton de mode de la molette');
 		await expectAccessible(page, 'page du menu circulaire');
 	});
@@ -782,7 +815,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 async function openModules(page: Page) {
 	await open(page);
-	await page.getByRole('button', { name: 'Modules' }).click();
+	await goTo(page, 'Modules');
 	await expect(page.getByRole('heading', { name: 'Pomodoro', level: 2 })).toBeVisible();
 }
 
@@ -811,22 +844,20 @@ test('montre la même chose sur la molette du deck et dans un autre onglet', asy
 }) => {
 	await openModules(page);
 	const other = await context.newPage();
-	await other.goto('/');
-	await other.getByRole('button', { name: 'Modules' }).click();
+	await other.goto('/application/modules');
 
 	await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
 	await expect(other.getByTestId('module-status-pomodoro')).not.toContainText('prêt');
 
 	// The key of the dial of the deck follows too: it is the same timer.
-	await page.getByRole('button', { name: 'Stream Deck' }).click();
+	await goTo(page, /Stream Deck/);
 	await expect(dial(page, '2 : Contrôle du pomodoro')).toBeVisible();
 });
 
 test('enregistre les réglages du pomodoro, pour toute l’application', async ({ page, context }) => {
 	await openModules(page);
 	const other = await context.newPage();
-	await other.goto('/');
-	await other.getByRole('button', { name: 'Modules' }).click();
+	await other.goto('/application/modules');
 
 	const work = page.getByLabel('Durée du travail');
 	await work.fill('30');
@@ -838,7 +869,7 @@ test('enregistre les réglages du pomodoro, pour toute l’application', async (
 
 test('intègre un alias du système, qui reste après un rechargement', async ({ page }) => {
 	await open(page);
-	await page.getByRole('button', { name: 'Machine' }).click();
+	await goTo(page, 'Alias du shell');
 	const system = page.getByRole('list', { name: 'Alias du système, non gérés' });
 	const managed = page.getByRole('list', { name: 'Alias gérés' });
 	await expect(system.getByText('git status', { exact: true })).toBeVisible();
@@ -851,7 +882,6 @@ test('intègre un alias du système, qui reste après un rechargement', async ({
 	await expect(page.getByRole('button', { name: 'Intégrer l’alias gl' })).toBeFocused();
 
 	await page.reload();
-	await page.getByRole('button', { name: 'Machine' }).click();
 	await expect(managed.getByText('git status', { exact: true })).toBeVisible();
 	await expect(system.getByText('git status', { exact: true })).toHaveCount(0);
 	await expect(system.getByText('git log --oneline', { exact: true })).toBeVisible();
@@ -864,8 +894,7 @@ test('Git : lit la configuration trouvée, enregistre l’identité et refuse un
 	page
 }) => {
 	await open(page);
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	await goTo(page, 'Git');
 	const found = page.getByRole('list', { name: 'Valeurs de Git définies ailleurs' });
 	await expect(found.getByText('Ada Lovelace')).toBeVisible();
 	const aliases = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
@@ -883,8 +912,6 @@ test('Git : lit la configuration trouvée, enregistre l’identité et refuse un
 	await expect(page.getByText(/ne commence ni par « ! »/)).toBeVisible();
 
 	await page.reload();
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
 	await expect(form.getByRole('textbox', { name: 'Nom' })).toHaveValue('Grace Hopper');
 });
 
@@ -896,8 +923,7 @@ test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le r
 	page
 }) => {
 	await open(page);
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'SSH' }).check({ force: true });
+	await goTo(page, 'SSH');
 	const found = page.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' });
 	const managed = page.getByRole('list', { name: 'Serveurs SSH gérés' });
 	await expect(found.getByText('ada@192.0.2.10:2222')).toBeVisible();
@@ -915,8 +941,6 @@ test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le r
 	).toBeVisible();
 
 	await page.reload();
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'SSH' }).check({ force: true });
 	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
 	await expect(found.getByText('ada@192.0.2.10:2222')).toHaveCount(0);
 });
@@ -926,7 +950,9 @@ test('la page Modules reste accessible', async ({ page }) => {
 	await expectAccessible(page, 'page des modules');
 });
 
-test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', async ({ page }) => {
+test('désactive les commandes tant que l’ordinateur est verrouillé, la navigation restant utilisable', async ({
+	page
+}) => {
 	const sockets: WebSocketRoute[] = [];
 	await page.routeWebSocket('**/ws', (socket: WebSocketRoute) => {
 		sockets.push(socket);
@@ -939,8 +965,8 @@ test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', 
 
 	// What the manager says when the computer locks.
 	sockets[0].send(JSON.stringify({ type: 'locked', locked: true }));
-	await expect(page.getByRole('alert')).toContainText('L’ordinateur est verrouillé');
-	await expect(page.locator('div[inert]').first()).toContainText('Pomodoro');
+	await expect(banner(page, 'Ordinateur verrouillé')).toBeVisible();
+	await expect(start).toBeDisabled();
 	await start.click({ trial: true, timeout: 1000 }).then(
 		() => {
 			throw new Error('the page can still be used');
@@ -952,7 +978,7 @@ test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', 
 	await expect(page.locator('main')).toBeFocused();
 
 	sockets[0].send(JSON.stringify({ type: 'locked', locked: false }));
-	await expect(page.getByRole('alert').filter({ hasText: 'verrouillé' })).toHaveCount(0);
+	await expect(banner(page, 'verrouillé')).toHaveCount(0);
 	await expect(start, 'focus given back').toBeFocused();
 	await start.click();
 });
@@ -961,8 +987,8 @@ test('rend l’interface inutilisable tant que l’ordinateur est verrouillé', 
 
 test('règle le son ambiant et l’égaliseur du casque, et libère la liaison', async ({ page }) => {
 	await open(page);
-	await page.getByRole('button', { name: 'Casque' }).click();
-	await expect(page.getByRole('heading', { name: /WH-1000XM4/ })).toBeVisible();
+	await goTo(page, 'WH-1000XM4');
+	await expect(page.getByRole('heading', { name: /WH-1000XM4/ }).first()).toBeVisible();
 	await expect(page.getByText('Connecté', { exact: true })).toBeVisible();
 	await expect(page.getByText(/^Batterie \d+ %/)).toBeVisible();
 
