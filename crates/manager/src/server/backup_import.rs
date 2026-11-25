@@ -46,7 +46,13 @@ pub(super) async fn apply(
         if !sections.contains(section) {
             continue;
         }
-        let outcome = apply_section(context, backup, section, document).await;
+        // Checked before each section: the computer may lock during an import,
+        // and what is left is not written then.
+        let outcome = if *context.screen_lock.watch().borrow() {
+            refused(ErrorCode::Locked, "the computer is locked")
+        } else {
+            apply_section(context, backup, section, document).await
+        };
         outcomes.push(SectionOutcome {
             section: section.id(),
             outcome,

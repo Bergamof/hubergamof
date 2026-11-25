@@ -45,6 +45,7 @@ pub(super) fn routes() -> Router<AppState> {
             post(import).layer(DefaultBodyLimit::max(MAX_ARCHIVE_BYTES)),
         )
         .route("/api/backup/snapshots", get(snapshots))
+        .route("/api/backup/snapshots/{id}/preview", get(preview_restore))
         .route("/api/backup/snapshots/{id}/restore", post(restore))
 }
 
@@ -73,6 +74,14 @@ impl Selection {
                 ));
             }
         }
+        // An empty selection is not "everything": it would take a snapshot for
+        // nothing, and three of them push out the state before the first import.
+        if sections.is_empty() {
+            return Err(Failure::new(
+                ErrorCode::InvalidInput,
+                "the selection names no section",
+            ));
+        }
         Ok(Some(sections))
     }
 }
@@ -92,6 +101,8 @@ async fn export(
     ensure_unlocked(&state)?;
     let selection = selection.parse()?;
     let _slot = transfer_slot(&state).await?;
+    // The computer may have been locked while the request waited its turn.
+    ensure_unlocked(&state)?;
     let store = state.context.store.clone();
     let archive = blocking(move || {
         let collected = store.collect_backup(APP_VERSION, now_seconds())?;
@@ -121,6 +132,7 @@ async fn read_upload(body: Bytes) -> Result<Backup, Failure> {
 async fn preview(State(state): State<AppState>, body: Bytes) -> Result<Response, Failure> {
     ensure_unlocked(&state)?;
     let _slot = transfer_slot(&state).await?;
+    ensure_unlocked(&state)?;
     let backup = read_upload(body).await?;
     let store = state.context.store.clone();
     let current = blocking(move || Ok(store.collect_backup(APP_VERSION, now_seconds())?))
@@ -141,6 +153,7 @@ async fn import(
     ensure_unlocked(&state)?;
     let selection = selection.parse()?;
     let _slot = transfer_slot(&state).await?;
+    ensure_unlocked(&state)?;
     let backup = read_upload(body).await?;
     let sections = match selection {
         Some(sections) => {
@@ -177,6 +190,27 @@ async fn snapshots(State(state): State<AppState>) -> Result<Response, Failure> {
     Ok(json(&list))
 }
 
+/// `GET /api/backup/snapshots/{id}/preview`: what restoring a snapshot would
+/// do, with the names it would take over, shown before it is restored.
+async fn preview_restore(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Response, Failure> {
+    ensure_unlocked(&state)?;
+    let _slot = transfer_slot(&state).await?;
+    ensure_unlocked(&state)?;
+    let store = state.context.store.clone();
+    let (snapshot, current) = blocking(move || {
+        let snapshot = store.read_snapshot(&id)?;
+        let current = store.collect_backup(APP_VERSION, now_seconds())?;
+        Ok((snapshot, current.backup.documents))
+    })
+    .await?;
+    Ok(json(
+        &backup_import::describe(&state.context, &snapshot.backup, &current).await,
+    ))
+}
+
 /// `POST /api/backup/snapshots/{id}/restore`: puts a snapshot back (after
 /// taking one of what is there, so that the restore can be undone too).
 async fn restore(
@@ -185,6 +219,7 @@ async fn restore(
 ) -> Result<Response, Failure> {
     ensure_unlocked(&state)?;
     let _slot = transfer_slot(&state).await?;
+    ensure_unlocked(&state)?;
     let store = state.context.store.clone();
     // Read first: taking the new snapshot may forget the oldest.
     let snapshot = blocking(move || Ok(store.read_snapshot(&id)?)).await?;

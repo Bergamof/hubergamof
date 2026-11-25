@@ -14,7 +14,7 @@ use hubergamof_protocol::SnapshotInfo;
 use super::archive::{ArchiveError, MAX_ARCHIVE_BYTES};
 use super::backup::{Backup, read_backup, write_backup};
 use super::backup_store::{RawFile, read_regular_file};
-use super::files::{io_error, write_bytes_atomically};
+use super::files::{io_error, restrict_existing_dir, write_bytes_atomically};
 use super::{ConfigStore, ConfigStoreError};
 
 /// How many snapshots are kept: the latest.
@@ -119,6 +119,8 @@ impl ConfigStore {
             return Err(ArchiveError::TooLarge.into());
         }
         let _guard = self.lock();
+        // A folder that existed before is not left more open than it should be.
+        restrict_existing_dir(&self.snapshots_dir())?;
         let millis = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
         let taken = self.snapshot_ids()?;
         let mut id = SnapshotId { millis, number: 0 };

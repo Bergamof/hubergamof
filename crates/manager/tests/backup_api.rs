@@ -479,6 +479,11 @@ async fn nothing_is_backed_up_or_restored_while_the_computer_is_locked() {
     };
     locked(api.get("/api/backup/export").await).await;
     locked(api.get("/api/backup/snapshots").await).await;
+    locked(
+        api.get("/api/backup/snapshots/1700000000000-0/preview")
+            .await,
+    )
+    .await;
     for path in [
         "/api/backup/preview",
         "/api/backup/import",
@@ -495,5 +500,57 @@ async fn an_archive_over_the_limit_is_refused() {
     let big = vec![0_u8; hubergamof_manager::config_store::MAX_ARCHIVE_BYTES + 1];
     let response = import(&api, "", big).await;
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn an_empty_selection_is_refused_and_takes_no_snapshot() {
+    let api = Api::start().await;
+    let archive = export(&api, "").await;
+    for query in ["?sections=", "?sections=,,"] {
+        let (status, code) = api_error(import(&api, query, archive.clone()).await).await;
+        assert_eq!(
+            (status, code),
+            (StatusCode::BAD_REQUEST, ErrorCode::InvalidInput),
+            "{query}"
+        );
+        let response = api.get(&format!("/api/backup/export{query}")).await;
+        assert_eq!(
+            api_error(response).await.0,
+            StatusCode::BAD_REQUEST,
+            "{query}"
+        );
+    }
+    assert_eq!(snapshots(&api).await.len(), 0);
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn a_restore_can_be_previewed_before_it_is_made() {
+    let api = Api::start().await;
+    let archive = export(&api, "").await;
+    let report: ImportReport = json(import(&api, "", archive).await).await;
+    set_brightness(&api, FIRST, 9).await;
+    let preview: BackupPreview = json(
+        api.get(&format!(
+            "/api/backup/snapshots/{}/preview",
+            report.snapshot
+        ))
+        .await,
+    )
+    .await;
+    let first = preview
+        .sections
+        .iter()
+        .find(|s| s.section == format!("devices/{FIRST}"))
+        .unwrap();
+    assert_eq!(first.change, SectionChange::Replaced);
+    // Nothing was written, and no snapshot was taken for a preview.
+    assert_eq!(brightness(&api, FIRST).await, 9);
+    assert_eq!(snapshots(&api).await.len(), 1);
+    let response = api
+        .get("/api/backup/snapshots/1700000000000-0/preview")
+        .await;
+    assert_eq!(api_error(response).await.0, StatusCode::BAD_REQUEST);
     api.stop().await;
 }
