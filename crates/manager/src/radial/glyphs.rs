@@ -39,6 +39,12 @@ fn shapes(glyph: RadialGlyph) -> &'static str {
         RadialGlyph::Speaker => {
             r#"<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6"/>"#
         }
+        RadialGlyph::Headphones => {
+            r#"<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/>"#
+        }
+        RadialGlyph::Ear => {
+            r#"<path d="M7 10a5 5 0 0 1 10 0c0 3-3 3-3 6a2.5 2.5 0 0 1-5 0M10 10a2 2 0 0 1 4 0"/>"#
+        }
         RadialGlyph::Play => r#"<path d="M8 5l11 7-11 7z"/>"#,
         RadialGlyph::Pause => r#"<path d="M8 5v14M16 5v14"/>"#,
         RadialGlyph::Skip => r#"<path d="M5 5l9 7-9 7zM18 5v14"/>"#,
@@ -80,7 +86,7 @@ pub fn svg(
 mod tests {
     use super::*;
 
-    const ALL: [RadialGlyph; 12] = [
+    const ALL: [RadialGlyph; 14] = [
         RadialGlyph::Microphone,
         RadialGlyph::Camera,
         RadialGlyph::HangUp,
@@ -89,6 +95,8 @@ mod tests {
         RadialGlyph::People,
         RadialGlyph::ReturnToCall,
         RadialGlyph::Speaker,
+        RadialGlyph::Headphones,
+        RadialGlyph::Ear,
         RadialGlyph::Play,
         RadialGlyph::Pause,
         RadialGlyph::Skip,
