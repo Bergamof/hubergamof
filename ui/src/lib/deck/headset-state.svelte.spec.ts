@@ -107,4 +107,56 @@ describe('HeadsetState', () => {
 		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
 		expect(connection.sent).toEqual([{ type: 'selectHeadset', address: ADDRESS }]);
 	});
+
+	it('keeps the last battery it was told after the page is left, until it is told another', () => {
+		const { connection, headsets } = setup();
+		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
+		expect(headsets.batteryOf(ADDRESS)).toBeUndefined();
+		headsets.enter();
+		const battery = { percent: 61, charging: false };
+		connection.receive({
+			type: 'headsetState',
+			address: ADDRESS,
+			state: status('connected', { battery })
+		});
+		headsets.leave();
+		expect(headsets.status).toBeUndefined();
+		expect(headsets.batteryOf(ADDRESS)).toEqual(battery);
+		expect(headsets.batteryOf(OTHER)).toBeUndefined();
+		// A state that does not say the battery does not erase it.
+		headsets.enter();
+		connection.receive({ type: 'headsetState', address: ADDRESS, state: status('connecting') });
+		expect(headsets.batteryOf(ADDRESS)).toEqual(battery);
+	});
+
+	it('opens the link to read the battery, and lets the headphones go once it is read', () => {
+		const { connection, headsets } = setup();
+		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
+		headsets.readBattery();
+		expect(connection.sent).toEqual([{ type: 'selectHeadset', address: ADDRESS }]);
+		// The link opens, the battery is not read yet: still followed.
+		connection.receive({ type: 'headsetState', address: ADDRESS, state: status('connecting') });
+		expect(headsets.status?.link).toBe('connecting');
+		const battery = { percent: 40, charging: true };
+		connection.receive({
+			type: 'headsetState',
+			address: ADDRESS,
+			state: status('connected', { battery })
+		});
+		expect(headsets.batteryOf(ADDRESS)).toEqual(battery);
+		// No longer followed: a new list selects nothing.
+		connection.sent.length = 0;
+		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
+		expect(connection.sent).toEqual([]);
+	});
+
+	it('stops waiting for the battery when the link could not be opened', () => {
+		const { connection, headsets } = setup();
+		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
+		headsets.readBattery();
+		expect(headsets.reading).toBe(true);
+		connection.receive({ type: 'headsetState', address: ADDRESS, state: status('cut') });
+		expect(headsets.reading).toBe(false);
+		expect(headsets.batteryOf(ADDRESS)).toBeUndefined();
+	});
 });

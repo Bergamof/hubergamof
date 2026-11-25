@@ -967,6 +967,7 @@ fn register_simulated_mice(hub: &MouseHub, store: &ConfigStore) -> Result<Vec<Mo
                     model,
                     display_name: model.display_name().to_owned(),
                     capabilities: model.capabilities(),
+                    battery: None,
                 },
                 config,
             );
@@ -1559,8 +1560,7 @@ mod tests {
         config.pointer.dpi = 800;
         let saved = hub.update_mouse(serial, config).unwrap();
         assert_eq!(saved.pointer.dpi, 800);
-        let mut status = hub.subscribe_status(serial).unwrap();
-        assert!(status.borrow_and_update().battery.is_some());
+        assert!(hub.mice().iter().all(|mouse| mouse.battery.is_some()));
         drop(listed);
         assert_eq!(hub.mice().len(), 0);
         // The next run of the demo finds what the interface saved.

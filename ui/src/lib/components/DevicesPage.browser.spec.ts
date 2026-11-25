@@ -34,4 +34,20 @@ describe('DevicesPage', () => {
 		await expect.element(page.getByRole('link', { name: /MX Master 4/ })).toBeVisible();
 		await expect.element(page.getByText(/^1 connecté$/)).toBeVisible();
 	});
+
+	it('shows the battery of each mouse, and « Non lu » for headphones not read yet', async () => {
+		const { connection, deck } = manager();
+		connection.receive({
+			type: 'mice',
+			mice: [
+				{ serial: 'M1', displayName: 'MX Master 4', battery: { percent: 78, charging: false } },
+				{ serial: 'M2', displayName: 'MX Anywhere 3S', battery: { percent: 9, charging: true } }
+			] as MouseInfo[]
+		} as never);
+		connection.receive({ type: 'headsets', headsets: [{ address: 'AA', name: 'WH-1000XM4' }] });
+		await render(ManagerHarness, { deck, page: DevicesPage });
+		await expect.element(page.getByText(/78\s*%/)).toBeVisible();
+		await expect.element(page.getByText(/9\s*%\s*· en charge/)).toBeVisible();
+		await expect.element(page.getByText(/Non lu/)).toBeVisible();
+	});
 });

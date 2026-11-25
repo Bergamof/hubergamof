@@ -31,11 +31,14 @@ function view(overrides: Partial<ApplicationModuleView> = {}): ApplicationModule
 	};
 }
 
-async function renderPanel(modules: ApplicationModuleView[] = [view()]) {
+async function renderPanel(
+	modules: ApplicationModuleView[] = [view()],
+	catalog: CatalogModule[] = [POMODORO_WITH_SETTINGS]
+) {
 	const connection = new FakeConnection();
 	const deck = new DeckState(connection, { load: () => null, save: () => undefined });
 	deck.listen();
-	connection.receive({ type: 'moduleCatalog', modules: [POMODORO_WITH_SETTINGS] });
+	connection.receive({ type: 'moduleCatalog', modules: catalog });
 	connection.receive({ type: 'applicationModules', modules });
 	await render(ModuleDetail, { deck, api: new ManagerApi(), view: modules[0] });
 	return { connection, deck };
@@ -67,7 +70,7 @@ describe('ModuleDetail', () => {
 
 	it('offers the actions of the module and sends the one that is chosen', async () => {
 		const { connection } = await renderPanel();
-		const actions = page.getByRole('list', { name: 'Actions de Pomodoro' });
+		const actions = page.getByRole('group', { name: 'Actions de Pomodoro' });
 		await expect
 			.element(actions.getByRole('button', { name: 'Démarrer ou mettre en pause' }))
 			.toBeVisible();
@@ -95,5 +98,91 @@ describe('ModuleDetail', () => {
 		await renderPanel([view({ status: null as unknown as undefined })]);
 		expect(document.querySelector('[data-testid="module-status-pomodoro"]')).toBeNull();
 		await expect.element(page.getByRole('heading', { name: 'Pomodoro' })).toBeVisible();
+	});
+
+	describe('Teams, whose actions follow the call', () => {
+		const action = (id: string, name: string) => ({ id, name, description: `${name}.` });
+		const TEAMS: CatalogModule = {
+			...POMODORO_WITH_SETTINGS,
+			kind: 'teams',
+			name: 'Teams',
+			description: '',
+			settings: [],
+			defaultSettings: {},
+			radialActions: [
+				action('mute', 'Micro'),
+				action('camera', 'Caméra'),
+				action('hang-up', 'Raccrocher'),
+				action('return-to-call', 'Revenir à l’appel'),
+				action('conversations', 'Conversations'),
+				action('teams', 'Équipes'),
+				action('activity', 'Activité')
+			]
+		};
+		const teams = (availableActions: string[] | null) =>
+			({ kind: 'teams', status: null, settings: {}, availableActions }) as ApplicationModuleView;
+
+		it('offers the controls of the call during a call, apart from the panels, hang up as the one that ends', async () => {
+			await renderPanel(
+				[
+					teams([
+						'mute',
+						'camera',
+						'hang-up',
+						'return-to-call',
+						'conversations',
+						'teams',
+						'activity'
+					])
+				],
+				[TEAMS]
+			);
+			await expect.element(page.getByRole('heading', { name: 'Appel en cours' })).toBeVisible();
+			await expect.element(page.getByRole('heading', { name: 'Ouvrir dans Teams' })).toBeVisible();
+			const hangUp = page.getByRole('button', { name: 'Raccrocher' });
+			await expect.element(hangUp).toBeVisible();
+			expect(hangUp.element().className).toContain('danger-button');
+			expect(page.getByRole('button', { name: 'Micro' }).element().className).toContain(
+				'primary-button'
+			);
+		});
+
+		it('offers only the panels when Teams is open and nobody calls', async () => {
+			await renderPanel([teams(['conversations', 'teams', 'activity'])], [TEAMS]);
+			await expect.element(page.getByRole('button', { name: 'Conversations' })).toBeVisible();
+			await expect
+				.element(page.getByRole('button', { name: 'Raccrocher' }))
+				.not.toBeInTheDocument();
+			await expect.element(page.getByRole('button', { name: 'Micro' })).not.toBeInTheDocument();
+			await expect
+				.element(page.getByRole('heading', { name: 'Appel en cours' }))
+				.not.toBeInTheDocument();
+		});
+
+		it('gives the focus to the title when the action that had it goes away', async () => {
+			const connection = new FakeConnection();
+			const deck = new DeckState(connection, { load: () => null, save: () => undefined });
+			deck.listen();
+			connection.receive({ type: 'moduleCatalog', modules: [TEAMS] });
+			const inCall = teams(['mute', 'hang-up', 'conversations']);
+			connection.receive({ type: 'applicationModules', modules: [inCall] });
+			const { rerender } = await render(ModuleDetail, {
+				deck,
+				api: new ManagerApi(),
+				view: inCall
+			});
+			const hangUp = page.getByRole('button', { name: 'Raccrocher' });
+			hangUp.element().focus();
+			await expect.element(hangUp).toHaveFocus();
+			// The call is over: its controls go, and the focus goes to the title, not to the page.
+			await rerender({ view: teams(['conversations']) });
+			await expect.element(page.getByRole('heading', { name: 'Teams', level: 2 })).toHaveFocus();
+		});
+
+		it('says why there is nothing to do when Teams is not connected', async () => {
+			await renderPanel([teams([])], [TEAMS]);
+			await expect.element(page.getByText(/Aucune action pour l’instant/)).toBeVisible();
+			await expect.element(page.getByRole('button')).not.toBeInTheDocument();
+		});
 	});
 });

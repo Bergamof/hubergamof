@@ -77,33 +77,18 @@ describe('MouseEditor', () => {
 			.toHaveAttribute('aria-selected', 'true');
 	});
 
-	it('shows the battery once the manager has read it, and when it is low or charging', async () => {
-		const { connection } = await renderEditor();
-		expect(document.body.textContent).not.toContain('Batterie');
-		connection.receive({
-			type: 'mouseStatus',
-			serial: 'mx-1',
-			problems: [],
-			battery: { percent: 76, charging: false }
-		});
-		await expect.element(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
-		expect(page.getByText('Batterie 76 %').element().className).not.toContain('text-warning');
-		connection.receive({
-			type: 'mouseStatus',
-			serial: 'mx-1',
-			problems: [],
-			battery: { percent: 12, charging: false }
-		});
-		await expect.element(page.getByText('Batterie 12 % · faible')).toBeVisible();
-		expect(page.getByText('Batterie 12 % · faible').element().className).toContain('text-warning');
-		connection.receive({
-			type: 'mouseStatus',
-			serial: 'mx-1',
-			problems: [],
-			battery: { percent: 12, charging: true }
-		});
-		await expect.element(page.getByText('Batterie 12 % · en charge')).toBeVisible();
-		expect(page.getByText(/^Batterie 12 %/).element().className).not.toContain('text-warning');
+	it('shows no battery while the manager has not read it', async () => {
+		await renderEditor();
+		expect(document.body.textContent).not.toContain('%');
+	});
+
+	it.each([
+		[{ percent: 76, charging: false }, /76\s*%/],
+		[{ percent: 12, charging: false }, /12\s*%\s*· faible/],
+		[{ percent: 12, charging: true }, /12\s*%\s*· en charge/]
+	])('shows the battery the mouse said, low or charging (%j)', async (battery, shown) => {
+		await renderEditor({ ...mouseInfo(), battery });
+		await expect.element(page.getByText(shown)).toBeVisible();
 	});
 
 	it('shows the pointer settings in their tab', async () => {

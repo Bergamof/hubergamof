@@ -44,9 +44,9 @@ describe('HeadsetPage', () => {
 
 	it('shows the battery and warns when it is low', async () => {
 		await renderPage(connectedState());
-		await expect.element(page.getByText('Batterie 80 %')).toBeVisible();
+		await expect.element(page.getByText(/80\s*%/)).toBeVisible();
 		await renderPage(connectedState({ battery: { percent: 12, charging: false } }));
-		await expect.element(page.getByText('Batterie 12 %, faible')).toBeVisible();
+		await expect.element(page.getByText(/12\s*%\s*· faible/)).toBeVisible();
 	});
 
 	it('changes the ambient mode and level, and the voice setting', async () => {

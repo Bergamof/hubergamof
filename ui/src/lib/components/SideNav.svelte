@@ -7,6 +7,8 @@ machine and the application. The page shown is marked with `aria-current`.
 	import { resolve } from '$app/paths';
 	import type { ResolvedPathname } from '$app/types';
 	import { PATHS, deviceHref, type NavDevice } from '#lib/deck/nav-model.js';
+	import type { Snippet } from 'svelte';
+	import BatteryBadge from './BatteryBadge.svelte';
 	import BrandWordmark from './BrandWordmark.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 
@@ -16,22 +18,13 @@ machine and the application. The page shown is marked with `aria-current`.
 		/** Serial of the Stream Deck and of the mouse the pages follow. */
 		selectedDeck: string | undefined;
 		selectedMouse: string | undefined;
-		/** Battery of the mouse followed, once read. */
-		mouseBattery: number | undefined;
 		updateAvailable: boolean;
 		/** Called after a link is followed (closes a drawer, for instance). */
 		onnavigate?: () => void;
 	}
 
-	let {
-		pathname,
-		devices,
-		selectedDeck,
-		selectedMouse,
-		mouseBattery,
-		updateAvailable,
-		onnavigate
-	}: Props = $props();
+	let { pathname, devices, selectedDeck, selectedMouse, updateAvailable, onnavigate }: Props =
+		$props();
 
 	const DEVICE_ICON: Record<NavDevice['kind'], IconName> = {
 		deck: 'deck',
@@ -68,12 +61,16 @@ machine and the application. The page shown is marked with `aria-current`.
 	const GROUP_TITLE = 'px-2 pb-1 text-xs font-semibold tracking-wider text-muted uppercase';
 </script>
 
+{#snippet available()}
+	<span class="text-muted">Disponible</span>
+{/snippet}
+
 {#snippet item(
 	href: ResolvedPathname,
 	label: string,
 	icon: IconName,
 	current: boolean,
-	trailing?: string
+	trailing?: Snippet
 )}
 	<a
 		{href}
@@ -85,7 +82,7 @@ machine and the application. The page shown is marked with `aria-current`.
 		<Icon name={icon} />
 		<span class="min-w-0 flex-1 truncate">{label}</span>
 		{#if trailing}
-			<span class="text-xs text-muted tabular-nums">{trailing}</span>
+			<span class="text-xs">{@render trailing()}</span>
 		{/if}
 	</a>
 {/snippet}
@@ -105,15 +102,20 @@ machine and the application. The page shown is marked with `aria-current`.
 		<h2 id="nav-devices" class={GROUP_TITLE}>Périphériques</h2>
 		<ul class="flex flex-col gap-0.5">
 			{#each devices as device (device.kind + device.id)}
+				<!-- The headphones are « Non lu » until the link to them has been opened. -->
+				{#snippet batteryOf()}
+					<BatteryBadge
+						battery={device.battery}
+						unknown={device.kind === 'headset' ? 'Non lu' : undefined}
+					/>
+				{/snippet}
 				<li>
 					{@render item(
 						deviceHref(device),
 						device.label,
 						DEVICE_ICON[device.kind],
 						deviceCurrent(device),
-						device.kind === 'mouse' && device.id === selectedMouse && mouseBattery !== undefined
-							? `${mouseBattery} %`
-							: undefined
+						device.kind === 'deck' ? undefined : batteryOf
 					)}
 				</li>
 			{:else}
@@ -143,7 +145,7 @@ machine and the application. The page shown is marked with `aria-current`.
 						entry.label,
 						entry.icon,
 						here === entry.href,
-						entry.href === PATHS.updates && updateAvailable ? 'Disponible' : undefined
+						entry.href === PATHS.updates && updateAvailable ? available : undefined
 					)}
 				</li>
 			{/each}

@@ -5,9 +5,16 @@ and its settings. It runs in the manager, with or without a device: the keys of 
 the same. Settings are saved as they are edited, like those of a key.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { ManagerApi } from '#lib/api/manager-api.js';
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
 	import { moduleName } from '#lib/deck/display.js';
+	import {
+		availableActions,
+		groupActions,
+		isEnding,
+		noActionText
+	} from '#lib/deck/module-actions.js';
 	import type { ApplicationModuleView, ModuleInstance } from '#lib/generated/index.js';
 	import InstanceEditor from './InstanceEditor.svelte';
 
@@ -22,6 +29,23 @@ the same. Settings are saved as they are edited, like those of a key.
 	const uid = $props.id();
 	const module = $derived(deck.moduleOf(view.kind));
 	const name = $derived(moduleName(view.kind, module));
+	/** The actions that make sense now (the call controls of Teams only exist during a call), grouped. */
+	const actions = $derived(availableActions(module, view));
+	const groups = $derived(groupActions(view.kind, actions));
+
+	let section: HTMLElement | undefined = $state();
+	let heading: HTMLHeadingElement | undefined = $state();
+
+	// An action that goes away (hang up, then the call is over) takes the focus with it: the title of
+	// the module gets it, rather than the body of the page.
+	$effect.pre(() => {
+		void actions;
+		const focused = document.activeElement;
+		if (!(focused instanceof HTMLElement) || !section?.contains(focused)) return;
+		void tick().then(() => {
+			if (!focused.isConnected) heading?.focus();
+		});
+	});
 
 	/** The module as an instance, which is what the settings form edits. */
 	const instance = $derived<ModuleInstance>({
@@ -53,10 +77,17 @@ the same. Settings are saved as they are edited, like those of a key.
 	}
 </script>
 
-<section aria-labelledby="{uid}-title" class="flex flex-col gap-4 card">
+<section bind:this={section} aria-labelledby="{uid}-title" class="flex flex-col gap-4 card">
 	<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
 		<div class="min-w-0">
-			<h2 id="{uid}-title" class="font-display text-xl font-semibold">{name}</h2>
+			<h2
+				bind:this={heading}
+				id="{uid}-title"
+				tabindex="-1"
+				class="font-display text-xl font-semibold"
+			>
+				{name}
+			</h2>
 			{#if module?.description}
 				<p class="text-muted">{module.description}</p>
 			{/if}
@@ -81,22 +112,42 @@ the same. Settings are saved as they are edited, like those of a key.
 	<p role="status" class="sr-only">{step}</p>
 
 	{#if module && module.radialActions.length > 0}
-		<ul class="flex flex-wrap gap-2" aria-label="Actions de {name}">
-			{#each module.radialActions as action, index (action.id)}
-				<li>
-					<button
-						type="button"
-						class={['focus-ring', index === 0 ? 'primary-button' : 'secondary-button']}
-						title={action.description}
-						aria-describedby="{uid}-{action.id}"
-						onclick={() => run(action.id)}
-					>
-						{action.name}
-					</button>
-					<span id="{uid}-{action.id}" class="sr-only">{action.description}</span>
-				</li>
+		<div class="flex flex-col gap-3" role="group" aria-label="Actions de {name}">
+			{#each groups as group, groupIndex (group.label ?? '')}
+				<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+					{#if group.label}
+						<h3 class="w-full text-sm font-semibold text-muted">{group.label}</h3>
+					{/if}
+					<ul class="flex flex-wrap gap-2">
+						{#each group.actions as action, index (action.id)}
+							<li>
+								<button
+									type="button"
+									class={[
+										'focus-ring',
+										isEnding(action)
+											? 'danger-button'
+											: groupIndex === 0 && index === 0
+												? 'primary-button'
+												: 'secondary-button'
+									]}
+									title={action.description}
+									aria-describedby="{uid}-{action.id}"
+									onclick={() => run(action.id)}
+								>
+									{action.name}
+								</button>
+								<span id="{uid}-{action.id}" class="sr-only">{action.description}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
 			{/each}
-		</ul>
+			<!-- Always there, so that what it says when the actions go away is announced. -->
+			<p role="status" class="text-sm text-muted empty:hidden">
+				{groups.length === 0 ? noActionText(view.kind) : ''}
+			</p>
+		</div>
 	{/if}
 
 	{#if module && module.settings.length > 0}

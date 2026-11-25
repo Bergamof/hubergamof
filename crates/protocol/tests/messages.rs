@@ -3,12 +3,12 @@
 #![cfg(test)]
 
 use hubergamof_protocol::{
-    AdvancedSetting, AmbientMode, AmbientSound, CatalogModule, ChoiceOption, ClientMessage,
-    DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DeviceTheme, DialAssignment,
-    DialFunctionDescriptor, Equalizer, EqualizerChange, EqualizerPreset, ErrorCode, GitConfig,
-    GitCredentialHelper, GitSystemEntry, HapticEventDescriptor, HapticWaveform, HeadsetBattery,
-    HeadsetInfo, HeadsetLink, HeadsetState, ImageSize, InstallSupport, KeyState, KeyView,
-    LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseBattery, MouseProblem,
+    AdvancedSetting, AmbientMode, AmbientSound, ApplicationModuleView, CatalogModule, ChoiceOption,
+    ClientMessage, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, DeviceTheme,
+    DialAssignment, DialFunctionDescriptor, Equalizer, EqualizerChange, EqualizerPreset, ErrorCode,
+    GitConfig, GitCredentialHelper, GitSystemEntry, HapticEventDescriptor, HapticWaveform,
+    HeadsetBattery, HeadsetInfo, HeadsetLink, HeadsetState, ImageSize, InstallSupport, KeyState,
+    KeyView, LiveState, ModuleCapabilities, ModuleDescriptor, ModuleInstance, MouseProblem,
     PageView, RadialActionDescriptor, ServerMessage, SettingField, SettingKind, SshConfig, SshHost,
     SshSystemHost, StripConfig, UpdateSettings, UpdateStatus,
 };
@@ -216,7 +216,7 @@ fn client_play_haptic() {
 }
 
 #[test]
-fn server_mouse_status_with_and_without_a_battery() {
+fn server_mouse_status() {
     assert_wire_format(
         &ServerMessage::MouseStatus {
             serial: "aaaa0001".into(),
@@ -224,25 +224,46 @@ fn server_mouse_status_with_and_without_a_battery() {
                 setting: "sensitivity".into(),
                 message: "no answer".into(),
             }],
-            battery: Some(MouseBattery {
-                percent: 80,
-                charging: true,
-            }),
         },
         &json!({
             "type": "mouseStatus",
             "serial": "aaaa0001",
-            "problems": [{ "setting": "sensitivity", "message": "no answer" }],
-            "battery": { "percent": 80, "charging": true }
+            "problems": [{ "setting": "sensitivity", "message": "no answer" }]
         }),
     );
+}
+
+#[test]
+fn server_application_modules_with_and_without_the_actions_that_make_sense() {
     assert_wire_format(
-        &ServerMessage::MouseStatus {
-            serial: "aaaa0001".into(),
-            problems: vec![],
-            battery: None,
+        &ServerMessage::ApplicationModules {
+            modules: vec![
+                ApplicationModuleView {
+                    kind: "teams".into(),
+                    status: Some("En appel\n1:05".into()),
+                    available_actions: Some(vec!["mute".into(), "hang-up".into()]),
+                    settings: json!({}),
+                },
+                ApplicationModuleView {
+                    kind: "pomodoro".into(),
+                    status: None,
+                    available_actions: None,
+                    settings: json!({}),
+                },
+            ],
         },
-        &json!({ "type": "mouseStatus", "serial": "aaaa0001", "problems": [] }),
+        &json!({
+            "type": "applicationModules",
+            "modules": [
+                {
+                    "kind": "teams",
+                    "status": "En appel\n1:05",
+                    "availableActions": ["mute", "hang-up"],
+                    "settings": {}
+                },
+                { "kind": "pomodoro", "settings": {} }
+            ]
+        }),
     );
 }
 

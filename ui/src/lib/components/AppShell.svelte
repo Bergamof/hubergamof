@@ -37,7 +37,11 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 		if (current.path === PATHS.headset) return deck.headsets.headset?.name ?? current.title;
 		return current.title;
 	});
-	const devices = $derived(navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets));
+	const devices = $derived(
+		navDevices(deck.devices, deck.mice.mice, deck.headsets.headsets, (address) =>
+			deck.headsets.batteryOf(address)
+		)
+	);
 	const updateAvailable = $derived(deck.updateStatus.type === 'available');
 
 	let content: HTMLFieldSetElement | undefined = $state();
@@ -93,7 +97,6 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 			{devices}
 			selectedDeck={deck.selectedSerial}
 			selectedMouse={deck.mice.selectedSerial}
-			mouseBattery={deck.mice.battery?.percent}
 			{updateAvailable}
 		/>
 		{#if deck.managerVersion}

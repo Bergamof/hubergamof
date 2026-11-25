@@ -18,6 +18,7 @@ controls show what they said.
 		presetOptions
 	} from '#lib/deck/headset-labels.js';
 	import type { AmbientMode, EqualizerPreset } from '#lib/generated/index.js';
+	import BatteryBadge from './BatteryBadge.svelte';
 	import RangeControl from './RangeControl.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
 	import SelectField from './SelectField.svelte';
@@ -35,13 +36,10 @@ controls show what they said.
 	const link = $derived(status?.link ?? 'idle');
 	const ambient = $derived(status?.ambient ?? undefined);
 	const equalizer = $derived(status?.equalizer ?? undefined);
-	const battery = $derived(status?.battery ?? undefined);
-	const connected = $derived(link === 'connected');
-	/** Below this charge (in percent) the battery chip warns, unless the headphones are charging. */
-	const LOW_BATTERY_PERCENT = 20;
-	const batteryLow = $derived(
-		battery !== undefined && !battery.charging && battery.percent <= LOW_BATTERY_PERCENT
+	const battery = $derived(
+		status?.battery ?? (headsets.headset ? headsets.batteryOf(headsets.headset.address) : undefined)
 	);
+	const connected = $derived(link === 'connected');
 	const modes = $derived(
 		AMBIENT_MODES.filter((mode) => mode.value !== 'windReduction' || status?.windReduction)
 	);
@@ -80,15 +78,8 @@ controls show what they said.
 		<header class="flex flex-wrap items-center gap-3">
 			<h2 class="text-xl font-semibold">{headsets.headset.name}</h2>
 			{#if battery}
-				<p
-					class={[
-						'rounded-full border px-3 py-0.5 text-sm',
-						batteryLow ? 'border-warning bg-warning-soft text-warning' : 'border-line bg-surface'
-					]}
-				>
-					Batterie {battery.percent} %{battery.charging ? ', en charge' : ''}{batteryLow
-						? ', faible'
-						: ''}
+				<p class="rounded-full border border-line bg-surface px-3 py-0.5 text-sm">
+					<BatteryBadge {battery} labelled />
 				</p>
 			{/if}
 		</header>

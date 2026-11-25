@@ -779,6 +779,19 @@ test('configure les boutons, le pointeur et les vibrations de la souris, et les 
 	await expect(page.getByRole('switch', { name: "Activer : Fin d'une étape" })).not.toBeChecked();
 });
 
+test('montre la batterie de chaque souris dans la barre latérale, quelle que soit la page', async ({
+	page
+}) => {
+	await open(page);
+	const nav = page.getByRole('navigation', { name: 'Navigation principale' });
+	await expect(nav.getByRole('link', { name: /MX Master 4/ })).toContainText(/76\s*%/);
+	await expect(nav.getByRole('link', { name: /MX Anywhere 3S/ })).toContainText(/18\s*%/);
+	// The headphones are not read until their link is open.
+	await expect(nav.getByRole('link', { name: /^WH-1000XM4/ })).toContainText('Non lu');
+	await page.goto('/');
+	await expect(page.getByRole('button', { name: /Lire la batterie/ })).toBeVisible();
+});
+
 test('montre les schémas de chaque modèle, avec un repère par bouton', async ({ page }) => {
 	await openMouse(page);
 	await expect(page.getByRole('group', { name: 'MX Master 4, vue de dessus' })).toBeVisible();
@@ -787,13 +800,13 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(9);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toBeVisible();
-	await expect(page.getByText('Batterie 76 %', { exact: true })).toBeVisible();
+	await expect(page.getByRole('main').getByText(/76\s*%/)).toBeVisible();
 
 	await goTo(page, /MX Anywhere 3S/);
 	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S', level: 2 })).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(6);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
-	await expect(page.getByText('Batterie 18 % · en charge')).toBeVisible();
+	await expect(page.getByRole('main').getByText(/18\s*%\s*· en charge/)).toBeVisible();
 	await expect(
 		page
 			.getByRole('main')
@@ -1088,10 +1101,10 @@ test('désactive les commandes tant que l’ordinateur est verrouillé, la navig
 
 test('règle le son ambiant et l’égaliseur du casque, et libère la liaison', async ({ page }) => {
 	await open(page);
-	await goTo(page, 'WH-1000XM4');
+	await goTo(page, /^WH-1000XM4/);
 	await expect(page.getByRole('heading', { name: /WH-1000XM4/ }).first()).toBeVisible();
 	await expect(page.getByText('Connecté', { exact: true })).toBeVisible();
-	await expect(page.getByText(/^Batterie \d+ %/)).toBeVisible();
+	await expect(page.getByRole('main').getByText(/\d+\s*%/)).toBeVisible();
 
 	await page.getByRole('radio', { name: 'Son ambiant' }).click();
 	await expect(page.getByRole('radio', { name: 'Son ambiant' })).toBeChecked();

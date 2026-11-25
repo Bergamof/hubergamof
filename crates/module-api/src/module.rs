@@ -283,6 +283,15 @@ pub trait Module: Send {
         None
     }
 
+    /// Which of the module's [`radial_actions`](crate::ModuleFactory::radial_actions) make
+    /// sense now, by id: the interface offers those (the call controls only exist
+    /// during a call). `None`, the default, says every one of them does. Like
+    /// the other getters it describes the current state, is cheap and
+    /// side-effect free.
+    fn radial_available_actions(&self) -> Option<Vec<String>> {
+        None
+    }
+
     /// A count drawn as a badge on the icon of the module's petal of the
     /// radial menu (unread messages): `None`, preferably, or zero draws no badge. Like
     /// the other getters it describes the current state, is cheap and

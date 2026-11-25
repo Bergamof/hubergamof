@@ -750,6 +750,27 @@ fn radial_items(state: &TeamsState) -> Vec<RadialItem> {
     items
 }
 
+/// The actions of the module that make sense in `state`: none while Teams is not connected, the panels
+/// once it is, and the call controls only during a call (ringing, answering belongs to the notification).
+fn available_actions(state: &TeamsState) -> Vec<String> {
+    if !state.connected {
+        return Vec::new();
+    }
+    let call = [
+        RADIAL_MUTE,
+        RADIAL_CAMERA,
+        RADIAL_HANG_UP,
+        RADIAL_RETURN_TO_CALL,
+    ];
+    let panels = [RADIAL_CONVERSATIONS, RADIAL_TEAMS, RADIAL_ACTIVITY];
+    let during_call = state.call.phase == CallPhase::InCall;
+    call.into_iter()
+        .filter(|_| during_call)
+        .chain(panels)
+        .map(str::to_owned)
+        .collect()
+}
+
 /// `item` with a badge when `count` is above zero.
 fn counted(item: RadialItem, count: u32) -> RadialItem {
     match count {
@@ -863,6 +884,10 @@ impl Module for Teams {
     fn radial_badge(&self) -> Option<u32> {
         let unread = self.changes.borrow().total_unread();
         (unread > 0).then_some(unread)
+    }
+
+    fn radial_available_actions(&self) -> Option<Vec<String>> {
+        Some(available_actions(&self.changes.borrow()))
     }
 
     fn radial_status(&self) -> Option<String> {

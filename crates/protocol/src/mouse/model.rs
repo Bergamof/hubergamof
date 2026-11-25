@@ -5,6 +5,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::MouseBattery;
+
 /// A supported mouse model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +128,10 @@ pub struct MouseInfo {
     pub display_name: String,
     /// What the model offers.
     pub capabilities: MouseCapabilities,
+    /// Its battery, once the mouse has said it; absent while unknown. The list of
+    /// mice is sent again when it changes: every mouse shows its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery: Option<MouseBattery>,
 }
 
 const fn button(id: MouseControlId) -> MouseControl {
