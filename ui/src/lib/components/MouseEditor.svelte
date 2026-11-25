@@ -58,7 +58,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 	}
 </script>
 
-<div class="flex flex-col gap-8">
+<div class="flex flex-col gap-4">
 	<SaveStatusLine tracker={saves} />
 
 	{#if deck.mice.problems.length > 0}
@@ -79,7 +79,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 
 	<section
 		aria-labelledby="{uid}-name"
-		class="shadow-card overflow-hidden rounded-2xl border border-line bg-surface"
+		class="overflow-hidden rounded-xl border border-line bg-surface"
 	>
 		<header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-5 py-4">
 			<h2 id="{uid}-name" class="font-display text-xl font-semibold">{mouse.displayName}</h2>
@@ -101,7 +101,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 				</span>
 			{/if}
 			{#if mouse.capabilities.haptics}
-				<span class="rounded-full bg-accent px-2 py-1 font-mono text-xs text-on-accent">
+				<span class="rounded-full bg-sunken px-2 py-1 font-mono text-xs text-muted">
 					Retour haptique
 				</span>
 			{/if}

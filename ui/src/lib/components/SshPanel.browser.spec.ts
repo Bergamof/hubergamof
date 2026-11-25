@@ -160,11 +160,12 @@ describe('SshPanel', () => {
 			await expect.element(page.getByText('Un serveur porte déjà ce nom.')).toBeVisible();
 		});
 
-		it('warns about forwarding the agent', async () => {
+		it('warns about forwarding the agent once it is turned on, not before', async () => {
 			await renderPanel();
-			await expect
-				.element(addForm().getByRole('switch', { name: 'Transmettre l’agent SSH' }))
-				.toHaveAccessibleDescription(/utiliser vos clés/);
+			const forward = addForm().getByRole('switch', { name: 'Transmettre l’agent SSH' });
+			await expect.element(page.getByText(/utiliser vos clés/)).not.toBeInTheDocument();
+			await forward.click();
+			await expect.element(forward).toHaveAccessibleDescription(/utiliser vos clés/);
 		});
 
 		it('does not offer to add once the configuration is full', async () => {

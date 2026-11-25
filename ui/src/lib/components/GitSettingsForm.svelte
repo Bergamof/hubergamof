@@ -17,6 +17,8 @@ editor and the credential helper come from lists, since Git runs them. The form 
 	} from '#lib/deck/git-validation.js';
 	import type { GitCredentialHelper, GitPullMode, GitSettings } from '#lib/generated/index.js';
 	import FormFooter from './FormFooter.svelte';
+	import FormCell from './FormCell.svelte';
+	import FormGrid from './FormGrid.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
 	import SelectField from './SelectField.svelte';
 	import TextField from './TextField.svelte';
@@ -150,68 +152,81 @@ editor and the credential helper come from lists, since Git runs them. The form 
 	}
 </script>
 
-<form novalidate aria-labelledby={labelledby} class="grid gap-4 sm:grid-cols-2" onsubmit={submit}>
-	<TextField
-		bind:this={branchField}
-		label="Première branche d’un nouveau dépôt"
-		mono
-		value={shown.defaultBranch}
-		oninput={(defaultBranch) => (draft = { ...shown, defaultBranch })}
-		hint="init.defaultBranch, par exemple main. Vide : Git garde son choix."
-		error={errors.branch}
-		maxlength={512}
-	/>
-	<div class="flex flex-col gap-1">
-		<span class="text-sm font-medium">Que fait « git pull » ?</span>
-		<SegmentedControl
-			label="Que fait « git pull » ?"
-			options={PULL_MODES}
-			value={shown.pull}
-			onchange={(pull) => (draft = { ...shown, pull })}
-		/>
-	</div>
-	<SelectField
-		label="Éditeur des messages de commit"
-		options={EDITORS}
-		value={editorChoice}
-		onchange={chooseEditor}
-		hint="core.editor : Git lance ce programme, la liste est donc fermée."
-	/>
-	{#if isOtherEditor}
+<FormGrid {labelledby} onsubmit={submit}>
+	<FormCell span={6}>
 		<TextField
-			bind:this={editorField}
-			label="Chemin du programme"
+			bind:this={branchField}
+			label="Première branche d’un nouveau dépôt"
 			mono
-			value={shown.editor}
-			oninput={(editor) => (draft = { ...shown, editor })}
-			hint="Le chemin absolu du programme de vi, vim, nvim, nano, emacs, micro ou hx, sans argument. Vide : Git garde son éditeur."
-			error={errors.editor}
+			placeholder="main"
+			value={shown.defaultBranch}
+			oninput={(defaultBranch) => (draft = { ...shown, defaultBranch })}
+			hint="init.defaultBranch. Vide : Git garde son choix."
+			error={errors.branch}
 			maxlength={512}
 		/>
-	{/if}
-	<SelectField
-		label="Mots de passe"
-		options={HELPERS}
-		value={helperKind}
-		onchange={chooseHelper}
-		hint="credential.helper : où Git garde les mots de passe qu’on lui a donnés."
-		warning={helperKind === 'store'
-			? 'Les mots de passe sont écrits en clair dans ~/.git-credentials.'
-			: undefined}
-	/>
-	{#if helperKind === 'cache'}
-		<TextField
-			bind:this={cacheField}
-			label="Durée en mémoire (secondes)"
-			value={cacheValue}
-			oninput={(text) => (cacheText = text)}
-			inputmode="numeric"
-			hint="De 30 s à 7 jours (604800 s)."
-			error={errors.cache}
-			maxlength={16}
+	</FormCell>
+	<FormCell span={6}>
+		<div class="flex flex-col gap-1">
+			<span class="text-sm font-medium">Que fait « git pull » ?</span>
+			<SegmentedControl
+				label="Que fait « git pull » ?"
+				options={PULL_MODES}
+				value={shown.pull}
+				onchange={(pull) => (draft = { ...shown, pull })}
+			/>
+		</div>
+	</FormCell>
+	<FormCell span={6}>
+		<SelectField
+			label="Éditeur des messages de commit"
+			options={EDITORS}
+			value={editorChoice}
+			onchange={chooseEditor}
+			hint="core.editor : Git lance ce programme, la liste est donc fermée."
 		/>
+	</FormCell>
+	{#if isOtherEditor}
+		<FormCell span={6}>
+			<TextField
+				bind:this={editorField}
+				label="Chemin du programme"
+				mono
+				value={shown.editor}
+				oninput={(editor) => (draft = { ...shown, editor })}
+				hint="Le chemin absolu du programme de vi, vim, nvim, nano, emacs, micro ou hx, sans argument. Vide : Git garde son éditeur."
+				error={errors.editor}
+				maxlength={512}
+			/>
+		</FormCell>
 	{/if}
-	<div class="sm:col-span-2">
+	<FormCell span={6}>
+		<SelectField
+			label="Mots de passe"
+			options={HELPERS}
+			value={helperKind}
+			onchange={chooseHelper}
+			hint="credential.helper : où Git garde les mots de passe qu’on lui a donnés."
+			warning={helperKind === 'store'
+				? 'Les mots de passe sont écrits en clair dans ~/.git-credentials.'
+				: undefined}
+		/>
+	</FormCell>
+	{#if helperKind === 'cache'}
+		<FormCell span={6}>
+			<TextField
+				bind:this={cacheField}
+				label="Durée en mémoire (secondes)"
+				value={cacheValue}
+				oninput={(text) => (cacheText = text)}
+				inputmode="numeric"
+				hint="De 30 s à 7 jours (604800 s)."
+				error={errors.cache}
+				maxlength={16}
+			/>
+		</FormCell>
+	{/if}
+	<FormCell>
 		<FormFooter {dirty} submitLabel="Enregistrer les réglages" />
-	</div>
-</form>
+	</FormCell>
+</FormGrid>

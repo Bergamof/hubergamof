@@ -232,11 +232,20 @@ selected key or dial.
 	}
 </script>
 
-<div class="flex flex-col gap-6" data-device-theme={config.theme}>
+<div class="flex flex-col gap-4" data-device-theme={config.theme}>
 	<p role="status" class="sr-only">{announcement}</p>
 
+	<!-- What applies to the whole device, in one bar above the keys and the details. -->
+	<div class="flex flex-wrap items-center gap-x-8 gap-y-2 card py-2.5">
+		<ThemeControl theme={config.theme} onchange={(theme) => deck.edit(setTheme(theme))} />
+		<BrightnessControl
+			brightness={config.brightness}
+			onchange={(brightness) => deck.edit(setBrightness(brightness))}
+		/>
+	</div>
+
 	<div class="flex flex-col gap-6 lg:flex-row lg:items-start">
-		<div class="flex min-w-0 flex-col gap-6 card lg:shrink-0">
+		<div class="flex min-w-0 flex-col gap-4 card lg:shrink-0">
 			<!-- Corps de l'appareil : touches, bande tactile (aperçu), molettes. -->
 			<div
 				class="flex w-fit max-w-full flex-col gap-4 rounded-3xl border border-device-line bg-device p-5"
@@ -293,18 +302,13 @@ selected key or dial.
 				{/if}
 			</div>
 
-			<ThemeControl theme={config.theme} onchange={(theme) => deck.edit(setTheme(theme))} />
-			<BrightnessControl
-				brightness={config.brightness}
-				onchange={(brightness) => deck.edit(setBrightness(brightness))}
-			/>
 			<LockSleepControl
 				seconds={config.lockSleepSeconds}
 				onchange={(seconds) => deck.edit(setLockSleepSeconds(seconds))}
 			/>
 		</div>
 
-		<div class="min-w-0 flex-1 scroll-mt-6 card lg:sticky lg:top-6">
+		<div class="min-w-0 flex-1 scroll-mt-6 card lg:sticky lg:top-16">
 			{#if selected?.surface === 'key'}
 				{@const instance = keys[selected.position]}
 				{@const position = selected.position}

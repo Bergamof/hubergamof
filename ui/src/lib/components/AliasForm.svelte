@@ -10,6 +10,8 @@ the field once the form was sent, and the focus goes to the first one.
 	import { hasErrors, trimCommand } from '#lib/deck/alias-validation.js';
 	import type { EditOutcome } from '#lib/deck/edit-queue.svelte.js';
 	import type { ShellAlias } from '#lib/generated/index.js';
+	import FormCell from './FormCell.svelte';
+	import FormGrid from './FormGrid.svelte';
 	import Switch from './Switch.svelte';
 
 	interface Props {
@@ -92,59 +94,59 @@ the field once the form was sent, and the focus goes to the first one.
 	});
 </script>
 
-<form
-	novalidate
-	aria-labelledby={labelledby}
-	aria-describedby={describedby}
-	class="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]"
-	onsubmit={submit}
->
-	<div class="flex flex-col gap-1">
-		<label for="{uid}-name" class="text-sm font-medium">{rules.nameLabel ?? 'Nom'}</label>
-		<input
-			bind:this={nameField}
-			bind:value={name}
-			id="{uid}-name"
-			class="field font-mono"
-			autocomplete="off"
-			autocapitalize="off"
-			spellcheck="false"
-			placeholder={rules.nameHint}
-			maxlength={rules.nameMax * 2}
-			aria-invalid={errors.name !== undefined}
-			aria-describedby={errors.name ? `${uid}-name-error` : undefined}
-		/>
-		{#if errors.name}
-			<p id="{uid}-name-error" class="text-sm text-danger">{errors.name}</p>
-		{/if}
-	</div>
-	<div class="flex flex-col gap-1">
-		<label for="{uid}-command" class="text-sm font-medium">
-			{rules.commandLabel ?? 'Commande'}
-		</label>
-		<input
-			bind:this={commandField}
-			bind:value={command}
-			id="{uid}-command"
-			class="field font-mono"
-			autocomplete="off"
-			autocapitalize="off"
-			spellcheck="false"
-			maxlength={rules.commandMax * 2}
-			aria-invalid={errors.command !== undefined}
-			aria-describedby={errors.command ? `${uid}-command-error` : undefined}
-		/>
-		{#if errors.command}
-			<p id="{uid}-command-error" class="text-sm text-danger">{errors.command}</p>
-		{/if}
-	</div>
-	<div class="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2">
-		<Switch checked={enabled} onchange={(checked) => (enabled = checked)}>Activé</Switch>
-		<div class="flex gap-2 sm:ml-auto">
-			{#if oncancel}
-				<button type="button" class="secondary-button" onclick={oncancel}>Annuler</button>
+<FormGrid {labelledby} {describedby} onsubmit={submit}>
+	<FormCell span={4}>
+		<div class="flex flex-col gap-1">
+			<label for="{uid}-name" class="text-sm font-medium">{rules.nameLabel ?? 'Nom'}</label>
+			<input
+				bind:this={nameField}
+				bind:value={name}
+				id="{uid}-name"
+				class="field font-mono"
+				autocomplete="off"
+				autocapitalize="off"
+				spellcheck="false"
+				placeholder={rules.nameHint}
+				maxlength={rules.nameMax * 2}
+				aria-invalid={errors.name !== undefined}
+				aria-describedby={errors.name ? `${uid}-name-error` : undefined}
+			/>
+			{#if errors.name}
+				<p id="{uid}-name-error" class="text-sm text-danger">{errors.name}</p>
 			{/if}
-			<button type="submit" class="primary-button">{submitLabel}</button>
 		</div>
-	</div>
-</form>
+	</FormCell>
+	<FormCell span={8}>
+		<div class="flex flex-col gap-1">
+			<label for="{uid}-command" class="text-sm font-medium">
+				{rules.commandLabel ?? 'Commande'}
+			</label>
+			<input
+				bind:this={commandField}
+				bind:value={command}
+				id="{uid}-command"
+				class="field font-mono"
+				autocomplete="off"
+				autocapitalize="off"
+				spellcheck="false"
+				maxlength={rules.commandMax * 2}
+				aria-invalid={errors.command !== undefined}
+				aria-describedby={errors.command ? `${uid}-command-error` : undefined}
+			/>
+			{#if errors.command}
+				<p id="{uid}-command-error" class="text-sm text-danger">{errors.command}</p>
+			{/if}
+		</div>
+	</FormCell>
+	<FormCell>
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+			<Switch checked={enabled} onchange={(checked) => (enabled = checked)}>Activé</Switch>
+			<div class="ml-auto flex gap-2">
+				{#if oncancel}
+					<button type="button" class="secondary-button" onclick={oncancel}>Annuler</button>
+				{/if}
+				<button type="submit" class="primary-button">{submitLabel}</button>
+			</div>
+		</div>
+	</FormCell>
+</FormGrid>
