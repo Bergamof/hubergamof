@@ -7,7 +7,7 @@
 //! and bounds the number of entries and every decompressed size as it reads,
 //! without trusting the sizes the archive declares.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Cursor, Read, Write};
 
 use hubergamof_protocol::{DeviceConfig, is_safe_image_name};
@@ -51,10 +51,10 @@ pub struct Archive {
 #[derive(Debug, Error)]
 pub enum ArchiveError {
     /// Larger than [`MAX_ARCHIVE_BYTES`].
-    #[error("archive is larger than {MAX_ARCHIVE_BYTES} bytes")]
+    #[error("archive is too large")]
     TooLarge,
     /// More than [`MAX_ARCHIVE_ENTRIES`] entries.
-    #[error("archive has more than {MAX_ARCHIVE_ENTRIES} entries")]
+    #[error("archive has too many entries")]
     TooManyEntries,
     /// An entry, or all of them, decompress beyond their limit.
     #[error("archive entry {0:?} is too large once decompressed")]
@@ -201,22 +201,45 @@ fn read_bounded(entry: impl Read, name: &str, limit: usize) -> Result<Vec<u8>, A
     Ok(bytes)
 }
 
-/// Reads an export archive.
+/// What an archive may hold: how large it is, how many entries, how much
+/// once decompressed.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Limits {
+    pub archive_bytes: usize,
+    pub entries: usize,
+    pub expanded_bytes: usize,
+}
+
+/// The limits of the export archive of a device.
+pub(super) const ARCHIVE_LIMITS: Limits = Limits {
+    archive_bytes: MAX_ARCHIVE_BYTES,
+    entries: MAX_ARCHIVE_ENTRIES,
+    expanded_bytes: MAX_ARCHIVE_EXPANDED_BYTES,
+};
+
+/// Reads the entries of an archive that `limit_of` accepts: it gives the
+/// largest size of an entry once decompressed, `None` for a directory entry
+/// (skipped), and an error for a name that must not be there. Everything the
+/// archive declares is checked, and every size is bounded as it is read.
 ///
 /// # Errors
 ///
 /// Any [`ArchiveError`]: the archive is refused as a whole.
-pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
-    if bytes.len() > MAX_ARCHIVE_BYTES {
+pub(super) fn read_entries(
+    bytes: &[u8],
+    limits: Limits,
+    limit_of: impl Fn(&str) -> Result<Option<usize>, ArchiveError>,
+) -> Result<Vec<(String, Vec<u8>)>, ArchiveError> {
+    if bytes.len() > limits.archive_bytes {
         return Err(ArchiveError::TooLarge);
     }
     // 0xFFFF (ZIP64, whose real count lies elsewhere) is refused too.
     let declared = declared_entry_count(bytes)?;
-    if declared > MAX_ARCHIVE_ENTRIES {
+    if declared > limits.entries {
         return Err(ArchiveError::TooManyEntries);
     }
     let mut zip = ZipArchive::new(Cursor::new(bytes))?;
-    if zip.len() > MAX_ARCHIVE_ENTRIES {
+    if zip.len() > limits.entries {
         return Err(ArchiveError::TooManyEntries);
     }
     // The zip reader keeps one entry per name: fewer entries than declared
@@ -224,30 +247,52 @@ pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
     if declared != zip.len() {
         return Err(ArchiveError::DuplicateEntry);
     }
-    let mut config = None;
-    let mut images = ArchiveImages::new();
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
     let mut expanded = 0_usize;
     for index in 0..zip.len() {
         let entry = zip.by_index(index)?;
         // The raw name, not a sanitised one: anything unexpected is refused.
         let name = entry.name()?.into_owned();
-        let (kind, limit) = match classify(&name)? {
-            Entry::Directory => continue,
-            Entry::Config => (Entry::Config, MAX_ARCHIVE_CONFIG_BYTES),
-            image @ Entry::Image(_) => (image, MAX_SOURCE_BYTES),
+        let Some(limit) = limit_of(&name)? else {
+            continue;
         };
-        let remaining = MAX_ARCHIVE_EXPANDED_BYTES - expanded;
+        let remaining = limits.expanded_bytes - expanded;
         let content = read_bounded(entry, &name, limit.min(remaining))?;
         expanded += content.len();
-        match kind {
-            Entry::Config if config.is_none() => {
+        if !seen.insert(name.clone()) {
+            return Err(ArchiveError::DuplicateEntry);
+        }
+        entries.push((name, content));
+    }
+    Ok(entries)
+}
+
+/// Reads an export archive.
+///
+/// # Errors
+///
+/// Any [`ArchiveError`]: the archive is refused as a whole.
+pub fn read_archive(bytes: &[u8]) -> Result<Archive, ArchiveError> {
+    let entries = read_entries(bytes, ARCHIVE_LIMITS, |name| {
+        Ok(match classify(name)? {
+            Entry::Directory => None,
+            Entry::Config => Some(MAX_ARCHIVE_CONFIG_BYTES),
+            Entry::Image(_) => Some(MAX_SOURCE_BYTES),
+        })
+    })?;
+    let mut config = None;
+    let mut images = ArchiveImages::new();
+    for (name, content) in entries {
+        match classify(&name)? {
+            Entry::Config => {
                 config =
                     Some(super::migration::parse_config(&content).map_err(ArchiveError::Config)?);
             }
-            Entry::Image(image) if !images.contains_key(&image) => {
+            Entry::Image(image) => {
                 images.insert(image, content);
             }
-            _ => return Err(ArchiveError::DuplicateEntry),
+            Entry::Directory => {}
         }
     }
     Ok(Archive {
