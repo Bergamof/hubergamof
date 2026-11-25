@@ -698,6 +698,7 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	await expect(page.getByText('Batterie 18 % · en charge')).toBeVisible();
 	await expect(
 		page
+			.getByRole('main')
 			.getByRole('list')
 			.first()
 			.getByRole('button', { name: /Bouton du dessus/ })
