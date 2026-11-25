@@ -21,6 +21,8 @@
 
 mod app_modules;
 mod archive;
+mod backup;
+mod backup_store;
 mod defaults;
 mod files;
 mod git;
@@ -50,6 +52,11 @@ pub use archive::{
     ARCHIVE_CONFIG_ENTRY, ARCHIVE_IMAGES_PREFIX, Archive, ArchiveError, ArchiveImages,
     MAX_ARCHIVE_BYTES, MAX_ARCHIVE_CONFIG_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ARCHIVE_EXPANDED_BYTES,
     read_archive, write_archive,
+};
+pub use backup::{
+    BACKUP_FORMAT, BACKUP_MANIFEST_ENTRY, Backup, BackupDocument, BackupError, BackupManifest,
+    BackupPreview, BackupSection, ExecutableItem, ExecutableKind, MAX_BACKUP_ENTRIES,
+    SectionChange, SectionPreview, preview, read_backup, write_backup,
 };
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};
 
@@ -399,6 +406,22 @@ impl ConfigStore {
     ///
     /// An I/O error on an image, or [`ConfigStoreError::Archive`].
     pub fn export(&self, serial: &str, config: &DeviceConfig) -> Result<Vec<u8>, ConfigStoreError> {
+        let (exported, images) = self.exported_parts(serial, config)?;
+        Ok(write_archive(&exported, &images)?)
+    }
+
+    /// The configuration of `serial` as it is exported, and the images it
+    /// uses. An image missing from the disk is left out, and so is its
+    /// reference: what is exported stays importable.
+    ///
+    /// # Errors
+    ///
+    /// An I/O error on an image.
+    fn exported_parts(
+        &self,
+        serial: &str,
+        config: &DeviceConfig,
+    ) -> Result<(DeviceConfig, ArchiveImages), ConfigStoreError> {
         let mut exported = config.clone();
         let mut images = ArchiveImages::new();
         for module in &mut exported.modules {
@@ -430,7 +453,7 @@ impl ConfigStore {
                 (!missing.contains(name)).then(|| name.to_owned())
             });
         }
-        Ok(write_archive(&exported, &images)?)
+        Ok((exported, images))
     }
 
     /// Writes the images of `import` that device `serial` does not have yet;
