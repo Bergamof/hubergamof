@@ -65,7 +65,7 @@ reqwest.workspace = true
 # umask and the receive timeout of the helper's socket (the update helper).
 rustix = { version = "1.1.6", features = ["fs", "net", "process"] }
 # SVG rendering without system fonts nor embedded raster images (untrusted input).
-resvg = { version = "0.49.0", default-features = false, features = ["text"] }
+resvg = { version = "0.50.0", default-features = false, features = ["text"] }
 # `allow_missing`: the UI build (`ui/build/`) may be absent (Rust-only CI jobs).
 rust-embed = { version = "8.13.0", features = ["include-exclude"] }
 serde.workspace = true
