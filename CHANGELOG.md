@@ -15,6 +15,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 - Casque Sony : module « Casque » (touche : mode suivant, molette : niveau du son ambiant, actions et statut du menu circulaire, vibration au changement de mode depuis le menu). Il n'ouvre la liaison que si personne ne l'a ouverte ; libérée ou coupée, elle reste fermée jusqu'à la page « Casque ».
 - Teams : le panneau « Équipes » est géré comme les conversations : compteur du rail dans le total des non lus, canaux non lus sur la page des non lus (une touche par canal qui l'ouvre, « +N » qui ouvre le panneau), action « Équipes » du menu circulaire avec son badge. En appel, le menu montre d'abord les commandes d'appel puis les panneaux qui ont des non lus. Recharger l'extension ; le balisage d'un canal non lu reste à valider dans Teams.
 
+- Mises à jour : l'écran affiche la date de dernière vérification et une pastille « Nouveau » / « À jour », et propose l'interrupteur « Vérifier une fois par jour » (enregistré ; coupé, la recherche ne se fait que sur demande ; `--no-update-check` garde la priorité). Contrat : `checkedAt` dans `UpdateStatus`, `checkDaily` dans `UpdateSettings`, message `setUpdateCheck`.
+
 ### Corrigé
 
 - Image Docker : `libzstd1` est mis à jour à la construction (CVE-2026-124851, HIGH, corrigée dans Debian 13 par `1.5.7+dfsg-1+deb13u1` mais absente du digest épinglé de la base) ; le contrôle Trivy de la CI échouait sur `main`.

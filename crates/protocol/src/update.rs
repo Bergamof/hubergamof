@@ -17,13 +17,18 @@ pub enum UpdateStatus {
     /// A check is running.
     Checking,
     /// The running version is the latest release.
-    UpToDate,
+    UpToDate {
+        /// When the check was made (seconds since the Unix epoch).
+        checked_at: u64,
+    },
     /// A newer release exists.
     Available {
         /// Version of the newer release, without the leading `v`.
         version: String,
         /// Release notes page.
         notes_url: String,
+        /// When the check was made (seconds since the Unix epoch).
+        checked_at: u64,
     },
     /// The last check failed (network down, rate limit…); the next one retries.
     CheckFailed {
@@ -76,6 +81,9 @@ pub enum InstallSupport {
 pub struct UpdateSettings {
     /// Install a newer release as soon as it is found (otherwise on request).
     pub auto_install: bool,
+    /// Look for a newer release once a day; off, only a check asked for runs.
+    /// Whatever it says, `--no-update-check` stops every check.
+    pub check_daily: bool,
     /// Whether installing is possible at all.
     pub install_support: InstallSupport,
 }

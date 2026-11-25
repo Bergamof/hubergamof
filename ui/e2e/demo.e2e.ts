@@ -88,11 +88,21 @@ test('annonce une version plus récente puis simule son installation', async ({ 
 	await expect(notes).toHaveAttribute('href', /^https:\/\//);
 	await expect(notes).toHaveAttribute('rel', 'noopener noreferrer');
 	await expect(
-		page.getByRole('checkbox', { name: 'Installer automatiquement les mises à jour' })
+		page.getByRole('switch', { name: 'Installer automatiquement les mises à jour' })
 	).not.toBeChecked();
 
 	await page.getByRole('button', { name: 'Mettre à jour maintenant' }).click();
 	await expect(page.getByText('Version 999.0.0 installée : le service redémarre.')).toBeVisible();
+});
+
+test('coupe la recherche quotidienne et le gestionnaire le confirme', async ({ page }) => {
+	await open(page);
+	await goTo(page, 'Mises à jour');
+	const daily = page.getByRole('switch', { name: 'Vérifier une fois par jour' });
+	await expect(daily).toBeChecked();
+	await daily.click();
+	await expect(daily).not.toBeChecked();
+	await expect(page.getByText(/^Vérifiée /)).toBeVisible();
 });
 
 test('relance la recherche de mises à jour à la demande', async ({ page }) => {

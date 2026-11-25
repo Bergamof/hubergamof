@@ -1,6 +1,6 @@
 //! The update service: checks for a newer release shortly after startup, then
-//! once a day or on request, and installs it when the user's policy says so
-//! (or on request).
+//! once a day (unless the user switched that off) or on request, and installs it
+//! when the user's policy says so (or on request).
 //!
 //! One background task owns everything; the outcome is published as an
 //! [`UpdateStatus`] (and the policy as [`UpdateSettings`]) that the WebSocket
@@ -8,7 +8,7 @@
 //! published, never fatal: the next check retries.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hubergamof_protocol::{InstallSupport, UpdateSettings, UpdateStatus};
 use tokio::sync::{Notify, watch};
@@ -31,6 +31,14 @@ pub const CHECK_INTERVAL: Duration = Duration::from_hours(24);
 /// with every other tool of the machine.
 pub const MIN_CHECK_SPACING: Duration = Duration::from_mins(5);
 
+/// Seconds since the Unix epoch, as the checks are dated.
+#[must_use]
+pub fn system_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 /// Follows and drives the update service; cheap to clone.
 #[derive(Clone)]
 pub struct UpdateHandle {
@@ -49,6 +57,7 @@ impl UpdateHandle {
     pub fn inactive() -> Self {
         Self::new(UpdateSettings {
             auto_install: UpdatePolicy::default().auto_install,
+            check_daily: UpdatePolicy::default().check_daily,
             install_support: InstallSupport::Unpackaged,
         })
     }
@@ -97,6 +106,16 @@ impl UpdateHandle {
         self.install_trigger.notify_one();
     }
 
+    /// Chooses whether the manager looks for a newer release once a day (a
+    /// check asked for is made all the same); the service saves the choice.
+    pub fn set_check_daily(&self, enabled: bool) {
+        self.settings.send_if_modified(|settings| {
+            let changed = settings.check_daily != enabled;
+            settings.check_daily = enabled;
+            changed
+        });
+    }
+
     /// Chooses whether a newer release is installed as soon as it is found;
     /// the service saves the choice.
     pub fn set_auto_install(&self, enabled: bool) {
@@ -120,6 +139,8 @@ pub struct UpdateParts {
     pub current: Version,
     /// Delay before the first check.
     pub first_delay: Duration,
+    /// What time it is, in seconds since the Unix epoch ([`system_seconds`]).
+    pub now: fn() -> u64,
 }
 
 /// Starts the service; it ends when `shutdown` turns `true`.
@@ -128,8 +149,10 @@ pub fn start(
     parts: UpdateParts,
     shutdown: watch::Receiver<bool>,
 ) -> (UpdateHandle, JoinHandle<()>) {
+    let policy = parts.policy.load();
     let handle = UpdateHandle::new(UpdateSettings {
-        auto_install: parts.policy.load().auto_install,
+        auto_install: policy.auto_install,
+        check_daily: policy.check_daily,
         install_support: parts.installer.support(),
     });
     let service = Service {
@@ -167,15 +190,22 @@ impl Service {
         settings.mark_unchanged();
         let mut delay = self.parts.first_delay;
         loop {
+            // The checks of the clock are the ones the user can switch off; the ones asked for are not.
+            let scheduled = self.handle.settings().check_daily;
             tokio::select! {
-                () = tokio::time::sleep(delay) => self.check().await,
+                () = tokio::time::sleep(delay), if scheduled => self.check().await,
                 () = self.handle.check_trigger.notified() => self.check().await,
                 () = self.handle.install_trigger.notified() => self.install_on_request().await,
                 Ok(()) = settings.changed() => self.on_settings_changed().await,
                 // A dropped sender also means shutting down.
                 () = wait_for_stop(&mut shutdown) => return,
             }
-            delay = CHECK_INTERVAL;
+            // Before any check the first delay applies again, whether the checks were off or just not due.
+            delay = if self.last_check.is_none() {
+                self.parts.first_delay
+            } else {
+                CHECK_INTERVAL
+            };
             if *shutdown.borrow() {
                 return;
             }
@@ -192,18 +222,23 @@ impl Service {
         }
         self.last_check = Some(Instant::now());
         self.handle.status.send_replace(UpdateStatus::Checking);
-        match self.parts.source.latest().await {
+        let outcome = self.parts.source.latest().await;
+        let checked_at = (self.parts.now)();
+        match outcome {
             Ok(release) if release.version > self.parts.current => {
                 self.handle.status.send_replace(UpdateStatus::Available {
                     version: release.version.to_string(),
                     notes_url: release.notes_url.clone(),
+                    checked_at,
                 });
                 self.found = Some(release);
                 self.install_if_automatic().await;
             }
             Ok(_) => {
                 self.found = None;
-                self.handle.status.send_replace(UpdateStatus::UpToDate);
+                self.handle
+                    .status
+                    .send_replace(UpdateStatus::UpToDate { checked_at });
             }
             Err(error) => {
                 tracing::warn!(%error, "update check failed");
@@ -238,8 +273,10 @@ impl Service {
     /// The policy was changed: save it, and install at once what is waiting
     /// when it now says to.
     async fn on_settings_changed(&mut self) {
+        let settings = self.handle.settings();
         let policy = UpdatePolicy {
-            auto_install: self.handle.settings().auto_install,
+            auto_install: settings.auto_install,
+            check_daily: settings.check_daily,
         };
         let store = Arc::clone(&self.parts.policy);
         if let Err(error) = tokio::task::spawn_blocking(move || store.save(policy)).await {
@@ -299,6 +336,9 @@ mod tests {
     use crate::update::policy::MemoryPolicyStore;
     use crate::update::source::{SimulatedReleases, UpdateError};
 
+    /// What time the checks of the tests say it is.
+    const CHECKED_AT: u64 = 1_700_000_000;
+
     fn version(text: &str) -> Version {
         text.parse().unwrap()
     }
@@ -314,6 +354,7 @@ mod tests {
             policy,
             current: version("1.0.0"),
             first_delay: FIRST_CHECK_DELAY,
+            now: || CHECKED_AT,
         }
     }
 
@@ -350,6 +391,15 @@ mod tests {
         found.clone()
     }
 
+    async fn status_settings(
+        handle: &UpdateHandle,
+        wanted: impl Fn(&UpdateSettings) -> bool,
+    ) -> UpdateSettings {
+        let mut receiver = handle.subscribe_settings();
+        let found = receiver.wait_for(wanted).await.unwrap();
+        *found
+    }
+
     #[tokio::test(start_paused = true)]
     async fn nothing_is_known_before_the_first_check() {
         let (handle, _stop, _task) = started(checking_only("2.0.0"));
@@ -364,6 +414,7 @@ mod tests {
             UpdateStatus::Available {
                 version: "1.1.0".into(),
                 notes_url: "https://github.com/Bergamof/hubergamof/releases/latest".into(),
+                checked_at: CHECKED_AT,
             }
         );
     }
@@ -372,7 +423,12 @@ mod tests {
     async fn the_same_or_an_older_release_is_up_to_date() {
         for latest in ["1.0.0", "0.9.0"] {
             let (handle, _stop, _task) = started(checking_only(latest));
-            assert_eq!(next_settled(&handle).await, UpdateStatus::UpToDate);
+            assert_eq!(
+                next_settled(&handle).await,
+                UpdateStatus::UpToDate {
+                    checked_at: CHECKED_AT
+                }
+            );
         }
     }
 
@@ -405,6 +461,48 @@ mod tests {
             .await
             .expect("answered before the first scheduled check");
         assert!(matches!(status, UpdateStatus::Available { .. }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn without_the_daily_check_only_a_request_checks() {
+        let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
+            auto_install: false,
+            check_daily: false,
+        }));
+        let (handle, _stop, _task) = installing(SimulatedInstaller::succeeding(), policy);
+        assert!(!handle.settings().check_daily);
+        tokio::time::sleep(CHECK_INTERVAL * 3).await;
+        assert_eq!(handle.status(), UpdateStatus::Unknown);
+        handle.check_now();
+        assert!(matches!(
+            next_settled(&handle).await,
+            UpdateStatus::Available {
+                checked_at: CHECKED_AT,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn turning_the_daily_check_off_is_saved_and_stops_the_schedule() {
+        let policy = Arc::new(MemoryPolicyStore::default());
+        let (handle, _stop, _task) =
+            installing(SimulatedInstaller::succeeding(), Arc::clone(&policy));
+        assert!(handle.settings().check_daily);
+        // The service marks the settings as seen when it starts: let it start first.
+        tokio::task::yield_now().await;
+        handle.set_check_daily(false);
+        let settings = status_settings(&handle, |settings| !settings.check_daily).await;
+        assert!(!settings.check_daily);
+        tokio::time::sleep(CHECK_INTERVAL * 3).await;
+        assert_eq!(handle.status(), UpdateStatus::Unknown);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while policy.load().check_daily {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the choice is saved");
     }
 
     #[tokio::test(start_paused = true)]
@@ -497,6 +595,7 @@ mod tests {
     async fn without_the_automatic_policy_it_waits_for_a_request() {
         let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         }));
         let (handle, _stop, _task) = installing(SimulatedInstaller::succeeding(), policy);
         assert!(matches!(
@@ -522,6 +621,7 @@ mod tests {
     async fn turning_the_policy_on_installs_what_is_waiting_and_is_saved() {
         let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         }));
         let (handle, _stop, _task) =
             installing(SimulatedInstaller::succeeding(), Arc::clone(&policy));
@@ -606,16 +706,27 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_request_with_nothing_found_does_nothing() {
         let (handle, _stop, _task) = started(checking_only("1.0.0"));
-        assert_eq!(next_settled(&handle).await, UpdateStatus::UpToDate);
+        assert_eq!(
+            next_settled(&handle).await,
+            UpdateStatus::UpToDate {
+                checked_at: CHECKED_AT
+            }
+        );
         handle.install_now();
         tokio::time::sleep(Duration::from_secs(1)).await;
-        assert_eq!(handle.status(), UpdateStatus::UpToDate);
+        assert_eq!(
+            handle.status(),
+            UpdateStatus::UpToDate {
+                checked_at: CHECKED_AT
+            }
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn the_saved_policy_is_the_starting_setting() {
         let policy = Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         }));
         let (handle, _stop, _task) = installing(SimulatedInstaller::succeeding(), policy);
         assert!(!handle.settings().auto_install);

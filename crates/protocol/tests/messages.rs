@@ -290,6 +290,10 @@ fn client_install_requests() {
         &ClientMessage::SetAutoInstall { enabled: false },
         &json!({ "type": "setAutoInstall", "enabled": false }),
     );
+    assert_wire_format(
+        &ClientMessage::SetUpdateCheck { enabled: false },
+        &json!({ "type": "setUpdateCheck", "enabled": false }),
+    );
 }
 
 #[test]
@@ -298,12 +302,17 @@ fn server_update_settings() {
         &ServerMessage::UpdateSettings {
             settings: UpdateSettings {
                 auto_install: true,
+                check_daily: false,
                 install_support: InstallSupport::Unpackaged,
             },
         },
         &json!({
             "type": "updateSettings",
-            "settings": { "autoInstall": true, "installSupport": "unpackaged" }
+            "settings": {
+                "autoInstall": true,
+                "checkDaily": false,
+                "installSupport": "unpackaged"
+            }
         }),
     );
 }
@@ -348,6 +357,7 @@ fn server_update_status() {
             status: UpdateStatus::Available {
                 version: "1.2.0".into(),
                 notes_url: "https://example.org/notes".into(),
+                checked_at: 1_700_000_000,
             },
         },
         &json!({
@@ -355,7 +365,8 @@ fn server_update_status() {
             "status": {
                 "type": "available",
                 "version": "1.2.0",
-                "notesUrl": "https://example.org/notes"
+                "notesUrl": "https://example.org/notes",
+                "checkedAt": 1_700_000_000_u64
             }
         }),
     );
@@ -372,9 +383,14 @@ fn server_update_status() {
     );
     assert_wire_format(
         &ServerMessage::UpdateStatus {
-            status: UpdateStatus::UpToDate,
+            status: UpdateStatus::UpToDate {
+                checked_at: 1_700_000_000,
+            },
         },
-        &json!({ "type": "updateStatus", "status": { "type": "upToDate" } }),
+        &json!({
+            "type": "updateStatus",
+            "status": { "type": "upToDate", "checkedAt": 1_700_000_000_u64 }
+        }),
     );
 }
 

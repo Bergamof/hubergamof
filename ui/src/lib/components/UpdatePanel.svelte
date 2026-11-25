@@ -6,6 +6,7 @@ The release notes open in a new tab.
 -->
 <script lang="ts">
 	import type { UpdateSettings, UpdateStatus } from '#lib/generated/index.js';
+	import { checkedLabel } from '#lib/deck/update-labels.js';
 
 	interface Props {
 		/** Running version, unknown until the manager greets the interface. */
@@ -16,11 +17,26 @@ The release notes open in a new tab.
 		oncheck: () => void;
 		oninstall: () => void;
 		onautoinstall: (enabled: boolean) => void;
+		oncheckdaily: (enabled: boolean) => void;
 	}
 
-	let { version, status, settings, oncheck, oninstall, onautoinstall }: Props = $props();
+	let { version, status, settings, oncheck, oninstall, onautoinstall, oncheckdaily }: Props =
+		$props();
 
-	const uid = $props.id();
+	/** Asks for the choice, then shows the confirmed value again: only the manager's `updateSettings` changes it. */
+	function confirmed(
+		input: HTMLInputElement,
+		current: boolean,
+		ask: (enabled: boolean) => void
+	): void {
+		ask(input.checked);
+		input.checked = current;
+	}
+
+	/** When the last check ran, known once one has found something (or nothing). */
+	const checkedAt = $derived(
+		status.type === 'available' || status.type === 'upToDate' ? status.checkedAt : undefined
+	);
 
 	/** Defence in depth: the manager already checks the link, the page still only follows https. */
 	const notesLink = $derived(
@@ -45,12 +61,14 @@ The release notes open in a new tab.
 
 <section
 	aria-label="Mises à jour"
-	class={[
-		'flex flex-col gap-3 rounded-xl border p-3 text-sm',
-		status.type === 'available' ? 'border-ring bg-surface' : 'border-line'
-	]}
+	class={['flex flex-col gap-3 card p-4 text-sm', status.type === 'available' && 'border-ring']}
 >
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+		{#if status.type === 'available' || status.type === 'upToDate'}
+			<span class="rounded-full border border-line px-2 py-0.5 text-sm font-medium">
+				{status.type === 'available' ? 'Nouveau' : 'À jour'}
+			</span>
+		{/if}
 		<p role="status" class="flex-1 wrap-anywhere">
 			{#if status.type === 'available'}
 				<strong class="font-semibold">Version {status.version} disponible.</strong>
@@ -117,20 +135,39 @@ The release notes open in a new tab.
 			</button>
 		</div>
 	</div>
-	{#if canInstall && settings}
-		<label class="flex min-h-9 items-center gap-2" for="{uid}-auto">
-			<input
-				id="{uid}-auto"
-				type="checkbox"
-				class="size-5 accent-ring focus-ring"
-				checked={settings.autoInstall}
-				onchange={(event) => {
-					onautoinstall(event.currentTarget.checked);
-					// Shown as the manager confirms it (`updateSettings`), never as merely asked.
-					event.currentTarget.checked = settings.autoInstall;
-				}}
-			/>
-			Installer automatiquement les mises à jour
-		</label>
+	{#if checkedAt !== undefined}
+		<p class="text-muted">Vérifiée {checkedLabel(checkedAt)}.</p>
 	{/if}
 </section>
+
+{#if settings}
+	<section aria-label="Réglages des mises à jour" class="mt-4 flex flex-col gap-3 card p-4 text-sm">
+		<!-- The switches show what the manager confirms (`updateSettings`), never what was merely asked. -->
+		<label class="flex items-center gap-2.5">
+			<input
+				type="checkbox"
+				role="switch"
+				class="switch"
+				checked={settings.checkDaily}
+				onchange={(event) => confirmed(event.currentTarget, settings.checkDaily, oncheckdaily)}
+			/>
+			Vérifier une fois par jour
+		</label>
+		<p class="text-muted">
+			Interroge GitHub une fois par jour, sans rien envoyer de vous. Désactivée, la recherche ne se
+			fait que sur demande.
+		</p>
+		{#if canInstall}
+			<label class="flex items-center gap-2.5">
+				<input
+					type="checkbox"
+					role="switch"
+					class="switch"
+					checked={settings.autoInstall}
+					onchange={(event) => confirmed(event.currentTarget, settings.autoInstall, onautoinstall)}
+				/>
+				Installer automatiquement les mises à jour
+			</label>
+		{/if}
+	</section>
+{/if}

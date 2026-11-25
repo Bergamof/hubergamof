@@ -1054,9 +1054,11 @@ fn demo_update_parts(current: Version) -> UpdateParts {
         // On request only, so that the interface shows the release first.
         policy: Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         })),
         current,
         first_delay: Duration::ZERO,
+        now: update::system_seconds,
     }
 }
 
@@ -1070,6 +1072,7 @@ fn system_update_parts(
         policy: Arc::new(FilePolicyStore::in_dir(config_dir)),
         current,
         first_delay: FIRST_CHECK_DELAY,
+        now: update::system_seconds,
     })
 }
 

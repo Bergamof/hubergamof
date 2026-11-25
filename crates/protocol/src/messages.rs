@@ -219,6 +219,13 @@ pub enum ClientMessage {
         /// Install automatically.
         enabled: bool,
     },
+    /// Choose whether the manager looks for a newer release once a day (a check
+    /// asked for with `checkForUpdates` is made anyway). Answered by
+    /// [`ServerMessage::UpdateSettings`].
+    SetUpdateCheck {
+        /// Check once a day.
+        enabled: bool,
+    },
     /// Keep-alive request, answered by [`ServerMessage::Pong`].
     Ping,
 }
