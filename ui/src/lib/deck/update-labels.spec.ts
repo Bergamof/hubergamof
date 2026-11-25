@@ -2,17 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { checkedLabel } from './update-labels.js';
 
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
+const NOW = new Date(2026, 10, 25, 18, 0);
+const NBSP = '\u202f';
 
 describe('checkedLabel', () => {
 	it('says today for a check of the same day', () => {
-		const now = new Date(2026, 10, 25, 18, 0);
-		expect(checkedLabel(seconds(new Date(2026, 10, 25, 9, 14)), now)).toBe('aujourd’hui à 09 h 14');
+		expect(checkedLabel(seconds(new Date(2026, 10, 25, 9, 14)), NOW)).toBe(
+			`aujourd’hui à 9${NBSP}h${NBSP}14`
+		);
 	});
 
 	it('names the day of an older check', () => {
-		const now = new Date(2026, 10, 25, 18, 0);
-		expect(checkedLabel(seconds(new Date(2026, 10, 12, 7, 5)), now)).toBe(
-			'le 12 novembre à 07 h 05'
+		expect(checkedLabel(seconds(new Date(2026, 10, 12, 7, 5)), NOW)).toBe(
+			`le 12 novembre à 7${NBSP}h${NBSP}05`
+		);
+	});
+
+	it('adds the year when it is not this one', () => {
+		expect(checkedLabel(seconds(new Date(2025, 10, 12, 7, 5)), NOW)).toBe(
+			`le 12 novembre 2025 à 7${NBSP}h${NBSP}05`
 		);
 	});
 });

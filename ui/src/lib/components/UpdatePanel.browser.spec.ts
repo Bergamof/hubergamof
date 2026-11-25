@@ -195,4 +195,12 @@ describe('UpdatePanel', () => {
 		expect(oncheckdaily).toHaveBeenLastCalledWith(false);
 		await expect.element(toggle).toBeChecked();
 	});
+
+	it('says the choice is being saved until the manager confirms it', async () => {
+		const view = await render(UpdatePanel, props());
+		await page.getByRole('switch', { name: 'Vérifier une fois par jour' }).click();
+		await expect.element(page.getByText('Enregistrement…')).toBeVisible();
+		await view.rerender(props({ settings: { ...CAN_INSTALL, checkDaily: false } }));
+		await expect.element(page.getByText('Enregistrement…')).not.toBeInTheDocument();
+	});
 });

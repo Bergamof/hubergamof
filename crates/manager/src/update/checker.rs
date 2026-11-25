@@ -57,7 +57,8 @@ impl UpdateHandle {
     pub fn inactive() -> Self {
         Self::new(UpdateSettings {
             auto_install: UpdatePolicy::default().auto_install,
-            check_daily: UpdatePolicy::default().check_daily,
+            // Nothing is ever checked without a service, whatever the saved choice.
+            check_daily: false,
             install_support: InstallSupport::Unpackaged,
         })
     }
@@ -485,9 +486,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn turning_the_daily_check_off_is_saved_and_stops_the_schedule() {
-        let policy = Arc::new(MemoryPolicyStore::default());
-        let (handle, _stop, _task) =
-            installing(SimulatedInstaller::succeeding(), Arc::clone(&policy));
+        let (policy, mut saves) = SignalingPolicyStore::new();
+        let (handle, _stop, _task) = installing_with(SimulatedInstaller::succeeding(), policy);
         assert!(handle.settings().check_daily);
         // The service marks the settings as seen when it starts: let it start first.
         tokio::task::yield_now().await;
@@ -496,13 +496,10 @@ mod tests {
         assert!(!settings.check_daily);
         tokio::time::sleep(CHECK_INTERVAL * 3).await;
         assert_eq!(handle.status(), UpdateStatus::Unknown);
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while policy.load().check_daily {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("the choice is saved");
+        let policy_saved = tokio::time::timeout(Duration::from_secs(10), saves.recv())
+            .await
+            .expect("the choice is saved");
+        assert_eq!(policy_saved.map(|policy| policy.check_daily), Some(false));
     }
 
     #[tokio::test(start_paused = true)]
@@ -560,6 +557,40 @@ mod tests {
         tokio::time::sleep(MIN_CHECK_SPACING * 2 + Duration::from_secs(1)).await;
         let asked = source.0.load(Ordering::SeqCst);
         assert!((1..=3).contains(&asked), "{asked} checks in 2 spacings");
+    }
+
+    /// Tells each saved policy on a channel, so that a test waits for the save itself.
+    struct SignalingPolicyStore(tokio::sync::mpsc::UnboundedSender<UpdatePolicy>);
+
+    impl SignalingPolicyStore {
+        fn new() -> (
+            Arc<Self>,
+            tokio::sync::mpsc::UnboundedReceiver<UpdatePolicy>,
+        ) {
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+            (Arc::new(Self(sender)), receiver)
+        }
+    }
+
+    impl PolicyStore for SignalingPolicyStore {
+        fn load(&self) -> UpdatePolicy {
+            UpdatePolicy::default()
+        }
+
+        fn save(&self, policy: UpdatePolicy) {
+            let _ = self.0.send(policy);
+        }
+    }
+
+    fn installing_with(
+        installer: SimulatedInstaller,
+        policy: Arc<dyn PolicyStore>,
+    ) -> (UpdateHandle, watch::Sender<bool>, JoinHandle<()>) {
+        started(parts(
+            Arc::new(SimulatedReleases::announcing(version("1.1.0"))),
+            Arc::new(installer),
+            policy,
+        ))
     }
 
     fn installing(

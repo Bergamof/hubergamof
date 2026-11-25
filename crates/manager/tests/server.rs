@@ -672,7 +672,7 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         ServerMessage::UpdateSettings {
             settings: UpdateSettings {
                 auto_install: true,
-                check_daily: true,
+                check_daily: false,
                 install_support: InstallSupport::Unpackaged,
             }
         }

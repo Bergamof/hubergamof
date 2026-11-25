@@ -23,14 +23,44 @@ The release notes open in a new tab.
 	let { version, status, settings, oncheck, oninstall, onautoinstall, oncheckdaily }: Props =
 		$props();
 
-	/** Asks for the choice, then shows the confirmed value again: only the manager's `updateSettings` changes it. */
-	function confirmed(
-		input: HTMLInputElement,
-		current: boolean,
-		ask: (enabled: boolean) => void
-	): void {
+	const uid = $props.id();
+
+	/** How long the manager has to confirm a choice before the page says it did not. */
+	const CONFIRMATION_DELAY_MS = 5000;
+
+	type Choice = 'checkDaily' | 'autoInstall';
+	/** The value asked for each switch and not confirmed yet. */
+	let asked = $state<Partial<Record<Choice, boolean>>>({});
+	let unconfirmed = $state<Choice | undefined>(undefined);
+
+	const pending = $derived(
+		settings !== undefined &&
+			(['checkDaily', 'autoInstall'] as const).some(
+				(choice) => asked[choice] !== undefined && asked[choice] !== settings[choice]
+			)
+	);
+
+	/**
+	 * Asks for the choice and keeps showing the confirmed value: only the manager's `updateSettings`
+	 * changes it. Meanwhile the switch stays (`aria-disabled`, so the focus is kept) and a status
+	 * line says it is being saved, then that the manager did not answer.
+	 */
+	function choose(choice: Choice, input: HTMLInputElement, ask: (enabled: boolean) => void): void {
+		const current = settings?.[choice];
+		if (pending || current === undefined) {
+			input.checked = current ?? false;
+			return;
+		}
+		asked[choice] = input.checked;
+		unconfirmed = undefined;
 		ask(input.checked);
 		input.checked = current;
+		setTimeout(() => {
+			if (settings && asked[choice] !== undefined && asked[choice] !== settings[choice]) {
+				unconfirmed = choice;
+				asked[choice] = undefined;
+			}
+		}, CONFIRMATION_DELAY_MS);
 	}
 
 	/** When the last check ran, known once one has found something (or nothing). */
@@ -60,9 +90,10 @@ The release notes open in a new tab.
 </script>
 
 <section
-	aria-label="Mises à jour"
+	aria-labelledby="{uid}-state"
 	class={['flex flex-col gap-3 card p-4 text-sm', status.type === 'available' && 'border-ring']}
 >
+	<h2 id="{uid}-state" class="font-display text-base font-semibold">Version</h2>
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 		{#if status.type === 'available' || status.type === 'upToDate'}
 			<span class="rounded-full border border-line px-2 py-0.5 text-sm font-medium">
@@ -136,24 +167,27 @@ The release notes open in a new tab.
 		</div>
 	</div>
 	{#if checkedAt !== undefined}
-		<p class="text-muted">Vérifiée {checkedLabel(checkedAt)}.</p>
+		<p role="status" class="text-muted">Vérifiée {checkedLabel(checkedAt)}.</p>
 	{/if}
 </section>
 
 {#if settings}
-	<section aria-label="Réglages des mises à jour" class="mt-4 flex flex-col gap-3 card p-4 text-sm">
-		<!-- The switches show what the manager confirms (`updateSettings`), never what was merely asked. -->
+	<section aria-labelledby="{uid}-settings" class="mt-4 flex flex-col gap-3 card p-4 text-sm">
+		<h2 id="{uid}-settings" class="font-display text-base font-semibold">Réglages</h2>
+		<!-- Not the shared `Switch`: these must show the value the manager confirmed, never the one clicked. -->
 		<label class="flex items-center gap-2.5">
 			<input
 				type="checkbox"
 				role="switch"
 				class="switch"
+				aria-disabled={pending}
+				aria-describedby="{uid}-daily-help"
 				checked={settings.checkDaily}
-				onchange={(event) => confirmed(event.currentTarget, settings.checkDaily, oncheckdaily)}
+				onchange={(event) => choose('checkDaily', event.currentTarget, oncheckdaily)}
 			/>
 			Vérifier une fois par jour
 		</label>
-		<p class="text-muted">
+		<p id="{uid}-daily-help" class="text-muted">
 			Interroge GitHub une fois par jour, sans rien envoyer de vous. Désactivée, la recherche ne se
 			fait que sur demande.
 		</p>
@@ -163,11 +197,20 @@ The release notes open in a new tab.
 					type="checkbox"
 					role="switch"
 					class="switch"
+					aria-disabled={pending}
 					checked={settings.autoInstall}
-					onchange={(event) => confirmed(event.currentTarget, settings.autoInstall, onautoinstall)}
+					onchange={(event) => choose('autoInstall', event.currentTarget, onautoinstall)}
 				/>
 				Installer automatiquement les mises à jour
 			</label>
+		{:else}
+			<p class="text-muted">
+				L’installation automatique n’est pas disponible ici : elle se fait à la main.
+			</p>
 		{/if}
+		<p role="status" class="text-muted empty:hidden">
+			{#if pending}Enregistrement…{:else if unconfirmed}Le gestionnaire n’a pas confirmé le réglage
+				: réessayez.{/if}
+		</p>
 	</section>
 {/if}
