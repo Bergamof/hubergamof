@@ -33,7 +33,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 # HTTP/1 + WebSocket only: no JSON/form extractors (messages are parsed by hand
 # to answer `invalidMessage` instead of rejecting the request).
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "tracing", "ws"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "query", "tokio", "tracing", "ws"] }
 base64.workspace = true
 hubergamof-headset.workspace = true
 hubergamof-module-api.workspace = true

@@ -300,14 +300,14 @@ fn the_preview_says_what_would_change() {
         preview
             .sections
             .iter()
-            .find(|s| &s.section == section)
+            .find(|s| s.section == section.id())
             .unwrap()
             .change
     };
     assert_eq!(change(&BackupSection::Ssh), SectionChange::Same);
     assert_eq!(change(&BackupSection::Machine), SectionChange::Replaced);
     assert_eq!(change(&BackupSection::Git), SectionChange::Added);
-    assert_eq!(preview.kept, vec![BackupSection::Mouse("OTHER".into())]);
+    assert_eq!(preview.kept, vec!["mice/OTHER".to_owned()]);
 }
 
 /// A backup whose documents hold what runs on a computer, enabled or not.
@@ -386,7 +386,7 @@ fn executables_of(backup: &Backup, section: &BackupSection) -> Vec<ExecutableIte
     preview(backup, &BTreeMap::new())
         .sections
         .into_iter()
-        .find(|s| &s.section == section)
+        .find(|s| s.section == section.id())
         .unwrap()
         .executables
 }
@@ -543,4 +543,28 @@ fn an_ambiguous_end_of_archive_is_refused_through_a_backup() {
             ArchiveError::AmbiguousEnd | ArchiveError::NoEnd
         ))
     ));
+}
+
+#[test]
+fn a_selection_keeps_the_chosen_sections_and_the_images_of_the_chosen_devices() {
+    let backup = full_backup();
+    let device = BackupSection::Device(DEMO_SERIAL.to_owned());
+
+    let with_device = backup.select(&BTreeSet::from([device.clone(), BackupSection::Ssh]));
+    assert_eq!(
+        with_device.manifest.sections,
+        vec![device.id(), "ssh".to_owned()]
+    );
+    assert_eq!(with_device.images.len(), 1);
+    assert_eq!(with_device.manifest.app_version, "1.4.2");
+    assert_eq!(with_device.manifest.created_at, 1_700_000_000);
+
+    // Images are not carried by other sections.
+    let without_device = backup.select(&BTreeSet::from([BackupSection::Git]));
+    assert_eq!(without_device.manifest.sections, vec!["git".to_owned()]);
+    assert_eq!(without_device.images.len(), 0);
+
+    // What is selected reads back as itself.
+    let archive = write_backup(&with_device).unwrap();
+    assert_eq!(read_backup(&archive).unwrap(), with_device);
 }

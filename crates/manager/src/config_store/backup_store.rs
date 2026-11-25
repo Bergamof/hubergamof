@@ -30,36 +30,57 @@ enum Found<T> {
     Document(T),
 }
 
-/// The document of `path`. A file that cannot be read as a `T` is reported,
-/// not an error: one broken file must not keep the rest from being saved.
+/// The bytes of a file read up to a limit.
+pub(super) enum RawFile {
+    /// No such file.
+    Missing,
+    /// A link, a named pipe or a folder in its place, or more than the limit.
+    Unreadable,
+    /// What the file holds.
+    Bytes(Vec<u8>),
+}
+
+/// Reads at most `limit` bytes of the regular file `path`.
 ///
-/// Opened without blocking and without following a link, and read up to a
-/// limit: a named pipe or a huge file in its place must not hold the store.
-fn read_document<T: DeserializeOwned>(path: &Path) -> Result<Found<T>, ConfigStoreError> {
+/// Opened without blocking and without following a link: a named pipe or a
+/// huge file in its place must not hold the store.
+pub(super) fn read_regular_file(path: &Path, limit: usize) -> Result<RawFile, ConfigStoreError> {
     let file = match fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Found::Missing),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(RawFile::Missing),
         // A link in the place of the file (`O_NOFOLLOW`) is not one to read.
-        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(Found::Unreadable),
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(RawFile::Unreadable),
         Err(error) => return Err(io_error(path, error)),
     };
     let is_file = file.metadata().is_ok_and(|metadata| metadata.is_file());
     if !is_file {
-        return Ok(Found::Unreadable);
+        return Ok(RawFile::Unreadable);
     }
     let mut bytes = Vec::new();
-    let cap = u64::try_from(MAX_ARCHIVE_CONFIG_BYTES).map_or(u64::MAX, |limit| limit + 1);
+    let cap = u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1));
     file.take(cap)
         .read_to_end(&mut bytes)
         .map_err(|error| io_error(path, error))?;
-    if bytes.len() > MAX_ARCHIVE_CONFIG_BYTES {
-        return Ok(Found::Unreadable);
+    if bytes.len() > limit {
+        return Ok(RawFile::Unreadable);
     }
-    Ok(serde_json::from_slice(&bytes).map_or(Found::Unreadable, Found::Document))
+    Ok(RawFile::Bytes(bytes))
+}
+
+/// The document of `path`. A file that cannot be read as a `T` is reported,
+/// not an error: one broken file must not keep the rest from being saved.
+fn read_document<T: DeserializeOwned>(path: &Path) -> Result<Found<T>, ConfigStoreError> {
+    Ok(match read_regular_file(path, MAX_ARCHIVE_CONFIG_BYTES)? {
+        RawFile::Missing => Found::Missing,
+        RawFile::Unreadable => Found::Unreadable,
+        RawFile::Bytes(bytes) => {
+            serde_json::from_slice(&bytes).map_or(Found::Unreadable, Found::Document)
+        }
+    })
 }
 
 /// What was read of the disk: the backup, and the parts left out of it.
@@ -238,9 +259,10 @@ mod tests {
     use hubergamof_protocol::MouseModel;
 
     use super::*;
-    use crate::config_store::backup::{SectionChange, preview, read_backup, write_backup};
+    use crate::config_store::backup::{preview, read_backup, write_backup};
     use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
     use crate::testing::builtin_registry;
+    use hubergamof_protocol::SectionChange;
 
     fn store() -> (tempfile::TempDir, ConfigStore) {
         let dir = tempfile::tempdir().unwrap();

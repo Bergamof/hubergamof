@@ -39,7 +39,7 @@ use crate::render::{ImageKind, ImageSource, MAX_SOURCE_BYTES, RenderError, Rende
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const JSON: &str = "application/json";
 const PNG: &str = "image/png";
-const ZIP: &str = "application/zip";
+pub(super) const ZIP: &str = "application/zip";
 /// Upload of unknown type: the format is read from the content.
 const UNKNOWN_TYPE: &str = "application/octet-stream";
 
@@ -64,7 +64,7 @@ pub(super) fn routes() -> Router<AppState> {
 
 /// A failed request, answered with an [`ApiError`] body.
 #[derive(Debug)]
-struct Failure {
+pub(super) struct Failure {
     code: ErrorCode,
     message: String,
     /// HTTP status, when not the one of the code.
@@ -72,7 +72,7 @@ struct Failure {
 }
 
 impl Failure {
-    fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+    pub(super) fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: client_message(code, message, "API request"),
@@ -84,7 +84,7 @@ impl Failure {
         Self::new(ErrorCode::UnknownDevice, format!("unknown device {serial}"))
     }
 
-    fn internal(error: impl std::fmt::Display) -> Self {
+    pub(super) fn internal(error: impl std::fmt::Display) -> Self {
         Self::new(ErrorCode::Internal, error.to_string())
     }
 
@@ -162,7 +162,7 @@ impl IntoResponse for Failure {
 }
 
 /// `value` as a JSON response body.
-fn json(value: &impl Serialize) -> Response {
+pub(super) fn json(value: &impl Serialize) -> Response {
     match serde_json::to_vec(value) {
         Ok(body) => ([(CONTENT_TYPE, JSON)], body).into_response(),
         Err(error) => Failure::internal(error).into_response(),
@@ -170,7 +170,7 @@ fn json(value: &impl Serialize) -> Response {
 }
 
 /// Runs CPU- or disk-bound work off the async runtime.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
     tokio::task::spawn_blocking(work)
@@ -180,7 +180,7 @@ async fn blocking<T: Send + 'static>(
 
 /// Waits for the transfer slot.
 /// Nothing is done from the interface while the computer is locked.
-fn ensure_unlocked(state: &AppState) -> Result<(), Failure> {
+pub(super) fn ensure_unlocked(state: &AppState) -> Result<(), Failure> {
     if *state.context.screen_lock.watch().borrow() {
         Err(Failure::locked())
     } else {
@@ -188,7 +188,7 @@ fn ensure_unlocked(state: &AppState) -> Result<(), Failure> {
     }
 }
 
-async fn transfer_slot(state: &AppState) -> Result<SemaphorePermit<'_>, Failure> {
+pub(super) async fn transfer_slot(state: &AppState) -> Result<SemaphorePermit<'_>, Failure> {
     state.transfers.acquire().await.map_err(Failure::internal)
 }
 
