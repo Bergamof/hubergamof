@@ -31,8 +31,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Cursor, Write};
 
 use hubergamof_protocol::{
-    AppModulesConfig, DeviceConfig, GitConfig, MachineConfig, MouseConfig, RadialMenuConfig,
-    SshConfig, SshHost, is_safe_image_name,
+    AppModulesConfig, BackupPreview, DeviceConfig, ExecutableItem, ExecutableKind, GitConfig,
+    MachineConfig, MouseConfig, RadialMenuConfig, SectionChange, SectionPreview, SshConfig,
+    SshHost, is_safe_image_name,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -265,7 +266,7 @@ impl BackupDocument {
                 .aliases
                 .iter()
                 .map(|alias| {
-                    ExecutableItem::new(
+                    executable(
                         ExecutableKind::ShellAlias,
                         &alias.name,
                         &alias.command,
@@ -275,7 +276,7 @@ impl BackupDocument {
                 .collect(),
             Self::Git(config) => {
                 let aliases = config.aliases.iter().map(|alias| {
-                    ExecutableItem::new(
+                    executable(
                         ExecutableKind::GitAlias,
                         &alias.name,
                         &alias.command,
@@ -286,7 +287,7 @@ impl BackupDocument {
                 // `filter.*`, `diff.*` run something without an alias being typed, and a list
                 // of the dangerous ones would always miss one.
                 let settings = config.extra_settings.iter().map(|setting| {
-                    ExecutableItem::new(
+                    executable(
                         ExecutableKind::GitSetting,
                         &setting.key,
                         &setting.value,
@@ -306,7 +307,7 @@ impl BackupDocument {
                         .map(|option| (host.alias.as_str(), option, host.enabled))
                 });
                 let options = common.chain(host_options).map(|(host, option, host_on)| {
-                    ExecutableItem::new(
+                    executable(
                         ExecutableKind::SshOption,
                         &format!("{host}: {}", option.key),
                         &option.value,
@@ -324,7 +325,7 @@ impl BackupDocument {
                             || !host.proxy_jump.is_empty()
                     })
                     .map(|host| {
-                        ExecutableItem::new(
+                        executable(
                             ExecutableKind::SshHost,
                             &host.alias,
                             &ssh_host_detail(host),
@@ -400,6 +401,32 @@ impl Backup {
             documents,
             images,
         }
+    }
+}
+
+impl Backup {
+    /// The part of the backup that holds `sections` (and the images of its
+    /// devices), written by the same version at the same time.
+    #[must_use]
+    pub fn select(&self, sections: &BTreeSet<BackupSection>) -> Self {
+        let documents: BTreeMap<_, _> = self
+            .documents
+            .iter()
+            .filter(|(section, _)| sections.contains(section))
+            .map(|(section, document)| (section.clone(), document.clone()))
+            .collect();
+        let images = self
+            .images
+            .iter()
+            .filter(|(serial, _)| documents.contains_key(&BackupSection::Device((*serial).clone())))
+            .map(|(serial, images)| (serial.clone(), images.clone()))
+            .collect();
+        Self::new(
+            &self.manifest.app_version,
+            self.manifest.created_at,
+            documents,
+            images,
+        )
     }
 }
 
@@ -610,82 +637,21 @@ fn parse_manifest(bytes: &[u8]) -> Result<BackupManifest, BackupError> {
     }
 }
 
-/// What importing a section would do to this computer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SectionChange {
-    /// This computer has nothing there yet.
-    Added,
-    /// The content differs: it would be replaced.
-    Replaced,
-    /// The same content (revisions apart): nothing would change.
-    Same,
-}
-
-/// What kind of command an item of a backup would run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutableKind {
-    /// A shell alias.
-    ShellAlias,
-    /// A Git alias.
-    GitAlias,
-    /// A free option of an SSH host.
-    SshOption,
-    /// A free setting of Git.
-    GitSetting,
-    /// An SSH host that names a machine, a jump or the forwarding of the agent.
-    SshHost,
-}
-
-/// Something a backup would have this computer run, which the person is
-/// shown before anything is written.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutableItem {
-    /// What kind of command it is.
-    pub kind: ExecutableKind,
-    /// The alias, or the host and the option.
-    pub name: String,
-    /// The command or the value.
-    pub detail: String,
-    /// Whether it is enabled: a disabled one is imported all the same, one
-    /// switch from being run.
-    pub enabled: bool,
-}
-
-impl ExecutableItem {
-    fn new(kind: ExecutableKind, name: &str, detail: &str, enabled: bool) -> Self {
-        Self {
-            kind,
-            name: name.to_owned(),
-            detail: detail.to_owned(),
-            enabled,
-        }
+/// An item of a document that runs something. Whether it takes over a name of
+/// the computer is for the server to say: it alone knows the machine.
+fn executable(kind: ExecutableKind, name: &str, detail: &str, enabled: bool) -> ExecutableItem {
+    ExecutableItem {
+        kind,
+        name: name.to_owned(),
+        detail: detail.to_owned(),
+        enabled,
+        takes_over: false,
     }
 }
 
-/// What an import would do to one section of the backup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SectionPreview {
-    /// The section.
-    pub section: BackupSection,
-    /// What an import would do to it.
-    pub change: SectionChange,
-    /// What it would have this computer run (the whole of it, even when the
-    /// section would not change).
-    pub executables: Vec<ExecutableItem>,
-}
-
-/// What an import would do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BackupPreview {
-    /// The sections of the backup, in the order of the sections.
-    pub sections: Vec<SectionPreview>,
-    /// The sections that this computer has and the backup does not: an
-    /// import leaves them as they are.
-    pub kept: Vec<BackupSection>,
-}
-
 /// What importing `backup` would do to a computer whose configuration is
-/// `current`. Nothing is written.
+/// `current`. Nothing is written. Every section is reported present: whether
+/// a device is connected is not known here.
 #[must_use]
 pub fn preview(
     backup: &Backup,
@@ -695,19 +661,20 @@ pub fn preview(
         .documents
         .iter()
         .map(|(section, document)| SectionPreview {
-            section: section.clone(),
+            section: section.id(),
             change: match current.get(section) {
                 None => SectionChange::Added,
                 Some(now) if now.comparable() == document.comparable() => SectionChange::Same,
                 Some(_) => SectionChange::Replaced,
             },
+            present: true,
             executables: document.executables(),
         })
         .collect();
     let kept = current
         .keys()
         .filter(|section| !backup.documents.contains_key(section))
-        .cloned()
+        .map(BackupSection::id)
         .collect();
     BackupPreview { sections, kept }
 }

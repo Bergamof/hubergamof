@@ -99,6 +99,19 @@ impl ConfigStore {
         save_document(&path, config)
     }
 
+    /// Saves the configuration of a mouse over the stored one, whatever the
+    /// revision it carries: the revision follows the stored one. For a mouse
+    /// that is not connected, whose configuration an import replaces.
+    ///
+    /// # Errors
+    /// See [`ConfigStore::save_mouse`], but the revision.
+    pub fn replace_mouse(&self, mut config: MouseConfig) -> Result<MouseConfig, ConfigStoreError> {
+        let _guard = self.lock();
+        let path = self.device_dir(&config.serial)?.join(MOUSE_FILE);
+        config.revision = stored_revision::<MouseConfig>(&path)?;
+        save_document(&path, config)
+    }
+
     /// Loads the radial menu configuration, creating it from defaults when
     /// missing and setting an invalid file aside.
     ///
@@ -155,20 +168,25 @@ pub(super) fn load_or_default<T: Document>(
     Ok(Loaded { config, outcome })
 }
 
-pub(super) fn save_document<T: Document>(
-    path: &Path,
-    mut config: T,
-) -> Result<T, ConfigStoreError> {
-    let current = match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice::<T>(&bytes)
+/// The revision of the stored document, 0 when there is none.
+fn stored_revision<T: Document>(path: &Path) -> Result<u64, ConfigStoreError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(serde_json::from_slice::<T>(&bytes)
             .map_err(|source| ConfigStoreError::Json {
                 path: path.to_owned(),
                 source,
             })?
-            .revision(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
-        Err(error) => return Err(io_error(path, error)),
-    };
+            .revision()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(io_error(path, error)),
+    }
+}
+
+pub(super) fn save_document<T: Document>(
+    path: &Path,
+    mut config: T,
+) -> Result<T, ConfigStoreError> {
+    let current = stored_revision::<T>(path)?;
     if config.revision() != current {
         return Err(ConfigStoreError::StaleRevision {
             current,

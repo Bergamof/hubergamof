@@ -13,6 +13,7 @@
 mod advanced;
 mod api;
 mod app_modules;
+mod backup;
 mod catalog;
 mod config;
 mod device;
@@ -34,6 +35,10 @@ pub use advanced::{
 pub use api::{ApiError, FileChooserRequest, FileChosen, ImageUploaded};
 pub use app_modules::{
     APP_MODULES_SCHEMA_VERSION, AppModulesConfig, AppModulesConfigError, ApplicationModuleView,
+};
+pub use backup::{
+    BackupPreview, ExecutableItem, ExecutableKind, ImportReport, SectionChange, SectionOutcome,
+    SectionPreview, SectionResult, SnapshotInfo,
 };
 pub use catalog::CatalogModule;
 pub use config::{

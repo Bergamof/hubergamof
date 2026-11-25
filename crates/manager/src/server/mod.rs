@@ -11,6 +11,8 @@
 
 mod api;
 mod assets;
+mod backup_api;
+mod backup_import;
 mod catalog;
 mod errors;
 mod headset_feed;
@@ -166,6 +168,7 @@ pub fn router(
     Router::new()
         .route(WS_PATH, get(upgrade_websocket))
         .merge(api::routes())
+        .merge(backup_api::routes())
         .fallback_service(get(assets::serve_ui).with_state(state.clone()))
         .layer(middleware::from_fn_with_state(
             state.clone(),

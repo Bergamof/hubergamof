@@ -28,6 +28,7 @@ mod files;
 mod git;
 mod machine;
 mod mouse;
+mod snapshots;
 mod ssh;
 pub(crate) use files::write_bytes_atomically;
 mod migration;
@@ -55,11 +56,11 @@ pub use archive::{
 };
 pub use backup::{
     BACKUP_FORMAT, BACKUP_MANIFEST_ENTRY, Backup, BackupDocument, BackupError, BackupManifest,
-    BackupPreview, BackupSection, ExecutableItem, ExecutableKind, MAX_BACKUP_ENTRIES,
-    SectionChange, SectionPreview, preview, read_backup, write_backup,
+    BackupSection, MAX_BACKUP_ENTRIES, preview, read_backup, write_backup,
 };
 pub use backup_store::CollectedBackup;
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};
+pub use snapshots::{MAX_SNAPSHOTS, Snapshot};
 
 use tokio::io::AsyncReadExt as _;
 
@@ -206,6 +207,12 @@ pub enum ConfigStoreError {
     /// The archived configuration uses an image the archive does not hold.
     #[error("the archive has no image {0:?}")]
     MissingImage(String),
+    /// A backup cannot be written or read.
+    #[error(transparent)]
+    Backup(#[from] BackupError),
+    /// No snapshot has this id.
+    #[error("no snapshot `{0}`")]
+    UnknownSnapshot(String),
 }
 
 impl ConfigStoreError {
@@ -230,7 +237,8 @@ impl ConfigStoreError {
             | Self::ImageTooLarge
             | Self::TooManyImages
             | Self::UnreadableImage { .. } => ErrorCode::InvalidImage,
-            Self::Archive(_) | Self::MissingImage(_) => ErrorCode::InvalidArchive,
+            Self::Archive(_) | Self::MissingImage(_) | Self::Backup(_) => ErrorCode::InvalidArchive,
+            Self::UnknownSnapshot(_) => ErrorCode::InvalidInput,
             Self::Io { .. } | Self::Json { .. } => ErrorCode::Internal,
         }
     }
@@ -566,6 +574,25 @@ impl ConfigStore {
         check: impl Fn(&[u8]) -> Result<ImageKind, String>,
     ) -> Result<PreparedImport, ConfigStoreError> {
         let Archive { config, images } = read_archive(bytes)?;
+        self.prepare_device_import(config, &images, device, revision, check)
+    }
+
+    /// Prepares `config` and the `images` that come with it for `device` at
+    /// its current `revision`, like [`ConfigStore::prepare_import`] does for
+    /// an archive already read.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigStoreError::MissingImage`], [`ConfigStoreError::UnreadableImage`]
+    /// or a validation error.
+    pub fn prepare_device_import(
+        &self,
+        config: DeviceConfig,
+        images: &ArchiveImages,
+        device: &DeviceInfo,
+        revision: u64,
+        check: impl Fn(&[u8]) -> Result<ImageKind, String>,
+    ) -> Result<PreparedImport, ConfigStoreError> {
         let mut config = fit_to_device(config, device, revision);
         let changes = normalize(&mut config, self.descriptors.as_ref());
         if !changes.is_empty() {
@@ -574,7 +601,72 @@ impl ConfigStore {
                 "imported configuration brought back to the placement rules"
             );
         }
-        let mut stager = ImageStager::new(&images, check);
+        let images = self.stage_images(&mut config, images, check)?;
+        check_config(&config, device)?;
+        Ok(PreparedImport { config, images })
+    }
+
+    /// Stores the configuration of a device that is not connected, and the
+    /// images that come with it, as an import does for a connected one: the
+    /// device finds it when it comes back (a configuration that does not fit
+    /// it then is set aside, as any invalid one). The revision follows the
+    /// stored one. Returns the stored configuration.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigStoreError::InvalidSerial`], a validation error,
+    /// [`ConfigStoreError::MissingImage`], [`ConfigStoreError::UnreadableImage`]
+    /// or an I/O error; nothing is left written then.
+    pub fn import_absent_device(
+        &self,
+        mut config: DeviceConfig,
+        images: &ArchiveImages,
+        check: impl Fn(&[u8]) -> Result<ImageKind, String>,
+    ) -> Result<DeviceConfig, ConfigStoreError> {
+        let serial = config.serial.clone();
+        let path = self.config_path(&serial)?;
+        config.validate()?;
+        let changes = normalize(&mut config, self.descriptors.as_ref());
+        if !changes.is_empty() {
+            tracing::info!(
+                ?changes,
+                "imported configuration brought back to the placement rules"
+            );
+        }
+        let used = used_instances(&config);
+        config.modules.retain(|module| used.contains(&module.id));
+        let staged = PreparedImport {
+            images: self.stage_images(&mut config, images, check)?,
+            config,
+        };
+        let created = self.write_import_images(&serial, &staged)?;
+        let mut config = staged.config;
+        let saved = {
+            let _guard = self.lock();
+            let current = read_config(&path).map(|stored| stored.map_or(0, |c| c.revision));
+            current.and_then(|current| {
+                config.revision = current + 1;
+                write_atomically(&path, &config)
+            })
+        };
+        match saved {
+            Ok(()) => Ok(config),
+            Err(error) => {
+                self.remove_images(&serial, &created);
+                Err(error)
+            }
+        }
+    }
+
+    /// Stages the images that `config` and its modules' settings use, by
+    /// content name, and points `config` at them.
+    fn stage_images(
+        &self,
+        config: &mut DeviceConfig,
+        images: &ArchiveImages,
+        check: impl Fn(&[u8]) -> Result<ImageKind, String>,
+    ) -> Result<Vec<(String, Vec<u8>)>, ConfigStoreError> {
+        let mut stager = ImageStager::new(images, check);
         for module in &mut config.modules {
             if let Some(name) = module.image.take() {
                 module.image = Some(stager.stage(&name)?);
@@ -587,11 +679,7 @@ impl ConfigStore {
                     .replace_settings_images(&mut module.settings, |name| stager.stored_name(name));
             }
         }
-        check_config(&config, device)?;
-        Ok(PreparedImport {
-            config,
-            images: stager.prepared,
-        })
+        Ok(stager.prepared)
     }
 
     /// What the module of `module` describes, `None` for a kind not provided.
