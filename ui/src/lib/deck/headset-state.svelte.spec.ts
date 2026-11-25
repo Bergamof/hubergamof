@@ -149,4 +149,14 @@ describe('HeadsetState', () => {
 		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
 		expect(connection.sent).toEqual([]);
 	});
+
+	it('stops waiting for the battery when the link could not be opened', () => {
+		const { connection, headsets } = setup();
+		connection.receive({ type: 'headsets', headsets: [headset(ADDRESS)] });
+		headsets.readBattery();
+		expect(headsets.reading).toBe(true);
+		connection.receive({ type: 'headsetState', address: ADDRESS, state: status('cut') });
+		expect(headsets.reading).toBe(false);
+		expect(headsets.batteryOf(ADDRESS)).toBeUndefined();
+	});
 });

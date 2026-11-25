@@ -28,7 +28,7 @@ describe('BatteryBadge', () => {
 
 	it('says what is asked when the battery is not known, and nothing otherwise', async () => {
 		const { container } = await render(BatteryBadge, { battery: undefined, unknown: 'Non lu' });
-		await expect.element(page.getByText('Non lu')).toBeVisible();
+		await expect.element(page.getByText(/Non lu/)).toBeVisible();
 		expect(container.querySelector('svg')).toBeNull();
 		const empty = await render(BatteryBadge, { battery: undefined });
 		expect(empty.container.textContent?.trim()).toBe('');

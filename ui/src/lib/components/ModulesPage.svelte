@@ -51,6 +51,7 @@ and does is on the home page.
 							href={moduleHref(view.kind)}
 							data-sveltekit-preload-data="off"
 							data-sveltekit-noscroll
+							data-sveltekit-keepfocus
 							aria-current={current ? 'true' : undefined}
 							class={[
 								'flex min-h-10 flex-col justify-center rounded-lg px-2.5 py-1 text-fg no-underline focus-ring hover:bg-sunken',

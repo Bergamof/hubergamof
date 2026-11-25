@@ -99,7 +99,7 @@ describe('SideNav', () => {
 	it('says the battery of the headphones is not read until it is, then keeps it', async () => {
 		const headset = { address: 'AA', name: 'WH-1000XM4' } as HeadsetInfo;
 		const unread = await render(SideNav, props({ devices: navDevices([], [], [headset]) }));
-		await expect.element(page.getByText('Non lu')).toBeVisible();
+		await expect.element(page.getByText(/Non lu/)).toBeVisible();
 		unread.unmount();
 		await render(
 			SideNav,

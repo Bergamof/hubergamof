@@ -33,11 +33,14 @@ never tells it. A battery not read yet shows `unknown` when it is given, else no
 	>
 		<Icon name="battery" class="size-3.5" />
 		{#if battery.charging}<Icon name="bolt" class="-ml-0.5 size-3" />{/if}
+		<span class={labelled ? '' : 'sr-only'}>Batterie&nbsp;</span>
 		<span>{battery.percent}&nbsp;%</span>
 		{#if state}
 			<span class={labelled ? '' : 'sr-only'}>{labelled ? `· ${state}` : `, ${state}`}</span>
 		{/if}
 	</span>
 {:else if unknown}
-	<span class={['text-muted', className]}>{unknown}</span>
+	<span class={['text-muted', className]}>
+		<span class={labelled ? '' : 'sr-only'}>Batterie&nbsp;:&nbsp;</span>{unknown}
+	</span>
 {/if}

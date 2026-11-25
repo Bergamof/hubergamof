@@ -21,7 +21,7 @@ export class HeadsetState {
 	readonly #connection: DeckConnection;
 	#watching = false;
 	/** The link is opened only to read the battery: the headphones are let go once it is read. */
-	#reading = false;
+	#reading = $state(false);
 	/** The last battery the headphones said: it stays when the page is left, until read again. */
 	#lastBattery: { address: string; battery: HeadsetBattery } | undefined = $state();
 	#address: string | undefined = $state();
@@ -46,6 +46,11 @@ export class HeadsetState {
 		this.#watching = false;
 		this.#reading = false;
 		this.#forget();
+	}
+
+	/** The link is being opened to read the battery. */
+	get reading(): boolean {
+		return this.#reading;
 	}
 
 	/**
@@ -98,10 +103,10 @@ export class HeadsetState {
 		} else if (message.type === 'headsetState' && message.address === this.#address) {
 			this.status = message.state;
 			const battery = message.state.battery;
-			if (battery) {
-				this.#lastBattery = { address: message.address, battery };
-				if (this.#reading) this.leave();
-			}
+			if (battery) this.#lastBattery = { address: message.address, battery };
+			// Read, or the link did not open: either way the wait is over.
+			const failed = message.state.link === 'cut' || message.state.link === 'released';
+			if (this.#reading && (battery || failed)) this.leave();
 		}
 	}
 

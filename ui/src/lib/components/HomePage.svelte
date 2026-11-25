@@ -9,7 +9,7 @@ it would cut the Sony application: the battery of the headphones is read on requ
 	import { getManager } from '#lib/deck/manager-context.js';
 	import { PATHS, deviceHref, navDevices, type NavDevice } from '#lib/deck/nav-model.js';
 	import { moduleName } from '#lib/deck/display.js';
-	import { availableActions } from '#lib/deck/module-actions.js';
+	import { availableActions, groupActions, isEnding } from '#lib/deck/module-actions.js';
 	import BatteryBadge from './BatteryBadge.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import PageHeader from './PageHeader.svelte';
@@ -35,6 +35,28 @@ it would cut the Sony application: the battery of the headphones is read on requ
 		intellij: 'code',
 		claude: 'spark'
 	};
+
+	/** Opens the link to the headphones to read their battery, and says what became of it. */
+	let headsetNotice = $state('');
+	let wasReading = false;
+	$effect(() => {
+		const reading = deck.headsets.reading;
+		if (reading) {
+			headsetNotice = 'Lecture de la batterie du casque…';
+		} else if (wasReading) {
+			const battery = deck.headsets.headsets[0]
+				? deck.headsets.batteryOf(deck.headsets.headsets[0].address)
+				: undefined;
+			headsetNotice = battery
+				? `Batterie du casque : ${battery.percent} %.`
+				: 'Batterie du casque non lue : la liaison n’a pas pu s’ouvrir.';
+		}
+		wasReading = reading;
+	});
+
+	function readBattery() {
+		if (!deck.headsets.reading) deck.headsets.readBattery();
+	}
 
 	/** The lines a module says: the step, then the detail. */
 	const linesOf = (status: string | null | undefined): string[] =>
@@ -91,20 +113,28 @@ it would cut the Sony application: the battery of the headphones is read on requ
 						{:else}
 							<BatteryBadge
 								battery={device.battery}
-								unknown={device.kind === 'headset' ? 'Batterie non lue' : 'Batterie : inconnue'}
+								unknown={device.kind === 'headset' ? 'non lue' : 'inconnue'}
 								labelled
 							/>
 						{/if}
 					</span>
 					<span class="mt-auto flex flex-wrap gap-2">
-						{#if device.kind === 'headset' && !device.battery}
+						{#if device.kind === 'headset'}
+							<!-- `aria-disabled`, not `disabled`: the button keeps the focus while the link opens. -->
 							<button
 								type="button"
 								class="secondary-button"
-								title="Ouvre la liaison avec le casque : l’application Sony se coupe jusqu’à ce qu’il soit libéré."
-								onclick={() => deck.headsets.readBattery()}
+								aria-disabled={deck.headsets.reading}
+								aria-describedby="home-headset-reading"
+								onclick={readBattery}
 							>
-								Lire la batterie<span class="sr-only"> de {device.label}</span>
+								{#if deck.headsets.reading}
+									Lecture…
+								{:else}
+									{device.battery ? 'Relire' : 'Lire'} la batterie<span class="sr-only">
+										de {device.label}</span
+									>
+								{/if}
 							</button>
 						{/if}
 						<a
@@ -115,9 +145,16 @@ it would cut the Sony application: the battery of the headphones is read on requ
 							Configurer<span class="sr-only"> {device.label}</span>
 						</a>
 					</span>
+					{#if device.kind === 'headset'}
+						<span class="text-xs text-muted">
+							Lire la batterie ouvre la liaison avec le casque : l’application Sony se coupe jusqu’à
+							ce qu’il soit libéré.
+						</span>
+					{/if}
 				</li>
 			{/each}
 		</ul>
+		<p id="home-headset-reading" role="status" class="sr-only">{headsetNotice}</p>
 	{/if}
 </section>
 
@@ -136,7 +173,10 @@ it would cut the Sony application: the battery of the headphones is read on requ
 			<ul class="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
 				{#each modules as view (view.kind)}
 					{@const lines = linesOf(view.status)}
-					{@const action = availableActions(deck.moduleOf(view.kind), view)[0]}
+					{@const action = groupActions(
+						view.kind,
+						availableActions(deck.moduleOf(view.kind), view)
+					)[0]?.actions.find((candidate) => !isEnding(candidate))}
 					<li class="flex min-h-24 flex-col gap-1 rounded-lg border border-line p-3">
 						<span class="flex items-center gap-1.5 font-medium text-muted">
 							<Icon name={MODULE_ICON[view.kind] ?? 'modules'} />
@@ -154,7 +194,9 @@ it would cut the Sony application: the battery of the headphones is read on requ
 								class="mt-auto secondary-button self-start"
 								onclick={() => run(view.kind, action.id)}
 							>
-								{action.name}
+								{action.name}<span class="sr-only">
+									de {moduleName(view.kind, deck.moduleOf(view.kind))}</span
+								>
 							</button>
 						{/if}
 					</li>

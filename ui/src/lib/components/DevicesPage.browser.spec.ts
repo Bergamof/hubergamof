@@ -48,6 +48,6 @@ describe('DevicesPage', () => {
 		await render(ManagerHarness, { deck, page: DevicesPage });
 		await expect.element(page.getByText(/78\s*%/)).toBeVisible();
 		await expect.element(page.getByText(/9\s*%\s*· en charge/)).toBeVisible();
-		await expect.element(page.getByText('Non lu')).toBeVisible();
+		await expect.element(page.getByText(/Non lu/)).toBeVisible();
 	});
 });

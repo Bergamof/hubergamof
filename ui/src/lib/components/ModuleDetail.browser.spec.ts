@@ -159,6 +159,26 @@ describe('ModuleDetail', () => {
 				.not.toBeInTheDocument();
 		});
 
+		it('gives the focus to the title when the action that had it goes away', async () => {
+			const connection = new FakeConnection();
+			const deck = new DeckState(connection, { load: () => null, save: () => undefined });
+			deck.listen();
+			connection.receive({ type: 'moduleCatalog', modules: [TEAMS] });
+			const inCall = teams(['mute', 'hang-up', 'conversations']);
+			connection.receive({ type: 'applicationModules', modules: [inCall] });
+			const { rerender } = await render(ModuleDetail, {
+				deck,
+				api: new ManagerApi(),
+				view: inCall
+			});
+			const hangUp = page.getByRole('button', { name: 'Raccrocher' });
+			hangUp.element().focus();
+			await expect.element(hangUp).toHaveFocus();
+			// The call is over: its controls go, and the focus goes to the title, not to the page.
+			await rerender({ view: teams(['conversations']) });
+			await expect.element(page.getByRole('heading', { name: 'Teams', level: 2 })).toHaveFocus();
+		});
+
 		it('says why there is nothing to do when Teams is not connected', async () => {
 			await renderPanel([teams([])], [TEAMS]);
 			await expect.element(page.getByText(/Aucune action pour l’instant/)).toBeVisible();
