@@ -41,8 +41,8 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use super::archive::{
-    ArchiveError, ArchiveImages, Limits, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_CONFIG_BYTES,
-    MAX_ARCHIVE_EXPANDED_BYTES, read_entries,
+    ARCHIVE_CONFIG_ENTRY, Archive, ArchiveError, ArchiveImages, Limits, MAX_ARCHIVE_BYTES,
+    MAX_ARCHIVE_CONFIG_BYTES, MAX_ARCHIVE_EXPANDED_BYTES, read_archive, read_entries,
 };
 use super::is_safe_serial;
 use crate::render::{ImageKind, MAX_SOURCE_BYTES};
@@ -635,6 +635,60 @@ fn parse_manifest(bytes: &[u8]) -> Result<BackupManifest, BackupError> {
         newer if newer > BACKUP_FORMAT => Err(BackupError::NewerFormat(newer)),
         older => Err(BackupError::UnknownFormat(older)),
     }
+}
+
+/// Version named for what an archive of a single device holds: the export that
+/// came before the global backup says none.
+const LEGACY_ARCHIVE_VERSION: &str = "1";
+
+/// Reads `bytes` as a backup, or as the archive of one device (what the
+/// application exported before the global backup), which becomes a backup of
+/// that device alone, its images with it: nothing exported is left unreadable.
+///
+/// # Errors
+///
+/// The [`BackupError`] of reading a backup when `bytes` are not an archive of
+/// a device either; [`BackupError::Refused`] for an archive of a device that
+/// holds an unacceptable configuration.
+pub fn read_backup_or_archive(bytes: &[u8]) -> Result<Backup, BackupError> {
+    let error = match read_backup(bytes) {
+        Ok(backup) => return Ok(backup),
+        Err(error) => error,
+    };
+    match read_archive(bytes) {
+        Ok(archive) => backup_of_archive(archive),
+        // An archive that has the `config.json` of a device and no manifest is the old
+        // export of one: say what is wrong with it as such, not that its entry is unexpected.
+        Err(archive_error) if names_old_config(&error) => Err(archive_error.into()),
+        Err(_) => Err(error),
+    }
+}
+
+/// Whether `error` is a backup read refusing the `config.json` entry of an old export.
+fn names_old_config(error: &BackupError) -> bool {
+    matches!(error, BackupError::Archive(ArchiveError::UnexpectedEntry(name)) if name == ARCHIVE_CONFIG_ENTRY)
+}
+
+fn backup_of_archive(archive: Archive) -> Result<Backup, BackupError> {
+    let Archive { config, images } = archive;
+    let section = BackupSection::parse(&format!("devices/{}", config.serial)).ok_or_else(|| {
+        BackupError::Refused {
+            section: "devices".to_owned(),
+            reason: "the serial of the device is not one".to_owned(),
+        }
+    })?;
+    let document = BackupDocument::Device(Box::new(config));
+    document.validate(&section)?;
+    let mut held = BTreeMap::new();
+    if let (BackupSection::Device(serial), false) = (&section, images.is_empty()) {
+        held.insert(serial.clone(), images);
+    }
+    Ok(Backup::new(
+        LEGACY_ARCHIVE_VERSION,
+        0,
+        BTreeMap::from([(section, document)]),
+        held,
+    ))
 }
 
 /// An item of a document that runs something. Whether it takes over a name of

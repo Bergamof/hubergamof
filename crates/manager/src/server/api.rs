@@ -1,15 +1,14 @@
 //! Internal HTTP routes of the UI, for what does not fit WebSocket messages:
-//! key images and configuration archives (`/api/devices/{serial}/…`), and the
-//! desktop's file dialog (`/api/file-chooser/…`).
+//! key images (`/api/devices/{serial}/…`) and the desktop's file dialog
+//! (`/api/file-chooser/…`). The backup of the configuration has its own routes
+//! (`backup_api.rs`).
 //!
 //! - The access policy applies as everywhere: `Host` always, `Origin` on
-//!   uploads and imports, no cross-site fetch.
+//!   uploads, no cross-site fetch.
 //! - Bodies are bounded per route, and one transfer runs at a time.
 //! - Every stored image (uploaded or imported) was first drawn by the
 //!   renderer; images are only ever served rendered as PNG, never as stored:
 //!   an SVG opened from the UI origin could run scripts there.
-//! - An import writes nothing before its configuration is validated, and
-//!   removes the images it added if the engine refuses it.
 
 use std::sync::Arc;
 
@@ -19,7 +18,7 @@ use super::errors::client_message;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -30,7 +29,7 @@ use serde::Serialize;
 use tokio::sync::SemaphorePermit;
 
 use super::{AppState, UI_IMAGE_SIZE};
-use crate::config_store::{ConfigStoreError, MAX_ARCHIVE_BYTES};
+use crate::config_store::ConfigStoreError;
 use crate::engine::{EngineError, EngineHandle};
 use crate::file_chooser::FilePickerError;
 use crate::render::{ImageKind, ImageSource, MAX_SOURCE_BYTES, RenderError, Renderer};
@@ -51,14 +50,9 @@ pub(super) fn routes() -> Router<AppState> {
             post(upload_image).layer(DefaultBodyLimit::max(MAX_SOURCE_BYTES)),
         )
         .route("/api/devices/{serial}/images/{name}", get(rendered_image))
-        .route("/api/devices/{serial}/export", get(export))
         .route(
             "/api/file-chooser",
             post(choose_file).layer(DefaultBodyLimit::max(MAX_CHOOSER_REQUEST_BYTES)),
-        )
-        .route(
-            "/api/devices/{serial}/import",
-            post(import).layer(DefaultBodyLimit::max(MAX_ARCHIVE_BYTES)),
         )
 }
 
@@ -273,24 +267,6 @@ async fn rendered_image(
         .into_response())
 }
 
-/// `GET /api/devices/{serial}/export`: the configuration archive, as a
-/// download named by the UI.
-async fn export(
-    State(state): State<AppState>,
-    Path(serial): Path<String>,
-) -> Result<Response, Failure> {
-    ensure_unlocked(&state)?;
-    let config = engine(&state, &serial)?.config().borrow().clone();
-    let _slot = transfer_slot(&state).await?;
-    let store = state.context.store.clone();
-    let archive = blocking(move || Ok(store.export(&serial, &config)?)).await?;
-    Ok((
-        [(CONTENT_TYPE, ZIP), (CONTENT_DISPOSITION, "attachment")],
-        archive,
-    )
-        .into_response())
-}
-
 /// Largest body of a file chooser request.
 const MAX_CHOOSER_REQUEST_BYTES: usize = 1024;
 
@@ -339,44 +315,6 @@ fn chooser_of(state: &AppState, body: &[u8]) -> Result<FileChooser, Failure> {
             _ => None,
         })
         .ok_or_else(|| invalid("no file chooser for this setting"))
-}
-
-/// `POST /api/devices/{serial}/import`: replaces the configuration by an
-/// archived one, fitted to the device, through the engine like any update
-/// (validated, saved, broadcast). Answers the saved configuration.
-async fn import(
-    State(state): State<AppState>,
-    Path(serial): Path<String>,
-    body: Bytes,
-) -> Result<Response, Failure> {
-    ensure_unlocked(&state)?;
-    let engine = engine(&state, &serial)?;
-    let _slot = transfer_slot(&state).await?;
-    let store = state.context.store.clone();
-    let renderer = Arc::clone(&state.context.renderer);
-    let device = engine.info().clone();
-    let revision = engine.config().borrow().revision;
-    let target = serial.clone();
-    let (config, created) = blocking(move || {
-        let check =
-            |bytes: &[u8]| checked_kind(&renderer, bytes).map_err(|error| error.to_string());
-        let prepared = store.prepare_import(&body, &device, revision, check)?;
-        let created = store.write_import_images(&target, &prepared)?;
-        Ok((prepared.config, created))
-    })
-    .await?;
-    match engine.apply_config(config).await {
-        Ok(saved) => Ok(json(&saved)),
-        Err(error) => {
-            let store = state.context.store.clone();
-            blocking(move || {
-                store.remove_images(&serial, &created);
-                Ok(())
-            })
-            .await?;
-            Err(error.into())
-        }
-    }
 }
 
 #[cfg(test)]

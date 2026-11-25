@@ -3,8 +3,8 @@ import {
 	MAX_ARCHIVE_BYTES,
 	MAX_IMAGE_BYTES,
 	ManagerApi,
-	exportFileName,
-	exportUrl,
+	backupFileName,
+	backupUrl,
 	keyImageUrl,
 	mebibytes,
 	type Fetch
@@ -36,15 +36,19 @@ const png = new File([new Uint8Array([137, 80, 78, 71])], 'logo.png', { type: 'i
 describe('URLs', () => {
 	it('escape the serial and the image name', () => {
 		expect(keyImageUrl('A B', 'x.png')).toBe('/api/devices/A%20B/images/x.png');
-		expect(exportUrl('A/B')).toBe('/api/devices/A%2FB/export');
+	});
+
+	it('give the whole backup, or the kinds of document asked for', () => {
+		expect(backupUrl()).toBe('/api/backup/export');
+		expect(backupUrl(['devices', 'radial-menu'])).toBe(
+			'/api/backup/export?sections=devices%2Cradial-menu'
+		);
 	});
 });
 
-describe('exportFileName', () => {
-	it('names the archive after the device and the local day', () => {
-		expect(exportFileName('DECK', new Date(2026, 0, 5, 23, 59))).toBe(
-			'hubergamof-DECK-2026-01-05.zip'
-		);
+describe('backupFileName', () => {
+	it('names the backup after the local day', () => {
+		expect(backupFileName(new Date(2026, 0, 5, 23, 59))).toBe('hubergamof-2026-01-05.zip');
 	});
 });
 
@@ -131,43 +135,6 @@ describe('uploadKeyImage', () => {
 	});
 });
 
-describe('importArchive', () => {
-	it('posts the archive', async () => {
-		const saved = { serial: 'DECK', revision: 4 };
-		const { calls, api } = fakeFetch(() => json(200, saved));
-		const archive = new File(['PK'], 'export.zip', { type: '' });
-		await expect(api.importArchive('DECK', archive)).resolves.toEqual({
-			ok: true,
-			value: undefined
-		});
-		expect(calls[0]).toMatchObject({
-			input: '/api/devices/DECK/import',
-			init: { headers: { 'content-type': 'application/zip' } }
-		});
-	});
-
-	it('explains a configuration changed meanwhile', async () => {
-		const { api } = fakeFetch(() => json(409, { code: 'staleRevision', message: 'stale' }));
-		await expect(api.importArchive('DECK', new File(['x'], 'a.zip'))).resolves.toMatchObject({
-			problem: { text: expect.stringMatching(/modifiée ailleurs/) }
-		});
-	});
-
-	it('explains a refused archive and refuses an oversized one locally', async () => {
-		const { calls, api } = fakeFetch(() =>
-			json(400, { code: 'invalidArchive', message: 'no config.json' })
-		);
-		await expect(api.importArchive('DECK', new File(['x'], 'a.zip'))).resolves.toMatchObject({
-			problem: { text: expect.stringMatching(/export HuBergamof/), detail: 'no config.json' }
-		});
-		const huge = new File([new Uint8Array(MAX_ARCHIVE_BYTES + 1)], 'big.zip');
-		await expect(api.importArchive('DECK', huge)).resolves.toMatchObject({
-			problem: { text: expect.stringMatching(/32 Mio/) }
-		});
-		expect(calls).toHaveLength(1);
-	});
-});
-
 describe('chooseFile', () => {
 	it('names the setting to the file chooser and resolves the chosen path', async () => {
 		const { calls, api } = fakeFetch(() => json(200, { path: '/srv/shop/compose.yaml' }));
@@ -202,6 +169,101 @@ describe('chooseFile', () => {
 			ok: false,
 			code: 'busy',
 			problem: { text: expect.stringMatching(/déjà ouvert/) }
+		});
+	});
+});
+
+const zip = new File(['PK'], 'backup.zip', { type: '' });
+const preview = { sections: [], kept: [] };
+const report = { snapshot: '1-0', sections: [] };
+
+describe('backup routes', () => {
+	it('fetches the backup as a blob, refusals shown rather than saved', async () => {
+		const ok = fakeFetch(() => new Response('PK', { status: 200 }));
+		const exported = await ok.api.exportBackup(['git', 'ssh']);
+		expect(exported.ok && (await exported.value.text())).toBe('PK');
+		expect(ok.calls[0]).toMatchObject({
+			input: '/api/backup/export?sections=git%2Cssh',
+			init: { method: 'GET' }
+		});
+		const locked = fakeFetch(() => json(423, { code: 'locked', message: 'locked' }));
+		await expect(locked.api.exportBackup()).resolves.toMatchObject({ ok: false, code: 'locked' });
+	});
+
+	it('posts the file for a preview and reads what it would do', async () => {
+		const { calls, api } = fakeFetch(() => json(200, preview));
+		await expect(api.previewBackup(zip)).resolves.toEqual({ ok: true, value: preview });
+		expect(calls[0].input).toBe('/api/backup/preview');
+		expect(calls[0].init).toMatchObject({
+			method: 'POST',
+			headers: { 'content-type': 'application/zip' },
+			body: zip
+		});
+	});
+
+	it('imports the sections chosen, with the devices that receive another’s', async () => {
+		const { calls, api } = fakeFetch(() => json(200, report));
+		const request = { sections: ['devices/OLD', 'git'], devices: { OLD: 'NEW' } };
+		await expect(api.importBackup(zip, request)).resolves.toEqual({ ok: true, value: report });
+		expect(calls[0].input).toBe('/api/backup/import?sections=devices%2FOLD%2Cgit&map=OLD%3ANEW');
+		const plain = fakeFetch(() => json(200, report));
+		await plain.api.importBackup(zip, { sections: ['git'], devices: {} });
+		expect(plain.calls[0].input).toBe('/api/backup/import?sections=git');
+	});
+
+	it('refuses an oversized file without sending it', async () => {
+		const { calls, api } = fakeFetch(() => json(200, report));
+		const huge = new Blob([new Uint8Array(MAX_ARCHIVE_BYTES + 1)]);
+		await expect(api.previewBackup(huge)).resolves.toMatchObject({
+			ok: false,
+			problem: { text: expect.stringMatching(/32 Mio/) }
+		});
+		await expect(api.importBackup(huge, { sections: ['git'], devices: {} })).resolves.toMatchObject(
+			{ ok: false }
+		);
+		expect(calls).toEqual([]);
+	});
+
+	it('explains an archive the manager refuses, and a body that is too large', async () => {
+		const refused = fakeFetch(() => json(400, { code: 'invalidArchive', message: 'no end' }));
+		await expect(refused.api.previewBackup(zip)).resolves.toMatchObject({
+			ok: false,
+			code: 'invalidArchive',
+			problem: { detail: 'no end' }
+		});
+		const tooLarge = fakeFetch(() => new Response('', { status: 413 }));
+		await expect(
+			tooLarge.api.importBackup(zip, { sections: ['git'], devices: {} })
+		).resolves.toMatchObject({ problem: { text: expect.stringMatching(/32 Mio/) } });
+	});
+
+	it('lists, previews and restores the snapshots', async () => {
+		const list = fakeFetch(() =>
+			json(200, [{ id: '1-0', createdAt: 1, appVersion: '1', sections: [] }])
+		);
+		await expect(list.api.listSnapshots()).resolves.toMatchObject({ ok: true });
+		expect(list.calls[0].input).toBe('/api/backup/snapshots');
+
+		const look = fakeFetch(() => json(200, preview));
+		await look.api.previewSnapshot('1-0');
+		expect(look.calls[0].input).toBe('/api/backup/snapshots/1-0/preview');
+
+		const back = fakeFetch(() => json(200, report));
+		await expect(back.api.restoreSnapshot('1-0')).resolves.toEqual({ ok: true, value: report });
+		expect(back.calls[0]).toMatchObject({
+			input: '/api/backup/snapshots/1-0/restore',
+			init: { method: 'POST' }
+		});
+	});
+
+	it('reports a manager that cannot be reached, and an answer it cannot read', async () => {
+		const down = fakeFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+		await expect(down.api.listSnapshots()).resolves.toMatchObject({
+			problem: { text: expect.stringMatching(/injoignable/) }
+		});
+		const odd = fakeFetch(() => new Response('<html>', { status: 200 }));
+		await expect(odd.api.listSnapshots()).resolves.toMatchObject({
+			problem: { text: expect.stringMatching(/inattendue/) }
 		});
 	});
 });

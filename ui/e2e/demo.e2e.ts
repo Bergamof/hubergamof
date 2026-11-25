@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import type { Locator, Page, WebSocketRoute } from '@playwright/test';
+import type { BrowserContext, Locator, Page, WebSocketRoute } from '@playwright/test';
 import { DEMO_COMPOSE_FILE, expect, test } from './demo-manager.js';
 
 // Each test runs against its own `hubergamof --demo` with the default layout of a Stream Deck+:
@@ -540,7 +540,8 @@ test('refuse un fichier qui n’est pas une image lisible', async ({ page }) => 
 	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', /^data:image\/png/);
 });
 
-test('exporte la configuration puis la réimporte après confirmation', async ({ page, context }) => {
+/** What a backup test starts from: a custom image on the first key, and everything saved as an export. */
+async function exportBackup(page: Page): Promise<{ archive: string; customImage: string }> {
 	await open(page);
 	await key(page, '1 : Audio').click();
 	await keyImageInput(page).setInputFiles({
@@ -549,14 +550,20 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 		buffer: RED_PNG
 	});
 	await expect(page.getByText('Image enregistrée.')).toBeVisible();
-	const customImage = await key(page, '1 : Audio').locator('img').getAttribute('src');
+	const customImage = (await key(page, '1 : Audio').locator('img').getAttribute('src')) ?? '';
 
 	await goTo(page, 'Sauvegarde');
+	await expect(page.getByText('Gardez ce fichier privé.')).toBeVisible();
 	const download = page.waitForEvent('download');
-	await page.getByRole('link', { name: 'Exporter la configuration' }).click();
-	const archive = await (await download).path();
-	expect((await download).suggestedFilename()).toMatch(/^hubergamof-.+-\d{4}-\d{2}-\d{2}\.zip$/);
+	await page.getByRole('button', { name: 'Exporter la configuration' }).click();
+	const saved = await download;
+	expect(saved.suggestedFilename()).toMatch(/^hubergamof-\d{4}-\d{2}-\d{2}\.zip$/);
+	await expect(page.getByText(/Sauvegarde exportée/)).toBeVisible();
+	return { archive: await saved.path(), customImage };
+}
 
+/** Removes the fifth key and waits until it is saved (another page sees it gone). */
+async function removeFifthKey(page: Page, context: BrowserContext) {
 	await goTo(page, /Stream Deck/);
 	await key(page, /^Touche 5 : Notifications/).click();
 	await removeSelectedKey(page);
@@ -566,27 +573,89 @@ test('exporte la configuration puis la réimporte après confirmation', async ({
 	await open(other);
 	await expect(other.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 	await other.close();
+}
 
+/** Chooses `archive` on the backup page and shows what importing it would do. */
+async function previewBackup(page: Page, archive: string) {
 	await goTo(page, 'Sauvegarde');
-	const importInput = page.locator('input[type="file"][accept*=".zip"]');
-	await importInput.setInputFiles(archive);
-	const confirm = page.getByRole('dialog', { name: /^Remplacer la configuration\s\?$/ });
-	await expect(confirm.getByRole('button', { name: 'Annuler' })).toBeFocused();
-	await expect(confirm).toContainText('fichiers de confiance');
-	await page.keyboard.press('Escape');
-	await expect(confirm).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Importer une configuration…' })).toBeFocused();
+	await page.locator('input[type="file"][accept*=".zip"]').setInputFiles(archive);
+	await expect(
+		page.getByRole('heading', { name: '2. Vérifier ce qui sera importé' })
+	).toBeFocused();
+}
+
+test('exporte la sauvegarde puis l’importe après l’avoir vue', async ({ page, context }) => {
+	const { archive, customImage } = await exportBackup(page);
+	await removeFifthKey(page, context);
+
+	await previewBackup(page, archive);
+	const deck = page.getByRole('checkbox', { name: /^Stream Deck.+\(.+\)$/ });
+	await expect(deck).toBeChecked();
+	await expect(page.getByText('Remplacée').first()).toBeVisible();
+	await expect(page.getByText(/fichiers de confiance/)).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Importer 1 section' })).toBeVisible();
+	// Nothing is imported by looking.
+	await goTo(page, /Stream Deck/);
 	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
 
-	await importInput.setInputFiles(archive);
-	await confirm.getByRole('button', { name: 'Remplacer' }).click();
-	await expect(page.getByText(/Configuration importée depuis/)).toBeVisible();
+	await previewBackup(page, archive);
+	await page.getByRole('button', { name: 'Importer 1 section' }).click();
+	await expect(page.getByRole('heading', { name: '3. Résultat' })).toBeFocused();
+	await expect(page.getByText('Appliquée').first()).toBeVisible();
+	await expect(page.getByText(/Import terminé/)).toBeVisible();
+	await expect(page.getByRole('button', { name: /^Restaurer la sauvegarde du/ })).toHaveCount(1);
+
 	await goTo(page, /Stream Deck/);
 	await expect(key(page, /^Touche 5 : Notifications/)).toBeVisible();
-	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', customImage ?? '');
+	await expect(key(page, '1 : Audio').locator('img')).toHaveAttribute('src', customImage);
 });
 
-test('refuse un fichier qui n’est pas un export', async ({ page }) => {
+test('annule un import avec son instantané', async ({ page, context }) => {
+	const { archive } = await exportBackup(page);
+	await removeFifthKey(page, context);
+
+	await previewBackup(page, archive);
+	await page.getByRole('button', { name: 'Importer 1 section' }).click();
+	await expect(page.getByRole('heading', { name: '3. Résultat' })).toBeVisible();
+	await page.getByRole('button', { name: 'Annuler l’import' }).click();
+	const confirm = page.getByRole('dialog', { name: /^Remettre l’état d’avant l’import\s\?$/ });
+	await expect(confirm.getByRole('button', { name: 'Annuler', exact: true })).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(confirm).toBeHidden();
+	await expect(page.getByRole('button', { name: 'Annuler l’import' })).toBeFocused();
+
+	await page.getByRole('button', { name: 'Annuler l’import' }).click();
+	await confirm.getByRole('button', { name: 'Remettre l’état d’avant' }).click();
+	await expect(page.getByRole('heading', { name: 'Import annulé' })).toBeFocused();
+	// The snapshot of the import, and the one of its undoing.
+	await expect(page.getByRole('button', { name: /^Restaurer la sauvegarde du/ })).toHaveCount(2);
+
+	await goTo(page, /Stream Deck/);
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+});
+
+test('restaure une sauvegarde automatique depuis la liste, après l’avoir vue', async ({
+	page,
+	context
+}) => {
+	const { archive } = await exportBackup(page);
+	await expect(page.getByText('Aucune sauvegarde automatique pour l’instant.')).toBeVisible();
+	await removeFifthKey(page, context);
+	await previewBackup(page, archive);
+	await page.getByRole('button', { name: 'Importer 1 section' }).click();
+	await expect(page.getByRole('heading', { name: '3. Résultat' })).toBeVisible();
+
+	await page.getByRole('button', { name: /^Restaurer la sauvegarde du/ }).click();
+	const confirm = page.getByRole('dialog', { name: /^Restaurer cette sauvegarde\s\?$/ });
+	await expect(confirm).toContainText('Remplacée');
+	await confirm.getByRole('button', { name: 'Restaurer' }).click();
+	await expect(page.getByText(/Sauvegarde automatique restaurée/)).toBeVisible();
+
+	await goTo(page, /Stream Deck/);
+	await expect(page.getByRole('button', { name: /^Touche 5/ })).toHaveCount(0);
+});
+
+test('refuse un fichier qui n’est pas une sauvegarde', async ({ page }) => {
 	await open(page);
 	await goTo(page, 'Sauvegarde');
 	await page.locator('input[type="file"][accept*=".zip"]').setInputFiles({
@@ -594,9 +663,9 @@ test('refuse un fichier qui n’est pas un export', async ({ page }) => {
 		mimeType: 'application/zip',
 		buffer: Buffer.from('pas une archive')
 	});
-	await page.getByRole('button', { name: 'Remplacer' }).click();
-	await expect(page.getByRole('alert')).toContainText('Configuration non importée');
+	await expect(page.getByRole('alert')).toContainText('Import non effectué');
 	await expect(page.getByRole('alert')).toContainText('export HuBergamof');
+	await expect(page.getByRole('heading', { name: '1. Choisir le fichier' })).toBeVisible();
 });
 
 /** Fails on any WCAG 2.2 A/AA violation of the page as it is now. */
@@ -646,6 +715,21 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		await page.getByRole('button', { name: 'Supprimer la touche' }).click();
 		await expect(page.getByRole('dialog', { name: 'Supprimer la touche ?' })).toBeVisible();
 		await expectAccessible(page, 'confirmation de suppression');
+	});
+
+	test(`reste accessible sur la page Sauvegarde (thème ${colorScheme})`, async ({ page }) => {
+		await page.emulateMedia({ colorScheme });
+		const { archive } = await exportBackup(page);
+		await expectAccessible(page, 'sauvegarde, étape 1');
+		await previewBackup(page, archive);
+		await expectAccessible(page, 'sauvegarde, aperçu');
+		await page.getByRole('checkbox', { name: /^Stream Deck.+\(.+\)$/ }).check();
+		await page.getByRole('button', { name: /^Importer \d+ sections?$/ }).click();
+		await expect(page.getByRole('heading', { name: '3. Résultat' })).toBeVisible();
+		await expectAccessible(page, 'sauvegarde, résultat');
+		await page.getByRole('button', { name: /^Restaurer la sauvegarde du/ }).click();
+		await expect(page.getByRole('dialog')).toBeVisible();
+		await expectAccessible(page, 'restauration d’une sauvegarde automatique');
 	});
 }
 

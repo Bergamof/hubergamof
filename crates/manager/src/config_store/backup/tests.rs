@@ -568,3 +568,44 @@ fn a_selection_keeps_the_chosen_sections_and_the_images_of_the_chosen_devices() 
     let archive = write_backup(&with_device).unwrap();
     assert_eq!(read_backup(&archive).unwrap(), with_device);
 }
+
+#[test]
+fn an_old_export_that_holds_nothing_acceptable_says_why() {
+    // Not a configuration at all: the error of reading it as one, not "unexpected entry".
+    let garbage = zip_of(&[("config.json", b"not json")]);
+    assert!(matches!(
+        read_backup_or_archive(&garbage),
+        Err(BackupError::Archive(ArchiveError::Config(_)))
+    ));
+    // A configuration the device refuses.
+    let mut invalid = device_config();
+    invalid.brightness = 250;
+    let archive = zip_of(&[("config.json", &serde_json::to_vec(&invalid).unwrap())]);
+    assert!(matches!(
+        read_backup_or_archive(&archive),
+        Err(BackupError::Refused { .. })
+    ));
+    // A zip that is neither keeps the error of reading a backup.
+    let other = zip_of(&[("other.txt", b"x")]);
+    assert!(matches!(
+        read_backup_or_archive(&other),
+        Err(BackupError::Archive(ArchiveError::UnexpectedEntry(_)))
+    ));
+}
+
+#[test]
+fn an_old_export_reads_as_the_backup_of_one_device_with_its_images() {
+    let config = device_config();
+    let archive = crate::config_store::write_archive(
+        &config,
+        &ArchiveImages::from([("logo.png".to_owned(), b"\x89PNG\r\n\x1a\nrest".to_vec())]),
+    )
+    .unwrap();
+    let backup = read_backup_or_archive(&archive).unwrap();
+    let section = BackupSection::Device(config.serial.clone());
+    assert_eq!(backup.documents.keys().collect::<Vec<_>>(), vec![&section]);
+    assert_eq!(backup.images[&config.serial].len(), 1);
+    // A real backup is read as itself.
+    let full = write_backup(&full_backup()).unwrap();
+    assert_eq!(read_backup_or_archive(&full).unwrap(), full_backup());
+}

@@ -4,90 +4,36 @@
 
 mod support;
 
-use std::io::{Cursor, Write as _};
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
-use hubergamof_manager::config_store::{IMAGES_DIR, MAX_ARCHIVE_BYTES, read_archive};
 use hubergamof_manager::file_chooser::{
     FilePicker, FilePickerError, NoFilePicker, SimulatedFilePicker,
 };
 use hubergamof_manager::render::MAX_SOURCE_BYTES;
 use hubergamof_manager::screen_lock::ScreenLock;
-use hubergamof_protocol::{
-    DeviceConfig, DeviceModel, DialAssignment, ErrorCode, FileChooser, FileChosen, ImageUploaded,
-};
-use image::{ImageFormat, Rgba, RgbaImage};
+use hubergamof_protocol::{ErrorCode, FileChooser, FileChosen, ImageUploaded};
+use image::ImageFormat;
 use tokio::sync::watch;
 use tower::ServiceExt as _;
 
-use support::{Api, CHOSEN_FILE, FIRST, HOST, NO_DIALS, ORIGIN, SECOND, WAIT, api_error, bytes};
+use support::{Api, CHOSEN_FILE, FIRST, HOST, ORIGIN, WAIT, api_error, bytes, png, stored_images};
 
 /// The file chooser of the compose files of the Docker module.
 const CHOOSER_REQUEST: &str = r#"{ "module": "docker", "setting": "composeFiles" }"#;
 const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><rect width="1" height="1" fill="red"/></svg>"#;
 
-/// Image files of device `serial`.
-fn stored_images(api: &Api, serial: &str) -> Vec<String> {
-    let dir = api
-        .context
-        .store
-        .device_dir(serial)
-        .unwrap()
-        .join(IMAGES_DIR);
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    names
-}
-
-async fn import(api: &Api, serial: &str, archive: Vec<u8>) -> Response<Body> {
-    api.post(
-        &format!("/api/devices/{serial}/import"),
-        "application/zip",
-        archive,
-    )
-    .await
-}
-
-async fn export(api: &Api, serial: &str) -> Vec<u8> {
-    let response = api.get(&format!("/api/devices/{serial}/export")).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    bytes(response).await
-}
-
 fn header<'a>(response: &'a Response<Body>, name: &str) -> &'a str {
     response.headers()[name].to_str().unwrap()
-}
-
-fn png(width: u32, height: u32) -> Vec<u8> {
-    let mut bytes = Cursor::new(Vec::new());
-    RgbaImage::from_pixel(width, height, Rgba([200, 30, 30, 255]))
-        .write_to(&mut bytes, ImageFormat::Png)
-        .unwrap();
-    bytes.into_inner()
 }
 
 async fn uploaded_name(response: Response<Body>) -> String {
     assert_eq!(response.status(), StatusCode::OK);
     let uploaded: ImageUploaded = serde_json::from_slice(&bytes(response).await).unwrap();
     uploaded.name
-}
-
-/// Puts image `name` on the first key of `serial`.
-async fn use_image_on_first_key(api: &Api, serial: &str, name: &str) -> DeviceConfig {
-    let mut config = api.config(serial).await;
-    let first = config.home[0].clone();
-    let module = config.modules.iter_mut().find(|m| m.id == first).unwrap();
-    module.image = Some(name.to_owned());
-    api.engine(serial).await.apply_config(config).await.unwrap()
 }
 
 #[tokio::test]
@@ -158,10 +104,7 @@ async fn uploads_are_refused_unless_they_are_images_of_the_declared_type() {
 #[tokio::test]
 async fn writes_need_the_origin_of_the_interface() {
     let api = Api::start().await;
-    for path in [
-        format!("/api/devices/{FIRST}/images"),
-        format!("/api/devices/{FIRST}/import"),
-    ] {
+    for path in [format!("/api/devices/{FIRST}/images")] {
         let response = api
             .send(
                 Request::post(path)
@@ -176,7 +119,7 @@ async fn writes_need_the_origin_of_the_interface() {
     }
     let foreign_host = api
         .send(
-            Request::get(format!("/api/devices/{FIRST}/export"))
+            Request::get(format!("/api/devices/{FIRST}/images/any.png"))
                 .header("host", "evil.example")
                 .body(Body::empty())
                 .unwrap(),
@@ -200,89 +143,6 @@ async fn missing_or_unsafe_image_names_are_not_served() {
         .get(&format!("/api/devices/{FIRST}/images/.config"))
         .await;
     assert_eq!(hidden.status(), StatusCode::BAD_REQUEST);
-    api.stop().await;
-}
-
-#[tokio::test]
-async fn an_export_imports_on_another_device_with_its_images() {
-    let api = Api::start().await;
-    let name = uploaded_name(api.upload(FIRST, "image/png", png(8, 8)).await).await;
-    let exported_config = use_image_on_first_key(&api, FIRST, &name).await;
-
-    let export = api.get(&format!("/api/devices/{FIRST}/export")).await;
-    assert_eq!(export.status(), StatusCode::OK);
-    assert_eq!(header(&export, "content-type"), "application/zip");
-    assert_eq!(header(&export, "content-disposition"), "attachment");
-    let archive = bytes(export).await;
-    let content = read_archive(&archive).unwrap();
-    assert_eq!(content.config, exported_config);
-    assert_eq!(content.images.keys().collect::<Vec<_>>(), [&name]);
-
-    let before = api.config(SECOND).await;
-    let response = api
-        .post(
-            &format!("/api/devices/{SECOND}/import"),
-            "application/zip",
-            archive,
-        )
-        .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let imported: DeviceConfig = serde_json::from_slice(&bytes(response).await).unwrap();
-    assert_eq!(imported.serial, SECOND);
-    assert_eq!(imported.revision, before.revision + 1);
-    assert_eq!(imported.home, exported_config.home);
-    assert_eq!(imported.modules, exported_config.modules);
-    assert_eq!(api.config(SECOND).await, imported, "saved and applied");
-    let image = api
-        .get(&format!("/api/devices/{SECOND}/images/{name}"))
-        .await;
-    assert_eq!(image.status(), StatusCode::OK, "image copied to the device");
-    api.stop().await;
-}
-
-fn zip_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    for (name, content) in entries {
-        zip.start_file(*name, zip::write::SimpleFileOptions::default())
-            .unwrap();
-        zip.write_all(content).unwrap();
-    }
-    zip.finish().unwrap().into_inner()
-}
-
-#[tokio::test]
-async fn invalid_archives_are_refused_and_change_nothing() {
-    let api = Api::start().await;
-    let before = api.config(FIRST).await;
-    let mut needs_image = before.clone();
-    needs_image.modules[0].image = Some("absent.png".into());
-    let needs_image = serde_json::to_vec(&needs_image).unwrap();
-    let mut invalid = before.clone();
-    invalid.brightness = 250;
-    let invalid = serde_json::to_vec(&invalid).unwrap();
-    let cases = [
-        (b"not a zip".to_vec(), ErrorCode::InvalidArchive),
-        (zip_with(&[("other.txt", b"x")]), ErrorCode::InvalidArchive),
-        (
-            zip_with(&[("config.json", &needs_image)]),
-            ErrorCode::InvalidArchive,
-        ),
-        (
-            zip_with(&[("config.json", &invalid)]),
-            ErrorCode::InvalidConfig,
-        ),
-    ];
-    for (archive, code) in cases {
-        let response = api
-            .post(
-                &format!("/api/devices/{FIRST}/import"),
-                "application/zip",
-                archive,
-            )
-            .await;
-        assert_eq!(api_error(response).await, (StatusCode::BAD_REQUEST, code));
-    }
-    assert_eq!(api.config(FIRST).await, before);
     api.stop().await;
 }
 
@@ -323,7 +183,7 @@ async fn reads_of_the_api_made_from_another_site_are_refused() {
     let api = Api::start().await;
     let response = api
         .send(
-            Request::get(format!("/api/devices/{FIRST}/export"))
+            Request::get(format!("/api/devices/{FIRST}/images/any.png"))
                 .header("host", HOST)
                 .header("sec-fetch-site", "cross-site")
                 .body(Body::from(CHOOSER_REQUEST))
@@ -331,100 +191,6 @@ async fn reads_of_the_api_made_from_another_site_are_refused() {
         )
         .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    api.stop().await;
-}
-
-#[tokio::test]
-async fn exports_and_imports_of_unknown_devices_fail() {
-    let api = Api::start().await;
-    let missing = api.get("/api/devices/NOPE/export").await;
-    assert_eq!(
-        api_error(missing).await,
-        (StatusCode::NOT_FOUND, ErrorCode::UnknownDevice)
-    );
-    let archive = export(&api, FIRST).await;
-    assert_eq!(
-        api_error(import(&api, "NOPE", archive).await).await,
-        (StatusCode::NOT_FOUND, ErrorCode::UnknownDevice)
-    );
-    let too_large = import(&api, FIRST, vec![0; MAX_ARCHIVE_BYTES + 1]).await;
-    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    api.stop().await;
-}
-
-#[tokio::test]
-async fn imports_fit_the_target_model_both_ways() {
-    let api = Api::start().await;
-    let plus = api.config(FIRST).await;
-    let response = import(&api, NO_DIALS, export(&api, FIRST).await).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let on_mk2: DeviceConfig = serde_json::from_slice(&bytes(response).await).unwrap();
-    assert_eq!(on_mk2.model, DeviceModel::Mk2);
-    assert_eq!(on_mk2.dials, Vec::new());
-    assert_eq!(on_mk2.home, plus.home);
-    // The pomodoro has no key and the device no dial: it is the only module dropped.
-    assert_eq!(on_mk2.modules.len(), plus.modules.len() - 1);
-    assert_eq!(api.config(NO_DIALS).await, on_mk2);
-
-    let response = import(&api, SECOND, export(&api, NO_DIALS).await).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let back: DeviceConfig = serde_json::from_slice(&bytes(response).await).unwrap();
-    assert_eq!(back.dials, vec![DialAssignment::None; 4]);
-    assert_eq!(back.home, plus.home);
-    api.stop().await;
-}
-
-/// The default configuration of `serial` with `image` on its first key, as
-/// an archive holding `content` under that name.
-async fn archive_with_image(
-    api: &Api,
-    serial: &str,
-    image: &str,
-    content: &[u8],
-    brightness: u8,
-) -> Vec<u8> {
-    let mut config = api.config(serial).await;
-    config.brightness = brightness;
-    let first = config.home[0].clone();
-    config
-        .modules
-        .iter_mut()
-        .find(|m| m.id == first)
-        .unwrap()
-        .image = Some(image.into());
-    let json = serde_json::to_vec(&config).unwrap();
-    zip_with(&[
-        ("config.json", &json),
-        (&format!("images/{image}"), content),
-    ])
-}
-
-#[tokio::test]
-async fn refused_imports_leave_no_image_behind() {
-    let api = Api::start().await;
-    // A compose file disguised as SVG: the former loose sniffing took it for one.
-    let polyglot = b"# <svg>\nservices:\n  x:\n    image: alpine\n    privileged: true\n";
-    let cases = [
-        (
-            archive_with_image(&api, FIRST, "a.svg", polyglot, 50).await,
-            ErrorCode::InvalidImage,
-        ),
-        (
-            archive_with_image(&api, FIRST, "b.png", &png(60_000, 1), 50).await,
-            ErrorCode::InvalidImage,
-        ),
-        (
-            archive_with_image(&api, FIRST, "c.png", &png(4, 4), 250).await,
-            ErrorCode::InvalidConfig,
-        ),
-    ];
-    for (archive, code) in cases {
-        assert_eq!(
-            api_error(import(&api, FIRST, archive).await).await,
-            (StatusCode::BAD_REQUEST, code)
-        );
-        assert_eq!(stored_images(&api, FIRST), Vec::<String>::new());
-    }
     api.stop().await;
 }
 
@@ -610,7 +376,7 @@ impl ScreenLock for Locked {
 }
 
 #[tokio::test]
-async fn nothing_is_transferred_or_chosen_while_the_computer_is_locked() {
+async fn nothing_is_uploaded_or_chosen_while_the_computer_is_locked() {
     let api = Api::start_on(
         Arc::new(SimulatedFilePicker::choosing(Some(CHOSEN_FILE.into()))),
         Arc::new(Locked),
@@ -618,12 +384,6 @@ async fn nothing_is_transferred_or_chosen_while_the_computer_is_locked() {
     .await;
     let locked = (StatusCode::LOCKED, ErrorCode::Locked);
 
-    let response = api.get(&format!("/api/devices/{FIRST}/export")).await;
-    assert_eq!(api_error(response).await, locked);
-    assert_eq!(
-        api_error(import(&api, FIRST, vec![0; 16]).await).await,
-        locked
-    );
     assert_eq!(
         api_error(api.upload(FIRST, "image/png", png(8, 8)).await).await,
         locked

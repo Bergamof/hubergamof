@@ -5,7 +5,7 @@
 //! nothing here. A section that fails leaves the others to go on: the
 //! snapshot taken before is what undoes them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hubergamof_protocol::{
     BackupPreview, ErrorCode, ExecutableKind, SectionOutcome, SectionResult,
@@ -40,6 +40,7 @@ pub(super) async fn apply(
     context: &ServerContext,
     backup: &Backup,
     sections: &BTreeSet<BackupSection>,
+    device_map: &BTreeMap<String, String>,
 ) -> Vec<SectionOutcome> {
     let mut outcomes = Vec::new();
     for (section, document) in &backup.documents {
@@ -51,7 +52,7 @@ pub(super) async fn apply(
         let outcome = if *context.screen_lock.watch().borrow() {
             refused(ErrorCode::Locked, "the computer is locked")
         } else {
-            apply_section(context, backup, section, document).await
+            apply_section(context, backup, section, document, device_map).await
         };
         outcomes.push(SectionOutcome {
             section: section.id(),
@@ -66,11 +67,17 @@ async fn apply_section(
     backup: &Backup,
     section: &BackupSection,
     document: &BackupDocument,
+    device_map: &BTreeMap<String, String>,
 ) -> SectionResult {
     match (section, document) {
         (BackupSection::Device(serial), BackupDocument::Device(config)) => {
             let images = backup.images.get(serial).cloned().unwrap_or_default();
-            device(context, serial, (**config).clone(), images).await
+            // A device of the backup may go to another one, connected now.
+            let (target, imposed) = match device_map.get(serial) {
+                Some(target) => (target, true),
+                None => (serial, false),
+            };
+            device(context, target, (**config).clone(), images, imposed).await
         }
         (BackupSection::Mouse(serial), BackupDocument::Mouse(config)) => {
             mouse(context, serial, (**config).clone()).await
@@ -126,6 +133,7 @@ async fn device(
     serial: &str,
     config: hubergamof_protocol::DeviceConfig,
     images: ArchiveImages,
+    imposed: bool,
 ) -> SectionResult {
     let store = context.store.clone();
     let renderer = std::sync::Arc::clone(&context.renderer);
@@ -135,6 +143,14 @@ async fn device(
             .map_err(|error| error.to_string())
     };
     let Some(engine) = context.engines.get(serial) else {
+        // A target the person chose is never replaced by "kept for its return" under the
+        // serial of the backup: it left between the check and now.
+        if imposed {
+            return refused(
+                ErrorCode::UnknownDevice,
+                "the device chosen is no longer connected",
+            );
+        }
         let stored =
             tokio::task::spawn_blocking(move || store.import_absent_device(config, &images, check))
                 .await;
@@ -337,5 +353,95 @@ fn system_names<S, E: std::error::Error>(
             tracing::warn!(%error, "the files of the machine were not read for the preview");
             BTreeSet::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::config_store::ConfigStore;
+    use crate::device::DeviceDiscovery;
+    use crate::device::virtual_deck::{DEMO_SERIAL, virtual_plus_info};
+    use crate::engine::{EngineServices, Supervisor};
+    use crate::file_chooser::NoFilePicker;
+    use crate::haptics::NoHaptics;
+    use crate::machine::MachineHub;
+    use crate::machine::git::GitConfigHub;
+    use crate::machine::ssh::SshConfigHub;
+    use crate::mouse_hub::MouseHub;
+    use crate::render::Renderer;
+    use crate::screen_lock::NoScreenLock;
+    use crate::server::{SimulatedInput, module_catalog};
+    use crate::strip::{FixedClock, SimulatedProbe};
+    use crate::testing::builtin_registry;
+    use crate::update::UpdateHandle;
+
+    /// A server context with no device connected.
+    fn bare_context(dir: &std::path::Path) -> (ServerContext, Supervisor) {
+        let registry = Arc::new(builtin_registry());
+        let services = EngineServices {
+            store: ConfigStore::new(dir, Arc::clone(&registry)),
+            renderer: Arc::new(Renderer::new().unwrap()),
+            registry: Arc::clone(&registry),
+            wall_clock: Arc::new(FixedClock::default()),
+            system: Arc::new(SimulatedProbe::default()),
+            screen_lock: Arc::new(NoScreenLock),
+            haptics: Arc::new(NoHaptics),
+            application: None,
+        };
+        let catalog = module_catalog(&registry, &services.renderer);
+        let store = services.store.clone();
+        let renderer = Arc::clone(&services.renderer);
+        let discovery = DeviceDiscovery::new();
+        let supervisor = Supervisor::start(&discovery, services);
+        let context = ServerContext {
+            discovery,
+            engines: supervisor.engines(),
+            catalog,
+            simulated_input: SimulatedInput::Refused,
+            mice: MouseHub::new(store.clone()).unwrap(),
+            headsets: None,
+            machine: MachineHub::new(store.clone(), None),
+            git: GitConfigHub::new(store.clone(), None),
+            ssh: SshConfigHub::new(store.clone(), None),
+            store,
+            renderer,
+            file_picker: Arc::new(NoFilePicker),
+            updates: UpdateHandle::inactive(),
+            application: None,
+            screen_lock: Arc::new(NoScreenLock),
+        };
+        (context, supervisor)
+    }
+
+    #[tokio::test]
+    async fn a_target_chosen_that_left_is_refused_not_kept_under_the_serial_of_the_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (context, supervisor) = bare_context(dir.path());
+        let mut config = context
+            .store
+            .load(&virtual_plus_info(DEMO_SERIAL))
+            .unwrap()
+            .config;
+        "OLD-DECK".clone_into(&mut config.serial);
+
+        let imposed = device(&context, "GONE", config.clone(), ArchiveImages::new(), true).await;
+        assert!(matches!(
+            imposed,
+            SectionResult::Refused {
+                code: ErrorCode::UnknownDevice,
+                ..
+            }
+        ));
+        assert!(!dir.path().join("devices/OLD-DECK").exists());
+        assert!(!dir.path().join("devices/GONE").exists());
+
+        // Without a target chosen, a device that is away is kept for its return.
+        let kept = device(&context, "OLD-DECK", config, ArchiveImages::new(), false).await;
+        assert_eq!(kept, SectionResult::Stored);
+        assert!(dir.path().join("devices/OLD-DECK/config.json").is_file());
+        supervisor.shutdown().await;
     }
 }
