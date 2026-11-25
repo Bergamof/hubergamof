@@ -15,6 +15,8 @@ goes to the first one.
 	} from '#lib/deck/git-validation.js';
 	import type { GitIdentity } from '#lib/generated/index.js';
 	import FormFooter from './FormFooter.svelte';
+	import FormCell from './FormCell.svelte';
+	import FormGrid from './FormGrid.svelte';
 	import TextField from './TextField.svelte';
 
 	interface Props {
@@ -58,29 +60,33 @@ goes to the first one.
 		);
 </script>
 
-<form novalidate aria-labelledby={labelledby} class="grid gap-3 sm:grid-cols-2" onsubmit={submit}>
-	<TextField
-		bind:this={nameField}
-		label="Nom"
-		value={form.shown.name}
-		oninput={(name) => form.edit({ name })}
-		hint="Le nom des auteurs de vos commits (user.name)."
-		error={errors.name}
-		autocomplete="name"
-		maxlength={GIT_INPUT_MAX}
-	/>
-	<TextField
-		bind:this={emailField}
-		label="Adresse e-mail"
-		type="email"
-		value={form.shown.email}
-		oninput={(email) => form.edit({ email })}
-		hint="L’adresse de vos commits (user.email)."
-		error={errors.email}
-		autocomplete="email"
-		maxlength={GIT_INPUT_MAX}
-	/>
-	<div class="sm:col-span-2">
+<FormGrid {labelledby} onsubmit={submit}>
+	<FormCell span={6}>
+		<TextField
+			bind:this={nameField}
+			label="Nom"
+			value={form.shown.name}
+			oninput={(name) => form.edit({ name })}
+			hint="Le nom des auteurs de vos commits (user.name)."
+			error={errors.name}
+			autocomplete="name"
+			maxlength={GIT_INPUT_MAX}
+		/>
+	</FormCell>
+	<FormCell span={6}>
+		<TextField
+			bind:this={emailField}
+			label="Adresse e-mail"
+			type="email"
+			value={form.shown.email}
+			oninput={(email) => form.edit({ email })}
+			hint="L’adresse de vos commits (user.email)."
+			error={errors.email}
+			autocomplete="email"
+			maxlength={GIT_INPUT_MAX}
+		/>
+	</FormCell>
+	<FormCell>
 		<FormFooter dirty={form.dirty} submitLabel="Enregistrer l’identité" />
-	</div>
-</form>
+	</FormCell>
+</FormGrid>

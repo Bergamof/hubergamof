@@ -15,6 +15,8 @@ focus goes to the first one.
 		validateFolderIdentity
 	} from '#lib/deck/git-validation.js';
 	import type { GitFolderIdentity } from '#lib/generated/index.js';
+	import FormCell from './FormCell.svelte';
+	import FormGrid from './FormGrid.svelte';
 	import Switch from './Switch.svelte';
 	import TextField from './TextField.svelte';
 
@@ -101,67 +103,81 @@ focus goes to the first one.
 	onMount(() => {
 		if (initial) focusFolder();
 	});
+	const uid = $props.id();
 </script>
 
-<form novalidate aria-labelledby={labelledby} class="grid gap-3 sm:grid-cols-2" onsubmit={submit}>
-	<div class="sm:col-span-2">
+<FormGrid {labelledby} onsubmit={submit}>
+	<FormCell span={12}>
 		<TextField
 			bind:this={folderField}
 			label="Dossier"
 			mono
 			value={draft.folder}
 			oninput={(folder) => (draft.folder = folder)}
-			hint="Sous votre dossier personnel, par exemple ~/travail. Tous les dépôts qu’il contient sont concernés."
+			hint="Sous votre dossier personnel. Tous les dépôts qu’il contient sont concernés."
 			error={errors.folder}
 			placeholder="~/travail"
 			maxlength={512}
 		/>
-	</div>
-	<TextField
-		bind:this={nameField}
-		label="Nom"
-		value={draft.name}
-		oninput={(name) => (draft.name = name)}
-		hint="Vide : le nom général."
-		error={errors.name}
-		autocomplete="name"
-		maxlength={512}
-	/>
-	<TextField
-		bind:this={emailField}
-		label="Adresse e-mail"
-		type="email"
-		value={draft.email}
-		oninput={(email) => (draft.email = email)}
-		hint="Vide : l’adresse générale."
-		error={errors.email}
-		autocomplete="email"
-		maxlength={512}
-	/>
-	<div class="sm:col-span-2">
+	</FormCell>
+	<FormCell span={4}>
+		<TextField
+			bind:this={nameField}
+			label="Nom"
+			value={draft.name}
+			oninput={(name) => (draft.name = name)}
+			placeholder="Valeur générale"
+			error={errors.name}
+			autocomplete="name"
+			maxlength={512}
+		/>
+	</FormCell>
+	<FormCell span={4}>
+		<TextField
+			bind:this={emailField}
+			label="Adresse e-mail"
+			type="email"
+			value={draft.email}
+			oninput={(email) => (draft.email = email)}
+			placeholder="Valeur générale"
+			error={errors.email}
+			autocomplete="email"
+			maxlength={512}
+		/>
+	</FormCell>
+	<FormCell span={4}>
 		<TextField
 			bind:this={keyField}
 			label="Clé de signature"
 			mono
 			value={draft.signingKey}
 			oninput={(signingKey) => (draft.signingKey = signingKey)}
-			hint="Vide : la clé générale."
+			placeholder="Valeur générale"
 			error={errors.signingKey}
 			maxlength={512}
 		/>
-	</div>
+	</FormCell>
+	<FormCell>
+		<p id="{uid}-empty" class="text-sm text-muted">
+			Un champ laissé vide garde la valeur générale de Git.
+		</p>
+	</FormCell>
 	{#if errors.empty}
-		<p class="text-sm text-danger sm:col-span-2" role="alert">{errors.empty}</p>
+		<FormCell>
+			<p class="text-sm text-danger" role="alert">{errors.empty}</p>
+		</FormCell>
 	{/if}
-	<div class="flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-span-2">
-		<Switch checked={draft.enabled} onchange={(checked) => (draft.enabled = checked)}>
-			Activée
-		</Switch>
-		<div class="flex gap-2 sm:ml-auto">
-			{#if oncancel}
-				<button type="button" class="secondary-button" onclick={oncancel}>Annuler</button>
-			{/if}
-			<button type="submit" class="primary-button">{submitLabel}</button>
+	<FormCell>
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+			<Switch checked={draft.enabled} onchange={(checked) => (draft.enabled = checked)}>
+				Activée
+			</Switch>
+			<div class="ml-auto flex gap-2">
+				{#if oncancel}
+					<button type="button" class="secondary-button" onclick={oncancel}>Annuler</button>
+				{/if}
+				<button type="submit" class="primary-button">{submitLabel}</button>
+			</div>
 		</div>
-	</div>
-</form>
+	</FormCell>
+</FormGrid>

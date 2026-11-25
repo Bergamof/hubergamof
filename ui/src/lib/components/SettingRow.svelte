@@ -18,10 +18,10 @@ line between them.
 </script>
 
 <div
-	class="grid grid-cols-1 items-center gap-x-6 gap-y-2 border-b border-line py-3.5 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]"
+	class="grid grid-cols-1 items-center gap-x-6 gap-y-1 border-b border-line py-2.5 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]"
 >
 	<div>
-		<div class="font-semibold">{label}</div>
+		<div class="font-medium">{label}</div>
 		<div class="text-sm text-muted">{description}</div>
 	</div>
 	<div class="flex min-w-0 flex-wrap items-center gap-2.5">
