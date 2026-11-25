@@ -330,7 +330,7 @@ mod tests {
             if let Some(site) = site {
                 headers.insert(SEC_FETCH_SITE, HeaderValue::from_str(site).unwrap());
             }
-            policy().check(&Method::GET, "/api/devices/A/export", &headers)
+            policy().check(&Method::GET, "/api/backup/export", &headers)
         };
         assert_eq!(check(None), Ok(()));
         assert_eq!(check(Some("same-origin")), Ok(()));

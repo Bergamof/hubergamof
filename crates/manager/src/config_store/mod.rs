@@ -56,7 +56,7 @@ pub use archive::{
 };
 pub use backup::{
     BACKUP_FORMAT, BACKUP_MANIFEST_ENTRY, Backup, BackupDocument, BackupError, BackupManifest,
-    BackupSection, MAX_BACKUP_ENTRIES, preview, read_backup, write_backup,
+    BackupSection, MAX_BACKUP_ENTRIES, preview, read_backup, read_backup_or_archive, write_backup,
 };
 pub use backup_store::CollectedBackup;
 pub use defaults::{ConfigDefaults, DEFAULT_BRIGHTNESS, ModuleDescriptors, default_config};

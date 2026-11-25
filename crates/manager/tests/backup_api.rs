@@ -16,10 +16,13 @@ use hubergamof_manager::config_store::{
 use hubergamof_manager::file_chooser::SimulatedFilePicker;
 use hubergamof_manager::screen_lock::ScreenLock;
 use hubergamof_protocol::{
-    BackupPreview, ErrorCode, ImportReport, MachineConfig, MouseConfig, MouseModel, SectionChange,
-    SectionResult, ShellAlias, SnapshotInfo,
+    BackupPreview, DeviceConfig, DeviceModel, DialAssignment, ErrorCode, ImportReport,
+    MachineConfig, MouseConfig, MouseModel, SectionChange, SectionResult, ShellAlias, SnapshotInfo,
 };
-use support::{Api, CHOSEN_FILE, FIRST, HOST, NO_DIALS, SECOND, api_error, bytes};
+use support::{
+    Api, CHOSEN_FILE, FIRST, HOST, NO_DIALS, SECOND, api_error, bytes, png, stored_images,
+    use_image_on_first_key, zip_with,
+};
 use tokio::sync::watch;
 
 const ABSENT_DECK: &str = "ABSENT0000001";
@@ -415,16 +418,38 @@ async fn an_archive_that_is_not_a_backup_changes_nothing_and_takes_no_snapshot()
             .await;
         assert_eq!(api_error(response).await.0, StatusCode::BAD_REQUEST);
     }
-    // A device export (format 1) is not a backup.
-    let device_archive = api.get(&format!("/api/devices/{FIRST}/export")).await;
-    let device_archive = bytes(device_archive).await;
-    let (status, code) = api_error(import(&api, "", device_archive).await).await;
-    assert_eq!(
-        (status, code),
-        (StatusCode::BAD_REQUEST, ErrorCode::InvalidArchive)
-    );
+    // Neither is an old export of a device that holds nothing acceptable.
+    let before = api.config(FIRST).await;
+    let mut needs_image = before.clone();
+    needs_image.modules[0].image = Some("absent.png".into());
+    let mut invalid = before.clone();
+    invalid.brightness = 250;
+    let config = |config: &DeviceConfig| serde_json::to_vec(config).unwrap();
+    for archive in [
+        zip_with(&[("other.txt", b"x")]),
+        zip_with(&[("config.json", &config(&invalid))]),
+    ] {
+        let (status, code) = api_error(import(&api, "", archive).await).await;
+        assert_eq!(
+            (status, code),
+            (StatusCode::BAD_REQUEST, ErrorCode::InvalidArchive)
+        );
+    }
+    assert_eq!(api.config(FIRST).await, before);
     assert_eq!(brightness(&api, FIRST).await, 17);
     assert_eq!(snapshots(&api).await.len(), 0);
+    // One that uses an image it does not hold reads as a device, and is refused
+    // for that section, which is left as it was.
+    let archive = zip_with(&[("config.json", &config(&needs_image))]);
+    let report: ImportReport = json(import(&api, "", archive).await).await;
+    assert!(matches!(
+        outcome(&report, &format!("devices/{FIRST}")),
+        SectionResult::Refused {
+            code: ErrorCode::InvalidArchive,
+            ..
+        }
+    ));
+    assert_eq!(api.config(FIRST).await, before);
     api.stop().await;
 }
 
@@ -552,5 +577,225 @@ async fn a_restore_can_be_previewed_before_it_is_made() {
         .get("/api/backup/snapshots/1700000000000-0/preview")
         .await;
     assert_eq!(api_error(response).await.0, StatusCode::BAD_REQUEST);
+    api.stop().await;
+}
+
+/// The old export of a device, as an earlier version made it.
+async fn old_export(api: &Api, serial: &str) -> Vec<u8> {
+    api.context
+        .store
+        .export(serial, &api.config(serial).await)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_old_export_of_a_device_goes_to_another_one_with_its_images() {
+    let api = Api::start().await;
+    let name = {
+        let response = api.upload(FIRST, "image/png", png(8, 8)).await;
+        let uploaded: hubergamof_protocol::ImageUploaded = json(response).await;
+        uploaded.name
+    };
+    let exported = use_image_on_first_key(&api, FIRST, &name).await;
+    let archive = old_export(&api, FIRST).await;
+
+    let before = api.config(SECOND).await;
+    let query = format!("?map={FIRST}:{SECOND}");
+    let report: ImportReport = json(import(&api, &query, archive).await).await;
+    assert_eq!(
+        outcome(&report, &format!("devices/{FIRST}")),
+        &SectionResult::Applied
+    );
+    let imported = api.config(SECOND).await;
+    assert_eq!(imported.serial, SECOND);
+    assert_eq!(imported.revision, before.revision + 1);
+    assert_eq!(imported.home, exported.home);
+    assert_eq!(imported.modules, exported.modules);
+    let image = api
+        .get(&format!("/api/devices/{SECOND}/images/{name}"))
+        .await;
+    assert_eq!(image.status(), StatusCode::OK, "image copied to the device");
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn a_device_of_a_backup_goes_to_another_one_and_leaves_the_rest() {
+    let api = Api::start().await;
+    set_brightness(&api, FIRST, 31).await;
+    let archive = export(&api, "").await;
+    set_brightness(&api, FIRST, 77).await;
+    set_brightness(&api, SECOND, 55).await;
+
+    let query = format!("?sections=devices/{FIRST}&map={FIRST}:{SECOND}");
+    let report: ImportReport = json(import(&api, &query, archive).await).await;
+    assert_eq!(report.sections.len(), 1);
+    assert_eq!(brightness(&api, SECOND).await, 31);
+    assert_eq!(brightness(&api, FIRST).await, 77, "not the target");
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn an_import_fits_the_target_model_both_ways() {
+    let api = Api::start().await;
+    let plus = api.config(FIRST).await;
+    let query = format!("?map={FIRST}:{NO_DIALS}");
+    let report: ImportReport =
+        json(import(&api, &query, old_export(&api, FIRST).await).await).await;
+    assert_eq!(
+        outcome(&report, &format!("devices/{FIRST}")),
+        &SectionResult::Applied
+    );
+    let on_mk2 = api.config(NO_DIALS).await;
+    assert_eq!(on_mk2.model, DeviceModel::Mk2);
+    assert_eq!(on_mk2.dials, Vec::new());
+    assert_eq!(on_mk2.home, plus.home);
+    // The pomodoro has no key and the device no dial: it is the only module dropped.
+    assert_eq!(on_mk2.modules.len(), plus.modules.len() - 1);
+
+    let query = format!("?map={NO_DIALS}:{SECOND}");
+    json::<ImportReport>(import(&api, &query, old_export(&api, NO_DIALS).await).await).await;
+    let back = api.config(SECOND).await;
+    assert_eq!(back.dials, vec![DialAssignment::None; 4]);
+    assert_eq!(back.home, plus.home);
+    api.stop().await;
+}
+
+/// The default configuration of `serial` with `image` on its first key, as an
+/// old export holding `content` under that name.
+async fn old_export_with_image(
+    api: &Api,
+    serial: &str,
+    image: &str,
+    content: &[u8],
+    brightness: u8,
+) -> Vec<u8> {
+    let mut config = api.config(serial).await;
+    config.brightness = brightness;
+    let first = config.home[0].clone();
+    config
+        .modules
+        .iter_mut()
+        .find(|m| m.id == first)
+        .unwrap()
+        .image = Some(image.into());
+    let json = serde_json::to_vec(&config).unwrap();
+    zip_with(&[
+        ("config.json", &json),
+        (&format!("images/{image}"), content),
+    ])
+}
+
+#[tokio::test]
+async fn refused_images_leave_nothing_behind() {
+    let api = Api::start().await;
+    // A compose file disguised as SVG: the former loose sniffing took it for one.
+    let polyglot = b"# <svg>\nservices:\n  x:\n    image: alpine\n    privileged: true\n";
+    for archive in [
+        old_export_with_image(&api, FIRST, "a.svg", polyglot, 50).await,
+        old_export_with_image(&api, FIRST, "b.png", &png(60_000, 1), 50).await,
+    ] {
+        let report: ImportReport = json(import(&api, "", archive).await).await;
+        assert!(matches!(
+            outcome(&report, &format!("devices/{FIRST}")),
+            SectionResult::Refused {
+                code: ErrorCode::InvalidImage,
+                ..
+            }
+        ));
+        assert_eq!(stored_images(&api, FIRST), Vec::<String>::new());
+    }
+    // A configuration that does not validate never gets as far as the images.
+    let archive = old_export_with_image(&api, FIRST, "c.png", &png(4, 4), 250).await;
+    let (status, code) = api_error(import(&api, "", archive).await).await;
+    assert_eq!(
+        (status, code),
+        (StatusCode::BAD_REQUEST, ErrorCode::InvalidArchive)
+    );
+    assert_eq!(stored_images(&api, FIRST), Vec::<String>::new());
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn a_device_map_that_does_not_hold_together_is_refused_and_changes_nothing() {
+    let api = Api::start().await;
+    let archive = export(&api, "").await;
+    let cases = [
+        // Not a pair, not serials, a target named twice.
+        (format!("?map={FIRST}"), ErrorCode::InvalidInput),
+        (format!("?map=..%2Fx:{SECOND}"), ErrorCode::InvalidInput),
+        (
+            format!("?map={FIRST}:{SECOND},{NO_DIALS}:{SECOND}"),
+            ErrorCode::InvalidInput,
+        ),
+        // A target that is not connected.
+        (format!("?map={FIRST}:NOPE"), ErrorCode::UnknownDevice),
+        // A source that is not imported.
+        (
+            format!("?sections=devices/{SECOND}&map={FIRST}:{NO_DIALS}"),
+            ErrorCode::InvalidInput,
+        ),
+        // A device that would get its own configuration and another's.
+        (format!("?map={FIRST}:{SECOND}"), ErrorCode::InvalidInput),
+    ];
+    for (query, code) in cases {
+        let (_, found) = api_error(import(&api, &query, archive.clone()).await).await;
+        assert_eq!(found, code, "{query}");
+    }
+    assert_eq!(snapshots(&api).await.len(), 0);
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn every_device_or_every_mouse_can_be_named_at_once() {
+    let api = Api::start().await;
+    let devices = read_backup(&export(&api, "?sections=devices").await).unwrap();
+    assert_eq!(devices.manifest.sections.len(), 3);
+    assert!(
+        devices
+            .manifest
+            .sections
+            .iter()
+            .all(|s| s.starts_with("devices/"))
+    );
+    let mice = read_backup(&export(&api, "?sections=mice").await).unwrap();
+    assert_eq!(mice.manifest.sections.len(), 0);
+
+    let archive = export(&api, "").await;
+    let report: ImportReport = json(import(&api, "?sections=devices", archive).await).await;
+    assert_eq!(report.sections.len(), 3);
+    // A group that names nothing the backup holds is refused.
+    let archive = export(&api, "?sections=devices").await;
+    let (status, code) = api_error(import(&api, "?sections=mice", archive).await).await;
+    assert_eq!(
+        (status, code),
+        (StatusCode::BAD_REQUEST, ErrorCode::InvalidInput)
+    );
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn the_per_device_routes_are_gone() {
+    let api = Api::start().await;
+    for (path, post) in [
+        (format!("/api/devices/{FIRST}/export"), false),
+        (format!("/api/devices/{FIRST}/import"), true),
+    ] {
+        let response = if post {
+            api.post(&path, "application/zip", Body::empty()).await
+        } else {
+            api.get(&path).await
+        };
+        let content_type = response.headers().get("content-type");
+        assert_ne!(
+            content_type.map(axum::http::HeaderValue::as_bytes),
+            Some("application/zip".as_bytes()),
+            "{path}"
+        );
+        assert!(
+            !response.status().is_success(),
+            "{path}: {}",
+            response.status()
+        );
+    }
     api.stop().await;
 }

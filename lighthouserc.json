@@ -8,7 +8,8 @@
         "http://127.0.0.1:7881/",
         "http://127.0.0.1:7881/poste/ssh",
         "http://127.0.0.1:7881/application/modules",
-        "http://127.0.0.1:7881/application/menu-circulaire"
+        "http://127.0.0.1:7881/application/menu-circulaire",
+        "http://127.0.0.1:7881/application/sauvegarde"
       ],
       "numberOfRuns": 3
     },

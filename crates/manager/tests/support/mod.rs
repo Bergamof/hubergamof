@@ -3,12 +3,13 @@
 
 #![allow(dead_code)]
 
+use std::io::{Cursor, Write as _};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
-use hubergamof_manager::config_store::ConfigStore;
+use hubergamof_manager::config_store::{ConfigStore, IMAGES_DIR};
 use hubergamof_manager::device::DeviceDiscovery;
 use hubergamof_manager::device::virtual_deck::{VirtualDevices, virtual_plus_info};
 use hubergamof_manager::engine::{EngineHandle, EngineServices, Supervisor};
@@ -28,6 +29,7 @@ use hubergamof_modules::{BuiltinServices, builtin_registry_with};
 use hubergamof_protocol::{
     ApiError, DeviceCapabilities, DeviceConfig, DeviceInfo, DeviceModel, ErrorCode, ImageSize,
 };
+use image::{ImageFormat, Rgba, RgbaImage};
 use tempfile::TempDir;
 use tokio::sync::watch;
 use tower::ServiceExt as _;
@@ -223,6 +225,58 @@ pub async fn bytes(response: Response<Body>) -> Vec<u8> {
 
 pub async fn api_error(response: Response<Body>) -> (StatusCode, ErrorCode) {
     let status = response.status();
-    let error: ApiError = serde_json::from_slice(&bytes(response).await).unwrap();
+    let body = bytes(response).await;
+    let error: ApiError = serde_json::from_slice(&body).unwrap_or_else(|_| {
+        panic!(
+            "{status}: not an ApiError: {}",
+            String::from_utf8_lossy(&body)
+        )
+    });
     (status, error.code)
+}
+
+pub fn zip_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, content) in entries {
+        zip.start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(content).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+pub fn png(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = Cursor::new(Vec::new());
+    RgbaImage::from_pixel(width, height, Rgba([200, 30, 30, 255]))
+        .write_to(&mut bytes, ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
+
+/// Image files of device `serial`.
+pub fn stored_images(api: &Api, serial: &str) -> Vec<String> {
+    let dir = api
+        .context
+        .store
+        .device_dir(serial)
+        .unwrap()
+        .join(IMAGES_DIR);
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// Puts image `name` on the first key of `serial`.
+pub async fn use_image_on_first_key(api: &Api, serial: &str, name: &str) -> DeviceConfig {
+    let mut config = api.config(serial).await;
+    let first = config.home[0].clone();
+    let module = config.modules.iter_mut().find(|m| m.id == first).unwrap();
+    module.image = Some(name.to_owned());
+    api.engine(serial).await.apply_config(config).await.unwrap()
 }

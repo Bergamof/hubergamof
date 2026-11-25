@@ -1,10 +1,12 @@
 import type {
 	ApiError,
-	DeviceConfig,
+	BackupPreview,
 	ErrorCode,
 	FileChooserRequest,
 	FileChosen,
-	ImageUploaded
+	ImageUploaded,
+	ImportReport,
+	SnapshotInfo
 } from '#lib/generated/index.js';
 import { problemOf, type Problem } from '#lib/deck/problems.js';
 
@@ -70,17 +72,46 @@ export function keyImageUrl(serial: string, name: string): string {
 	return `${devicePath(serial)}/images/${encodeURIComponent(name)}`;
 }
 
-/** URL downloading the configuration archive of a device. */
-export function exportUrl(serial: string): string {
-	return `${devicePath(serial)}/export`;
+/** What a backup can be limited to (`?sections=`): a kind of document, every device or mouse included. */
+export const BACKUP_GROUPS = [
+	'devices',
+	'mice',
+	'radial-menu',
+	'modules',
+	'machine',
+	'git',
+	'ssh'
+] as const;
+
+export type BackupGroup = (typeof BACKUP_GROUPS)[number];
+
+/** URL of the backup of `groups` (all of the configuration when none is given). */
+export function backupUrl(groups?: readonly BackupGroup[]): string {
+	if (!groups) return '/api/backup/export';
+	return `/api/backup/export?sections=${encodeURIComponent(groups.join(','))}`;
 }
 
-/** Name of an archive of device `serial` saved on `date` (local day). */
-export function exportFileName(serial: string, date: Date): string {
+/** Name of a backup saved on `date` (local day). */
+export function backupFileName(date: Date): string {
 	const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
 		.map((part) => String(part).padStart(2, '0'))
 		.join('-');
-	return `hubergamof-${serial}-${day}.zip`;
+	return `hubergamof-${day}.zip`;
+}
+
+/** What an import applies: the sections chosen, and the devices that receive another's configuration. */
+export interface ImportRequest {
+	/** Ids of the sections to import. */
+	sections: readonly string[];
+	/** Serial of a device of the backup → serial of the connected device that receives it. */
+	devices: Readonly<Record<string, string>>;
+}
+
+function importQuery({ sections, devices }: ImportRequest): string {
+	const map = Object.entries(devices).map(([from, to]) => `${from}:${to}`);
+	const parts = [`sections=${encodeURIComponent(sections.join(','))}`];
+	if (map.length > 0) parts.push(`map=${encodeURIComponent(map.join(','))}`);
+	return parts.join('&');
 }
 
 function isApiError(value: unknown): value is ApiError {
@@ -152,35 +183,92 @@ export class ManagerApi {
 	}
 
 	/**
-	 * Replaces the configuration of device `serial` by an exported archive. The new
-	 * configuration then reaches every client over the WebSocket.
+	 * The backup of `groups` (the whole configuration when none is given), as the bytes of
+	 * a zip: the page saves it, so that a refusal (computer locked…) is shown, not saved.
 	 */
-	async importArchive(serial: string, file: File): Promise<ApiResult<void>> {
-		if (file.size > MAX_ARCHIVE_BYTES) return { ok: false, problem: ARCHIVE_TOO_LARGE };
-		const path = `${devicePath(serial)}/import`;
-		const result = await this.#post<DeviceConfig>(path, file, 'application/zip', ARCHIVE_TOO_LARGE);
-		return result.ok ? { ok: true, value: undefined } : result;
+	async exportBackup(groups?: readonly BackupGroup[]): Promise<ApiResult<Blob>> {
+		return this.#call(backupUrl(groups), { method: 'GET' }, UNEXPECTED_ANSWER, (response) =>
+			response.blob()
+		);
 	}
 
-	async #post<T>(
+	/** What importing `file` would do: nothing is written. */
+	async previewBackup(file: Blob): Promise<ApiResult<BackupPreview>> {
+		if (file.size > MAX_ARCHIVE_BYTES) return { ok: false, problem: ARCHIVE_TOO_LARGE };
+		return this.#post<BackupPreview>(
+			'/api/backup/preview',
+			file,
+			'application/zip',
+			ARCHIVE_TOO_LARGE
+		);
+	}
+
+	/**
+	 * Imports the sections of `file` named by `request`, after the manager took a snapshot
+	 * of what is there: the report says what became of each section.
+	 */
+	async importBackup(file: Blob, request: ImportRequest): Promise<ApiResult<ImportReport>> {
+		if (file.size > MAX_ARCHIVE_BYTES) return { ok: false, problem: ARCHIVE_TOO_LARGE };
+		return this.#post<ImportReport>(
+			`/api/backup/import?${importQuery(request)}`,
+			file,
+			'application/zip',
+			ARCHIVE_TOO_LARGE
+		);
+	}
+
+	/** The automatic snapshots, the latest first. */
+	async listSnapshots(): Promise<ApiResult<SnapshotInfo[]>> {
+		return this.#get<SnapshotInfo[]>('/api/backup/snapshots');
+	}
+
+	/** What restoring snapshot `id` would do: nothing is written. */
+	async previewSnapshot(id: string): Promise<ApiResult<BackupPreview>> {
+		return this.#get<BackupPreview>(`/api/backup/snapshots/${encodeURIComponent(id)}/preview`);
+	}
+
+	/** Puts snapshot `id` back (after taking a snapshot of what is there). */
+	async restoreSnapshot(id: string): Promise<ApiResult<ImportReport>> {
+		return this.#post<ImportReport>(
+			`/api/backup/snapshots/${encodeURIComponent(id)}/restore`,
+			new Blob([]),
+			'application/json',
+			UNEXPECTED_ANSWER
+		);
+	}
+
+	#get<T>(path: string): Promise<ApiResult<T>> {
+		return this.#call(path, { method: 'GET' }, UNEXPECTED_ANSWER, async (response) => {
+			return (await response.json()) as T;
+		});
+	}
+
+	#post<T>(
 		path: string,
 		body: Blob,
 		contentType: string,
 		tooLarge: Problem
 	): Promise<ApiResult<T>> {
+		const init = { method: 'POST', headers: { 'content-type': contentType }, body };
+		return this.#call(path, init, tooLarge, async (response) => (await response.json()) as T);
+	}
+
+	/** One request: what the manager answers is read by `read`, anything else is a problem. */
+	async #call<T>(
+		path: string,
+		init: RequestInit,
+		tooLarge: Problem,
+		read: (response: Response) => Promise<T>
+	): Promise<ApiResult<T>> {
 		let response: Response;
 		try {
-			response = await this.#fetch(path, {
-				method: 'POST',
-				headers: { 'content-type': contentType },
-				body
-			});
+			response = await this.#fetch(path, init);
 		} catch {
 			return { ok: false, problem: NO_CONNECTION };
 		}
 		if (!response.ok) return failureFrom(response, tooLarge);
 		try {
-			return { ok: true, value: (await response.json()) as T };
+			return { ok: true, value: await read(response) };
 		} catch {
 			return { ok: false, problem: UNEXPECTED_ANSWER };
 		}

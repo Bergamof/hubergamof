@@ -5,7 +5,7 @@
 //! nothing here. A section that fails leaves the others to go on: the
 //! snapshot taken before is what undoes them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hubergamof_protocol::{
     BackupPreview, ErrorCode, ExecutableKind, SectionOutcome, SectionResult,
@@ -40,6 +40,7 @@ pub(super) async fn apply(
     context: &ServerContext,
     backup: &Backup,
     sections: &BTreeSet<BackupSection>,
+    device_map: &BTreeMap<String, String>,
 ) -> Vec<SectionOutcome> {
     let mut outcomes = Vec::new();
     for (section, document) in &backup.documents {
@@ -51,7 +52,7 @@ pub(super) async fn apply(
         let outcome = if *context.screen_lock.watch().borrow() {
             refused(ErrorCode::Locked, "the computer is locked")
         } else {
-            apply_section(context, backup, section, document).await
+            apply_section(context, backup, section, document, device_map).await
         };
         outcomes.push(SectionOutcome {
             section: section.id(),
@@ -66,11 +67,14 @@ async fn apply_section(
     backup: &Backup,
     section: &BackupSection,
     document: &BackupDocument,
+    device_map: &BTreeMap<String, String>,
 ) -> SectionResult {
     match (section, document) {
         (BackupSection::Device(serial), BackupDocument::Device(config)) => {
             let images = backup.images.get(serial).cloned().unwrap_or_default();
-            device(context, serial, (**config).clone(), images).await
+            // A device of the backup may go to another one, connected now.
+            let target = device_map.get(serial).unwrap_or(serial);
+            device(context, target, (**config).clone(), images).await
         }
         (BackupSection::Mouse(serial), BackupDocument::Mouse(config)) => {
             mouse(context, serial, (**config).clone()).await
