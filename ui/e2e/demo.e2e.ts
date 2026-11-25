@@ -40,6 +40,20 @@ async function open(page: Page) {
 	await expect(key(page, '1 : Audio')).toBeVisible();
 }
 
+test('dit qu’un Stream Deck de l’adresse n’est plus connecté, sans en montrer un autre', async ({
+	page
+}) => {
+	await page.goto('/peripheriques/stream-deck?appareil=ABSENT');
+	await expect(page.getByRole('status').filter({ hasText: 'plus connecté' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Voir les périphériques' })).toBeVisible();
+	await expect(key(page, '1 : Audio')).toHaveCount(0);
+});
+
+test('dit qu’une souris de l’adresse n’est plus connectée', async ({ page }) => {
+	await page.goto('/peripheriques/souris?appareil=ABSENT');
+	await expect(page.getByRole('status').filter({ hasText: 'plus connectée' })).toBeVisible();
+});
+
 test('affiche les touches et les molettes de la configuration', async ({ page }) => {
 	await open(page);
 	await expect(page.getByRole('heading', { name: 'Stream Deck+' })).toBeVisible();

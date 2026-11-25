@@ -66,7 +66,8 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 
 	// A new page starts at its top, with the focus on it: its title is read, not the end of the previous page.
 	afterNavigate(({ type }) => {
-		if (type === 'enter') return;
+		// The first page is not a navigation, and a step back restores the scroll position by itself.
+		if (type === 'enter' || type === 'popstate') return;
 		window.scrollTo(0, 0);
 		document.getElementById(MAIN_ID)?.focus({ preventScroll: true });
 	});
@@ -84,7 +85,7 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 </a>
 
 <div class="grid min-h-screen min-w-[64rem] grid-cols-[15.5rem_minmax(0,1fr)]">
-	<aside
+	<div
 		class="sticky top-0 flex h-screen flex-col gap-4 overflow-y-auto border-r border-line bg-surface p-2"
 	>
 		<SideNav
@@ -100,7 +101,7 @@ computer locked): the page is only disabled, not removed, so it stays readable.
 				Version {deck.managerVersion}
 			</p>
 		{/if}
-	</aside>
+	</div>
 
 	<div class="flex min-w-0 flex-col">
 		<header

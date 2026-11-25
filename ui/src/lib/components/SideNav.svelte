@@ -118,8 +118,7 @@ machine and the application. The page shown is marked with `aria-current`.
 				</li>
 			{:else}
 				<li class="px-2 py-1.5 text-muted italic">
-					<a href={resolve(PATHS.devices)} class="focus-ring" onclick={onnavigate}>Aucun connecté</a
-					>
+					<a href={resolve(PATHS.devices)} class="link" onclick={onnavigate}>Aucun connecté</a>
 				</li>
 			{/each}
 		</ul>

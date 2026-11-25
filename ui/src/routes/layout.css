@@ -39,7 +39,7 @@
 	--surface: #ffffff;
 	--sunken: #eef1ec;
 	--line: #d5dbd2;
-	--edge: #7d8f8b;
+	--edge: #7a8c88;
 	--fg: #14201f;
 	--muted: #4a5b58;
 	--accent: #0b6b66;
@@ -135,9 +135,14 @@
 }
 
 @layer base {
-	/* Room for the page bar and the banner, which stick to the top: a focused control is not left under them. */
+	/* Room for the page bar and the notices, which stick to the top: a focused control is not left under them. */
 	html {
 		scroll-padding-top: 6rem;
+	}
+
+	/* A page that cannot be used (connection lost, computer locked) is a disabled fieldset: its controls must look it. */
+	fieldset:disabled :is(button, input, select, textarea) {
+		@apply cursor-not-allowed opacity-60;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
@@ -185,6 +190,11 @@
 	@apply min-h-8 rounded-lg border border-danger bg-danger-soft px-3.5 py-1.5 text-sm font-semibold text-danger focus-ring hover:brightness-95 aria-disabled:opacity-60;
 }
 
+/* Link inside a sentence or a card: the colour and the underline tell it from the text around it. */
+@utility link {
+	@apply rounded-sm text-accent underline underline-offset-2 focus-ring hover:text-accent-hover;
+}
+
 /* White card on the page. */
 @utility card {
 	@apply rounded-xl border border-line bg-surface p-4;
@@ -192,7 +202,7 @@
 
 /* On/off switch (a checkbox with role="switch"): the thumb slides, the track takes the ring colour when on. */
 @utility switch {
-	@apply relative h-[22px] w-[38px] shrink-0 cursor-pointer appearance-none rounded-full bg-line focus-ring transition-colors checked:bg-ring disabled:cursor-default disabled:opacity-50;
+	@apply relative h-[22px] w-[38px] shrink-0 cursor-pointer appearance-none rounded-full bg-edge focus-ring transition-colors checked:bg-ring disabled:cursor-default disabled:opacity-50;
 	&::after {
 		content: '';
 		@apply absolute inset-y-[3px] left-[3px] w-4 rounded-full bg-surface shadow-sm transition-transform;

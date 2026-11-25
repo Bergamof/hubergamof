@@ -67,8 +67,9 @@ it would cut the Sony application.
 <section class="flex flex-col gap-3 card" aria-labelledby="home-devices">
 	<div class="flex items-center justify-between">
 		<h2 id="home-devices" class="text-lg font-semibold">Périphériques</h2>
-		<a href={resolve(PATHS.devices)} class="inline-flex items-center gap-1 focus-ring">
-			Tout voir <Icon name="chevronRight" class="size-3.5" />
+		<a href={resolve(PATHS.devices)} class="inline-flex items-center gap-1 link">
+			Tout voir<span class="sr-only"> les périphériques</span>
+			<Icon name="chevronRight" class="size-3.5" />
 		</a>
 	</div>
 	{#if devices.length === 0}
@@ -91,7 +92,7 @@ it would cut the Sony application.
 						{:else if device.kind === 'deck'}
 							Connecté en USB
 						{:else}
-							Batterie non lue
+							Batterie : inconnue
 						{/if}
 					</span>
 					<a
@@ -111,8 +112,9 @@ it would cut the Sony application.
 	<section class="flex flex-col gap-3 card" aria-labelledby="home-modules">
 		<div class="flex items-center justify-between">
 			<h2 id="home-modules" class="text-lg font-semibold">Modules</h2>
-			<a href={resolve(PATHS.modules)} class="inline-flex items-center gap-1 focus-ring">
-				Réglages <Icon name="chevronRight" class="size-3.5" />
+			<a href={resolve(PATHS.modules)} class="inline-flex items-center gap-1 link">
+				Réglages<span class="sr-only"> des modules</span>
+				<Icon name="chevronRight" class="size-3.5" />
 			</a>
 		</div>
 		{#if modules.length === 0}
@@ -144,7 +146,7 @@ it would cut the Sony application.
 			<p>
 				{#if update.type === 'available'}
 					<strong>Version {update.version} disponible</strong>
-					<span class="block text-muted">Vous avez la {deck.managerVersion}.</span>
+					<span class="block text-muted">Version installée : {deck.managerVersion}.</span>
 				{:else if update.type === 'upToDate'}
 					<strong>Version {deck.managerVersion}</strong>
 					<span class="block text-muted">À jour.</span>
