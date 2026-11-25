@@ -139,7 +139,7 @@ describe('InstanceEditor', () => {
 		await expect.element(workField()).toHaveValue('25');
 		await expect
 			.element(page.getByRole('form', { name: 'Réglages' }))
-			.toHaveAccessibleDescription(/^Enregistrés automatiquement/);
+			.toHaveAccessibleDescription(/^Enregistrés au fil de la saisie/);
 		await expect.element(page.getByRole('button', { name: 'Appliquer' })).not.toBeInTheDocument();
 		expect(onapply).not.toHaveBeenCalled();
 	});

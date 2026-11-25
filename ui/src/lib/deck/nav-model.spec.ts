@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceInfo, HeadsetInfo, MouseInfo } from '#lib/generated/index.js';
-import { PATHS, deviceQuery, navDevices, pageOf } from './nav-model.js';
+import { PATHS, deviceQuery, moduleHref, navDevices, pageOf } from './nav-model.js';
 
 const deck = { serial: 'A1', displayName: 'Stream Deck +' } as DeviceInfo;
 const mouse = { serial: 'M 1', displayName: 'MX Master 4' } as MouseInfo;
@@ -16,6 +16,13 @@ describe('pageOf', () => {
 	it('falls back to the home page for an unknown address', () => {
 		expect(pageOf('/nulle-part').title).toBe('Accueil');
 		expect(pageOf('/').group).toBeUndefined();
+	});
+});
+
+describe('moduleHref', () => {
+	it('names the module in the query, encoded', () => {
+		expect(moduleHref('pomodoro')).toBe('/application/modules?module=pomodoro');
+		expect(moduleHref('a b')).toBe('/application/modules?module=a%20b');
 	});
 });
 

@@ -816,8 +816,25 @@ for (const colorScheme of ['light', 'dark'] as const) {
 async function openModules(page: Page) {
 	await open(page);
 	await goTo(page, 'Modules');
+	await page
+		.getByRole('navigation', { name: 'Modules à régler' })
+		.getByRole('link', { name: /Pomodoro/ })
+		.click();
 	await expect(page.getByRole('heading', { name: 'Pomodoro', level: 2 })).toBeVisible();
 }
+
+test('ne liste que les modules qui ont des réglages, et montre les autres sur l’accueil', async ({
+	page
+}) => {
+	await open(page);
+	await goTo(page, 'Modules');
+	const list = page.getByRole('navigation', { name: 'Modules à régler' });
+	await expect(list.getByRole('link', { name: /Pomodoro/ })).toBeVisible();
+	await expect(list.getByRole('link', { name: /Claude/ })).toHaveCount(0);
+	await goTo(page, /^Accueil$/);
+	await expect(page.getByRole('heading', { name: 'Modules', level: 2 })).toBeVisible();
+	await expect(page.getByText('Claude', { exact: true })).toBeVisible();
+});
 
 test('pilote le pomodoro de l’application depuis la page Modules', async ({ page }) => {
 	await openModules(page);
@@ -844,7 +861,7 @@ test('montre la même chose sur la molette du deck et dans un autre onglet', asy
 }) => {
 	await openModules(page);
 	const other = await context.newPage();
-	await other.goto('/application/modules');
+	await other.goto('/application/modules?module=pomodoro');
 
 	await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
 	await expect(other.getByTestId('module-status-pomodoro')).not.toContainText('prêt');
@@ -857,7 +874,7 @@ test('montre la même chose sur la molette du deck et dans un autre onglet', asy
 test('enregistre les réglages du pomodoro, pour toute l’application', async ({ page, context }) => {
 	await openModules(page);
 	const other = await context.newPage();
-	await other.goto('/application/modules');
+	await other.goto('/application/modules?module=pomodoro');
 
 	const work = page.getByLabel('Durée du travail');
 	await work.fill('30');

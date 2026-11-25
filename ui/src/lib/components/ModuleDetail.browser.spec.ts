@@ -5,7 +5,7 @@ import { ManagerApi } from '#lib/api/manager-api.js';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
 import { FakeConnection } from '#lib/deck/fake-connection.js';
 import type { ApplicationModuleView, CatalogModule } from '#lib/generated/index.js';
-import ApplicationPanel from './ApplicationPanel.svelte';
+import ModuleDetail from './ModuleDetail.svelte';
 import { POMODORO } from './mouse-fixtures.js';
 
 const POMODORO_WITH_SETTINGS: CatalogModule = {
@@ -37,33 +37,24 @@ async function renderPanel(modules: ApplicationModuleView[] = [view()]) {
 	deck.listen();
 	connection.receive({ type: 'moduleCatalog', modules: [POMODORO_WITH_SETTINGS] });
 	connection.receive({ type: 'applicationModules', modules });
-	await render(ApplicationPanel, { deck, api: new ManagerApi() });
+	await render(ModuleDetail, { deck, api: new ManagerApi(), view: modules[0] });
 	return { connection, deck };
 }
 
-describe('ApplicationPanel', () => {
+describe('ModuleDetail', () => {
 	it('shows the step and the time of the pomodoro, whether or not a device is connected', async () => {
 		await renderPanel();
 		await expect.element(page.getByRole('heading', { name: 'Pomodoro', level: 2 })).toBeVisible();
 		await expect.element(page.getByText(/^Focus 2\/4$/).first()).toBeVisible();
 		await expect.element(page.getByText(/^12:34 · pause$/)).toBeVisible();
-		await expect.element(page.getByText(/Tourne dans le gestionnaire/)).toBeVisible();
+		await expect.element(page.getByText(/Sessions de travail et pauses\./)).toBeVisible();
 	});
 
 	it('announces the step, not the time', async () => {
-		const { connection } = await renderPanel();
+		await renderPanel();
 		const step = page.getByRole('status').first();
 		await expect.element(step).toHaveTextContent('Focus 2/4');
-		connection.receive({
-			type: 'applicationModules',
-			modules: [view({ status: 'Focus 2/4\n12:33' })]
-		});
-		await expect.element(step).toHaveTextContent('Focus 2/4');
-		connection.receive({
-			type: 'applicationModules',
-			modules: [view({ status: 'Pause\n05:00' })]
-		});
-		await expect.element(step).toHaveTextContent('Pause');
+		expect(step.element().textContent).not.toContain('12:34');
 	});
 
 	it('says so when an action cannot be sent', async () => {
@@ -72,15 +63,6 @@ describe('ApplicationPanel', () => {
 		await page.getByRole('button', { name: 'Démarrer ou mettre en pause' }).click();
 		expect(deck.notices).toHaveLength(1);
 		expect(deck.notices[0].text).toMatch(/Action non envoyée/);
-	});
-
-	it('follows what the module shows as it changes', async () => {
-		const { connection } = await renderPanel();
-		connection.receive({
-			type: 'applicationModules',
-			modules: [view({ status: 'Focus 2/4\n12:33' })]
-		});
-		await expect.element(page.getByText(/^12:33$/)).toBeVisible();
 	});
 
 	it('offers the actions of the module and sends the one that is chosen', async () => {
@@ -109,7 +91,7 @@ describe('ApplicationPanel', () => {
 		});
 	});
 
-	it('shows nothing of a module without a state, and no section without modules', async () => {
+	it('shows nothing of a module without a state', async () => {
 		await renderPanel([view({ status: null as unknown as undefined })]);
 		expect(document.querySelector('[data-testid="module-status-pomodoro"]')).toBeNull();
 		await expect.element(page.getByRole('heading', { name: 'Pomodoro' })).toBeVisible();
