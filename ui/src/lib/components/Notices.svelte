@@ -29,7 +29,7 @@ next message, or to a fallback element, rather than losing it.
 <div
 	bind:this={list}
 	role="alert"
-	class="sticky top-0 z-20 flex flex-col gap-2 bg-page empty:hidden"
+	class="sticky top-12 z-20 flex flex-col gap-2 bg-page empty:hidden"
 >
 	{#each notices as notice (notice.id)}
 		<div

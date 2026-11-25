@@ -26,6 +26,6 @@ the accessible name.
 		d="M32 13v10"
 		stroke-width="4"
 		stroke-linecap="round"
-		class={assigned ? 'stroke-accent' : 'stroke-device-line'}
+		class={assigned ? 'stroke-device-ring' : 'stroke-device-line'}
 	/>
 </svg>

@@ -66,9 +66,8 @@ async function playManager(page: Page, aliases: Alias[] = []): Promise<FakeManag
 }
 
 async function openMachine(page: Page) {
-	await page.goto('/');
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await expect(page.getByRole('heading', { name: 'Alias du shell' })).toBeVisible();
+	await page.goto('/poste/alias');
+	await expect(page.getByRole('heading', { name: 'Alias du shell' }).first()).toBeVisible();
 }
 
 const managed = (page: Page) => page.getByRole('list', { name: 'Alias gérés' });
@@ -81,7 +80,7 @@ test('lit le système à l’ouverture de la page seulement, puis à chaque reco
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	expect(manager.received).not.toContain('refreshMachine');
 
-	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('link', { name: 'Alias du shell' }).click();
 	await expect
 		.poll(() => manager.received.filter((type) => type === 'refreshMachine'))
 		.toHaveLength(1);

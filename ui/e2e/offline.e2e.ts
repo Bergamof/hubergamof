@@ -5,9 +5,13 @@ test.describe('page d’accueil sans gestionnaire', () => {
 		await page.goto('/');
 	});
 
-	test('affiche le titre HuBergamof', async ({ page }) => {
-		await expect(page).toHaveTitle('HuBergamof');
-		await expect(page.getByRole('heading', { level: 1, name: 'HuBergamof' })).toBeVisible();
+	test('affiche le titre et la navigation', async ({ page }) => {
+		await expect(page).toHaveTitle(/HuBergamof/);
+		await expect(
+			page.getByRole('navigation', { name: 'Navigation principale' }).getByRole('link', {
+				name: 'Alias du shell'
+			})
+		).toBeVisible();
 	});
 
 	test('indique que la connexion au gestionnaire est en cours', async ({ page }) => {

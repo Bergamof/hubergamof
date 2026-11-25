@@ -21,6 +21,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Modifié
 
+- Interface (refonte, étape 1) : navigation par adresses (`/`, `/peripheriques/…`, `/poste/{alias,git,ssh}`, `/application/{modules,menu-circulaire,mises-a-jour,sauvegarde}`) dans une barre latérale à trois groupes (Périphériques : seulement ceux qui sont connectés, avec la batterie de la souris suivie ; Poste ; Application), fil d'Ariane, bannière verrouillé / connexion perdue qui laisse la navigation utilisable (les commandes de la page sont désactivées par `fieldset`, plus d'`inert` global), page d'accueil (appareils, modules, mises à jour, raccourcis), page Périphériques avec état vide. Palette « thé et bergamote 2 » : le teal porte l'action, la sélection et le focus, la bergamote ne sert plus qu'à la marque ; formulaires et cartes plus denses. Les mises à jour ont leur page ; la sauvegarde d'un Stream Deck quitte l'éditeur du deck pour la page Sauvegarde (en attendant l'export global). Interface prévue pour ordinateur seulement (1024 px au minimum).
+
 - Rubrique « Machine » : un `machine.json` invalide, mis de côté et remplacé par une configuration vide, retire aussi de l'ordinateur ce qu'il y avait appliqué (alias du fichier géré, lignes d'origine commentées rétablies), comme pour Git.
 - Interface : les schémas des souris (MX Master 4 et MX Anywhere 3S, vue de dessus et vue du côté du pouce) sont de nouveaux dessins vectoriels sans fond, identiques en thème clair et sombre. Un fichier SVG par vue, chargé seulement quand la souris s'affiche ; les repères numérotés et les zones cliquables sont replacés sur ces dessins.
 

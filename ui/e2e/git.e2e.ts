@@ -104,9 +104,7 @@ async function playManager(page: Page, config: FakeGit = emptyGit()): Promise<Fa
 }
 
 async function openGit(page: Page) {
-	await page.goto('/');
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'Git' }).check({ force: true });
+	await page.goto('/poste/git');
 	await expect(page.getByRole('heading', { name: 'Identité', exact: true })).toBeVisible();
 }
 
@@ -120,7 +118,7 @@ test('ne lit l’ordinateur qu’à l’ouverture de la page Machine, puis à ch
 	await expect(page.getByRole('status').first()).toHaveText('Connecté au gestionnaire');
 	expect(manager.received).not.toContain('refreshGit');
 
-	await page.getByRole('button', { name: 'Machine' }).click();
+	await page.getByRole('link', { name: 'Git', exact: true }).click();
 	await expect.poll(() => manager.received.filter((type) => type === 'refreshGit')).toHaveLength(1);
 
 	await manager.sockets[0].close();

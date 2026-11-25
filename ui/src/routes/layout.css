@@ -29,25 +29,34 @@
 		format('woff2-variations');
 }
 
-/* Palette « thé et bergamote » : neutres teintés de vert, un seul accent chaud (sélection et
-   action principale). Les valeurs changent avec le thème du système ; les utilitaires
+/* Palette « thé et bergamote 2 » : neutres teintés de vert ; le teal (`accent`) porte l'action, la
+   sélection et le focus ; la bergamote (`brand`) ne sert qu'à la marque, jamais en texte ni en
+   bordure sur fond clair (1,9:1). Les valeurs changent avec le thème du système ; les utilitaires
    (`bg-surface`, `text-muted`…) suivent donc sans variante `dark:`. */
 :root {
 	color-scheme: light dark;
-	--page: #f4f6f2;
+	--page: #f6f7f4;
 	--surface: #ffffff;
-	--sunken: #e9eee8;
-	--line: #cbd3c9;
-	--fg: #11201f;
-	--muted: #455654;
-	--accent: #f2b134;
-	--on-accent: #1b1404;
+	--sunken: #eef1ec;
+	--line: #d5dbd2;
+	--edge: #7d8f8b;
+	--fg: #14201f;
+	--muted: #4a5b58;
+	--accent: #0b6b66;
+	--accent-hover: #095854;
+	--on-accent: #ffffff;
+	--tint: #e0f0ee;
+	--brand: #f2b134;
+	--on-brand: #1b1404;
 	--ring: #0b6b66;
 	--ok: #0e7a4a;
+	--ok-soft: #e2f4ea;
 	--danger: #a11d1d;
 	--danger-soft: #fdeceb;
 	--warning: #8a5600;
 	--warning-soft: #fdf3dc;
+	--info: #1f5f99;
+	--info-soft: #e6f0fa;
 	--device: #0c1618;
 	--device-key: #16282a;
 	--device-strip: #0f2224;
@@ -58,27 +67,33 @@
 	/* Écran de l'appareil (touches, bande) : le thème de l'appareil, pas celui du système. */
 	--screen: #e7ebf1;
 	--screen-ink: #13213b;
-	--shadow: 0 1px 2px rgb(17 32 31 / 0.06), 0 8px 24px rgb(17 32 31 / 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--page: #091112;
+		--page: #0b1415;
 		--surface: #111c1e;
 		--sunken: #182628;
-		--line: #2a3d3f;
+		--line: #26383a;
+		--edge: #6b8480;
 		--fg: #e8efec;
 		--muted: #9fb3af;
-		--accent: #f4c04e;
+		--accent: #5cd6cc;
+		--accent-hover: #7ae0d7;
+		--on-accent: #04201e;
+		--tint: #12302f;
+		--brand: #f4c04e;
 		--ring: #5cd6cc;
 		--ok: #6fdda4;
+		--ok-soft: #10301f;
 		--danger: #ff9f9a;
 		--danger-soft: #3a1717;
 		--warning: #f4c04e;
 		--warning-soft: #33280d;
+		--info: #8cc4f5;
+		--info-soft: #12263a;
 		--device: #060d0e;
 		--device-strip: #0b1a1c;
-		--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
 	}
 }
 
@@ -87,9 +102,17 @@
 	--color-surface: var(--surface);
 	--color-sunken: var(--sunken);
 	--color-line: var(--line);
+	--color-edge: var(--edge);
 	--color-fg: var(--fg);
 	--color-muted: var(--muted);
 	--color-accent: var(--accent);
+	--color-accent-hover: var(--accent-hover);
+	--color-tint: var(--tint);
+	--color-brand: var(--brand);
+	--color-on-brand: var(--on-brand);
+	--color-ok-soft: var(--ok-soft);
+	--color-info: var(--info);
+	--color-info-soft: var(--info-soft);
 	--color-on-accent: var(--on-accent);
 	--color-ring: var(--ring);
 	--color-ok: var(--ok);
@@ -106,16 +129,15 @@
 	--color-device-muted: var(--device-muted);
 	--color-screen: var(--screen);
 	--color-screen-ink: var(--screen-ink);
-	--shadow-card: var(--shadow);
 	--font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
 	--font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
 	--font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
 }
 
 @layer base {
-	/* Room for the bar of the save status, which sticks to the top: a focused control is not left under it. */
+	/* Room for the page bar and the banner, which stick to the top: a focused control is not left under them. */
 	html {
-		scroll-padding-top: 3rem;
+		scroll-padding-top: 6rem;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
@@ -128,7 +150,7 @@
 	}
 
 	body {
-		@apply bg-page font-sans text-fg antialiased;
+		@apply bg-page font-sans text-sm text-fg antialiased;
 	}
 
 	h1,
@@ -145,27 +167,27 @@
 
 /* Text input, select and textarea. */
 @utility field {
-	@apply min-h-10 w-full rounded-[10px] border border-muted bg-surface px-3 py-2 text-fg focus-ring placeholder:text-muted aria-invalid:border-danger;
+	@apply min-h-8 w-full rounded-lg border border-edge bg-surface px-2.5 py-1 text-fg focus-ring placeholder:text-muted aria-invalid:border-danger;
 }
 
 /* Secondary action button. */
 @utility secondary-button {
-	@apply min-h-9 rounded-[10px] border border-line bg-surface px-3.5 py-1.5 text-sm font-medium text-fg focus-ring hover:border-muted hover:bg-sunken aria-disabled:opacity-60 aria-disabled:hover:border-line aria-disabled:hover:bg-surface;
+	@apply min-h-8 rounded-lg border border-edge bg-surface px-3 py-1 text-sm font-medium text-fg focus-ring hover:border-muted hover:bg-sunken aria-disabled:opacity-60 aria-disabled:hover:border-line aria-disabled:hover:bg-surface;
 }
 
 /* Main action of a form or dialog: the only filled button. */
 @utility primary-button {
-	@apply min-h-9 rounded-[10px] bg-accent px-3.5 py-1.5 text-sm font-semibold text-on-accent focus-ring hover:brightness-105 aria-disabled:opacity-60;
+	@apply min-h-8 rounded-lg bg-accent px-3 py-1 text-sm font-semibold text-on-accent focus-ring hover:bg-accent-hover aria-disabled:opacity-60;
 }
 
 /* Destructive action. */
 @utility danger-button {
-	@apply min-h-9 rounded-[10px] border border-danger bg-danger-soft px-3.5 py-1.5 text-sm font-semibold text-danger focus-ring hover:brightness-95 aria-disabled:opacity-60;
+	@apply min-h-8 rounded-lg border border-danger bg-danger-soft px-3.5 py-1.5 text-sm font-semibold text-danger focus-ring hover:brightness-95 aria-disabled:opacity-60;
 }
 
 /* White card on the page. */
 @utility card {
-	@apply rounded-2xl border border-line bg-surface p-5 shadow-card;
+	@apply rounded-xl border border-line bg-surface p-4;
 }
 
 /* On/off switch (a checkbox with role="switch"): the thumb slides, the track takes the ring colour when on. */
@@ -189,7 +211,7 @@
 /* A key or dial of the device, selectable to configure it. The selection is drawn with the
    accent, on the device's dark body. */
 @utility surface-button {
-	@apply flex w-full flex-col items-center gap-1.5 rounded-2xl p-1.5 text-center text-xs font-medium text-device-fg hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring aria-current:bg-device-key aria-current:ring-2 aria-current:ring-accent;
+	@apply flex w-full flex-col items-center gap-1.5 rounded-2xl p-1.5 text-center text-xs font-medium text-device-fg hover:bg-device-key focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-device-ring aria-current:bg-device-key aria-current:ring-2 aria-current:ring-device-ring;
 }
 
 /* Thème de l'appareil : mêmes fonds et encres que la bande tactile dessinée par le gestionnaire. */

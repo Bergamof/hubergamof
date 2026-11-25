@@ -79,7 +79,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 
 	<section
 		aria-labelledby="{uid}-name"
-		class="overflow-hidden rounded-2xl border border-line bg-surface shadow-card"
+		class="shadow-card overflow-hidden rounded-2xl border border-line bg-surface"
 	>
 		<header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-5 py-4">
 			<h2 id="{uid}-name" class="font-display text-xl font-semibold">{mouse.displayName}</h2>

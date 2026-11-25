@@ -38,7 +38,6 @@ selected key or dial.
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import DialDetails from './DialDetails.svelte';
 	import DialRow from './DialRow.svelte';
-	import ExportImport from './ExportImport.svelte';
 	import KeyDetails from './KeyDetails.svelte';
 	import KeyGrid from './KeyGrid.svelte';
 	import ModulePicker from './ModulePicker.svelte';
@@ -303,7 +302,6 @@ selected key or dial.
 				seconds={config.lockSleepSeconds}
 				onchange={(seconds) => deck.edit(setLockSleepSeconds(seconds))}
 			/>
-			<ExportImport {device} {api} />
 		</div>
 
 		<div class="min-w-0 flex-1 scroll-mt-6 card lg:sticky lg:top-6">

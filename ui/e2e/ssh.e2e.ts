@@ -131,9 +131,7 @@ async function playManager(
 }
 
 async function openSsh(page: Page) {
-	await page.goto('/');
-	await page.getByRole('button', { name: 'Machine' }).click();
-	await page.getByRole('radio', { name: 'SSH' }).check({ force: true });
+	await page.goto('/poste/ssh');
 	await expect(page.getByRole('heading', { name: 'Serveurs SSH', exact: true })).toBeVisible();
 }
 
