@@ -7,8 +7,4 @@
 </script>
 
 <PageHeader title="Menu circulaire" />
-{#if deck.mice.radialMenu}
-	<RadialMenuPage {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
-{:else}
-	<p class="m-auto text-muted">Chargement de la configuration…</p>
-{/if}
+<RadialMenuPage {deck} mouse={deck.mice.mouse} config={deck.mice.config} />

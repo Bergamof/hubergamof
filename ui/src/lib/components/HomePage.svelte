@@ -47,6 +47,15 @@ it would cut the Sony application.
 	const linesOf = (status: string | null | undefined): string[] =>
 		(status ?? '').split('\n').filter((line) => line !== '');
 
+	/** Runs the first action of a module; the connection being lost, nothing was sent, which is said. */
+	function run(kind: string, action: string) {
+		if (deck.application.run(kind, action)) return;
+		deck.report({
+			text: 'Action non envoyée : la connexion au gestionnaire est perdue.',
+			detail: null
+		});
+	}
+
 	const update = $derived(deck.updateStatus);
 	const SHORTCUTS = [
 		{ href: PATHS.radial, label: 'Régler le menu circulaire' },
@@ -123,6 +132,7 @@ it would cut the Sony application.
 			<ul class="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
 				{#each modules as view (view.kind)}
 					{@const lines = linesOf(view.status)}
+					{@const action = deck.moduleOf(view.kind)?.radialActions[0]}
 					<li class="flex min-h-24 flex-col gap-1 rounded-lg border border-line p-3">
 						<span class="flex items-center gap-1.5 font-medium text-muted">
 							<Icon name={MODULE_ICON[view.kind] ?? 'modules'} />
@@ -133,6 +143,15 @@ it would cut the Sony application.
 							{#if lines[1]}<span class="text-muted">{lines[1]}</span>{/if}
 						{:else}
 							<span class="text-muted">En attente</span>
+						{/if}
+						{#if action}
+							<button
+								type="button"
+								class="mt-auto secondary-button self-start"
+								onclick={() => run(view.kind, action.id)}
+							>
+								{action.name}
+							</button>
 						{/if}
 					</li>
 				{/each}

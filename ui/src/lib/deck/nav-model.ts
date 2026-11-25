@@ -79,6 +79,11 @@ export function deviceHref(device: NavDevice): ResolvedPathname {
 	);
 }
 
+/** The address of the page of a module: the modules are told apart by `?module=`. */
+export function moduleHref(kind: string): ResolvedPathname {
+	return resolve(`${PATHS.modules}?module=${encodeURIComponent(kind)}`);
+}
+
 function entry(kind: NavDevice['kind'], id: string, label: string): NavDevice {
 	return { kind, id, label, path: DEVICE_PATH[kind], query: deviceQuery(kind, id) };
 }

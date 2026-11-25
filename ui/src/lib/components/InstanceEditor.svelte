@@ -46,6 +46,9 @@ one being changed keeps what is typed, saved over the other change once finished
 
 	/** Longest label: it is drawn at the bottom of a key, where little more fits. */
 	const MAX_LABEL_LENGTH = 40;
+
+	/** Kinds of setting that need the whole width of the form. */
+	const WIDE_KINDS: ReadonlySet<string> = new Set(['text', 'path', 'pathList', 'fileEntryList']);
 	/** Pause in the typing after which a text counts as finished, and is saved. */
 	const TYPING_PAUSE_MS = 1000;
 
@@ -208,17 +211,16 @@ one being changed keeps what is typed, saved over the other change once finished
 </script>
 
 <form
-	class="flex flex-col gap-4"
+	class="flex flex-col gap-3"
 	aria-labelledby="{uid}-title"
 	aria-describedby="{uid}-help"
 	onsubmit={(event) => event.preventDefault()}
 	novalidate
 >
-	<div class="flex flex-col gap-1">
+	<div class="flex flex-wrap items-baseline justify-between gap-x-4">
 		<h3 id="{uid}-title" class="font-semibold">Réglages</h3>
-		<p id="{uid}-help" class="text-sm text-muted">
-			Enregistrés automatiquement : un choix tout de suite, un texte à la fin de la saisie (pause,
-			Tab ou Entrée). Échap rétablit la valeur enregistrée d’un champ.
+		<p id="{uid}-help" class="text-xs text-muted">
+			Enregistrés au fil de la saisie (pause, Tab ou Entrée) ; Échap rétablit la valeur enregistrée.
 		</p>
 	</div>
 
@@ -255,21 +257,28 @@ one being changed keeps what is typed, saved over the other change once finished
 		</p>
 	{/if}
 
-	{#each fields as field (field.key)}
-		<SettingInput
-			{field}
-			idPrefix={uid}
-			bind:value={draft[field.key]}
-			error={errors[field.key]}
-			{serial}
-			{api}
-			moduleKind={instance.kind}
-			defaultIcon={module?.settingIcons[field.key] ?? module?.icon}
-			ontype={typed}
-			oncommit={commit}
-			onrevert={() => revertSetting(field.key)}
-		/>
-	{/each}
+	<!-- Short controls side by side when the form is wide enough; lists and long texts take the whole row. -->
+	<div class="@container">
+		<div class="grid grid-cols-1 gap-x-4 gap-y-3 @xl:grid-cols-2">
+			{#each fields as field (field.key)}
+				<div class={[WIDE_KINDS.has(field.kind.type) && '@xl:col-span-2']}>
+					<SettingInput
+						{field}
+						idPrefix={uid}
+						bind:value={draft[field.key]}
+						error={errors[field.key]}
+						{serial}
+						{api}
+						moduleKind={instance.kind}
+						defaultIcon={module?.settingIcons[field.key] ?? module?.icon}
+						ontype={typed}
+						oncommit={commit}
+						onrevert={() => revertSetting(field.key)}
+					/>
+				</div>
+			{/each}
+		</div>
+	</div>
 
 	{#if refusal}
 		<ProblemAlert problem={refusal} lead="Réglages non enregistrés." />

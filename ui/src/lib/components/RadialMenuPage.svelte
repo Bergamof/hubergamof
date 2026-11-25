@@ -38,36 +38,46 @@ holds. Every change is sent at once; the line under the title says whether the m
 	}
 </script>
 
-<div class="flex flex-col gap-8">
+<div class="flex flex-col gap-4">
 	<SaveStatusLine tracker={saves} />
 
-	<section aria-labelledby="{uid}-title" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-title" class="font-display text-xl font-semibold">Menu circulaire</h2>
-		<p class="text-sm text-muted">
-			Le même pour toutes les souris. Il s’ouvre depuis le bouton auquel vous avez donné l’action «
-			Menu circulaire ».
-		</p>
-		{#if !mouse}
-			<p class="text-sm">
-				Aucune souris connectée : le menu s’ouvrira depuis un bouton de souris MX.
-			</p>
-		{:else}
-			<p class="text-sm" data-testid="menu-trigger">
-				{#if trigger}
-					Sur {mouse.displayName}, il s’ouvre avec : <strong>{CONTROL_LABELS[trigger]}</strong>.
-				{:else}
-					Sur {mouse.displayName}, aucun bouton ne l’ouvre : donnez l’action « Menu circulaire » à
-					un bouton, dans l’onglet Touches.
-				{/if}
-			</p>
-		{/if}
-		{#if menu}
-			<div class="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[18rem_minmax(0,1fr)]">
+	<div class="grid grid-cols-[19rem_minmax(0,1fr)] items-start gap-4">
+		<!-- The preview is always there, and follows the page while the settings are edited. -->
+		<section aria-labelledby="{uid}-preview" class="sticky top-28 card">
+			<h2 id="{uid}-preview" class="mb-2 font-display text-lg font-semibold">Aperçu</h2>
+			{#if menu}
 				<RadialPreview {menu} catalog={deck.catalog} />
+			{:else}
+				<div
+					role="status"
+					class="grid aspect-square place-items-center rounded-full border border-dashed border-edge text-muted"
+				>
+					Chargement du menu…
+				</div>
+			{/if}
+		</section>
+
+		<section aria-labelledby="{uid}-title" class="flex flex-col gap-3 card">
+			<h2 id="{uid}-title" class="font-display text-lg font-semibold">Réglages</h2>
+			<p class="text-muted">
+				Le même pour toutes les souris. Il s’ouvre depuis le bouton auquel vous avez donné l’action
+				« Menu circulaire ».
+			</p>
+			{#if !mouse}
+				<p>Aucune souris connectée : le menu s’ouvrira depuis un bouton de souris MX.</p>
+			{:else}
+				<p data-testid="menu-trigger">
+					{#if trigger}
+						Sur {mouse.displayName}, il s’ouvre avec : <strong>{CONTROL_LABELS[trigger]}</strong>.
+					{:else}
+						Sur {mouse.displayName}, aucun bouton ne l’ouvre : donnez l’action « Menu circulaire » à
+						un bouton, dans l’onglet Touches.
+					{/if}
+				</p>
+			{/if}
+			{#if menu}
 				<RadialMenuEditor {menu} catalog={deck.catalog} onedit={edit} />
-			</div>
-		{:else}
-			<p class="text-muted">Chargement du menu…</p>
-		{/if}
-	</section>
+			{/if}
+		</section>
+	</div>
 </div>
