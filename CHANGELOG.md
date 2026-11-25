@@ -17,6 +17,7 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 ### Corrigé
 
+- Image Docker : `libzstd1` est mis à jour à la construction (CVE-2026-124851, HIGH, corrigée dans Debian 13 par `1.5.7+dfsg-1+deb13u1` mais absente du digest épinglé de la base) ; le contrôle Trivy de la CI échouait sur `main`.
 - Souris : une souris inactive (veille d'économie d'énergie) n'est plus déclarée éteinte puis revenue toutes les vingt secondes : chaque contrôle de présence envoie trois pings au lieu d'un, et quatre contrôles ratés d'affilée sont nécessaires (au lieu de deux).
 
 ### Modifié
