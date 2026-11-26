@@ -19,6 +19,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 	import BatteryBadge from './BatteryBadge.svelte';
 	import HapticsPanel from './HapticsPanel.svelte';
 	import MouseControls from './MouseControls.svelte';
+	import PageHeader from './PageHeader.svelte';
 	import PointerSettings from './PointerSettings.svelte';
 	import SaveStatusLine from './SaveStatusLine.svelte';
 	import Tabs, { panelId, tabId } from './Tabs.svelte';
@@ -53,6 +54,18 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 </script>
 
 <div class="flex flex-col gap-4">
+	<PageHeader title={mouse.displayName}>
+		{#snippet chips()}
+			<span class="chip">Connectée · Logi Bolt</span>
+			{#if mouse.battery}
+				<span class="chip"><BatteryBadge battery={mouse.battery} labelled /></span>
+			{/if}
+			{#if mouse.capabilities.haptics}
+				<span class="chip">Retour haptique</span>
+			{/if}
+		{/snippet}
+	</PageHeader>
+
 	<SaveStatusLine tracker={saves} />
 
 	{#if deck.mice.problems.length > 0}
@@ -71,60 +84,42 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 		</div>
 	{/if}
 
-	<section
-		aria-labelledby="{uid}-name"
-		class="overflow-hidden rounded-xl border border-line bg-surface"
+	<Tabs
+		label="Réglages de {mouse.displayName}"
+		{tabs}
+		selected={tab}
+		prefix={uid}
+		onselect={(id) => (wanted = id)}
+	/>
+
+	<div
+		role="tabpanel"
+		id={panelId(uid, tab)}
+		aria-labelledby={tabId(uid, tab)}
+		tabindex="0"
+		class="focus-ring"
 	>
-		<header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-5 py-4">
-			<h2 id="{uid}-name" class="font-display text-xl font-semibold">{mouse.displayName}</h2>
-			<span class="rounded-full bg-sunken px-2 py-1 font-mono text-xs text-muted">
-				Connectée · Logi Bolt
-			</span>
-			{#if mouse.battery}
-				<span class="rounded-full bg-sunken px-2 py-1 text-xs">
-					<BatteryBadge battery={mouse.battery} labelled />
-				</span>
-			{/if}
-			{#if mouse.capabilities.haptics}
-				<span class="rounded-full bg-sunken px-2 py-1 font-mono text-xs text-muted">
-					Retour haptique
-				</span>
-			{/if}
-		</header>
-
-		<Tabs
-			label="Réglages de {mouse.displayName}"
-			{tabs}
-			selected={tab}
-			prefix={uid}
-			onselect={(id) => (wanted = id)}
-		/>
-
-		<div
-			role="tabpanel"
-			id={panelId(uid, tab)}
-			aria-labelledby={tabId(uid, tab)}
-			tabindex="0"
-			class="px-5 pt-5 pb-6 focus-ring"
-		>
-			{#if tab === 'touches'}
+		{#if tab === 'touches'}
+			<div class="card">
 				<MouseControls
 					{mouse}
 					{config}
 					catalog={deck.catalog}
 					onbind={(control, action) => edit(bindControl(control, action))}
 				/>
-			{:else if tab === 'settings'}
-				<PointerSettings
-					pointer={config.pointer}
-					wheel={config.wheel}
-					thumbWheel={config.thumbWheel}
-					hasThumbWheel={mouse.capabilities.thumbWheel}
-					onpointer={(dpi) => edit(setDpi(dpi))}
-					onwheel={(change) => edit(setWheel(change))}
-					onthumbwheel={(change) => edit(setThumbWheel(change))}
-				/>
-			{:else}
+			</div>
+		{:else if tab === 'settings'}
+			<PointerSettings
+				pointer={config.pointer}
+				wheel={config.wheel}
+				thumbWheel={config.thumbWheel}
+				hasThumbWheel={mouse.capabilities.thumbWheel}
+				onpointer={(dpi) => edit(setDpi(dpi))}
+				onwheel={(change) => edit(setWheel(change))}
+				onthumbwheel={(change) => edit(setThumbWheel(change))}
+			/>
+		{:else}
+			<div class="max-w-3xl card">
 				<HapticsPanel
 					haptics={config.haptics}
 					catalog={deck.catalog}
@@ -132,7 +127,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 					onevent={(key, setting) => void edit(setHapticEvent(key, setting))}
 					onplay={(waveform) => void deck.mice.playHaptic(waveform)}
 				/>
-			{/if}
-		</div>
-	</section>
+			</div>
+		{/if}
+	</div>
 </div>

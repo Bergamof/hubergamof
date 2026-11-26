@@ -17,6 +17,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Mises à jour : l'écran affiche la date de dernière vérification et une pastille « Nouveau » / « À jour », et propose l'interrupteur « Vérifier une fois par jour » (enregistré ; coupé, la recherche ne se fait que sur demande ; `--no-update-check` garde la priorité). Contrat : `checkedAt` dans `UpdateStatus`, `checkDaily` dans `UpdateSettings`, message `setUpdateCheck`.
 
+- Pages de la souris et du casque refaites comme la maquette : titre unique avec pastilles (liaison, batterie, retour haptique), réglages de la souris en cartes (trois cartes pour le pointeur et les molettes), casque avec une note sur le client de réglages unique et ses deux cartes côte à côte.
+
 ### Corrigé
 
 - Accueil : la page ne saute plus quand la liste des périphériques arrive (la place des cartes et de la liste de la barre latérale est réservée) ; le score de performance de Lighthouse repasse au-dessus de 0,9.

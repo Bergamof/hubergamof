@@ -28,6 +28,12 @@ async function renderPage(state?: HeadsetState) {
 }
 
 describe('HeadsetPage', () => {
+	it('warns that only one client can hold the settings link, with the page title as the only h1', async () => {
+		await renderPage(connectedState());
+		await expect.element(page.getByText(/Un seul client de réglages à la fois/)).toBeVisible();
+		expect(document.querySelectorAll('h1')).toHaveLength(1);
+	});
+
 	it('says there are no headphones when none is connected', async () => {
 		const connection = new FakeConnection();
 		const deck = new DeckState(connection, { load: () => null, save: () => undefined });
@@ -39,7 +45,7 @@ describe('HeadsetPage', () => {
 		const { connection } = await renderPage();
 		expect(connection.sent).toContainEqual({ type: 'selectHeadset', address: ADDRESS });
 		await expect.element(page.getByRole('heading', { name: 'WH-1000XM4' })).toBeVisible();
-		await expect.element(page.getByText('Pas encore connecté')).toBeVisible();
+		await expect.element(page.getByText(/Pas encore connecté/)).toBeVisible();
 	});
 
 	it('shows the battery and warns when it is low', async () => {
@@ -105,7 +111,7 @@ describe('HeadsetPage', () => {
 			address: ADDRESS,
 			state: connectedState({ link: 'cut' })
 		});
-		await expect.element(page.getByText(/Connexion coupée/)).toBeVisible();
+		await expect.element(page.getByRole('alert').getByText(/Connexion coupée/)).toBeVisible();
 		await page.getByRole('button', { name: 'Reprendre la connexion' }).click();
 		expect(connection.lastSent()).toEqual({ type: 'resumeHeadset', address: ADDRESS });
 	});

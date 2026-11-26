@@ -200,6 +200,11 @@
 	@apply rounded-xl border border-line bg-surface p-4;
 }
 
+/* Small status pill next to a title. */
+@utility chip {
+	@apply inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2.5 py-0.5 text-sm;
+}
+
 /* On/off switch (a checkbox with role="switch"): the thumb slides, the track takes the ring colour when on. */
 @utility switch {
 	@apply relative h-[22px] w-[38px] shrink-0 cursor-pointer appearance-none rounded-full bg-edge focus-ring transition-colors checked:bg-ring disabled:cursor-default disabled:opacity-50;

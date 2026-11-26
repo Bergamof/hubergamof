@@ -115,7 +115,7 @@ Changes are sent at once; `null` gives a control back to the mouse.
 
 		{#if spot}
 			<section aria-labelledby="{uid}-control" class="flex flex-col gap-3 card">
-				<h3 id="{uid}-control" class="flex items-center gap-2 text-base font-semibold">
+				<h2 id="{uid}-control" class="flex items-center gap-2 text-base font-semibold">
 					<span
 						aria-hidden="true"
 						class={[
@@ -128,7 +128,7 @@ Changes are sent at once; `null` gives a control back to the mouse.
 						{spot.number}
 					</span>
 					{spot.label}
-				</h3>
+				</h2>
 				<p class="text-sm text-muted">{spot.where}</p>
 				{#if isLocked}
 					<p class="rounded-[10px] border border-line bg-accent/15 p-2.5 text-sm" role="note">

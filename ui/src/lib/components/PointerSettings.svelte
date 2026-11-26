@@ -33,85 +33,96 @@ has one. Every change is applied at once.
 
 	let { pointer, wheel, thumbWheel, hasThumbWheel, onpointer, onwheel, onthumbwheel }: Props =
 		$props();
+
+	const uid = $props.id();
 </script>
 
-<div class="max-w-4xl">
-	<SettingRow
-		label="Sensibilité du pointeur"
-		description="Points par pouce. Plus c’est haut, plus le pointeur va loin."
-	>
-		<RangeControl
-			label="Sensibilité du pointeur"
-			value={pointer.dpi}
-			min={DPI_MIN}
-			max={DPI_MAX}
-			step={DPI_STEP}
-			unit="dpi"
-			onchange={onpointer}
-		/>
-	</SettingRow>
-
-	<SettingRow
-		label="Molette principale"
-		description="Cran par cran, libre, ou automatique : la molette passe en libre quand on la lance vite."
-	>
-		<SegmentedControl
-			label="Mode de la molette"
-			options={WHEEL_MODES}
-			value={wheel.mode}
-			onchange={(mode) => onwheel({ mode })}
-		/>
-	</SettingRow>
-
-	{#if wheel.mode === 'auto'}
+<div class="grid grid-cols-[repeat(auto-fit,minmax(20rem,1fr))] items-start gap-4">
+	<section class="card" aria-labelledby="{uid}-pointer">
+		<h2 id="{uid}-pointer" class="mb-1 text-lg font-semibold">Pointeur</h2>
 		<SettingRow
-			label="Seuil du mode automatique"
-			description="Vitesse à partir de laquelle la molette devient libre."
+			label="Sensibilité du pointeur"
+			description="Points par pouce. Plus c’est haut, plus le pointeur va loin."
 		>
 			<RangeControl
-				label="Seuil du mode automatique"
-				value={wheel.autoThreshold}
-				min={WHEEL_THRESHOLD_MIN}
-				max={WHEEL_THRESHOLD_MAX}
-				onchange={(autoThreshold) => onwheel({ autoThreshold })}
+				label="Sensibilité du pointeur"
+				value={pointer.dpi}
+				min={DPI_MIN}
+				max={DPI_MAX}
+				step={DPI_STEP}
+				unit="dpi"
+				onchange={onpointer}
 			/>
 		</SettingRow>
-	{/if}
+	</section>
 
-	<SettingRow
-		label="Défilement naturel"
-		description="Le contenu suit le geste, comme sur un écran tactile."
-	>
-		<Switch
-			checked={wheel.natural}
+	<section class="card" aria-labelledby="{uid}-wheel">
+		<h2 id="{uid}-wheel" class="mb-1 text-lg font-semibold">Molette</h2>
+		<SettingRow
+			label="Molette principale"
+			description="Cran par cran, libre, ou automatique : la molette passe en libre quand on la lance vite."
+		>
+			<SegmentedControl
+				label="Mode de la molette"
+				options={WHEEL_MODES}
+				value={wheel.mode}
+				onchange={(mode) => onwheel({ mode })}
+			/>
+		</SettingRow>
+
+		{#if wheel.mode === 'auto'}
+			<SettingRow
+				label="Seuil du mode automatique"
+				description="Vitesse à partir de laquelle la molette devient libre."
+			>
+				<RangeControl
+					label="Seuil du mode automatique"
+					value={wheel.autoThreshold}
+					min={WHEEL_THRESHOLD_MIN}
+					max={WHEEL_THRESHOLD_MAX}
+					onchange={(autoThreshold) => onwheel({ autoThreshold })}
+				/>
+			</SettingRow>
+		{/if}
+
+		<SettingRow
 			label="Défilement naturel"
-			onchange={(natural) => onwheel({ natural })}
-		/>
-	</SettingRow>
+			description="Le contenu suit le geste, comme sur un écran tactile."
+		>
+			<Switch
+				checked={wheel.natural}
+				label="Défilement naturel"
+				onchange={(natural) => onwheel({ natural })}
+			/>
+		</SettingRow>
 
-	<SettingRow
-		label="Défilement haute résolution"
-		description="Un défilement plus fin et plus fluide dans les applications compatibles."
-	>
-		<Switch
-			checked={wheel.hiRes}
+		<SettingRow
 			label="Défilement haute résolution"
-			onchange={(hiRes) => onwheel({ hiRes })}
-		/>
-	</SettingRow>
+			description="Un défilement plus fin et plus fluide dans les applications compatibles."
+		>
+			<Switch
+				checked={wheel.hiRes}
+				label="Défilement haute résolution"
+				onchange={(hiRes) => onwheel({ hiRes })}
+			/>
+		</SettingRow>
+	</section>
 
 	{#if hasThumbWheel}
-		<SettingRow label="Molette du pouce" description="Vitesse et sens du défilement horizontal.">
-			<RangeControl
-				label="Vitesse de la molette du pouce"
-				value={thumbWheel.speed}
-				min={THUMB_SPEED_MIN}
-				max={THUMB_SPEED_MAX}
-				onchange={(speed) => onthumbwheel({ speed })}
-			/>
-			<Switch checked={thumbWheel.invert} onchange={(invert) => onthumbwheel({ invert })}>
-				Inverser
-			</Switch>
-		</SettingRow>
+		<section class="card" aria-labelledby="{uid}-thumb">
+			<h2 id="{uid}-thumb" class="mb-1 text-lg font-semibold">Molette du pouce</h2>
+			<SettingRow label="Vitesse et sens" description="Vitesse et sens du défilement horizontal.">
+				<RangeControl
+					label="Vitesse de la molette du pouce"
+					value={thumbWheel.speed}
+					min={THUMB_SPEED_MIN}
+					max={THUMB_SPEED_MAX}
+					onchange={(speed) => onthumbwheel({ speed })}
+				/>
+				<Switch checked={thumbWheel.invert} onchange={(invert) => onthumbwheel({ invert })}>
+					Inverser
+				</Switch>
+			</SettingRow>
+		</section>
 	{/if}
 </div>

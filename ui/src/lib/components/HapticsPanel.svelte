@@ -201,7 +201,7 @@ Every change is applied at once; changing a waveform plays it.
 	{#each modules as module (module.kind)}
 		{@const count = enabledCount(module)}
 		<section class="flex flex-col" aria-labelledby="{uid}-{module.kind}">
-			<h3
+			<h2
 				id="{uid}-{module.kind}"
 				class="flex items-center gap-2 border-b-2 border-line pb-1.5 text-base font-semibold"
 			>
@@ -218,7 +218,7 @@ Every change is applied at once; changing a waveform plays it.
 						onchange={(enabled) => setModule(module, enabled)}
 					/>
 				</span>
-			</h3>
+			</h2>
 			{#each module.hapticEvents as event (event.id)}
 				{@const setting = settingOf(module, event)}
 				<div
