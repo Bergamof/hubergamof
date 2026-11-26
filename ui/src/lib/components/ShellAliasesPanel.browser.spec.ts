@@ -26,6 +26,11 @@ async function renderPage(config: MachineConfig | null = machine(1)) {
 	return { connection };
 }
 
+/** The system aliases sit in a closed block: opening it is what the person does first. */
+async function openSystemAliases() {
+	await page.getByText(/^Alias présents sur le système, non gérés \(\d+\)$/).click();
+}
+
 describe('ShellAliasesPanel', () => {
 	it('asks the manager to read the system when it opens', async () => {
 		const { connection } = await renderPage();
@@ -39,6 +44,7 @@ describe('ShellAliasesPanel', () => {
 
 	it('lists the managed aliases and, apart, those of the system with their limit', async () => {
 		await renderPage();
+		await openSystemAliases();
 		await expect.element(page.getByRole('heading', { name: 'Alias du shell' })).toBeVisible();
 		await expect
 			.element(page.getByRole('list', { name: 'Alias gérés' }).getByText('ll', { exact: true }))
@@ -91,6 +97,7 @@ describe('ShellAliasesPanel', () => {
 
 	it('takes a system alias in, switched on, and removes it from the system list at once', async () => {
 		const { connection } = await renderPage();
+		await openSystemAliases();
 		await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
 		expect(connection.lastSent()).toMatchObject({
 			type: 'updateMachine',
@@ -117,6 +124,7 @@ describe('ShellAliasesPanel', () => {
 
 	it('focuses the section title when the last system alias is taken in', async () => {
 		await renderPage();
+		await openSystemAliases();
 		await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Alias présents sur le système, non gérés' }))

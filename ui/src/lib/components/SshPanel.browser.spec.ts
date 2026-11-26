@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
@@ -48,12 +48,19 @@ const SYSTEM: SshSystemHost[] = [
 	found('far', { identityFile: '/home/ada/key' })
 ];
 
+/** The tab the panel opens on in the test (the one of the hosts when none is asked). */
+let startTab: string | RegExp | undefined;
+afterEach(() => (startTab = undefined));
+
+const openTab = (name: string | RegExp) => page.getByRole('tab', { name }).click();
+
 async function renderPanel(config: SshConfig | null = ssh(1), system = SYSTEM) {
 	const connection = new FakeConnection();
 	const deck = new DeckState(connection, { load: () => null, save: () => undefined });
 	deck.listen();
 	await render(SshPanel, { deck });
 	if (config) connection.receive({ type: 'ssh', config, systemHosts: system });
+	if (startTab) await openTab(startTab);
 	return { connection };
 }
 
@@ -80,6 +87,7 @@ describe('SshPanel', () => {
 		await renderPanel(ssh(1, host('prod', { hostName: '10.0.0.1', user: 'deploy', port: 2222 })));
 		await expect.element(managed().getByText('prod', { exact: true })).toBeVisible();
 		await expect.element(managed().getByText('deploy@10.0.0.1:2222')).toBeVisible();
+		await openTab(/^Détectés/);
 		const system = page.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' });
 		await expect.element(system.getByText('ada@web.example.org')).toBeVisible();
 	});
@@ -202,6 +210,7 @@ describe('SshPanel', () => {
 				found('far-away', { forwardAgent: true })
 			]);
 			await expect.element(managed().getByText(/agent transmis/)).toBeVisible();
+			await openTab(/^Détectés/);
 			await expect
 				.element(
 					page
@@ -239,6 +248,8 @@ describe('SshPanel', () => {
 	});
 
 	describe('the hosts found elsewhere', () => {
+		beforeEach(() => (startTab = /^Détectés/));
+
 		it('takes one in, switched on, and removes it from the list at once', async () => {
 			const { connection } = await renderPanel();
 			await page.getByRole('button', { name: 'Reprendre le serveur web' }).click();
@@ -294,6 +305,7 @@ describe('SshPanel', () => {
 		const optionForm = (name: string) => page.getByRole('form', { name });
 
 		it('adds an option common to every host', async () => {
+			startTab = 'Réglages communs';
 			const { connection } = await renderPanel();
 			const form = optionForm('Ajouter une option commune');
 			await form.getByRole('textbox', { name: 'Nom de l’option' }).fill('ServerAliveInterval');
@@ -311,6 +323,7 @@ describe('SshPanel', () => {
 		});
 
 		it('refuses a section keyword and says why, sending nothing', async () => {
+			startTab = 'Réglages communs';
 			const { connection } = await renderPanel();
 			const before = connection.sent.length;
 			const form = optionForm('Ajouter une option commune');
@@ -322,6 +335,7 @@ describe('SshPanel', () => {
 		});
 
 		it('warns that an option is written as it is', async () => {
+			startTab = 'Réglages communs';
 			await renderPanel();
 			await expect
 				.element(page.getByText(/une option est écrite telle quelle/).last())
@@ -405,6 +419,7 @@ describe('SshPanel', () => {
 		});
 
 		it('takes over a host found elsewhere with its options', async () => {
+			startTab = /^Détectés/;
 			const option = { key: 'ProxyCommand', value: 'nc %h %p', enabled: true };
 			const { connection } = await renderPanel(ssh(1), [found('proxied', { options: [option] })]);
 			await expect.element(page.getByText(/options avancées : ProxyCommand/)).toBeVisible();
@@ -415,6 +430,7 @@ describe('SshPanel', () => {
 		});
 
 		it('describes the form that adds an option by the warning', async () => {
+			startTab = 'Réglages communs';
 			await renderPanel();
 			await expect
 				.element(optionForm('Ajouter une option commune'))
@@ -422,6 +438,7 @@ describe('SshPanel', () => {
 		});
 
 		it('shows no form when the list holds as many options as the manager accepts', async () => {
+			startTab = 'Réglages communs';
 			const options = Array.from({ length: ADVANCED_MAX }, (_, index) => ({
 				key: `Key${index}`,
 				value: 'v',

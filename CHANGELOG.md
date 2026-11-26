@@ -19,6 +19,8 @@ et le projet respecte le [versionnement sémantique](https://semver.org/lang/fr/
 
 - Pages de la souris et du casque refaites comme la maquette : titre unique avec pastilles (liaison, batterie, retour haptique), réglages de la souris en cartes (trois cartes pour le pointeur et les molettes), casque avec une note sur le client de réglages unique et ses deux cartes côte à côte.
 
+- Pages Git et SSH en onglets (Git : identité et signature, réglages, alias, dossiers, avancé ; SSH : serveurs, réglages communs, détectés), alias du shell avec le formulaire d'ajout à côté de la liste et les alias du système repliés.
+
 ### Corrigé
 
 - Accueil : la page ne saute plus quand la liste des périphériques arrive (la place des cartes et de la liste de la barre latérale est réservée) ; le score de performance de Lighthouse repasse au-dessus de 0,9.

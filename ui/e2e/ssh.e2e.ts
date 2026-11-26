@@ -135,6 +135,8 @@ async function openSsh(page: Page) {
 	await expect(page.getByRole('heading', { name: 'Serveurs SSH', exact: true })).toBeVisible();
 }
 
+const openTab = (page: Page, name: RegExp) => page.getByRole('tab', { name }).click();
+
 const addForm = (page: Page) => page.getByRole('form', { name: 'Ajouter un serveur' });
 const managed = (page: Page) => page.getByRole('list', { name: 'Serveurs SSH gérés' });
 
@@ -184,6 +186,7 @@ test('ajoute des options communes et des options d’un serveur, refuse « Host 
 		revision: 1
 	});
 	await openSsh(page);
+	await openTab(page, /^Réglages communs/);
 
 	const common = page.getByRole('form', { name: 'Ajouter une option commune' });
 	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('Host');
@@ -202,6 +205,7 @@ test('ajoute des options communes et des options d’un serveur, refuse « Host 
 		{ key: 'ServerAliveInterval', value: '30', enabled: true }
 	]);
 
+	await openTab(page, /^Serveurs/);
 	await page
 		.getByText(/^Options avancées/)
 		.first()
@@ -222,6 +226,7 @@ test('montre à l’écran, en français, qu’une option enregistrée n’est p
 	const manager = await playManager(page);
 	manager.notApplied = 'ssh refuses the options of *: Bad configuration option: Nope';
 	await openSsh(page);
+	await openTab(page, /^Réglages communs/);
 	const common = page.getByRole('form', { name: 'Ajouter une option commune' });
 	await common.scrollIntoViewIfNeeded();
 	await common.getByRole('textbox', { name: 'Nom de l’option' }).fill('Nope');
@@ -271,16 +276,20 @@ test('reprend un serveur trouvé dans ~/.ssh/config avec ses options, sauf celui
 }) => {
 	const manager = await playManager(page);
 	await openSsh(page);
+	await openTab(page, /^Détectés/);
 	await expect(page.getByRole('button', { name: 'Reprendre le serveur tunnel' })).toHaveAttribute(
 		'aria-disabled',
 		'true'
 	);
 	await page.getByRole('button', { name: 'Reprendre le serveur web' }).click();
+	await openTab(page, /^Serveurs/);
 	await expect(managed(page).getByText('ada@web.example.org')).toBeVisible();
 	expect(manager.config.hosts).toMatchObject([{ alias: 'web', user: 'ada', enabled: true }]);
 
+	await openTab(page, /^Détectés/);
 	await expect(page.getByText(/options avancées : ProxyCommand/)).toBeVisible();
 	await page.getByRole('button', { name: 'Reprendre le serveur proxied' }).click();
+	await openTab(page, /^Serveurs/);
 	await expect(managed(page).getByText(/proxied\.example\.org/)).toBeVisible();
 	expect(manager.config.hosts[1]).toMatchObject({
 		alias: 'proxied',

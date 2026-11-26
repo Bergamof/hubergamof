@@ -28,6 +28,7 @@ sent at once; the line under the title says whether the manager has saved it.
 	import SshHostForm from './SshHostForm.svelte';
 	import SshHostList from './SshHostList.svelte';
 	import SshSystemHosts from './SshSystemHosts.svelte';
+	import Tabs, { panelId, tabId } from './Tabs.svelte';
 
 	interface Props {
 		deck: DeckState;
@@ -36,6 +37,9 @@ sent at once; the line under the title says whether the manager has saved it.
 	let { deck }: Props = $props();
 
 	const uid = $props.id();
+
+	type TabId = 'hosts' | 'common' | 'found';
+	let tab: TabId = $state('hosts');
 	let addForm: ReturnType<typeof SshHostForm> | undefined = $state();
 	let addHeading: HTMLHeadingElement | undefined = $state();
 	let systemHeading: HTMLHeadingElement | undefined = $state();
@@ -57,107 +61,135 @@ sent at once; the line under the title says whether the manager has saved it.
 		return outcome;
 	}
 
+	const tabs = $derived<{ id: TabId; label: string }[]>([
+		{ id: 'hosts', label: `Serveurs${config ? ` (${config.hosts.length})` : ''}` },
+		{ id: 'common', label: 'Réglages communs' },
+		{ id: 'found', label: `Détectés (${unmanaged.length})` }
+	]);
+
 	function adopt(system: SshSystemHost) {
 		void edit(addHost(hostOf({ ...draftOf({ ...system, enabled: true }) })));
 	}
 </script>
 
-<div class="flex flex-col gap-8">
+<div class="flex flex-col gap-4">
 	<SaveStatusLine tracker={saves} />
 
-	<section aria-labelledby="{uid}-hosts" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-hosts" class="font-display text-xl font-semibold">Serveurs SSH</h2>
-		<p class="text-sm text-muted">
-			Écrits dans un fichier de HuBergamof, inclus tout en haut de
-			<code class="font-mono">~/.ssh/config</code>, qui reste sinon tel que vous l’avez écrit : ce
-			qui est écrit ici l’emporte. Les champs du formulaire ne lancent aucun programme ; les autres
-			réglages sont les « options avancées » du serveur, dans son formulaire ou dans sa ligne, et
-			peuvent en lancer un. « Reprendre » un serveur de ce fichier emporte aussi ses options. Un
-			serveur désactivé reste ici mais n’est plus sur l’ordinateur.
-		</p>
-		{#if config}
-			<SshHostList
-				hosts={config.hosts}
-				onreplace={(alias, host) => edit(replaceHost(alias, host))}
-				ontoggle={(alias, enabled) => void edit(setHostEnabled(alias, enabled))}
-				onremove={(alias) => void edit(removeHost(alias))}
-				onoptions={(alias, change) => edit(editHostOptions(alias, change))}
-				fallbackFocus={() => (addForm ? addForm.focusAlias() : addHeading?.focus())}
-			/>
-			<h3
-				bind:this={addHeading}
-				tabindex="-1"
-				id="{uid}-add"
-				class="font-display text-lg font-semibold"
-			>
-				Ajouter un serveur
-			</h3>
-			{#if isHostListFull(config)}
+	<Tabs
+		label="Configuration de SSH"
+		{tabs}
+		selected={tab}
+		prefix={uid}
+		onselect={(id) => (tab = id)}
+	/>
+
+	<div
+		role="tabpanel"
+		id={panelId(uid, tab)}
+		aria-labelledby={tabId(uid, tab)}
+		tabindex="0"
+		class="flex flex-col gap-4 focus-ring"
+	>
+		{#if tab === 'hosts'}
+			<section aria-labelledby="{uid}-hosts" class="flex flex-col gap-4 card">
+				<h2 id="{uid}-hosts" class="font-display text-xl font-semibold">Serveurs SSH</h2>
 				<p class="text-sm text-muted">
-					La configuration contient déjà le nombre maximal de serveurs : supprimez-en un pour en
-					ajouter.
+					Écrits dans un fichier de HuBergamof, inclus tout en haut de
+					<code class="font-mono">~/.ssh/config</code>, qui reste sinon tel que vous l’avez écrit :
+					ce qui est écrit ici l’emporte. Les champs du formulaire ne lancent aucun programme ; les
+					autres réglages sont les « options avancées » du serveur, dans son formulaire ou dans sa
+					ligne, et peuvent en lancer un. « Reprendre » un serveur de ce fichier emporte aussi ses
+					options. Un serveur désactivé reste ici mais n’est plus sur l’ordinateur.
 				</p>
-			{:else}
-				<SshHostForm
-					bind:this={addForm}
-					labelledby="{uid}-add"
-					takenAliases={config.hosts.map(({ alias }) => alias)}
-					submitLabel="Ajouter le serveur"
-					onsubmit={(host) => edit(addHost(host))}
-				/>
-			{/if}
-		{:else}
-			<p class="text-muted" role="status" aria-busy="true">
-				Chargement de la configuration de SSH…
-			</p>
+				{#if config}
+					<SshHostList
+						hosts={config.hosts}
+						onreplace={(alias, host) => edit(replaceHost(alias, host))}
+						ontoggle={(alias, enabled) => void edit(setHostEnabled(alias, enabled))}
+						onremove={(alias) => void edit(removeHost(alias))}
+						onoptions={(alias, change) => edit(editHostOptions(alias, change))}
+						fallbackFocus={() => (addForm ? addForm.focusAlias() : addHeading?.focus())}
+					/>
+					<h3
+						bind:this={addHeading}
+						tabindex="-1"
+						id="{uid}-add"
+						class="font-display text-lg font-semibold"
+					>
+						Ajouter un serveur
+					</h3>
+					{#if isHostListFull(config)}
+						<p class="text-sm text-muted">
+							La configuration contient déjà le nombre maximal de serveurs : supprimez-en un pour en
+							ajouter.
+						</p>
+					{:else}
+						<SshHostForm
+							bind:this={addForm}
+							labelledby="{uid}-add"
+							takenAliases={config.hosts.map(({ alias }) => alias)}
+							submitLabel="Ajouter le serveur"
+							onsubmit={(host) => edit(addHost(host))}
+						/>
+					{/if}
+				{:else}
+					<p class="text-muted" role="status" aria-busy="true">
+						Chargement de la configuration de SSH…
+					</p>
+				{/if}
+			</section>
 		{/if}
-	</section>
 
-	{#if config}
-		<section aria-labelledby="{uid}-common" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-common" class="font-display text-xl font-semibold">
-				Options communes à tous les serveurs
-			</h2>
-			<p class="text-sm text-muted">
-				Écrites sous <code class="font-mono">Host *</code>, à la fin du fichier de HuBergamof : un
-				serveur ci-dessus garde ce qu’il règle lui-même. Elles passent avant le reste de
-				<code class="font-mono">~/.ssh/config</code>, et l’emportent donc sur les mêmes options
-				qu’il contient.
-			</p>
-			<AdvancedSettings
-				settings={config.commonOptions}
-				rules={SSH_OPTION_ALIAS_RULES}
-				tool="ssh"
-				label="Options communes"
-				suffix=" commune"
-				addLabel="Ajouter une option commune"
-				onchange={(change) => edit(editCommonOptions(change))}
-			/>
-		</section>
+		{#if config}
+			{#if tab === 'common'}
+				<section aria-labelledby="{uid}-common" class="flex flex-col gap-4 card">
+					<h2 id="{uid}-common" class="font-display text-xl font-semibold">
+						Options communes à tous les serveurs
+					</h2>
+					<p class="text-sm text-muted">
+						Écrites sous <code class="font-mono">Host *</code>, à la fin du fichier de HuBergamof :
+						un serveur ci-dessus garde ce qu’il règle lui-même. Elles passent avant le reste de
+						<code class="font-mono">~/.ssh/config</code>, et l’emportent donc sur les mêmes options
+						qu’il contient.
+					</p>
+					<AdvancedSettings
+						settings={config.commonOptions}
+						rules={SSH_OPTION_ALIAS_RULES}
+						tool="ssh"
+						label="Options communes"
+						suffix=" commune"
+						addLabel="Ajouter une option commune"
+						onchange={(change) => edit(editCommonOptions(change))}
+					/>
+				</section>
+			{/if}
 
-		<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
-			<h2
-				bind:this={systemHeading}
-				tabindex="-1"
-				id="{uid}-found"
-				class="font-display text-xl font-semibold"
-			>
-				Serveurs définis ailleurs, non gérés
-			</h2>
-			<p class="text-sm text-muted">
-				Seul <code class="font-mono">~/.ssh/config</code> est lu, au moment où cette page s’ouvre ;
-				les fichiers qu’il inclut ne sont pas suivis. « Reprendre » ajoute le serveur à la
-				configuration, activé, et commente sa section d’origine (préfixe
-				<code class="font-mono">#hubergamof-off#</code>) : désactivé ici, il disparaît vraiment ;
-				supprimé de la configuration, il retrouve sa section.
-			</p>
-			<SshSystemHosts
-				hosts={unmanaged}
-				takenAliases={config.hosts.map(({ alias }) => alias)}
-				full={isHostListFull(config)}
-				onadopt={adopt}
-				fallbackFocus={() => systemHeading?.focus()}
-			/>
-		</section>
-	{/if}
+			{#if tab === 'found'}
+				<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
+					<h2
+						bind:this={systemHeading}
+						tabindex="-1"
+						id="{uid}-found"
+						class="font-display text-xl font-semibold"
+					>
+						Serveurs définis ailleurs, non gérés
+					</h2>
+					<p class="text-sm text-muted">
+						Seul <code class="font-mono">~/.ssh/config</code> est lu, au moment où cette page
+						s’ouvre ; les fichiers qu’il inclut ne sont pas suivis. « Reprendre » ajoute le serveur
+						à la configuration, activé, et commente sa section d’origine (préfixe
+						<code class="font-mono">#hubergamof-off#</code>) : désactivé ici, il disparaît vraiment
+						; supprimé de la configuration, il retrouve sa section.
+					</p>
+					<SshSystemHosts
+						hosts={unmanaged}
+						takenAliases={config.hosts.map(({ alias }) => alias)}
+						full={isHostListFull(config)}
+						onadopt={adopt}
+						fallbackFocus={() => systemHeading?.focus()}
+					/>
+				</section>
+			{/if}
+		{/if}
+	</div>
 </div>

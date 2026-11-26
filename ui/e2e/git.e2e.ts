@@ -108,6 +108,8 @@ async function openGit(page: Page) {
 	await expect(page.getByRole('heading', { name: 'Identité', exact: true })).toBeVisible();
 }
 
+const openTab = (page: Page, name: string) => page.getByRole('tab', { name }).click();
+
 const identityForm = (page: Page) => page.getByRole('form', { name: 'Identité', exact: true });
 
 test('ne lit l’ordinateur qu’à l’ouverture de la page Machine, puis à chaque reconnexion', async ({
@@ -155,6 +157,7 @@ test('enregistre l’identité, la signature et les réglages', async ({ page })
 	await expect.poll(() => manager.config.revision).toBe(3);
 	expect(manager.config.signing).toEqual({ enabled: true, format: 'ssh', key: '~/.ssh/id.pub' });
 
+	await openTab(page, 'Réglages');
 	await page.getByRole('textbox', { name: /Première branche/ }).fill('main');
 	await page.getByRole('combobox', { name: 'Mots de passe' }).selectOption('cache');
 	await page.getByRole('button', { name: 'Enregistrer les réglages' }).click();
@@ -168,6 +171,7 @@ test('enregistre l’identité, la signature et les réglages', async ({ page })
 test('refuse un alias qui lance une commande du shell, au clavier', async ({ page }) => {
 	const manager = await playManager(page);
 	await openGit(page);
+	await openTab(page, 'Alias');
 
 	const form = page.getByRole('form', { name: 'Ajouter un alias Git' });
 	await form.getByRole('textbox', { name: 'Nom' }).fill('pwn');
@@ -185,6 +189,7 @@ test('ajoute, désactive et supprime un alias Git, et intègre un alias trouvé 
 }) => {
 	const manager = await playManager(page);
 	await openGit(page);
+	await openTab(page, 'Alias');
 	const managed = page.getByRole('list', { name: 'Alias Git gérés' });
 	const found = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
 
@@ -217,6 +222,7 @@ test('ajoute, désactive et supprime un alias Git, et intègre un alias trouvé 
 test('ajoute un réglage libre, refuse un alias déguisé, au clavier', async ({ page }) => {
 	const manager = await playManager(page);
 	await openGit(page);
+	await openTab(page, 'Avancé');
 
 	const form = page.getByRole('form', { name: 'Ajouter une option Git' });
 	await form.getByRole('textbox', { name: 'Clé Git' }).fill('alias.pwn');
@@ -247,6 +253,7 @@ test('ajoute une identité par dossier et refuse un dossier hors du dossier pers
 }) => {
 	const manager = await playManager(page);
 	await openGit(page);
+	await openTab(page, 'Dossiers');
 	const form = page.getByRole('form', { name: 'Ajouter une identité par dossier' });
 
 	await form.getByRole('textbox', { name: 'Dossier' }).fill('/etc');
@@ -308,16 +315,26 @@ for (const colorScheme of ['light', 'dark'] as const) {
 		};
 		await scan('page Git');
 
-		await page.getByRole('button', { name: 'Enregistrer les réglages' }).click();
 		await page.getByRole('button', { name: 'Enregistrer l’identité' }).click();
-		await scan('formulaires envoyés');
+		await scan('formulaire d’identité envoyé');
 
-		await page.getByRole('button', { name: 'Ajouter', exact: true }).first().click();
-		await scan('formulaires en erreur');
+		await openTab(page, 'Réglages');
+		await scan('réglages');
+		await page.getByRole('button', { name: 'Enregistrer les réglages' }).click();
+		await scan('réglages envoyés');
 
+		await openTab(page, 'Dossiers');
+		await scan('identités par dossier');
 		await page.getByRole('button', { name: 'Modifier l’identité de ~/travail' }).click();
 		await scan('identité en modification');
 		await page.getByRole('button', { name: 'Annuler' }).click();
+
+		await openTab(page, 'Avancé');
+		await scan('options avancées');
+
+		await openTab(page, 'Alias');
+		await page.getByRole('button', { name: 'Ajouter', exact: true }).first().click();
+		await scan('formulaire en erreur');
 
 		await page.getByRole('button', { name: 'Supprimer l’alias Git co' }).click();
 		await scan('confirmation de suppression');
