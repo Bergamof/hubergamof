@@ -427,10 +427,12 @@ mod tests {
             policy: Arc::new(crate::update::MemoryPolicyStore::holding(
                 crate::update::UpdatePolicy {
                     auto_install: false,
+                    ..crate::update::UpdatePolicy::default()
                 },
             )),
             current: crate::update::Version::new(1, 0, 0),
             first_delay: Duration::ZERO,
+            now: || 0,
         };
         let (updates, _task) = crate::update::start(parts, stopping);
         let mut status = updates.subscribe();

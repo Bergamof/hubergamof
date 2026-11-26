@@ -10,6 +10,11 @@ export type UpdateSettings = {
  */
 autoInstall: boolean, 
 /**
+ * Look for a newer release once a day; off, only a check asked for runs.
+ * Whatever it says, `--no-update-check` stops every check.
+ */
+checkDaily: boolean, 
+/**
  * Whether installing is possible at all.
  */
 installSupport: InstallSupport, };

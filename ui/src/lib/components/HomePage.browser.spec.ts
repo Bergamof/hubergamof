@@ -49,7 +49,10 @@ describe('HomePage', () => {
 
 	it('names what the manager is when it is up to date', async () => {
 		const { connection, deck } = manager();
-		connection.receive({ type: 'updateStatus', status: { type: 'upToDate' } } as never);
+		connection.receive({
+			type: 'updateStatus',
+			status: { type: 'upToDate', checkedAt: 1_700_000_000 }
+		} as never);
 		await render(ManagerHarness, { deck, page: HomePage });
 		await expect.element(page.getByText(/^À jour\.$/)).toBeVisible();
 	});

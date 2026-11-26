@@ -142,4 +142,8 @@ config: SshConfig, } | { "type": "checkForUpdates" } | { "type": "installUpdate"
 /**
  * Install automatically.
  */
+enabled: boolean, } | { "type": "setUpdateCheck", 
+/**
+ * Check once a day.
+ */
 enabled: boolean, } | { "type": "ping" };

@@ -672,6 +672,7 @@ async fn clients_are_greeted_with_devices_and_catalog() {
         ServerMessage::UpdateSettings {
             settings: UpdateSettings {
                 auto_install: true,
+                check_daily: false,
                 install_support: InstallSupport::Unpackaged,
             }
         }
@@ -1185,9 +1186,13 @@ async fn server_with_updates(auto_install: bool) -> (Running, watch::Sender<bool
     let parts = UpdateParts {
         source: Arc::new(SimulatedReleases::announcing(Version::new(999, 0, 0))),
         installer: Arc::new(SimulatedInstaller::succeeding()),
-        policy: Arc::new(MemoryPolicyStore::holding(UpdatePolicy { auto_install })),
+        policy: Arc::new(MemoryPolicyStore::holding(UpdatePolicy {
+            auto_install,
+            ..UpdatePolicy::default()
+        })),
         current: Version::new(1, 0, 0),
         first_delay: Duration::from_secs(3600),
+        now: || 1_700_000_000,
     };
     let (updates, _task) = update::start(parts, stopping);
     devices.context.updates = updates;
@@ -1225,6 +1230,29 @@ async fn clients_follow_the_update_check_and_can_ask_for_one() {
         })
         .await;
     assert_eq!(status, available);
+    stop.send_replace(true);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn clients_choose_whether_the_release_is_checked_every_day() {
+    let (server, stop) = server_with_updates(false).await;
+    let mut client = server.connect().await;
+    let mut observer = server.connect().await;
+    client
+        .send(&ClientMessage::SetUpdateCheck { enabled: false })
+        .await;
+    for watcher in [&mut client, &mut observer] {
+        let settings = watcher
+            .receive_until(|message| match message {
+                ServerMessage::UpdateSettings { settings } if !settings.check_daily => {
+                    Some(settings)
+                }
+                _ => None,
+            })
+            .await;
+        assert!(!settings.auto_install);
+    }
     stop.send_replace(true);
     server.stop().await;
 }
@@ -1766,6 +1794,7 @@ async fn nothing_is_done_from_the_interface_while_the_computer_is_locked() {
             config: SshConfig::empty(),
         },
         ClientMessage::CheckForUpdates,
+        ClientMessage::SetUpdateCheck { enabled: false },
         ClientMessage::SelectHeadset {
             address: "AC:80:0A:0B:2E:61".into(),
         },

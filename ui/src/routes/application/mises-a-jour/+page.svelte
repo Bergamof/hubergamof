@@ -14,4 +14,5 @@
 	oncheck={() => deck.checkForUpdates()}
 	oninstall={() => deck.installUpdate()}
 	onautoinstall={(enabled) => deck.setAutoInstall(enabled)}
+	oncheckdaily={(enabled) => deck.setUpdateCheck(enabled)}
 />

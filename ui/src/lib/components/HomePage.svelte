@@ -96,12 +96,13 @@ it would cut the Sony application: the battery of the headphones is read on requ
 			<Icon name="chevronRight" class="size-3.5" />
 		</a>
 	</div>
+	<!-- The room of a row of cards is kept before they arrive: the page below would jump when they do. -->
 	{#if devices.length === 0}
-		<p class="text-muted">
+		<p class="min-h-32 text-muted">
 			Aucun périphérique connecté. Ils apparaissent ici dès qu’ils sont branchés ou allumés.
 		</p>
 	{:else}
-		<ul class="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3">
+		<ul class="grid min-h-32 grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3">
 			{#each devices as device (device.kind + device.id)}
 				<li class="flex flex-col gap-2 rounded-lg border border-line p-3">
 					<span class="flex items-center gap-2 font-semibold">

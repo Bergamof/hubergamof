@@ -333,7 +333,12 @@ describe('configuration updates', () => {
 		expect(state.managerVersion).toBe('1.0.0');
 		connection.receive({
 			type: 'updateStatus',
-			status: { type: 'available', version: '1.1.0', notesUrl: 'https://example.org/n' }
+			status: {
+				type: 'available',
+				version: '1.1.0',
+				notesUrl: 'https://example.org/n',
+				checkedAt: 1_700_000_000
+			}
 		});
 		expect(state.updateStatus).toMatchObject({ type: 'available', version: '1.1.0' });
 		state.checkForUpdates();
@@ -345,13 +350,19 @@ describe('configuration updates', () => {
 		expect(state.updateSettings).toBeUndefined();
 		connection.receive({
 			type: 'updateSettings',
-			settings: { autoInstall: true, installSupport: 'available' }
+			settings: { autoInstall: true, checkDaily: true, installSupport: 'available' }
 		});
-		expect(state.updateSettings).toEqual({ autoInstall: true, installSupport: 'available' });
+		expect(state.updateSettings).toEqual({
+			autoInstall: true,
+			checkDaily: true,
+			installSupport: 'available'
+		});
 		state.installUpdate();
 		expect(connection.lastSent()).toEqual({ type: 'installUpdate' });
 		state.setAutoInstall(false);
 		expect(connection.lastSent()).toEqual({ type: 'setAutoInstall', enabled: false });
+		state.setUpdateCheck(false);
+		expect(connection.lastSent()).toEqual({ type: 'setUpdateCheck', enabled: false });
 	});
 
 	it('start again after a reconnection', async () => {

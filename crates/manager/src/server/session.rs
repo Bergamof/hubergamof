@@ -374,6 +374,10 @@ impl Session {
                 self.state.context.updates.set_auto_install(enabled);
                 return Ok(());
             }
+            ClientMessage::SetUpdateCheck { enabled } => {
+                self.state.context.updates.set_check_daily(enabled);
+                return Ok(());
+            }
             ClientMessage::UpdateConfig { serial, config } => {
                 return self.update_config(serial, config).await;
             }

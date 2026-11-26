@@ -139,6 +139,11 @@ export class DeckState {
 		this.#connection.send({ type: 'setAutoInstall', enabled });
 	}
 
+	/** Chooses whether the manager looks for a newer release every day by itself. */
+	setUpdateCheck(enabled: boolean): void {
+		this.#connection.send({ type: 'setUpdateCheck', enabled });
+	}
+
 	dismiss(id: number): void {
 		this.notices = this.notices.filter((notice) => notice.id !== id);
 	}

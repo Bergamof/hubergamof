@@ -7,19 +7,29 @@ import UpdatePanel from './UpdatePanel.svelte';
 const AVAILABLE: UpdateStatus = {
 	type: 'available',
 	version: '1.2.0',
-	notesUrl: 'https://example.org/notes'
+	notesUrl: 'https://example.org/notes',
+	checkedAt: 1_700_000_000
 };
-const CAN_INSTALL: UpdateSettings = { autoInstall: false, installSupport: 'available' };
-const CANNOT_INSTALL: UpdateSettings = { autoInstall: true, installSupport: 'unpackaged' };
+const CAN_INSTALL: UpdateSettings = {
+	autoInstall: false,
+	checkDaily: true,
+	installSupport: 'available'
+};
+const CANNOT_INSTALL: UpdateSettings = {
+	autoInstall: true,
+	checkDaily: true,
+	installSupport: 'unpackaged'
+};
 
 function props(overrides: Partial<Parameters<typeof render<typeof UpdatePanel>>[1]> = {}) {
 	return {
 		version: '1.0.0',
-		status: { type: 'upToDate' } as UpdateStatus,
+		status: { type: 'upToDate', checkedAt: 1_700_000_000 } as UpdateStatus,
 		settings: CAN_INSTALL,
 		oncheck: vi.fn(),
 		oninstall: vi.fn(),
 		onautoinstall: vi.fn(),
+		oncheckdaily: vi.fn(),
 		...overrides
 	};
 }
@@ -47,7 +57,7 @@ describe('UpdatePanel', () => {
 	});
 
 	it.each([
-		['upToDate', {}, /HuBergamof est à jour \(version 1\.0\.0\)/],
+		['upToDate', { checkedAt: 1_700_000_000 }, /HuBergamof est à jour \(version 1\.0\.0\)/],
 		['checking', {}, /Recherche de mises à jour…/],
 		['unknown', {}, /Version 1\.0\.0\. Aucune recherche/],
 		['downloading', { version: '1.2.0' }, /Téléchargement de la version 1\.2\.0…/],
@@ -134,7 +144,7 @@ describe('UpdatePanel', () => {
 	it('explains that an installation outside a package updates by hand', async () => {
 		await render(UpdatePanel, props({ status: AVAILABLE, settings: CANNOT_INSTALL }));
 		await expect.element(page.getByText(/ne se met pas à jour seule/)).toBeVisible();
-		expect(document.querySelectorAll('input')).toHaveLength(0);
+		expect(document.querySelectorAll('input')).toHaveLength(1);
 		await expect
 			.element(page.getByRole('button', { name: 'Mettre à jour maintenant' }))
 			.not.toBeInTheDocument();
@@ -150,7 +160,7 @@ describe('UpdatePanel', () => {
 
 	it('follows the confirmed automatic installation setting', async () => {
 		const view = await render(UpdatePanel, props());
-		const toggle = page.getByRole('checkbox', {
+		const toggle = page.getByRole('switch', {
 			name: 'Installer automatiquement les mises à jour'
 		});
 		await view.rerender(props({ settings: { ...CAN_INSTALL, autoInstall: true } }));
@@ -160,7 +170,7 @@ describe('UpdatePanel', () => {
 	it('shows and changes the automatic installation', async () => {
 		const onautoinstall = vi.fn();
 		await render(UpdatePanel, props({ onautoinstall }));
-		const toggle = page.getByRole('checkbox', {
+		const toggle = page.getByRole('switch', {
 			name: 'Installer automatiquement les mises à jour'
 		});
 		await expect.element(toggle).not.toBeChecked();
@@ -168,5 +178,29 @@ describe('UpdatePanel', () => {
 		expect(onautoinstall).toHaveBeenLastCalledWith(true);
 		// Only the manager's confirmation checks it.
 		await expect.element(toggle).not.toBeChecked();
+	});
+
+	it('tells when the last check ran and whether the release is new', async () => {
+		await render(UpdatePanel, props({ status: AVAILABLE }));
+		await expect.element(page.getByText(/^Vérifiée /)).toBeVisible();
+		await expect.element(page.getByText('Nouveau')).toBeVisible();
+	});
+
+	it('shows and changes the daily check, which only the manager confirms', async () => {
+		const oncheckdaily = vi.fn();
+		await render(UpdatePanel, props({ oncheckdaily }));
+		const toggle = page.getByRole('switch', { name: 'Vérifier une fois par jour' });
+		await expect.element(toggle).toBeChecked();
+		await toggle.click();
+		expect(oncheckdaily).toHaveBeenLastCalledWith(false);
+		await expect.element(toggle).toBeChecked();
+	});
+
+	it('says the choice is being saved until the manager confirms it', async () => {
+		const view = await render(UpdatePanel, props());
+		await page.getByRole('switch', { name: 'Vérifier une fois par jour' }).click();
+		await expect.element(page.getByText('Enregistrement…')).toBeVisible();
+		await view.rerender(props({ settings: { ...CAN_INSTALL, checkDaily: false } }));
+		await expect.element(page.getByText('Enregistrement…')).not.toBeInTheDocument();
 	});
 });

@@ -12,6 +12,7 @@ pub mod wire;
 
 pub use checker::{
     CHECK_INTERVAL, FIRST_CHECK_DELAY, MIN_CHECK_SPACING, UpdateHandle, UpdateParts, start,
+    system_seconds,
 };
 pub use installer::{
     Downloader, InstallError, InstallStage, Installer, PackageInstaller, SimulatedInstaller,

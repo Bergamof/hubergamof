@@ -11,17 +11,24 @@ use crate::config_store::write_bytes_atomically;
 /// File name, in the configuration directory.
 pub const POLICY_FILE: &str = "updates.json";
 
-/// Whether a newer release is installed as soon as it is found.
+/// What the user chose about updates: whether a newer release is installed as
+/// soon as it is found, and whether the manager looks for one once a day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UpdatePolicy {
     /// Install automatically (the default: the point of the feature).
     pub auto_install: bool,
+    /// Look for a newer release once a day (the default: a release found is
+    /// announced; off, only a check asked for runs).
+    pub check_daily: bool,
 }
 
 impl Default for UpdatePolicy {
     fn default() -> Self {
-        Self { auto_install: true }
+        Self {
+            auto_install: true,
+            check_daily: true,
+        }
     }
 }
 
@@ -123,10 +130,37 @@ mod tests {
         let store = FilePolicyStore::in_dir(dir.path());
         store.save(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         });
         assert!(!FilePolicyStore::in_dir(dir.path()).load().auto_install);
         let text = std::fs::read_to_string(dir.path().join(POLICY_FILE)).unwrap();
         assert!(text.contains("autoInstall"), "{text}");
+    }
+
+    #[test]
+    fn checking_every_day_is_the_default_and_the_choice_is_read_back() {
+        assert!(UpdatePolicy::default().check_daily);
+        let dir = tempfile::tempdir().unwrap();
+        let store = FilePolicyStore::in_dir(dir.path());
+        assert!(store.load().check_daily);
+        store.save(UpdatePolicy {
+            check_daily: false,
+            ..UpdatePolicy::default()
+        });
+        let read = FilePolicyStore::in_dir(dir.path()).load();
+        assert!(!read.check_daily);
+        assert!(read.auto_install, "the other choice is kept as it was");
+        let text = std::fs::read_to_string(dir.path().join(POLICY_FILE)).unwrap();
+        assert!(text.contains("checkDaily"), "{text}");
+    }
+
+    #[test]
+    fn a_file_from_before_the_choice_existed_checks_every_day() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(POLICY_FILE), r#"{ "autoInstall": false }"#).unwrap();
+        let read = FilePolicyStore::in_dir(dir.path()).load();
+        assert!(!read.auto_install);
+        assert!(read.check_daily);
     }
 
     #[test]
@@ -149,6 +183,7 @@ mod tests {
         let store = FilePolicyStore::in_dir(&dir.path().join("config"));
         store.save(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         });
         assert!(!store.load().auto_install);
     }
@@ -158,6 +193,7 @@ mod tests {
         let store = MemoryPolicyStore::default();
         store.save(UpdatePolicy {
             auto_install: false,
+            ..UpdatePolicy::default()
         });
         assert!(!store.load().auto_install);
     }

@@ -100,7 +100,8 @@ machine and the application. The page shown is marked with `aria-current`.
 
 	<section aria-labelledby="nav-devices">
 		<h2 id="nav-devices" class={GROUP_TITLE}>Périphériques</h2>
-		<ul class="flex flex-col gap-0.5">
+		<!-- Room for a few devices before the list arrives: the groups below would jump when it does. -->
+		<ul class="flex min-h-28 flex-col gap-0.5">
 			{#each devices as device (device.kind + device.id)}
 				<!-- The headphones are « Non lu » until the link to them has been opened. -->
 				{#snippet batteryOf()}

@@ -3,7 +3,11 @@
 /**
  * Result of the check for a newer release.
  */
-export type UpdateStatus = { "type": "unknown" } | { "type": "checking" } | { "type": "upToDate" } | { "type": "available", 
+export type UpdateStatus = { "type": "unknown" } | { "type": "checking" } | { "type": "upToDate", 
+/**
+ * When the check was made (seconds since the Unix epoch).
+ */
+checkedAt: number, } | { "type": "available", 
 /**
  * Version of the newer release, without the leading `v`.
  */
@@ -11,7 +15,11 @@ version: string,
 /**
  * Release notes page.
  */
-notesUrl: string, } | { "type": "checkFailed", 
+notesUrl: string, 
+/**
+ * When the check was made (seconds since the Unix epoch).
+ */
+checkedAt: number, } | { "type": "checkFailed", 
 /**
  * Human-readable details.
  */

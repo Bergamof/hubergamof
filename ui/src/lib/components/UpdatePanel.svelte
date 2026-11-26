@@ -6,6 +6,7 @@ The release notes open in a new tab.
 -->
 <script lang="ts">
 	import type { UpdateSettings, UpdateStatus } from '#lib/generated/index.js';
+	import { checkedLabel } from '#lib/deck/update-labels.js';
 
 	interface Props {
 		/** Running version, unknown until the manager greets the interface. */
@@ -16,11 +17,56 @@ The release notes open in a new tab.
 		oncheck: () => void;
 		oninstall: () => void;
 		onautoinstall: (enabled: boolean) => void;
+		oncheckdaily: (enabled: boolean) => void;
 	}
 
-	let { version, status, settings, oncheck, oninstall, onautoinstall }: Props = $props();
+	let { version, status, settings, oncheck, oninstall, onautoinstall, oncheckdaily }: Props =
+		$props();
 
 	const uid = $props.id();
+
+	/** How long the manager has to confirm a choice before the page says it did not. */
+	const CONFIRMATION_DELAY_MS = 5000;
+
+	type Choice = 'checkDaily' | 'autoInstall';
+	/** The value asked for each switch and not confirmed yet. */
+	let asked = $state<Partial<Record<Choice, boolean>>>({});
+	let unconfirmed = $state<Choice | undefined>(undefined);
+
+	const pending = $derived(
+		settings !== undefined &&
+			(['checkDaily', 'autoInstall'] as const).some(
+				(choice) => asked[choice] !== undefined && asked[choice] !== settings[choice]
+			)
+	);
+
+	/**
+	 * Asks for the choice and keeps showing the confirmed value: only the manager's `updateSettings`
+	 * changes it. Meanwhile the switch stays (`aria-disabled`, so the focus is kept) and a status
+	 * line says it is being saved, then that the manager did not answer.
+	 */
+	function choose(choice: Choice, input: HTMLInputElement, ask: (enabled: boolean) => void): void {
+		const current = settings?.[choice];
+		if (pending || current === undefined) {
+			input.checked = current ?? false;
+			return;
+		}
+		asked[choice] = input.checked;
+		unconfirmed = undefined;
+		ask(input.checked);
+		input.checked = current;
+		setTimeout(() => {
+			if (settings && asked[choice] !== undefined && asked[choice] !== settings[choice]) {
+				unconfirmed = choice;
+				asked[choice] = undefined;
+			}
+		}, CONFIRMATION_DELAY_MS);
+	}
+
+	/** When the last check ran, known once one has found something (or nothing). */
+	const checkedAt = $derived(
+		status.type === 'available' || status.type === 'upToDate' ? status.checkedAt : undefined
+	);
 
 	/** Defence in depth: the manager already checks the link, the page still only follows https. */
 	const notesLink = $derived(
@@ -44,13 +90,16 @@ The release notes open in a new tab.
 </script>
 
 <section
-	aria-label="Mises à jour"
-	class={[
-		'flex flex-col gap-3 rounded-xl border p-3 text-sm',
-		status.type === 'available' ? 'border-ring bg-surface' : 'border-line'
-	]}
+	aria-labelledby="{uid}-state"
+	class={['flex flex-col gap-3 card p-4 text-sm', status.type === 'available' && 'border-ring']}
 >
+	<h2 id="{uid}-state" class="font-display text-base font-semibold">Version</h2>
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+		{#if status.type === 'available' || status.type === 'upToDate'}
+			<span class="rounded-full border border-line px-2 py-0.5 text-sm font-medium">
+				{status.type === 'available' ? 'Nouveau' : 'À jour'}
+			</span>
+		{/if}
 		<p role="status" class="flex-1 wrap-anywhere">
 			{#if status.type === 'available'}
 				<strong class="font-semibold">Version {status.version} disponible.</strong>
@@ -117,20 +166,51 @@ The release notes open in a new tab.
 			</button>
 		</div>
 	</div>
-	{#if canInstall && settings}
-		<label class="flex min-h-9 items-center gap-2" for="{uid}-auto">
-			<input
-				id="{uid}-auto"
-				type="checkbox"
-				class="size-5 accent-ring focus-ring"
-				checked={settings.autoInstall}
-				onchange={(event) => {
-					onautoinstall(event.currentTarget.checked);
-					// Shown as the manager confirms it (`updateSettings`), never as merely asked.
-					event.currentTarget.checked = settings.autoInstall;
-				}}
-			/>
-			Installer automatiquement les mises à jour
-		</label>
+	{#if checkedAt !== undefined}
+		<p role="status" class="text-muted">Vérifiée {checkedLabel(checkedAt)}.</p>
 	{/if}
 </section>
+
+{#if settings}
+	<section aria-labelledby="{uid}-settings" class="mt-4 flex flex-col gap-3 card p-4 text-sm">
+		<h2 id="{uid}-settings" class="font-display text-base font-semibold">Réglages</h2>
+		<!-- Not the shared `Switch`: these must show the value the manager confirmed, never the one clicked. -->
+		<label class="flex items-center gap-2.5">
+			<input
+				type="checkbox"
+				role="switch"
+				class="switch"
+				aria-disabled={pending}
+				aria-describedby="{uid}-daily-help"
+				checked={settings.checkDaily}
+				onchange={(event) => choose('checkDaily', event.currentTarget, oncheckdaily)}
+			/>
+			Vérifier une fois par jour
+		</label>
+		<p id="{uid}-daily-help" class="text-muted">
+			Interroge GitHub une fois par jour, sans rien envoyer de vous. Désactivée, la recherche ne se
+			fait que sur demande.
+		</p>
+		{#if canInstall}
+			<label class="flex items-center gap-2.5">
+				<input
+					type="checkbox"
+					role="switch"
+					class="switch"
+					aria-disabled={pending}
+					checked={settings.autoInstall}
+					onchange={(event) => choose('autoInstall', event.currentTarget, onautoinstall)}
+				/>
+				Installer automatiquement les mises à jour
+			</label>
+		{:else}
+			<p class="text-muted">
+				L’installation automatique n’est pas disponible ici : elle se fait à la main.
+			</p>
+		{/if}
+		<p role="status" class="text-muted empty:hidden">
+			{#if pending}Enregistrement…{:else if unconfirmed}Le gestionnaire n’a pas confirmé le réglage
+				: réessayez.{/if}
+		</p>
+	</section>
+{/if}
