@@ -7,7 +7,9 @@ controls show what they said.
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { resolve } from '$app/paths';
 	import type { DeckState } from '#lib/deck/deck-state.svelte.js';
+	import { PATHS } from '#lib/deck/nav-model.js';
 	import {
 		AMBIENT_MODES,
 		EQUALIZER_BANDS,
@@ -20,6 +22,7 @@ controls show what they said.
 	import type { AmbientMode, EqualizerPreset } from '#lib/generated/index.js';
 	import BatteryBadge from './BatteryBadge.svelte';
 	import Icon from './Icon.svelte';
+	import EmptyState from './EmptyState.svelte';
 	import PageHeader from './PageHeader.svelte';
 	import RangeControl from './RangeControl.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
@@ -32,6 +35,8 @@ controls show what they said.
 	}
 
 	let { deck }: Props = $props();
+
+	const uid = $props.id();
 
 	const headsets = $derived(deck.headsets);
 	const status = $derived(headsets.status);
@@ -75,17 +80,30 @@ controls show what they said.
 
 {#if !headsets.headset}
 	<PageHeader title="Casque" />
-	<p class="m-auto text-muted">Aucun casque connecté à cet ordinateur.</p>
+	<EmptyState title="Aucun casque connecté" live>
+		<p>
+			Activez le Bluetooth et connectez le casque à cet ordinateur : il apparaît ici dès qu’il
+			l’est.
+		</p>
+		<a href={resolve(PATHS.devices)} class="link">Voir les périphériques</a>
+	</EmptyState>
 {:else}
 	<div class="flex flex-col gap-4">
 		<PageHeader title={headsets.headset.name}>
 			{#snippet chips()}
-				<span class="chip" role={link === 'cut' ? 'alert' : 'status'}>{LINK_LABELS[link]}</span>
+				<span id="{uid}-link" class="chip" role="status"
+					><span class="sr-only">Connexion : </span>{LINK_LABELS[link]}</span
+				>
 				{#if battery}
 					<span class="chip"><BatteryBadge {battery} labelled /></span>
 				{/if}
 			{/snippet}
 		</PageHeader>
+
+		<!-- Always there, empty until the link is cut: a region that already exists is read when it fills. -->
+		<p role="alert" class="font-semibold text-warning empty:hidden">
+			{#if link === 'cut'}{LINK_LABELS.cut}{/if}
+		</p>
 
 		<section
 			class="flex flex-wrap items-center gap-3 rounded-xl border border-warning bg-warning-soft p-3 text-sm"
@@ -101,6 +119,7 @@ controls show what they said.
 				type="button"
 				class={connected ? 'secondary-button' : 'primary-button'}
 				aria-disabled={link === 'idle' || link === 'connecting'}
+				aria-describedby="{uid}-link"
 				onclick={onlink}
 			>
 				{connected ? 'Libérer' : 'Reprendre la connexion'}
@@ -109,17 +128,17 @@ controls show what they said.
 
 		<!-- Nothing to change while the headphones are not linked: the controls only show what they said. -->
 		{#if !connected}
-			<p id="headset-inactive" class="text-sm text-muted">
+			<p id="{uid}-inactive" class="text-sm text-muted">
 				Les réglages ci-dessous sont inactifs tant que la connexion au casque n’est pas ouverte.
 			</p>
 		{/if}
 		<fieldset
 			disabled={!connected}
-			aria-describedby={connected ? undefined : 'headset-inactive'}
-			class="grid grid-cols-[repeat(auto-fit,minmax(24rem,1fr))] items-start gap-4 border-0 p-0 disabled:opacity-60"
+			aria-describedby={connected ? undefined : `${uid}-inactive`}
+			class="grid grid-cols-[repeat(auto-fit,minmax(24rem,1fr))] items-start gap-4 border-0 p-0"
 		>
-			<section class="card" aria-labelledby="ambient-title">
-				<h3 id="ambient-title" class="mb-2 text-lg font-semibold">Son ambiant</h3>
+			<section class="card" aria-labelledby="{uid}-ambient">
+				<h2 id="{uid}-ambient" class="mb-2 text-lg font-semibold">Son ambiant</h2>
 				{#if ambient}
 					<SettingRow label="Mode" description="Ce que le casque fait du bruit extérieur.">
 						<SegmentedControl
@@ -152,8 +171,8 @@ controls show what they said.
 				{/if}
 			</section>
 
-			<section class="card" aria-labelledby="equalizer-title">
-				<h3 id="equalizer-title" class="mb-2 text-lg font-semibold">Égaliseur</h3>
+			<section class="card" aria-labelledby="{uid}-equalizer">
+				<h2 id="{uid}-equalizer" class="mb-2 text-lg font-semibold">Égaliseur</h2>
 				{#if equalizer}
 					<SettingRow label="Préréglage" description="Un réglage prêt à l’emploi.">
 						<SelectField

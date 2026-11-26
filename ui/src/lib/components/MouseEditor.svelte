@@ -100,14 +100,14 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 		class="focus-ring"
 	>
 		{#if tab === 'touches'}
-			<section class="card" aria-label="Touches">
+			<div class="card">
 				<MouseControls
 					{mouse}
 					{config}
 					catalog={deck.catalog}
 					onbind={(control, action) => edit(bindControl(control, action))}
 				/>
-			</section>
+			</div>
 		{:else if tab === 'settings'}
 			<PointerSettings
 				pointer={config.pointer}
@@ -119,7 +119,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 				onthumbwheel={(change) => edit(setThumbWheel(change))}
 			/>
 		{:else}
-			<section class="max-w-3xl card" aria-label="Retour haptique">
+			<div class="max-w-3xl card">
 				<HapticsPanel
 					haptics={config.haptics}
 					catalog={deck.catalog}
@@ -127,7 +127,7 @@ Configuration of the selected mouse (buttons, pointer and wheels, vibrations on 
 					onevent={(key, setting) => void edit(setHapticEvent(key, setting))}
 					onplay={(waveform) => void deck.mice.playHaptic(waveform)}
 				/>
-			</section>
+			</div>
 		{/if}
 	</div>
 </div>

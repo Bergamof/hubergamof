@@ -749,7 +749,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 async function openMouse(page: Page) {
 	await open(page);
 	await goTo(page, /MX Master 4/);
-	await expect(page.getByRole('heading', { name: 'MX Master 4', level: 2 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'MX Master 4', level: 1 })).toBeVisible();
 }
 
 /** The control of the list under the drawings, which shows its editor. */
@@ -813,7 +813,7 @@ test('montre les schémas de chaque modèle, avec un repère par bouton', async 
 	await expect(page.getByRole('main').getByText(/76\s*%/)).toBeVisible();
 
 	await goTo(page, /MX Anywhere 3S/);
-	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S', level: 2 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'MX Anywhere 3S', level: 1 })).toBeVisible();
 	await expect(page.locator('.mk')).toHaveCount(6);
 	await expect(page.getByRole('tab', { name: 'Haptique' })).toHaveCount(0);
 	await expect(page.getByRole('main').getByText(/18\s*%\s*· en charge/)).toBeVisible();
@@ -830,11 +830,11 @@ test('choisit un bouton sur le schéma, au pointeur et au clavier', async ({ pag
 	await openMouse(page);
 	// The zone of the control on the drawing, then its marker with the keyboard.
 	await page.locator('.part[data-id="forward"]').dispatchEvent('click');
-	await expect(page.getByRole('heading', { name: 'Suivant', level: 3 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Suivant', level: 2 })).toBeVisible();
 	const marker = page.locator('.mk[data-id="back"]');
 	await marker.focus();
 	await page.keyboard.press('Enter');
-	await expect(page.getByRole('heading', { name: 'Précédent', level: 3 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Précédent', level: 2 })).toBeVisible();
 	await chooseControl(page, /Clic gauche/);
 	await expect(page.getByText(/Ce bouton est verrouillé/)).toBeVisible();
 });
@@ -1113,7 +1113,7 @@ test('règle le son ambiant et l’égaliseur du casque, et libère la liaison',
 	await open(page);
 	await goTo(page, /^WH-1000XM4/);
 	await expect(page.getByRole('heading', { name: /WH-1000XM4/ }).first()).toBeVisible();
-	await expect(page.getByText('Connecté', { exact: true })).toBeVisible();
+	await expect(page.getByText(/Connexion\s*:\s*Connecté/)).toBeVisible();
 	await expect(page.getByRole('main').getByText(/\d+\s*%/)).toBeVisible();
 
 	await page.getByRole('radio', { name: 'Son ambiant' }).click();
@@ -1130,6 +1130,6 @@ test('règle le son ambiant et l’égaliseur du casque, et libère la liaison',
 	await expect(page.getByRole('button', { name: 'Reprendre la connexion' })).toBeFocused();
 	await expect(page.getByRole('slider', { name: 'Égaliseur : 1 kHz' })).toBeDisabled();
 	await page.getByRole('button', { name: 'Reprendre la connexion' }).click();
-	await expect(page.getByText('Connecté', { exact: true })).toBeVisible();
+	await expect(page.getByText(/Connexion\s*:\s*Connecté/)).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Libérer' })).toBeFocused();
 });
