@@ -33,7 +33,6 @@ that is no longer connected is said so, instead of silently showing another one.
 		<a href={resolve(PATHS.devices)} class="link">Voir les périphériques</a>
 	</EmptyState>
 {:else if deck.mice.mouse && deck.mice.config}
-	<h1 class="sr-only">{deck.mice.mouse.displayName}</h1>
 	<MouseEditor {deck} mouse={deck.mice.mouse} config={deck.mice.config} />
 {:else if deck.mice.mice.length === 0}
 	<PageHeader title="Souris" />

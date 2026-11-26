@@ -28,6 +28,12 @@ async function renderPage(state?: HeadsetState) {
 }
 
 describe('HeadsetPage', () => {
+	it('warns that only one client can hold the settings link, with the page title as the only h1', async () => {
+		await renderPage(connectedState());
+		await expect.element(page.getByText(/Un seul client de réglages à la fois/)).toBeVisible();
+		expect(document.querySelectorAll('h1')).toHaveLength(1);
+	});
+
 	it('says there are no headphones when none is connected', async () => {
 		const connection = new FakeConnection();
 		const deck = new DeckState(connection, { load: () => null, save: () => undefined });

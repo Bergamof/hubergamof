@@ -19,6 +19,8 @@ controls show what they said.
 	} from '#lib/deck/headset-labels.js';
 	import type { AmbientMode, EqualizerPreset } from '#lib/generated/index.js';
 	import BatteryBadge from './BatteryBadge.svelte';
+	import Icon from './Icon.svelte';
+	import PageHeader from './PageHeader.svelte';
 	import RangeControl from './RangeControl.svelte';
 	import SegmentedControl from './SegmentedControl.svelte';
 	import SelectField from './SelectField.svelte';
@@ -72,24 +74,27 @@ controls show what they said.
 </script>
 
 {#if !headsets.headset}
+	<PageHeader title="Casque" />
 	<p class="m-auto text-muted">Aucun casque connecté à cet ordinateur.</p>
 {:else}
-	<div class="flex max-w-4xl flex-col gap-6">
-		<header class="flex flex-wrap items-center gap-3">
-			<h2 class="text-xl font-semibold">{headsets.headset.name}</h2>
-			{#if battery}
-				<p class="rounded-full border border-line bg-surface px-3 py-0.5 text-sm">
-					<BatteryBadge {battery} labelled />
-				</p>
-			{/if}
-		</header>
+	<div class="flex flex-col gap-4">
+		<PageHeader title={headsets.headset.name}>
+			{#snippet chips()}
+				<span class="chip" role={link === 'cut' ? 'alert' : 'status'}>{LINK_LABELS[link]}</span>
+				{#if battery}
+					<span class="chip"><BatteryBadge {battery} labelled /></span>
+				{/if}
+			{/snippet}
+		</PageHeader>
 
-		<section class="flex flex-wrap items-center justify-between gap-3 card" aria-label="Connexion">
-			<p
-				role={link === 'cut' ? 'alert' : 'status'}
-				class={link === 'cut' ? 'font-semibold text-warning' : ''}
-			>
-				{LINK_LABELS[link]}
+		<section
+			class="flex flex-wrap items-center gap-3 rounded-xl border border-warning bg-warning-soft p-3 text-sm"
+			aria-label="Connexion"
+		>
+			<Icon name="info" class="size-4 shrink-0 text-warning" />
+			<p class="flex-1">
+				Un seul client de réglages à la fois : cette page ouvre la liaison et coupe l’application
+				Sony du téléphone (pas l’audio).
 			</p>
 			<!-- One button whose action follows the link: the focus stays on it whatever the link does. -->
 			<button
@@ -111,7 +116,7 @@ controls show what they said.
 		<fieldset
 			disabled={!connected}
 			aria-describedby={connected ? undefined : 'headset-inactive'}
-			class="flex flex-col gap-6 border-0 p-0 disabled:opacity-60"
+			class="grid grid-cols-[repeat(auto-fit,minmax(24rem,1fr))] items-start gap-4 border-0 p-0 disabled:opacity-60"
 		>
 			<section class="card" aria-labelledby="ambient-title">
 				<h3 id="ambient-title" class="mb-2 text-lg font-semibold">Son ambiant</h3>
