@@ -122,12 +122,12 @@ describe('ShellAliasesPanel', () => {
 		expect(document.querySelector('form')).toBeNull();
 	});
 
-	it('focuses the section title when the last system alias is taken in', async () => {
+	it('focuses the line of the system aliases when the last one is taken in', async () => {
 		await renderPage();
 		await openSystemAliases();
 		await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
 		await expect
-			.element(page.getByRole('heading', { name: 'Alias présents sur le système, non gérés' }))
+			.element(page.getByText(/^Alias présents sur le système, non gérés \(\d+\)$/))
 			.toHaveFocus();
 	});
 

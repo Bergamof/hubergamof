@@ -148,7 +148,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 		tabindex="0"
 		class="flex flex-col gap-4 focus-ring"
 	>
-		{#if tab === 'identity'}
+		<div hidden={tab !== 'identity'} class="flex flex-col gap-4">
 			<section aria-labelledby="{uid}-identity" class="flex flex-col gap-4 card">
 				<h2 id="{uid}-identity" class="font-display text-xl font-semibold">Identité</h2>
 				<p class="text-sm text-muted">
@@ -168,10 +168,10 @@ Each form is sent as a whole; the line under the title says whether the manager 
 					</p>
 				{/if}
 			</section>
-		{/if}
+		</div>
 
 		{#if config}
-			{#if tab === 'identity'}
+			<div hidden={tab !== 'identity'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-signing" class="flex flex-col gap-4 card">
 					<h2 id="{uid}-signing" class="font-display text-xl font-semibold">
 						Signature des commits
@@ -182,9 +182,9 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						onsubmit={(signing) => edit(setSigning(signing))}
 					/>
 				</section>
-			{/if}
+			</div>
 
-			{#if tab === 'settings'}
+			<div hidden={tab !== 'settings'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-settings" class="flex flex-col gap-4 card">
 					<h2 id="{uid}-settings" class="font-display text-xl font-semibold">Réglages</h2>
 					<GitSettingsForm
@@ -193,9 +193,9 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						onsubmit={(settings) => edit(setSettings(settings))}
 					/>
 				</section>
-			{/if}
+			</div>
 
-			{#if tab === 'aliases'}
+			<div hidden={tab !== 'aliases'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-aliases" class="flex flex-col gap-4 card">
 					<h2 id="{uid}-aliases" class="font-display text-xl font-semibold">Alias Git</h2>
 					<p class="text-sm text-muted">
@@ -216,7 +216,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						bind:this={addAliasHeading}
 						tabindex="-1"
 						id="{uid}-add-alias"
-						class="font-display text-lg font-semibold"
+						class="font-display text-lg font-semibold focus-ring"
 					>
 						Ajouter un alias Git
 					</h3>
@@ -239,7 +239,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						bind:this={systemAliasHeading}
 						tabindex="-1"
 						id="{uid}-system-aliases"
-						class="font-display text-lg font-semibold"
+						class="font-display text-lg font-semibold focus-ring"
 					>
 						Alias présents ailleurs, non gérés
 					</h3>
@@ -263,9 +263,9 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						fallbackFocus={() => systemAliasHeading?.focus()}
 					/>
 				</section>
-			{/if}
+			</div>
 
-			{#if tab === 'advanced'}
+			<div hidden={tab !== 'advanced'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-extra" class="flex flex-col gap-4 card">
 					<h2 id="{uid}-extra" class="font-display text-xl font-semibold">Autres options Git</h2>
 					<p class="text-sm text-muted">
@@ -286,15 +286,15 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						onchange={(change) => edit(editExtraSettings(change))}
 					/>
 				</section>
-			{/if}
+			</div>
 
-			{#if tab === 'folders'}
+			<div hidden={tab !== 'folders'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-folders" class="flex flex-col gap-4 card">
 					<h2
 						bind:this={foldersHeading}
 						tabindex="-1"
 						id="{uid}-folders"
-						class="font-display text-xl font-semibold"
+						class="font-display text-xl font-semibold focus-ring"
 					>
 						Identités par dossier
 					</h2>
@@ -331,9 +331,9 @@ Each form is sent as a whole; the line under the title says whether the manager 
 						/>
 					{/if}
 				</section>
-			{/if}
+			</div>
 
-			{#if tab === 'advanced'}
+			<div hidden={tab !== 'advanced'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
 					<h2 id="{uid}-found" class="font-display text-xl font-semibold">
 						Valeurs déjà présentes ailleurs
@@ -346,7 +346,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 					</p>
 					<GitSystemEntries entries={otherEntries} unreadable={deck.git.gitAvailable === false} />
 				</section>
-			{/if}
+			</div>
 		{/if}
 	</div>
 </div>

@@ -34,7 +34,7 @@ whether the manager has saved it.
 	const uid = $props.id();
 	let addForm: ReturnType<typeof AliasForm> | undefined = $state();
 	let addHeading: HTMLHeadingElement | undefined = $state();
-	let systemHeading: HTMLHeadingElement | undefined = $state();
+	let systemSummary: HTMLElement | undefined = $state();
 	let systemOpen = $state(false);
 	const saves = new SaveTracker();
 	const config = $derived(deck.machine.config);
@@ -90,7 +90,7 @@ whether the manager has saved it.
 					bind:this={addHeading}
 					tabindex="-1"
 					id="{uid}-add"
-					class="font-display text-xl font-semibold"
+					class="font-display text-xl font-semibold focus-ring"
 				>
 					Ajouter un alias
 				</h2>
@@ -113,13 +113,13 @@ whether the manager has saved it.
 	</div>
 
 	<details class="card" bind:open={systemOpen}>
-		<summary class="cursor-pointer rounded-sm font-display text-xl font-semibold focus-ring">
+		<summary
+			bind:this={systemSummary}
+			class="cursor-pointer rounded-sm font-display text-xl font-semibold focus-ring"
+		>
 			Alias présents sur le système, non gérés ({unmanaged.length})
 		</summary>
 		<div class="mt-3 flex flex-col gap-4">
-			<h2 bind:this={systemHeading} tabindex="-1" id="{uid}-system" class="sr-only">
-				Alias présents sur le système, non gérés
-			</h2>
 			<p class="text-sm text-muted">
 				Seuls <code class="font-mono">~/.bashrc</code>, <code class="font-mono">~/.zshrc</code>,
 				<code class="font-mono">~/.bash_aliases</code> et
@@ -134,7 +134,7 @@ whether the manager has saved it.
 					aliases={unmanaged}
 					full={isFull(config)}
 					onadopt={adopt}
-					fallbackFocus={() => systemHeading?.focus()}
+					fallbackFocus={() => systemSummary?.focus()}
 				/>
 			{/if}
 		</div>

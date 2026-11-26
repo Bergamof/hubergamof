@@ -90,7 +90,7 @@ sent at once; the line under the title says whether the manager has saved it.
 		tabindex="0"
 		class="flex flex-col gap-4 focus-ring"
 	>
-		{#if tab === 'hosts'}
+		<div hidden={tab !== 'hosts'} class="flex flex-col gap-4">
 			<section aria-labelledby="{uid}-hosts" class="flex flex-col gap-4 card">
 				<h2 id="{uid}-hosts" class="font-display text-xl font-semibold">Serveurs SSH</h2>
 				<p class="text-sm text-muted">
@@ -114,7 +114,7 @@ sent at once; the line under the title says whether the manager has saved it.
 						bind:this={addHeading}
 						tabindex="-1"
 						id="{uid}-add"
-						class="font-display text-lg font-semibold"
+						class="font-display text-lg font-semibold focus-ring"
 					>
 						Ajouter un serveur
 					</h3>
@@ -138,10 +138,10 @@ sent at once; the line under the title says whether the manager has saved it.
 					</p>
 				{/if}
 			</section>
-		{/if}
+		</div>
 
 		{#if config}
-			{#if tab === 'common'}
+			<div hidden={tab !== 'common'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-common" class="flex flex-col gap-4 card">
 					<h2 id="{uid}-common" class="font-display text-xl font-semibold">
 						Options communes à tous les serveurs
@@ -162,15 +162,15 @@ sent at once; the line under the title says whether the manager has saved it.
 						onchange={(change) => edit(editCommonOptions(change))}
 					/>
 				</section>
-			{/if}
+			</div>
 
-			{#if tab === 'found'}
+			<div hidden={tab !== 'found'} class="flex flex-col gap-4">
 				<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
 					<h2
 						bind:this={systemHeading}
 						tabindex="-1"
 						id="{uid}-found"
-						class="font-display text-xl font-semibold"
+						class="font-display text-xl font-semibold focus-ring"
 					>
 						Serveurs définis ailleurs, non gérés
 					</h2>
@@ -189,7 +189,7 @@ sent at once; the line under the title says whether the manager has saved it.
 						fallbackFocus={() => systemHeading?.focus()}
 					/>
 				</section>
-			{/if}
+			</div>
 		{/if}
 	</div>
 </div>

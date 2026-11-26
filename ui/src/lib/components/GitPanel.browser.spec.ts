@@ -87,6 +87,17 @@ describe('GitPanel', () => {
 		await expect.element(aliases.getByText('status --short')).toBeVisible();
 	});
 
+	it('keeps what was typed in a form when another tab is opened and the first one comes back', async () => {
+		await renderPanel();
+		await identityForm().getByRole('textbox', { name: 'Nom' }).fill('Ada Lovelace');
+		await openTab('Réglages');
+		await expect.element(identityForm()).not.toBeInTheDocument();
+		await openTab('Identité et signature');
+		await expect
+			.element(identityForm().getByRole('textbox', { name: 'Nom' }))
+			.toHaveValue('Ada Lovelace');
+	});
+
 	describe('identity', () => {
 		it('sends the whole configuration on its revision', async () => {
 			const { connection } = await renderPanel();
