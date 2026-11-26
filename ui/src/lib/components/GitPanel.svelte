@@ -45,6 +45,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 	import GitSystemEntries from './GitSystemEntries.svelte';
 	import SaveStatusLine from './SaveStatusLine.svelte';
 	import SystemAliasList from './SystemAliasList.svelte';
+	import Tabs, { panelId, tabId } from './Tabs.svelte';
 
 	interface Props {
 		deck: DeckState;
@@ -66,6 +67,16 @@ Each form is sent as a whole; the line under the title says whether the manager 
 	}
 
 	const uid = $props.id();
+
+	type TabId = 'identity' | 'settings' | 'aliases' | 'folders' | 'advanced';
+	const TABS: { id: TabId; label: string }[] = [
+		{ id: 'identity', label: 'Identité et signature' },
+		{ id: 'settings', label: 'Réglages' },
+		{ id: 'aliases', label: 'Alias' },
+		{ id: 'folders', label: 'Dossiers' },
+		{ id: 'advanced', label: 'Avancé' }
+	];
+	let tab: TabId = $state('identity');
 	let addForm: ReturnType<typeof AliasForm> | undefined = $state();
 	let addAliasHeading: HTMLHeadingElement | undefined = $state();
 	let systemAliasHeading: HTMLHeadingElement | undefined = $state();
@@ -112,7 +123,7 @@ Each form is sent as a whole; the line under the title says whether the manager 
 	}
 </script>
 
-<div class="flex flex-col gap-8">
+<div class="flex flex-col gap-4">
 	<SaveStatusLine tracker={saves} />
 
 	{#if deck.git.gitAvailable === false}
@@ -122,186 +133,220 @@ Each form is sent as a whole; the line under the title says whether the manager 
 		</p>
 	{/if}
 
-	<section aria-labelledby="{uid}-identity" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-identity" class="font-display text-xl font-semibold">Identité</h2>
-		<p class="text-sm text-muted">
-			Écrite dans un fichier de HuBergamof, inclus à la fin de
-			<code class="font-mono">~/.gitconfig</code>, qui reste tel que vous l’avez écrit. Ce qui est
-			écrit ici l’emporte sur le reste ; un champ vide laisse Git comme il est.
-		</p>
+	<Tabs
+		label="Configuration de Git"
+		tabs={TABS}
+		selected={tab}
+		prefix={uid}
+		onselect={(id) => (tab = id)}
+	/>
+
+	<div
+		role="tabpanel"
+		id={panelId(uid, tab)}
+		aria-labelledby={tabId(uid, tab)}
+		tabindex="0"
+		class="flex flex-col gap-4 focus-ring"
+	>
+		<div hidden={tab !== 'identity'} class="flex flex-col gap-4">
+			<section aria-labelledby="{uid}-identity" class="flex flex-col gap-4 card">
+				<h2 id="{uid}-identity" class="font-display text-xl font-semibold">Identité</h2>
+				<p class="text-sm text-muted">
+					Écrite dans un fichier de HuBergamof, inclus à la fin de
+					<code class="font-mono">~/.gitconfig</code>, qui reste tel que vous l’avez écrit. Ce qui
+					est écrit ici l’emporte sur le reste ; un champ vide laisse Git comme il est.
+				</p>
+				{#if config}
+					<GitIdentityForm
+						identity={config.identity}
+						labelledby="{uid}-identity"
+						onsubmit={(identity) => edit(setIdentity(identity))}
+					/>
+				{:else}
+					<p class="text-muted" role="status" aria-busy="true">
+						Chargement de la configuration de Git…
+					</p>
+				{/if}
+			</section>
+		</div>
+
 		{#if config}
-			<GitIdentityForm
-				identity={config.identity}
-				labelledby="{uid}-identity"
-				onsubmit={(identity) => edit(setIdentity(identity))}
-			/>
-		{:else}
-			<p class="text-muted" role="status" aria-busy="true">
-				Chargement de la configuration de Git…
-			</p>
+			<div hidden={tab !== 'identity'} class="flex flex-col gap-4">
+				<section aria-labelledby="{uid}-signing" class="flex flex-col gap-4 card">
+					<h2 id="{uid}-signing" class="font-display text-xl font-semibold">
+						Signature des commits
+					</h2>
+					<GitSigningForm
+						signing={config.signing}
+						labelledby="{uid}-signing"
+						onsubmit={(signing) => edit(setSigning(signing))}
+					/>
+				</section>
+			</div>
+
+			<div hidden={tab !== 'settings'} class="flex flex-col gap-4">
+				<section aria-labelledby="{uid}-settings" class="flex flex-col gap-4 card">
+					<h2 id="{uid}-settings" class="font-display text-xl font-semibold">Réglages</h2>
+					<GitSettingsForm
+						settings={config.settings}
+						labelledby="{uid}-settings"
+						onsubmit={(settings) => edit(setSettings(settings))}
+					/>
+				</section>
+			</div>
+
+			<div hidden={tab !== 'aliases'} class="flex flex-col gap-4">
+				<section aria-labelledby="{uid}-aliases" class="flex flex-col gap-4 card">
+					<h2 id="{uid}-aliases" class="font-display text-xl font-semibold">Alias Git</h2>
+					<p class="text-sm text-muted">
+						Un alias est un raccourci pour une commande Git : <code class="font-mono">co</code> pour
+						<code class="font-mono">checkout</code>. Ceux qui lancent une commande du shell
+						(commençant par <code class="font-mono">!</code>) sont refusés. Un alias désactivé reste
+						ici mais n’est plus sur l’ordinateur.
+					</p>
+					<AliasList
+						rules={GIT_ALIAS_RULES}
+						aliases={config.aliases}
+						onreplace={(name, alias) => edit(replaceAlias<GitConfig>(name, alias))}
+						ontoggle={(name, enabled) => void edit(setAliasEnabled<GitConfig>(name, enabled))}
+						onremove={(name) => void edit(removeAlias<GitConfig>(name))}
+						fallbackFocus={() => (addForm ? addForm.focusName() : addAliasHeading?.focus())}
+					/>
+					<h3
+						bind:this={addAliasHeading}
+						tabindex="-1"
+						id="{uid}-add-alias"
+						class="font-display text-lg font-semibold focus-ring"
+					>
+						Ajouter un alias Git
+					</h3>
+					{#if isFull(config, GIT_ALIASES_MAX)}
+						<p class="text-sm text-muted">
+							La configuration contient déjà le nombre maximal d’alias Git : supprimez-en un pour en
+							ajouter.
+						</p>
+					{:else}
+						<AliasForm
+							bind:this={addForm}
+							rules={GIT_ALIAS_RULES}
+							labelledby="{uid}-add-alias"
+							takenNames={config.aliases.map(({ name }) => name)}
+							submitLabel="Ajouter"
+							onsubmit={(alias) => edit(addAlias<GitConfig>(alias, GIT_ALIASES_MAX))}
+						/>
+					{/if}
+					<h3
+						bind:this={systemAliasHeading}
+						tabindex="-1"
+						id="{uid}-system-aliases"
+						class="font-display text-lg font-semibold focus-ring"
+					>
+						Alias présents ailleurs, non gérés
+					</h3>
+					<p class="text-sm text-muted">
+						« Reprendre » ajoute l’alias à la configuration, activé, et commente sa ligne d’origine
+						(préfixe <code class="font-mono">#hubergamof-off#</code>) : désactivé ici, il disparaît
+						vraiment ; supprimé de la configuration, il retrouve sa ligne. Seuls
+						<code class="font-mono">~/.gitconfig</code> et
+						<code class="font-mono">~/.config/git/config</code> sont modifiés.
+					</p>
+					<SystemAliasList
+						rules={GIT_ALIAS_RULES}
+						aliases={unmanagedAliases}
+						full={isFull(config, GIT_ALIASES_MAX)}
+						describeSource={(source) => source}
+						refuse={refuseOtherFile}
+						unreadable={deck.git.gitAvailable === false
+							? 'Non lu : le programme git est introuvable.'
+							: undefined}
+						onadopt={adopt}
+						fallbackFocus={() => systemAliasHeading?.focus()}
+					/>
+				</section>
+			</div>
+
+			<div hidden={tab !== 'advanced'} class="flex flex-col gap-4">
+				<section aria-labelledby="{uid}-extra" class="flex flex-col gap-4 card">
+					<h2 id="{uid}-extra" class="font-display text-xl font-semibold">Autres options Git</h2>
+					<p class="text-sm text-muted">
+						Toute option de Git que les formulaires ci-dessus ne couvrent pas, sous la forme
+						<code class="font-mono">section.nom</code> et sa valeur : par exemple
+						<code class="font-mono">push.default</code> à <code class="font-mono">current</code>.
+						Écrits dans le fichier de HuBergamof, ils l’emportent sur les mêmes clés de
+						<code class="font-mono">~/.gitconfig</code>, qui reste tel qu’il est : une option
+						désactivée ici laisse la valeur de ce fichier. Une clé ne figure qu’une fois dans la
+						liste.
+					</p>
+					<AdvancedSettings
+						settings={config.extraSettings}
+						rules={GIT_SETTING_ALIAS_RULES}
+						tool="git"
+						label="Autres options Git"
+						addLabel="Ajouter une option Git"
+						onchange={(change) => edit(editExtraSettings(change))}
+					/>
+				</section>
+			</div>
+
+			<div hidden={tab !== 'folders'} class="flex flex-col gap-4">
+				<section aria-labelledby="{uid}-folders" class="flex flex-col gap-4 card">
+					<h2
+						bind:this={foldersHeading}
+						tabindex="-1"
+						id="{uid}-folders"
+						class="font-display text-xl font-semibold focus-ring"
+					>
+						Identités par dossier
+					</h2>
+					<p class="text-sm text-muted">
+						Dans les dépôts d’un dossier (et de ses sous-dossiers), Git utilise ce nom, cette
+						adresse et cette clé à la place des généraux : par exemple une adresse professionnelle
+						sous
+						<code class="font-mono">~/travail</code>. Un dossier est écrit sous votre dossier
+						personnel et ne passe pas par un lien.
+					</p>
+					<GitFolderList
+						rules={config.folderIdentities}
+						onreplace={(folder, rule) => edit(replaceFolderIdentity(folder, rule))}
+						ontoggle={(folder, enabled) => void edit(setFolderIdentityEnabled(folder, enabled))}
+						onremove={(folder) => void edit(removeFolderIdentity(folder))}
+						fallbackFocus={() =>
+							addFolderForm ? addFolderForm.focusFolder() : foldersHeading?.focus()}
+					/>
+					<h3 id="{uid}-add-folder" class="font-display text-lg font-semibold">
+						Ajouter une identité par dossier
+					</h3>
+					{#if isFolderListFull(config)}
+						<p class="text-sm text-muted">
+							La configuration contient déjà le nombre maximal d’identités par dossier :
+							supprimez-en une pour en ajouter.
+						</p>
+					{:else}
+						<GitFolderForm
+							bind:this={addFolderForm}
+							labelledby="{uid}-add-folder"
+							takenFolders={config.folderIdentities.map(({ folder }) => folder)}
+							submitLabel="Ajouter"
+							onsubmit={(rule) => edit(addFolderIdentity(rule))}
+						/>
+					{/if}
+				</section>
+			</div>
+
+			<div hidden={tab !== 'advanced'} class="flex flex-col gap-4">
+				<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
+					<h2 id="{uid}-found" class="font-display text-xl font-semibold">
+						Valeurs déjà présentes ailleurs
+					</h2>
+					<p class="text-sm text-muted">
+						L’identité, la signature et les réglages que Git trouve dans d’autres fichiers (<code
+							class="font-mono">~/.gitconfig</code
+						>, <code class="font-mono">/etc/gitconfig</code>…), lus quand cette page s’ouvre. Ce que
+						vous enregistrez ici les remplace.
+					</p>
+					<GitSystemEntries entries={otherEntries} unreadable={deck.git.gitAvailable === false} />
+				</section>
+			</div>
 		{/if}
-	</section>
-
-	{#if config}
-		<section aria-labelledby="{uid}-signing" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-signing" class="font-display text-xl font-semibold">Signature des commits</h2>
-			<GitSigningForm
-				signing={config.signing}
-				labelledby="{uid}-signing"
-				onsubmit={(signing) => edit(setSigning(signing))}
-			/>
-		</section>
-
-		<section aria-labelledby="{uid}-settings" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-settings" class="font-display text-xl font-semibold">Réglages</h2>
-			<GitSettingsForm
-				settings={config.settings}
-				labelledby="{uid}-settings"
-				onsubmit={(settings) => edit(setSettings(settings))}
-			/>
-		</section>
-
-		<section aria-labelledby="{uid}-aliases" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-aliases" class="font-display text-xl font-semibold">Alias Git</h2>
-			<p class="text-sm text-muted">
-				Un alias est un raccourci pour une commande Git : <code class="font-mono">co</code> pour
-				<code class="font-mono">checkout</code>. Ceux qui lancent une commande du shell (commençant
-				par <code class="font-mono">!</code>) sont refusés. Un alias désactivé reste ici mais n’est
-				plus sur l’ordinateur.
-			</p>
-			<AliasList
-				rules={GIT_ALIAS_RULES}
-				aliases={config.aliases}
-				onreplace={(name, alias) => edit(replaceAlias<GitConfig>(name, alias))}
-				ontoggle={(name, enabled) => void edit(setAliasEnabled<GitConfig>(name, enabled))}
-				onremove={(name) => void edit(removeAlias<GitConfig>(name))}
-				fallbackFocus={() => (addForm ? addForm.focusName() : addAliasHeading?.focus())}
-			/>
-			<h3
-				bind:this={addAliasHeading}
-				tabindex="-1"
-				id="{uid}-add-alias"
-				class="font-display text-lg font-semibold"
-			>
-				Ajouter un alias Git
-			</h3>
-			{#if isFull(config, GIT_ALIASES_MAX)}
-				<p class="text-sm text-muted">
-					La configuration contient déjà le nombre maximal d’alias Git : supprimez-en un pour en
-					ajouter.
-				</p>
-			{:else}
-				<AliasForm
-					bind:this={addForm}
-					rules={GIT_ALIAS_RULES}
-					labelledby="{uid}-add-alias"
-					takenNames={config.aliases.map(({ name }) => name)}
-					submitLabel="Ajouter"
-					onsubmit={(alias) => edit(addAlias<GitConfig>(alias, GIT_ALIASES_MAX))}
-				/>
-			{/if}
-			<h3
-				bind:this={systemAliasHeading}
-				tabindex="-1"
-				id="{uid}-system-aliases"
-				class="font-display text-lg font-semibold"
-			>
-				Alias présents ailleurs, non gérés
-			</h3>
-			<p class="text-sm text-muted">
-				« Reprendre » ajoute l’alias à la configuration, activé, et commente sa ligne d’origine
-				(préfixe <code class="font-mono">#hubergamof-off#</code>) : désactivé ici, il disparaît
-				vraiment ; supprimé de la configuration, il retrouve sa ligne. Seuls
-				<code class="font-mono">~/.gitconfig</code> et
-				<code class="font-mono">~/.config/git/config</code> sont modifiés.
-			</p>
-			<SystemAliasList
-				rules={GIT_ALIAS_RULES}
-				aliases={unmanagedAliases}
-				full={isFull(config, GIT_ALIASES_MAX)}
-				describeSource={(source) => source}
-				refuse={refuseOtherFile}
-				unreadable={deck.git.gitAvailable === false
-					? 'Non lu : le programme git est introuvable.'
-					: undefined}
-				onadopt={adopt}
-				fallbackFocus={() => systemAliasHeading?.focus()}
-			/>
-		</section>
-
-		<section aria-labelledby="{uid}-extra" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-extra" class="font-display text-xl font-semibold">Autres options Git</h2>
-			<p class="text-sm text-muted">
-				Toute option de Git que les formulaires ci-dessus ne couvrent pas, sous la forme
-				<code class="font-mono">section.nom</code> et sa valeur : par exemple
-				<code class="font-mono">push.default</code> à <code class="font-mono">current</code>. Écrits
-				dans le fichier de HuBergamof, ils l’emportent sur les mêmes clés de
-				<code class="font-mono">~/.gitconfig</code>, qui reste tel qu’il est : une option désactivée
-				ici laisse la valeur de ce fichier. Une clé ne figure qu’une fois dans la liste.
-			</p>
-			<AdvancedSettings
-				settings={config.extraSettings}
-				rules={GIT_SETTING_ALIAS_RULES}
-				tool="git"
-				label="Autres options Git"
-				addLabel="Ajouter une option Git"
-				onchange={(change) => edit(editExtraSettings(change))}
-			/>
-		</section>
-
-		<section aria-labelledby="{uid}-folders" class="flex flex-col gap-4 card">
-			<h2
-				bind:this={foldersHeading}
-				tabindex="-1"
-				id="{uid}-folders"
-				class="font-display text-xl font-semibold"
-			>
-				Identités par dossier
-			</h2>
-			<p class="text-sm text-muted">
-				Dans les dépôts d’un dossier (et de ses sous-dossiers), Git utilise ce nom, cette adresse et
-				cette clé à la place des généraux : par exemple une adresse professionnelle sous
-				<code class="font-mono">~/travail</code>. Un dossier est écrit sous votre dossier personnel
-				et ne passe pas par un lien.
-			</p>
-			<GitFolderList
-				rules={config.folderIdentities}
-				onreplace={(folder, rule) => edit(replaceFolderIdentity(folder, rule))}
-				ontoggle={(folder, enabled) => void edit(setFolderIdentityEnabled(folder, enabled))}
-				onremove={(folder) => void edit(removeFolderIdentity(folder))}
-				fallbackFocus={() =>
-					addFolderForm ? addFolderForm.focusFolder() : foldersHeading?.focus()}
-			/>
-			<h3 id="{uid}-add-folder" class="font-display text-lg font-semibold">
-				Ajouter une identité par dossier
-			</h3>
-			{#if isFolderListFull(config)}
-				<p class="text-sm text-muted">
-					La configuration contient déjà le nombre maximal d’identités par dossier : supprimez-en
-					une pour en ajouter.
-				</p>
-			{:else}
-				<GitFolderForm
-					bind:this={addFolderForm}
-					labelledby="{uid}-add-folder"
-					takenFolders={config.folderIdentities.map(({ folder }) => folder)}
-					submitLabel="Ajouter"
-					onsubmit={(rule) => edit(addFolderIdentity(rule))}
-				/>
-			{/if}
-		</section>
-
-		<section aria-labelledby="{uid}-found" class="flex flex-col gap-4 card">
-			<h2 id="{uid}-found" class="font-display text-xl font-semibold">
-				Valeurs déjà présentes ailleurs
-			</h2>
-			<p class="text-sm text-muted">
-				L’identité, la signature et les réglages que Git trouve dans d’autres fichiers (<code
-					class="font-mono">~/.gitconfig</code
-				>, <code class="font-mono">/etc/gitconfig</code>…), lus quand cette page s’ouvre. Ce que
-				vous enregistrez ici les remplace.
-			</p>
-			<GitSystemEntries entries={otherEntries} unreadable={deck.git.gitAvailable === false} />
-		</section>
-	{/if}
+	</div>
 </div>

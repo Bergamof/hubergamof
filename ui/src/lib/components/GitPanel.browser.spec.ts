@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { DeckState } from '#lib/deck/deck-state.svelte.js';
@@ -21,6 +21,12 @@ function git(revision: number, change: (config: GitConfig) => void = () => undef
 	return config;
 }
 
+/** The tab the panel opens on in the test (the one of the identity when none is asked). */
+let startTab: string | RegExp | undefined;
+afterEach(() => (startTab = undefined));
+
+const openTab = (name: string | RegExp) => page.getByRole('tab', { name }).click();
+
 async function renderPanel(
 	config: GitConfig | null = git(1),
 	found: GitSystemEntry[] = FOUND,
@@ -33,6 +39,7 @@ async function renderPanel(
 	if (config) {
 		connection.receive({ type: 'git', config, systemEntries: found, gitAvailable: available });
 	}
+	if (startTab && config) await openTab(startTab);
 	return { connection };
 }
 
@@ -64,6 +71,7 @@ describe('GitPanel', () => {
 	it('says when git was not found', async () => {
 		await renderPanel(git(1), [], false);
 		await expect.element(page.getByRole('alert').getByText(/est introuvable/)).toBeVisible();
+		await openTab('Alias');
 		await expect
 			.element(page.getByText('Non lu : le programme git est introuvable.').first())
 			.toBeVisible();
@@ -71,10 +79,23 @@ describe('GitPanel', () => {
 
 	it('lists what Git finds elsewhere, aliases apart', async () => {
 		await renderPanel();
+		await openTab('Avancé');
 		const found = page.getByRole('list', { name: 'Valeurs de Git définies ailleurs' });
 		await expect.element(found.getByText('Existing Name')).toBeVisible();
+		await openTab('Alias');
 		const aliases = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
 		await expect.element(aliases.getByText('status --short')).toBeVisible();
+	});
+
+	it('keeps what was typed in a form when another tab is opened and the first one comes back', async () => {
+		await renderPanel();
+		await identityForm().getByRole('textbox', { name: 'Nom' }).fill('Ada Lovelace');
+		await openTab('Réglages');
+		await expect.element(identityForm()).not.toBeInTheDocument();
+		await openTab('Identité et signature');
+		await expect
+			.element(identityForm().getByRole('textbox', { name: 'Nom' }))
+			.toHaveValue('Ada Lovelace');
 	});
 
 	describe('identity', () => {
@@ -172,6 +193,8 @@ describe('GitPanel', () => {
 	});
 
 	describe('settings', () => {
+		beforeEach(() => (startTab = 'Réglages'));
+
 		it('sends the branch, the way of pulling, the editor and the helper', async () => {
 			const { connection } = await renderPanel();
 			await page.getByRole('textbox', { name: /Première branche/ }).fill('main');
@@ -262,6 +285,8 @@ describe('GitPanel', () => {
 	});
 
 	describe('aliases', () => {
+		beforeEach(() => (startTab = 'Alias'));
+
 		const withAlias = () =>
 			git(1, (config) => {
 				config.aliases = [{ name: 'co', command: 'checkout', enabled: true }];
@@ -359,6 +384,8 @@ describe('GitPanel', () => {
 	});
 
 	describe('identities by folder', () => {
+		beforeEach(() => (startTab = 'Dossiers'));
+
 		const withFolder = () =>
 			git(1, (config) => {
 				config.folderIdentities = [
@@ -495,6 +522,8 @@ describe('GitPanel', () => {
 	});
 
 	describe('the settings written by the person', () => {
+		beforeEach(() => (startTab = 'Avancé'));
+
 		const form = () => page.getByRole('form', { name: 'Ajouter une option Git' });
 
 		it('adds a setting and keeps the focus on the key for the next one', async () => {

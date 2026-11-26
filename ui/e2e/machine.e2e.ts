@@ -65,6 +65,11 @@ async function playManager(page: Page, aliases: Alias[] = []): Promise<FakeManag
 	return manager;
 }
 
+/** The aliases of the system sit in a closed block. */
+async function openSystem(page: Page) {
+	await page.getByText(/^Alias présents sur le système, non gérés \(\d+\)$/).click();
+}
+
 async function openMachine(page: Page) {
 	await page.goto('/poste/alias');
 	await expect(page.getByRole('heading', { name: 'Alias du shell' }).first()).toBeVisible();
@@ -151,6 +156,7 @@ test('intègre un alias du système, activé, et le retire de la liste des non g
 }) => {
 	const manager = await playManager(page);
 	await openMachine(page);
+	await openSystem(page);
 	const system = page.getByRole('list', { name: 'Alias du système, non gérés' });
 	await expect(system.getByText('Non géré · lu dans ~/.zsh_aliases')).toBeVisible();
 
@@ -167,6 +173,7 @@ test('annonce une modification refusée parce que la configuration a changé ail
 	const manager = await playManager(page);
 	await openMachine(page);
 	manager.revision = 7;
+	await openSystem(page);
 
 	await page.getByRole('button', { name: 'Intégrer l’alias gs' }).click();
 	await expect(page.getByRole('alert')).toContainText('modifiée ailleurs');

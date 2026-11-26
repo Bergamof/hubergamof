@@ -996,6 +996,9 @@ test('intègre un alias du système, qui reste après un rechargement', async ({
 	await goTo(page, 'Alias du shell');
 	const system = page.getByRole('list', { name: 'Alias du système, non gérés' });
 	const managed = page.getByRole('list', { name: 'Alias gérés' });
+	const openSystem = () =>
+		page.getByText(/^Alias présents sur le système, non gérés \(\d+\)$/).click();
+	await openSystem();
 	await expect(system.getByText('git status', { exact: true })).toBeVisible();
 	await expect(system.getByText('git log --oneline', { exact: true })).toBeVisible();
 	await expect(page.getByText('Aucun alias géré pour l’instant.')).toBeVisible();
@@ -1006,6 +1009,7 @@ test('intègre un alias du système, qui reste après un rechargement', async ({
 	await expect(page.getByRole('button', { name: 'Intégrer l’alias gl' })).toBeFocused();
 
 	await page.reload();
+	await openSystem();
 	await expect(managed.getByText('git status', { exact: true })).toBeVisible();
 	await expect(system.getByText('git status', { exact: true })).toHaveCount(0);
 	await expect(system.getByText('git log --oneline', { exact: true })).toBeVisible();
@@ -1019,16 +1023,20 @@ test('Git : lit la configuration trouvée, enregistre l’identité et refuse un
 }) => {
 	await open(page);
 	await goTo(page, 'Git');
+	await page.getByRole('tab', { name: 'Avancé' }).click();
 	const found = page.getByRole('list', { name: 'Valeurs de Git définies ailleurs' });
 	await expect(found.getByText('Ada Lovelace')).toBeVisible();
+	await page.getByRole('tab', { name: 'Alias' }).click();
 	const aliases = page.getByRole('list', { name: 'Alias Git définis ailleurs, non gérés' });
 	await expect(aliases.getByText('status --short', { exact: true })).toBeVisible();
 
+	await page.getByRole('tab', { name: 'Identité et signature' }).click();
 	const form = page.getByRole('form', { name: 'Identité', exact: true });
 	await form.getByRole('textbox', { name: 'Nom' }).fill('Grace Hopper');
 	await page.getByRole('button', { name: 'Enregistrer l’identité' }).click();
 	await expect(page.getByText('Modifications enregistrées.').first()).toBeVisible();
 
+	await page.getByRole('tab', { name: 'Alias' }).click();
 	const add = page.getByRole('form', { name: 'Ajouter un alias Git' });
 	await add.getByRole('textbox', { name: 'Nom' }).fill('pwn');
 	await add.getByRole('textbox', { name: 'Commande' }).fill('!rm -rf ~');
@@ -1048,6 +1056,7 @@ test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le r
 }) => {
 	await open(page);
 	await goTo(page, 'SSH');
+	await page.getByRole('tab', { name: /^Détectés/ }).click();
 	const found = page.getByRole('list', { name: 'Serveurs SSH définis ailleurs, non gérés' });
 	const managed = page.getByRole('list', { name: 'Serveurs SSH gérés' });
 	await expect(found.getByText('ada@192.0.2.10:2222')).toBeVisible();
@@ -1056,8 +1065,9 @@ test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le r
 	).toHaveAttribute('aria-disabled', 'true');
 
 	await page.getByRole('button', { name: 'Reprendre le serveur demo-server' }).click();
-	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
 	await page.getByRole('button', { name: 'Reprendre le serveur demo-tunnel' }).click();
+	await page.getByRole('tab', { name: /^Serveurs/ }).click();
+	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
 	await expect(managed.getByText(/192\.0\.2\.20/)).toBeVisible();
 	await managed.getByText(/^Options avancées \(1\)/).click();
 	await expect(
@@ -1066,6 +1076,7 @@ test('SSH : lit les serveurs trouvés, reprend l’un, refuse l’autre, et le r
 
 	await page.reload();
 	await expect(managed.getByText('ada@192.0.2.10:2222')).toBeVisible();
+	await page.getByRole('tab', { name: /^Détectés/ }).click();
 	await expect(found.getByText('ada@192.0.2.10:2222')).toHaveCount(0);
 });
 

@@ -34,7 +34,8 @@ whether the manager has saved it.
 	const uid = $props.id();
 	let addForm: ReturnType<typeof AliasForm> | undefined = $state();
 	let addHeading: HTMLHeadingElement | undefined = $state();
-	let systemHeading: HTMLHeadingElement | undefined = $state();
+	let systemSummary: HTMLElement | undefined = $state();
+	let systemOpen = $state(false);
 	const saves = new SaveTracker();
 	const config = $derived(deck.machine.config);
 	/** Aliases of the system that are not in the configuration yet: taken in, one leaves the list at once. */
@@ -59,76 +60,83 @@ whether the manager has saved it.
 	}
 </script>
 
-<div class="flex flex-col gap-8">
+<div class="flex flex-col gap-4">
 	<SaveStatusLine tracker={saves} />
 
-	<section aria-labelledby="{uid}-managed" class="flex flex-col gap-4 card">
-		<h2 id="{uid}-managed" class="font-display text-xl font-semibold">Alias du shell</h2>
-		<p class="text-sm text-muted">
-			Écrits dans un bloc réservé de <code class="font-mono">~/.bashrc</code> et
-			<code class="font-mono">~/.zshrc</code>, ils sont disponibles dans les nouveaux terminaux. Un
-			alias désactivé reste ici mais n’est plus sur l’ordinateur.
-		</p>
-		{#if config}
-			<AliasList
-				aliases={config.aliases}
-				onreplace={(name, alias) => edit(replaceAlias(name, alias))}
-				ontoggle={(name, enabled) => void edit(setAliasEnabled(name, enabled))}
-				onremove={(name) => void edit(removeAlias(name))}
-				fallbackFocus={() => (addForm ? addForm.focusName() : addHeading?.focus())}
-			/>
-			<h3
-				bind:this={addHeading}
-				tabindex="-1"
-				id="{uid}-add"
-				class="font-display text-lg font-semibold"
-			>
-				Ajouter un alias
-			</h3>
-			{#if isFull(config)}
-				<p class="text-sm text-muted">
-					La configuration contient déjà le nombre maximal d’alias : supprimez-en un pour en
-					ajouter.
-				</p>
+	<div class="grid grid-cols-[repeat(auto-fit,minmax(22rem,1fr))] items-start gap-4">
+		<section aria-labelledby="{uid}-managed" class="flex flex-col gap-4 card">
+			<h2 id="{uid}-managed" class="font-display text-xl font-semibold">Alias du shell</h2>
+			<p class="text-sm text-muted">
+				Écrits dans un bloc réservé de <code class="font-mono">~/.bashrc</code> et
+				<code class="font-mono">~/.zshrc</code>, ils sont disponibles dans les nouveaux terminaux.
+				Un alias désactivé reste ici mais n’est plus sur l’ordinateur.
+			</p>
+			{#if config}
+				<AliasList
+					aliases={config.aliases}
+					onreplace={(name, alias) => edit(replaceAlias(name, alias))}
+					ontoggle={(name, enabled) => void edit(setAliasEnabled(name, enabled))}
+					onremove={(name) => void edit(removeAlias(name))}
+					fallbackFocus={() => (addForm ? addForm.focusName() : addHeading?.focus())}
+				/>
 			{:else}
-				<AliasForm
-					bind:this={addForm}
-					labelledby="{uid}-add"
-					takenNames={config.aliases.map(({ name }) => name)}
-					submitLabel="Ajouter"
-					onsubmit={(alias) => edit(addAlias(alias))}
+				<p class="text-muted">Chargement des alias…</p>
+			{/if}
+		</section>
+
+		{#if config}
+			<section aria-labelledby="{uid}-add" class="flex flex-col gap-4 card">
+				<h2
+					bind:this={addHeading}
+					tabindex="-1"
+					id="{uid}-add"
+					class="font-display text-xl font-semibold focus-ring"
+				>
+					Ajouter un alias
+				</h2>
+				{#if isFull(config)}
+					<p class="text-sm text-muted">
+						La configuration contient déjà le nombre maximal d’alias : supprimez-en un pour en
+						ajouter.
+					</p>
+				{:else}
+					<AliasForm
+						bind:this={addForm}
+						labelledby="{uid}-add"
+						takenNames={config.aliases.map(({ name }) => name)}
+						submitLabel="Ajouter"
+						onsubmit={(alias) => edit(addAlias(alias))}
+					/>
+				{/if}
+			</section>
+		{/if}
+	</div>
+
+	<details class="card" bind:open={systemOpen}>
+		<summary
+			bind:this={systemSummary}
+			class="cursor-pointer rounded-sm font-display text-xl font-semibold focus-ring"
+		>
+			Alias présents sur le système, non gérés ({unmanaged.length})
+		</summary>
+		<div class="mt-3 flex flex-col gap-4">
+			<p class="text-sm text-muted">
+				Seuls <code class="font-mono">~/.bashrc</code>, <code class="font-mono">~/.zshrc</code>,
+				<code class="font-mono">~/.bash_aliases</code> et
+				<code class="font-mono">~/.zsh_aliases</code>
+				sont lus, au moment où cette page s’ouvre. « Intégrer » ajoute l’alias à la configuration, activé,
+				et commente sa ligne d’origine (préfixe <code class="font-mono">: #hubergamof-off#</code>) ;
+				supprimer l’alias de la configuration la rétablit. Un alias de ce formulaire fait de même
+				pour un alias de même nom déjà présent.
+			</p>
+			{#if config}
+				<SystemAliasList
+					aliases={unmanaged}
+					full={isFull(config)}
+					onadopt={adopt}
+					fallbackFocus={() => systemSummary?.focus()}
 				/>
 			{/if}
-		{:else}
-			<p class="text-muted">Chargement des alias…</p>
-		{/if}
-	</section>
-
-	<section aria-labelledby="{uid}-system" class="flex flex-col gap-4 card">
-		<h2
-			bind:this={systemHeading}
-			tabindex="-1"
-			id="{uid}-system"
-			class="font-display text-xl font-semibold"
-		>
-			Alias présents sur le système, non gérés
-		</h2>
-		<p class="text-sm text-muted">
-			Seuls <code class="font-mono">~/.bashrc</code>, <code class="font-mono">~/.zshrc</code>,
-			<code class="font-mono">~/.bash_aliases</code> et
-			<code class="font-mono">~/.zsh_aliases</code>
-			sont lus, au moment où cette page s’ouvre. « Intégrer » ajoute l’alias à la configuration, activé,
-			et commente sa ligne d’origine (préfixe <code class="font-mono">: #hubergamof-off#</code>) ;
-			supprimer l’alias de la configuration la rétablit. Un alias de ce formulaire fait de même pour
-			un alias de même nom déjà présent.
-		</p>
-		{#if config}
-			<SystemAliasList
-				aliases={unmanaged}
-				full={isFull(config)}
-				onadopt={adopt}
-				fallbackFocus={() => systemHeading?.focus()}
-			/>
-		{/if}
-	</section>
+		</div>
+	</details>
 </div>
